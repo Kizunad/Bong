@@ -1,6 +1,7 @@
 mod network;
 mod npc;
 mod player;
+#[allow(dead_code)]
 mod schema;
 mod world;
 
