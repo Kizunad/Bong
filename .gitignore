@@ -1,6 +1,7 @@
 # Rust
 target/
 Cargo.lock
+!server/Cargo.lock
 
 # Java/Gradle (Fabric Client)
 client/.gradle/
