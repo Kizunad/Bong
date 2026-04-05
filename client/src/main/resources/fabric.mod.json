@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "bong-client",
+  "version": "${version}",
+  "name": "Bong Client",
+  "description": "Bong MVP Client",
+  "authors": [
+    "OhMyOpenCode"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.bong.client.BongClient"
+    ]
+  },
+  "mixins": [
+    "bong-client.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "1.20.1",
+    "java": ">=17",
+    "fabric-api": "*",
+    "owo-lib": "*"
+  }
+}
