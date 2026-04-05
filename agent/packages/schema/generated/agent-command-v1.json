@@ -1,0 +1,75 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "id",
+    "commands"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "id": {
+      "description": "Unique command batch ID, e.g. cmd_1712345678_001",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "const": "calamity",
+          "type": "string"
+        },
+        {
+          "const": "mutation",
+          "type": "string"
+        },
+        {
+          "const": "era",
+          "type": "string"
+        }
+      ]
+    },
+    "commands": {
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "target",
+          "params"
+        ],
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "const": "spawn_event",
+                "type": "string"
+              },
+              {
+                "const": "modify_zone",
+                "type": "string"
+              },
+              {
+                "const": "npc_behavior",
+                "type": "string"
+              }
+            ]
+          },
+          "target": {
+            "description": "区域名 or NPC ID",
+            "type": "string"
+          },
+          "params": {
+            "description": "指令参数。spawn_event: {event, intensity, duration_ticks, target_player?}; modify_zone: {spirit_qi_delta, danger_level_delta?}; npc_behavior: {aggression?, flee_threshold?, patrol_radius?}",
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          }
+        }
+      }
+    }
+  }
+}

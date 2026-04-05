@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "ts",
+    "player",
+    "raw",
+    "zone"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "ts": {
+      "description": "Unix timestamp (seconds)",
+      "type": "integer"
+    },
+    "player": {
+      "type": "string"
+    },
+    "raw": {
+      "maxLength": 256,
+      "type": "string"
+    },
+    "zone": {
+      "type": "string"
+    }
+  }
+}

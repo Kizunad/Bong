@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "required": [
+    "player",
+    "raw",
+    "sentiment",
+    "intent",
+    "influence_weight"
+  ],
+  "properties": {
+    "player": {
+      "type": "string"
+    },
+    "raw": {
+      "type": "string"
+    },
+    "sentiment": {
+      "minimum": -1,
+      "maximum": 1,
+      "type": "number"
+    },
+    "intent": {
+      "anyOf": [
+        {
+          "const": "complaint",
+          "type": "string"
+        },
+        {
+          "const": "boast",
+          "type": "string"
+        },
+        {
+          "const": "social",
+          "type": "string"
+        },
+        {
+          "const": "help",
+          "type": "string"
+        },
+        {
+          "const": "provoke",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "type": "string"
+        }
+      ]
+    },
+    "mentions_mechanic": {
+      "type": "string"
+    },
+    "influence_weight": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "v": 1,
+  "ts": 1712345678,
+  "tick": 84000,
+  "players": [
+    {
+      "uuid": "offline:Steve",
+      "name": "Steve",
+      "realm": "qi_refining_3",
+      "composite_power": 0.85,
+      "breakdown": {
+        "combat": 0.92,
+        "wealth": 0.60,
+        "social": 0.45,
+        "karma": -0.30,
+        "territory": 0.20
+      },
+      "trend": "rising",
+      "active_hours": 12.5,
+      "zone": "blood_valley",
+      "pos": [128.5, 66.0, 200.3],
+      "recent_kills": 5,
+      "recent_deaths": 1
+    },
+    {
+      "uuid": "offline:NewPlayer1",
+      "name": "NewPlayer1",
+      "realm": "mortal",
+      "composite_power": 0.12,
+      "breakdown": {
+        "combat": 0.05,
+        "wealth": 0.10,
+        "social": 0.02,
+        "karma": 0.00,
+        "territory": 0.00
+      },
+      "trend": "rising",
+      "active_hours": 1.2,
+      "zone": "starter_valley",
+      "pos": [8.0, 66.0, 8.0],
+      "recent_kills": 0,
+      "recent_deaths": 0
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_001",
+      "kind": "zombie",
+      "pos": [14.0, 66.0, 14.0],
+      "state": "idle",
+      "blackboard": {
+        "nearest_player_dist": 12.5
+      }
+    }
+  ],
+  "zones": [
+    {
+      "name": "blood_valley",
+      "spirit_qi": 0.42,
+      "danger_level": 3,
+      "active_events": ["beast_tide_warning"],
+      "player_count": 1
+    },
+    {
+      "name": "starter_valley",
+      "spirit_qi": 0.95,
+      "danger_level": 0,
+      "active_events": [],
+      "player_count": 1
+    }
+  ],
+  "recent_events": [
+    {
+      "type": "player_kill_npc",
+      "tick": 83200,
+      "player": "offline:Steve",
+      "target": "npc_003",
+      "zone": "blood_valley"
+    },
+    {
+      "type": "player_join",
+      "tick": 83800,
+      "player": "offline:NewPlayer1",
+      "zone": "starter_valley"
+    }
+  ]
+}

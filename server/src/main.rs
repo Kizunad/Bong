@@ -1,6 +1,7 @@
 mod network;
 mod npc;
 mod player;
+mod schema;
 mod world;
 
 use crossbeam_channel::unbounded;

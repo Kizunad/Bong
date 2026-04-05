@@ -1,0 +1,313 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "ts",
+    "tick",
+    "players",
+    "npcs",
+    "zones",
+    "recent_events"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "ts": {
+      "description": "Unix timestamp (seconds)",
+      "type": "integer"
+    },
+    "tick": {
+      "description": "Server game tick",
+      "type": "integer"
+    },
+    "players": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "realm",
+          "composite_power",
+          "breakdown",
+          "trend",
+          "active_hours",
+          "zone",
+          "pos",
+          "recent_kills",
+          "recent_deaths"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "realm": {
+            "type": "string"
+          },
+          "composite_power": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "breakdown": {
+            "type": "object",
+            "required": [
+              "combat",
+              "wealth",
+              "social",
+              "karma",
+              "territory"
+            ],
+            "properties": {
+              "combat": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "wealth": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "social": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "karma": {
+                "minimum": -1,
+                "maximum": 1,
+                "type": "number"
+              },
+              "territory": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              }
+            }
+          },
+          "trend": {
+            "anyOf": [
+              {
+                "const": "rising",
+                "type": "string"
+              },
+              {
+                "const": "stable",
+                "type": "string"
+              },
+              {
+                "const": "falling",
+                "type": "string"
+              }
+            ]
+          },
+          "active_hours": {
+            "type": "number"
+          },
+          "zone": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "array",
+            "items": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "additionalItems": false,
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "recent_kills": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "recent_deaths": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "npcs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "pos",
+          "state",
+          "blackboard"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "array",
+            "items": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "additionalItems": false,
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "state": {
+            "anyOf": [
+              {
+                "const": "idle",
+                "type": "string"
+              },
+              {
+                "const": "fleeing",
+                "type": "string"
+              },
+              {
+                "const": "attacking",
+                "type": "string"
+              },
+              {
+                "const": "patrolling",
+                "type": "string"
+              }
+            ]
+          },
+          "blackboard": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          }
+        }
+      }
+    },
+    "zones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "spirit_qi",
+          "danger_level",
+          "active_events",
+          "player_count"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "spirit_qi": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "danger_level": {
+            "minimum": 0,
+            "maximum": 5,
+            "type": "integer"
+          },
+          "active_events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "player_count": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "recent_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "tick"
+        ],
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "const": "player_kill_npc",
+                "type": "string"
+              },
+              {
+                "const": "player_kill_player",
+                "type": "string"
+              },
+              {
+                "const": "player_death",
+                "type": "string"
+              },
+              {
+                "const": "npc_spawn",
+                "type": "string"
+              },
+              {
+                "const": "zone_qi_change",
+                "type": "string"
+              },
+              {
+                "const": "event_triggered",
+                "type": "string"
+              },
+              {
+                "const": "player_join",
+                "type": "string"
+              },
+              {
+                "const": "player_leave",
+                "type": "string"
+              }
+            ]
+          },
+          "tick": {
+            "type": "integer"
+          },
+          "player": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "zone": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -27,5 +27,9 @@ Thumbs.db
 *.dat_old
 world/
 
+# Node.js (Agent)
+node_modules/
+dist/
+
 # Env
 .env

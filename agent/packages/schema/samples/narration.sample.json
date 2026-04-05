@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "narrations": [
+    {
+      "scope": "broadcast",
+      "text": "天道震怒，血谷上空乌云密布，一道紫雷即将降下……",
+      "style": "system_warning"
+    },
+    {
+      "scope": "player",
+      "target": "offline:Steve",
+      "text": "你感到一股凌厉的杀意从天而降，浑身汗毛直竖。",
+      "style": "perception"
+    }
+  ]
+}
