@@ -1,0 +1,17 @@
+[package]
+name = "bong-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+big-brain = "0.21"
+bevy_transform = "0.14.2"
+pathfinding = "4"
+seldom_state = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
