@@ -1,0 +1,30 @@
+# Rust
+target/
+Cargo.lock
+
+# Java/Gradle (Fabric Client)
+client/.gradle/
+client/build/
+client/run/
+client/.idea/
+client/*.iml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Minecraft
+*.mca
+*.dat
+*.dat_old
+world/
+
+# Env
+.env
