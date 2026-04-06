@@ -133,33 +133,13 @@ sdk use java 17.0.18-amzn
 
 ## 七、快速验证脚本
 
-保存为 `scripts/smoke-test.sh`：
+一键跑完 fmt/clippy/test/smoke run/client build：
 
 ```bash
-#!/bin/bash
-set -e
-
-echo "=== Rust Server ==="
-cd "$(dirname "$0")/../server"
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-echo "Server: ALL PASS"
-
-echo ""
-echo "=== Fabric Client ==="
-cd "$(dirname "$0")/../client"
-# 需要 Java 17
-./gradlew test build
-echo "Client: ALL PASS"
-
-echo ""
-echo "=== Smoke Run (15s) ==="
-cd "$(dirname "$0")/../server"
-timeout 15s cargo run 2>&1 | tee /tmp/bong-smoke.log || true
-grep -q "tokio runtime started" /tmp/bong-smoke.log && echo "Bridge: OK" || echo "Bridge: FAIL"
-grep -q "creating overworld" /tmp/bong-smoke.log && echo "World: OK" || echo "World: FAIL"
+bash scripts/smoke-test.sh
 ```
+
+脚本涵盖 4 个阶段：Rust 格式+lint、Rust 测试、服务端 15s 冒烟、Fabric client 构建。
 
 ---
 

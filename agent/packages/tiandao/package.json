@@ -1,0 +1,23 @@
+{
+  "name": "@bong/tiandao",
+  "version": "0.1.0",
+  "description": "天道 Agent — AI world orchestrator for Bong",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bong/schema": "*",
+    "openai": "^4.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  }
+}

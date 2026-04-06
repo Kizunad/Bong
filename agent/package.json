@@ -1,0 +1,5 @@
+{
+  "name": "@bong/agent-workspace",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
