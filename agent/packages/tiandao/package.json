@@ -7,13 +7,15 @@
   "scripts": {
     "build": "tsc",
     "start": "tsx src/main.ts",
+    "start:mock": "tsx src/main.ts --mock",
     "dev": "tsx watch src/main.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {
     "@bong/schema": "*",
     "openai": "^4.0.0",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "ioredis": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

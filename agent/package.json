@@ -1,5 +1,13 @@
 {
   "name": "@bong/agent-workspace",
   "private": true,
-  "workspaces": ["packages/*"]
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "ioredis": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/ioredis": "^4.28.10"
+  }
 }
