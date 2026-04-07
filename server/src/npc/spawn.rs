@@ -2,11 +2,13 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, ChunkLayer, Commands, Component, Entity, EntityKind, EntityLayer, EntityLayerId,
-    IntoSystemConfigs, Position, PostStartup, Query, With,
+    bevy_ecs, App, ChunkLayer, Commands, Component, DVec3, Entity, EntityKind, EntityLayer,
+    EntityLayerId, IntoSystemConfigs, Position, PostStartup, Query, With,
 };
 
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
+use crate::npc::patrol::NpcPatrol;
+use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
 
@@ -72,6 +74,14 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             GlobalTransform::default(),
             NpcMarker,
             NpcBlackboard::default(),
+            NpcPatrol::new(
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(
+                    NPC_SPAWN_POSITION[0],
+                    NPC_SPAWN_POSITION[1],
+                    NPC_SPAWN_POSITION[2],
+                ),
+            ),
             Thinker::build()
                 .picker(FirstToScore {
                     threshold: PROXIMITY_THRESHOLD,
@@ -168,6 +178,13 @@ mod tests {
             blackboard.player_distance.is_infinite(),
             "NpcBlackboard.player_distance should default to infinity"
         );
+
+        let patrol = app
+            .world()
+            .get::<NpcPatrol>(npc_entity)
+            .expect("NPC should have a patrol component");
+        assert_eq!(patrol.home_zone, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(patrol.current_target, DVec3::new(14.0, 66.0, 14.0));
 
         let layer_id = app
             .world()

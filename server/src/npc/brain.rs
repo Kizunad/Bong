@@ -2,15 +2,17 @@ use bevy_transform::components::Transform;
 use big_brain::prelude::{
     ActionBuilder, ActionState, Actor, BigBrainPlugin, BigBrainSet, Score, ScorerBuilder,
 };
+use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, IntoSystemConfigs, Position,
-    PreUpdate, Query, With, Without,
+    PreUpdate, Query, Res, Resource, With, Without,
 };
 
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 
-pub(crate) const PROXIMITY_THRESHOLD: f32 = 0.6;
+pub const DEFAULT_FLEE_THRESHOLD: f32 = 0.6;
+pub(crate) const PROXIMITY_THRESHOLD: f32 = DEFAULT_FLEE_THRESHOLD;
 const FLEE_SUCCESS_DISTANCE: f64 = 16.0;
 const FLEE_SPEED: f64 = 0.15;
 const FALLBACK_FLEE_DIR: DVec3 = DVec3::new(1.0, 0.0, 0.0);
@@ -23,6 +25,37 @@ pub struct PlayerProximityScorer;
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct FleeAction;
+
+#[derive(Clone, Debug)]
+pub struct NpcBehaviorConfig {
+    pub default_flee_threshold: f32,
+    flee_threshold_overrides: HashMap<u32, f32>,
+}
+
+impl Default for NpcBehaviorConfig {
+    fn default() -> Self {
+        Self {
+            default_flee_threshold: DEFAULT_FLEE_THRESHOLD,
+            flee_threshold_overrides: HashMap::new(),
+        }
+    }
+}
+
+impl Resource for NpcBehaviorConfig {}
+
+impl NpcBehaviorConfig {
+    pub fn threshold_for_npc_index(&self, npc_index: u32) -> f32 {
+        self.flee_threshold_overrides
+            .get(&npc_index)
+            .copied()
+            .unwrap_or(self.default_flee_threshold)
+    }
+
+    pub fn set_threshold_for_npc_index(&mut self, npc_index: u32, flee_threshold: f32) {
+        self.flee_threshold_overrides
+            .insert(npc_index, flee_threshold.clamp(0.0, 1.0));
+    }
+}
 
 type NpcFleeQueryItem<'a> = (&'a mut Position, &'a mut Transform, &'a NpcBlackboard);
 type NpcFleeQueryFilter = (With<NpcMarker>, With<EntityKind>, Without<ClientMarker>);
@@ -49,7 +82,8 @@ impl ActionBuilder for FleeAction {
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering brain systems");
-    app.add_plugins(BigBrainPlugin::new(PreUpdate))
+    app.insert_resource(NpcBehaviorConfig::default())
+        .add_plugins(BigBrainPlugin::new(PreUpdate))
         .add_systems(
             PreUpdate,
             update_npc_blackboard.before(BigBrainSet::Scorers),
@@ -87,15 +121,30 @@ pub fn update_npc_blackboard(
 fn player_proximity_scorer_system(
     npcs: Query<&NpcBlackboard, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<PlayerProximityScorer>>,
+    npc_behavior: Option<Res<NpcBehaviorConfig>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
+        let flee_threshold = npc_behavior
+            .as_deref()
+            .map(|behavior| behavior.threshold_for_npc_index(actor.index()))
+            .unwrap_or(DEFAULT_FLEE_THRESHOLD)
+            .clamp(0.0, 1.0);
+
         let value = if let Ok(blackboard) = npcs.get(*actor) {
-            proximity_score(blackboard.player_distance)
+            score_for_flee_threshold(proximity_score(blackboard.player_distance), flee_threshold)
         } else {
             0.0
         };
 
         score.set(value);
+    }
+}
+
+fn score_for_flee_threshold(score: f32, flee_threshold: f32) -> f32 {
+    if score >= flee_threshold {
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -211,6 +260,22 @@ mod tests {
         app.world_mut().spawn(thinker);
         assert_eq!(PROXIMITY_THRESHOLD, 0.6);
         assert!((proximity_score(3.2) - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn npc_behavior_config_defaults_to_proximity_threshold() {
+        let config = NpcBehaviorConfig::default();
+        assert_eq!(config.default_flee_threshold, PROXIMITY_THRESHOLD);
+        assert_eq!(config.threshold_for_npc_index(1), PROXIMITY_THRESHOLD);
+    }
+
+    #[test]
+    fn npc_behavior_config_applies_per_npc_override() {
+        let mut config = NpcBehaviorConfig::default();
+        config.set_threshold_for_npc_index(7, 0.2);
+
+        assert_eq!(config.threshold_for_npc_index(7), 0.2);
+        assert_eq!(config.threshold_for_npc_index(8), PROXIMITY_THRESHOLD);
     }
 
     #[test]

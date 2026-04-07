@@ -26,6 +26,8 @@ Thumbs.db
 *.dat
 *.dat_old
 world/
+!server/src/world/
+!server/src/world/**
 
 # Node.js (Agent)
 node_modules/
