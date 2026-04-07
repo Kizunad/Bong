@@ -341,12 +341,19 @@ fn vec3_to_array(position: valence::prelude::DVec3) -> [f64; 3] {
     [position.x, position.y, position.z]
 }
 
+type PlayerStateEmitQueryItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Username,
+    &'a Position,
+    &'a PlayerState,
+);
+
+type PlayerStateEmitQueryFilter = (With<Client>, Or<(Added<PlayerState>, Changed<PlayerState>)>);
+
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
-    mut clients: Query<
-        (Entity, &mut Client, &Username, &Position, &PlayerState),
-        (With<Client>, Or<(Added<PlayerState>, Changed<PlayerState>)>),
-    >,
+    mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
@@ -666,13 +673,13 @@ fn collect_routed_targets(
 
 fn format_narration_chat_mirror(narration: &crate::schema::narration::Narration) -> String {
     let prefix = match narration.style {
-        crate::schema::common::NarrationStyle::SystemWarning => "§c[天道警示]",
-        crate::schema::common::NarrationStyle::Perception => "§7[感知]",
-        crate::schema::common::NarrationStyle::Narration => "§f[叙事]",
-        crate::schema::common::NarrationStyle::EraDecree => "§6[时代]",
+        crate::schema::common::NarrationStyle::SystemWarning => "§c§l[天道警示] §r§c",
+        crate::schema::common::NarrationStyle::Perception => "§7[感知] §r§7",
+        crate::schema::common::NarrationStyle::Narration => "§f[叙事] §r§f",
+        crate::schema::common::NarrationStyle::EraDecree => "§6§l[§e时代§6§l] §r§6",
     };
 
-    format!("{prefix} {}", narration.text)
+    format!("{prefix}{}", narration.text)
 }
 
 // ─── Legacy mock bridge systems (unchanged) ──────────────
@@ -1050,6 +1057,43 @@ mod tests {
         }
 
         #[test]
+        fn narration_chat_mirror_formats_match_plan_examples() {
+            let cases = [
+                (
+                    NarrationStyle::SystemWarning,
+                    "天道警示之下，雷光将至。",
+                    "§c§l[天道警示] §r§c天道警示之下，雷光将至。",
+                ),
+                (
+                    NarrationStyle::Perception,
+                    "灵脉在远处微微震颤。",
+                    "§7[感知] §r§7灵脉在远处微微震颤。",
+                ),
+                (
+                    NarrationStyle::Narration,
+                    "山风掠过古碑，留下低语。",
+                    "§f[叙事] §r§f山风掠过古碑，留下低语。",
+                ),
+                (
+                    NarrationStyle::EraDecree,
+                    "末法将临，诸法归寂。",
+                    "§6§l[§e时代§6§l] §r§6末法将临，诸法归寂。",
+                ),
+            ];
+
+            for (style, text, expected) in cases {
+                let narration = Narration {
+                    scope: NarrationScope::Broadcast,
+                    target: None,
+                    text: text.to_string(),
+                    style,
+                };
+
+                assert_eq!(format_narration_chat_mirror(&narration), expected);
+            }
+        }
+
+        #[test]
         fn broadcast_hits_all_clients() {
             let (mut app, tx_inbound) = setup_narration_app(None);
             let (_alice, mut alice_helper) =
@@ -1086,6 +1130,7 @@ mod tests {
                 danger_level: 0,
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                blocked_tiles: Vec::new(),
             };
             let blood_valley = Zone {
                 name: "blood_valley".to_string(),
@@ -1097,6 +1142,7 @@ mod tests {
                 danger_level: 4,
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(1004.0, 66.0, 1004.0)],
+                blocked_tiles: Vec::new(),
             };
 
             let zone_registry = ZoneRegistry {
@@ -1283,6 +1329,7 @@ mod tests {
                         danger_level: 0,
                         active_events: vec![],
                         patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                        blocked_tiles: vec![],
                     },
                     Zone {
                         name: "blood_valley".to_string(),
@@ -1294,6 +1341,7 @@ mod tests {
                         danger_level: 4,
                         active_events: vec!["beast_tide".to_string()],
                         patrol_anchors: vec![DVec3::new(1004.0, 66.0, 1004.0)],
+                        blocked_tiles: vec![],
                     },
                 ],
             };

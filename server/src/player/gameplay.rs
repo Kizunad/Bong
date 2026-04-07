@@ -143,6 +143,15 @@ struct BreakthroughRule {
     next_spirit_qi_max: f64,
 }
 
+type GameplayPlayerSetReadItem<'a> = (Entity, &'a Username, &'a Position, &'a PlayerState);
+type GameplayPlayerSetReadFilter = With<Client>;
+type GameplayPlayerSetWriteItem<'a> = &'a mut PlayerState;
+type GameplayPlayerSetWriteFilter = With<Client>;
+type GameplayPlayerSetParams<'w, 's> = (
+    Query<'w, 's, GameplayPlayerSetReadItem<'w>, GameplayPlayerSetReadFilter>,
+    Query<'w, 's, GameplayPlayerSetWriteItem<'w>, GameplayPlayerSetWriteFilter>,
+);
+
 pub fn register(app: &mut App) {
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(PendingGameplayNarrations::default());
@@ -159,10 +168,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
-    mut player_sets: ParamSet<(
-        Query<(Entity, &Username, &Position, &PlayerState), With<Client>>,
-        Query<&mut PlayerState, With<Client>>,
-    )>,
+    mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
 

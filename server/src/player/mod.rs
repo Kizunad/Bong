@@ -25,6 +25,9 @@ type ClientInitQueryItem<'a> = (
     &'a mut GameMode,
 );
 
+type JoinedClientsWithoutStateQueryItem<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
     app.insert_resource(PlayerStatePersistence::default());
@@ -93,7 +96,10 @@ fn init_clients(
 pub(crate) fn attach_player_state_to_joined_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
-    joined_clients: Query<(Entity, &Username), (Added<Client>, Without<PlayerState>)>,
+    joined_clients: Query<
+        JoinedClientsWithoutStateQueryItem<'_>,
+        JoinedClientsWithoutStateQueryFilter,
+    >,
 ) {
     for (entity, username) in &joined_clients {
         let player_state = load_player_state(&persistence, username.0.as_str());
