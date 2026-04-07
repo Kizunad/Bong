@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "ts": 1712345678,
+  "tick": 84000,
+  "players": [
+    {
+      "uuid": "offline:Steve",
+      "name": "Steve",
+      "realm": "qi_refining_3",
+      "composite_power": 0.85,
+      "breakdown": {
+        "combat": 0.92,
+        "wealth": 0.6,
+        "social": 0.45,
+        "karma": -0.3,
+        "territory": 0.2
+      },
+      "trend": "rising",
+      "active_hours": 12.5,
+      "zone": "blood_valley",
+      "pos": [128.5, 66, 200.3],
+      "recent_kills": 5,
+      "recent_deaths": 1,
+      "rogue_power": 999
+    }
+  ],
+  "npcs": [],
+  "zones": [],
+  "recent_events": []
+}

@@ -1,4 +1,5 @@
 {
+  "additionalProperties": false,
   "type": "object",
   "required": [
     "v",
@@ -17,6 +18,10 @@
     "source": {
       "anyOf": [
         {
+          "const": "arbiter",
+          "type": "string"
+        },
+        {
           "const": "calamity",
           "type": "string"
         },
@@ -34,6 +39,7 @@
       "maxItems": 5,
       "type": "array",
       "items": {
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "type",
