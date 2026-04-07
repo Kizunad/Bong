@@ -1,5 +1,6 @@
 package com.bong.client;
 
+import com.bong.client.ui.CultivationScreenBootstrap;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import org.slf4j.Logger;
@@ -14,5 +15,8 @@ public class BongClient implements ClientModInitializer {
 
         BongNetworkHandler.register();
         HudRenderCallback.EVENT.register(BongHud::render);
+        CultivationScreenBootstrap.register();
+
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, and keybinding scheduler are active.");
     }
 }
