@@ -75,6 +75,7 @@ write_category_index() {
   local book_found=0
   local book
 
+  mkdir -p "$category_dir"
   tmp="$(mktemp)"
 
   {
