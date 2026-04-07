@@ -97,6 +97,15 @@ impl ActiveEventsResource {
             return;
         };
 
+        if self.contains(event.zone_name.as_str(), event.event_name.as_str()) {
+            tracing::info!(
+                "[bong][world] ignored duplicate schedule for {} in zone `{}`",
+                event.event_name,
+                event.zone_name
+            );
+            return;
+        }
+
         if !zone
             .active_events
             .iter()
@@ -229,8 +238,6 @@ mod events_tests {
     use super::{
         tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_THUNDER_TRIBULATION,
     };
-    use crate::network::command_executor::{execute_agent_commands, CommandExecutorResource};
-    use crate::schema::agent_command::AgentCommandV1;
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
     use crate::world::zone::ZoneRegistry;
@@ -253,15 +260,6 @@ mod events_tests {
         app.insert_resource(ActiveEventsResource::default());
         app.add_systems(Update, tick_active_events);
         app
-    }
-
-    fn batch(id: &str, commands: Vec<Command>) -> AgentCommandV1 {
-        AgentCommandV1 {
-            v: 1,
-            id: id.to_string(),
-            source: Some("calamity".to_string()),
-            commands,
-        }
     }
 
     #[test]
@@ -377,19 +375,17 @@ mod events_tests {
 
     #[test]
     fn spawn_event_only_enters_scheduler_once() {
-        let mut app = App::new();
-        app.insert_resource(CommandExecutorResource::default());
-        app.insert_resource(ZoneRegistry::fallback());
-        app.insert_resource(ActiveEventsResource::default());
-        app.add_systems(Update, execute_agent_commands);
-
+        let mut app = setup_events_app();
         let command = spawn_event_command("spawn", EVENT_THUNDER_TRIBULATION, 3);
-        {
-            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
-            executor.enqueue_batch(batch("cmd_event_once", vec![command]));
-        }
 
-        app.update();
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                events.enqueue_from_spawn_command(&command, Some(&mut zones));
+            });
+        }
 
         let world = app.world();
         let events = world.resource::<ActiveEventsResource>();
@@ -401,7 +397,7 @@ mod events_tests {
         assert_eq!(
             events.count_by_zone_and_event("spawn", EVENT_THUNDER_TRIBULATION),
             1,
-            "spawn_event should only register one scheduled thunder event"
+            "repeated spawn_event should only register one scheduled thunder event"
         );
         assert_eq!(
             zone.active_events
@@ -410,6 +406,29 @@ mod events_tests {
                 .count(),
             1,
             "spawn zone should expose thunder exactly once in stable active_events"
+        );
+
+        app.update();
+        app.update();
+        app.update();
+
+        let world = app.world();
+        let events = world.resource::<ActiveEventsResource>();
+        let zone = world
+            .resource::<ZoneRegistry>()
+            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .expect("spawn zone should exist");
+
+        assert!(
+            !events.contains("spawn", EVENT_THUNDER_TRIBULATION),
+            "expired thunder event should be removed from scheduler after cleanup"
+        );
+        assert!(
+            !zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_THUNDER_TRIBULATION),
+            "expired thunder event should be removed from zone after cleanup"
         );
     }
 }
