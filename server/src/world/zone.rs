@@ -24,6 +24,7 @@ pub struct Zone {
     pub danger_level: u8,
     pub active_events: Vec<String>,
     pub patrol_anchors: Vec<DVec3>,
+    pub blocked_tiles: Vec<(i32, i32)>,
 }
 
 impl Zone {
@@ -38,6 +39,7 @@ impl Zone {
                 .into_iter()
                 .map(dvec3_from_array)
                 .collect(),
+            blocked_tiles: Vec::new(),
         }
     }
 
@@ -182,6 +184,8 @@ struct ZoneConfig {
     active_events: Vec<String>,
     #[serde(default)]
     patrol_anchors: Vec<[f64; 3]>,
+    #[serde(default)]
+    blocked_tiles: Vec<[i32; 2]>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,6 +271,34 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
         patrol_anchors.push(anchor);
     }
 
+    let mut seen_blocked_tiles = HashSet::new();
+    let mut blocked_tiles = Vec::with_capacity(zone.blocked_tiles.len());
+    for (index, [x, z]) in zone.blocked_tiles.into_iter().enumerate() {
+        if !contains_horizontal_bounds((min, max), x, z) {
+            return Err(format!(
+                "zone `{name}` blocked_tiles[{index}] must stay within the zone aabb"
+            ));
+        }
+
+        let tile = (x, z);
+        if !seen_blocked_tiles.insert(tile) {
+            return Err(format!(
+                "zone `{name}` contains duplicate blocked_tiles entry ({x}, {z})"
+            ));
+        }
+
+        blocked_tiles.push(tile);
+    }
+
+    for (index, anchor) in patrol_anchors.iter().enumerate() {
+        let anchor_tile = (anchor.x.floor() as i32, anchor.z.floor() as i32);
+        if seen_blocked_tiles.contains(&anchor_tile) {
+            return Err(format!(
+                "zone `{name}` patrol_anchors[{index}] must not overlap blocked_tiles"
+            ));
+        }
+    }
+
     Ok(Zone {
         name: name.to_string(),
         bounds: (min, max),
@@ -274,6 +306,7 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
         danger_level: zone.danger_level,
         active_events: zone.active_events,
         patrol_anchors,
+        blocked_tiles,
     })
 }
 
@@ -294,6 +327,12 @@ fn contains_bounds(bounds: (DVec3, DVec3), pos: DVec3) -> bool {
         && pos.y <= max.y
         && pos.z >= min.z
         && pos.z <= max.z
+}
+
+fn contains_horizontal_bounds(bounds: (DVec3, DVec3), x: i32, z: i32) -> bool {
+    let (min, max) = bounds;
+
+    f64::from(x) >= min.x && f64::from(x) <= max.x && f64::from(z) >= min.z && f64::from(z) <= max.z
 }
 
 pub fn default_spawn_bounds() -> (DVec3, DVec3) {
@@ -354,6 +393,10 @@ mod zone_tests {
       "patrol_anchors": [
         [14.0, 66.0, 14.0],
         [18.0, 66.0, 18.0]
+      ],
+      "blocked_tiles": [
+        [15, 14],
+        [16, 14]
       ]
     },
     {
@@ -367,6 +410,9 @@ mod zone_tests {
       "active_events": ["beast_tide"],
       "patrol_anchors": [
         [104.0, 66.0, 104.0]
+      ],
+      "blocked_tiles": [
+        [106, 104]
       ]
     }
   ]
@@ -386,6 +432,7 @@ mod zone_tests {
         assert_eq!(spawn.name, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(spawn.patrol_anchors.len(), 2);
         assert_eq!(spawn.patrol_anchors[0], DVec3::new(14.0, 66.0, 14.0));
+        assert_eq!(spawn.blocked_tiles, vec![(15, 14), (16, 14)]);
         assert_eq!(blood_valley.name, "blood_valley");
         assert_eq!(blood_valley.spirit_qi, 0.35);
         assert_eq!(blood_valley.danger_level, 4);
@@ -394,6 +441,7 @@ mod zone_tests {
             blood_valley.patrol_anchors,
             vec![DVec3::new(104.0, 66.0, 104.0)]
         );
+        assert_eq!(blood_valley.blocked_tiles, vec![(106, 104)]);
 
         let fallback_path = unique_temp_path("bong-zones-missing", ".json");
         let fallback_registry = ZoneRegistry::load_from_path(&fallback_path);
