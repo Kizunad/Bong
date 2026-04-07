@@ -1,0 +1,73 @@
+package com.bong.client.network;
+
+import com.bong.client.state.VisualEffectState;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class EventAlertHandlerTest {
+    @Test
+    void parsesInfoAlertWithCustomDurationAndNoEffect() {
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 77L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"event_alert\",\"title\":\"灵潮回涌\",\"message\":\"谷中灵气逐渐平稳\",\"severity\":\"info\",\"duration_ms\":2500}"
+        ));
+
+        assertTrue(dispatch.handled());
+        ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+        assertEquals(EventAlertHandler.INFO_COLOR, toastSpec.color());
+        assertEquals(2_500L, toastSpec.durationMillis());
+        assertTrue(dispatch.visualEffectState().isEmpty());
+    }
+
+    @Test
+    void parsesCriticalAlertAndMapsEffectHint() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-event-alert-critical.json");
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 9_999L).handle(parseEnvelope(json));
+
+        assertTrue(dispatch.handled());
+        ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+        assertEquals("天劫将至：血谷上空雷云翻涌", toastSpec.text());
+        assertEquals(EventAlertHandler.CRITICAL_COLOR, toastSpec.color());
+        assertEquals(6_500L, toastSpec.durationMillis());
+
+        VisualEffectState visualEffectState = dispatch.visualEffectState().orElseThrow();
+        assertEquals(VisualEffectState.EffectType.SCREEN_SHAKE, visualEffectState.effectType());
+        assertEquals(0.9, visualEffectState.intensity(), 0.0001);
+        assertEquals(6_500L, visualEffectState.durationMillis());
+        assertEquals(9_999L, visualEffectState.startedAtMillis());
+    }
+
+    @Test
+    void unknownSeverityFallsBackToWarningAndIgnoresBadEffectFields() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-event-alert-unknown-severity.json");
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 321L).handle(parseEnvelope(json));
+
+        assertTrue(dispatch.handled());
+        ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+        assertEquals(EventAlertHandler.WARNING_COLOR, toastSpec.color());
+        assertEquals(5_000L, toastSpec.durationMillis());
+        assertTrue(dispatch.visualEffectState().isEmpty());
+    }
+
+    @Test
+    void missingRequiredFieldsBecomeSafeNoOp() {
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 0L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"event_alert\",\"title\":\"天道警示\"}"
+        ));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.alertToast().isEmpty());
+        assertTrue(dispatch.visualEffectState().isEmpty());
+    }
+
+    private static ServerDataEnvelope parseEnvelope(String json) {
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parseResult.isSuccess(), () -> "Expected payload to parse successfully but got: " + parseResult.errorMessage());
+        return parseResult.envelope();
+    }
+}

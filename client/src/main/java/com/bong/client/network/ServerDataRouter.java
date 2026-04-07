@@ -14,16 +14,20 @@ public final class ServerDataRouter {
 
     public static ServerDataRouter createDefault() {
         LegacyMessageServerDataHandler legacyHandler = new LegacyMessageServerDataHandler();
-        AcknowledgingServerDataHandler acknowledgingHandler = new AcknowledgingServerDataHandler();
+        NarrationHandler narrationHandler = new NarrationHandler();
+        ZoneInfoHandler zoneInfoHandler = new ZoneInfoHandler();
+        EventAlertHandler eventAlertHandler = new EventAlertHandler();
+        PlayerStateHandler playerStateHandler = new PlayerStateHandler();
+        UiOpenHandler uiOpenHandler = new UiOpenHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
         handlers.put("heartbeat", legacyHandler);
-        handlers.put("narration", acknowledgingHandler);
-        handlers.put("zone_info", acknowledgingHandler);
-        handlers.put("event_alert", acknowledgingHandler);
-        handlers.put("player_state", acknowledgingHandler);
-        handlers.put("ui_open", acknowledgingHandler);
+        handlers.put("narration", narrationHandler);
+        handlers.put("zone_info", zoneInfoHandler);
+        handlers.put("event_alert", eventAlertHandler);
+        handlers.put("player_state", playerStateHandler);
+        handlers.put("ui_open", uiOpenHandler);
         return new ServerDataRouter(handlers);
     }
 

@@ -1,8 +1,18 @@
 package com.bong.client;
 
+import com.bong.client.hud.BongHudStateSnapshot;
+import com.bong.client.hud.BongHudStateStore;
+import com.bong.client.hud.BongToast;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
+import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.UiOpenState;
+import com.bong.client.state.VisualEffectState;
+import com.bong.client.state.ZoneState;
+import com.bong.client.ui.UiOpenScreens;
+import com.bong.client.visual.VisualEffectController;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -41,12 +51,94 @@ public class BongNetworkHandler {
             }
 
             BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
-            dispatch.legacyMessage().ifPresent(message -> client.execute(() -> {
-                if (client.player != null) {
-                    client.player.sendMessage(Text.literal("[Bong] " + result.envelope().type() + ": " + message), false);
-                }
-            }));
+            if (!dispatch.chatMessages().isEmpty()
+                || dispatch.narrationState().isPresent()
+                || dispatch.toastNarrationState().isPresent()
+                || dispatch.legacyMessage().isPresent()
+                || dispatch.playerStateViewModel().isPresent()
+                || dispatch.zoneState().isPresent()
+                || dispatch.visualEffectState().isPresent()
+                || dispatch.alertToast().isPresent()
+                || dispatch.uiOpenState().isPresent()) {
+                client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
+            }
         });
+    }
+
+    private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
+        dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
+        dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
+        dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
+        dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);
+        dispatch.visualEffectState().ifPresent(visualEffectState ->
+            replaceVisualEffectState(visualEffectState, System.currentTimeMillis())
+        );
+        dispatch.alertToast().ifPresent(alertToast -> BongToast.show(
+            alertToast.text(),
+            alertToast.color(),
+            System.currentTimeMillis(),
+            alertToast.durationMillis()
+        ));
+        dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
+
+        if (client.player == null) {
+            return;
+        }
+
+        for (Text chatMessage : dispatch.chatMessages()) {
+            client.player.sendMessage(chatMessage, false);
+        }
+
+        dispatch.legacyMessage().ifPresent(message ->
+            client.player.sendMessage(Text.literal("[Bong] " + envelopeType + ": " + message), false)
+        );
+    }
+
+    private static void applyUiOpen(net.minecraft.client.MinecraftClient client, UiOpenState uiOpenState, String envelopeType) {
+        net.minecraft.client.gui.screen.Screen screen = UiOpenScreens.createScreen(uiOpenState);
+        if (screen == null) {
+            BongClient.LOGGER.warn(
+                "Ignoring {} ui_open dispatch for screen '{}' because no client screen could be created",
+                envelopeType,
+                uiOpenState.screenId()
+            );
+            return;
+        }
+
+        client.setScreen(screen);
+    }
+
+    private static void replaceNarrationState(NarrationState narrationState) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            currentSnapshot.zoneState(),
+            narrationState,
+            currentSnapshot.visualEffectState()
+        ));
+    }
+
+    private static void replaceZoneState(ZoneState zoneState) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            zoneState,
+            currentSnapshot.narrationState(),
+            currentSnapshot.visualEffectState()
+        ));
+    }
+
+    private static void replaceVisualEffectState(VisualEffectState visualEffectState, long nowMillis) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        VisualEffectState nextVisualEffectState = VisualEffectController.acceptIncoming(
+            currentSnapshot.visualEffectState(),
+            visualEffectState,
+            nowMillis,
+            BongClientFeatures.ENABLE_VISUAL_EFFECTS
+        );
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            currentSnapshot.zoneState(),
+            currentSnapshot.narrationState(),
+            nextVisualEffectState
+        ));
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
@@ -61,4 +153,5 @@ public class BongNetworkHandler {
         Long previous = UNKNOWN_TYPE_LOG_TIMES.put(payloadType, now);
         return previous == null || now - previous >= UNKNOWN_LOG_THROTTLE_MS;
     }
+
 }
