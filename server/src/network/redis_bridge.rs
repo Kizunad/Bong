@@ -378,7 +378,7 @@ fn validate_agent_command_value(value: &Value) -> Result<(), ValidationError> {
             ValidationError::new("AgentCommandV1.source must be a string when present")
         })?;
 
-        if !matches!(source, "calamity" | "mutation" | "era") {
+        if !matches!(source, "calamity" | "mutation" | "era" | "arbiter") {
             return Err(ValidationError::new(format!(
                 "AgentCommandV1.source has unsupported value `{source}`"
             )));
@@ -634,6 +634,18 @@ mod redis_bridge_tests {
         assert!(matches!(
             parse_inbound_message(CH_AGENT_COMMAND, valid_agent_command)
                 .expect("valid command payload should pass"),
+            Some(RedisInbound::AgentCommand(_))
+        ));
+
+        let arbiter_agent_command = r#"{
+            "v": 1,
+            "id": "cmd_arbiter",
+            "source": "arbiter",
+            "commands": []
+        }"#;
+        assert!(matches!(
+            parse_inbound_message(CH_AGENT_COMMAND, arbiter_agent_command)
+                .expect("arbiter command payload should pass"),
             Some(RedisInbound::AgentCommand(_))
         ));
     }
