@@ -17,13 +17,15 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class BongNetworkHandler {
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
-    private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new ConcurrentHashMap<>();
+    private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
+    private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
 
     public static void register() {
         ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
@@ -149,9 +151,51 @@ public class BongNetworkHandler {
     }
 
     static boolean shouldLogNoOp(String payloadType) {
-        long now = System.currentTimeMillis();
-        Long previous = UNKNOWN_TYPE_LOG_TIMES.put(payloadType, now);
-        return previous == null || now - previous >= UNKNOWN_LOG_THROTTLE_MS;
+        return shouldLogNoOp(payloadType, System.currentTimeMillis());
+    }
+
+    static boolean shouldLogNoOp(String payloadType, long nowMillis) {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            pruneExpiredUnknownTypeLogTimes(nowMillis);
+
+            Long previous = UNKNOWN_TYPE_LOG_TIMES.put(payloadType, nowMillis);
+            trimUnknownTypeLogTimes();
+            return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
+        }
+    }
+
+    static void resetUnknownTypeLogTimesForTests() {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            UNKNOWN_TYPE_LOG_TIMES.clear();
+        }
+    }
+
+    static int unknownTypeLogCacheSizeForTests() {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            return UNKNOWN_TYPE_LOG_TIMES.size();
+        }
+    }
+
+    static int unknownTypeLogCacheLimitForTests() {
+        return UNKNOWN_TYPE_LOG_CACHE_LIMIT;
+    }
+
+    private static void pruneExpiredUnknownTypeLogTimes(long nowMillis) {
+        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+            if (nowMillis - entry.getValue() >= UNKNOWN_LOG_THROTTLE_MS) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private static void trimUnknownTypeLogTimes() {
+        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
+        while (UNKNOWN_TYPE_LOG_TIMES.size() > UNKNOWN_TYPE_LOG_CACHE_LIMIT && iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
+        }
     }
 
 }
