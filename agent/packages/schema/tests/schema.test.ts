@@ -249,6 +249,13 @@ describe("schema rejects invalid data", () => {
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });
+
+  it("accepts player_state spirit_qi above 100 for breakthrough progression", () => {
+    const data = loadObjectSample("server-data.player-state.sample.json");
+    data.spirit_qi = 140;
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 });
 
 describe("package entrypoints expose runtime validation", () => {

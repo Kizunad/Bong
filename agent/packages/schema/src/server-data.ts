@@ -77,7 +77,7 @@ export const ServerDataPlayerStateV1 = Type.Object(
     type: Type.Literal("player_state"),
     player: Type.Optional(Type.String()),
     realm: Type.String(),
-    spirit_qi: Type.Number({ minimum: 0, maximum: 100 }),
+    spirit_qi: Type.Number({ minimum: 0, maximum: 160 }),
     karma: Type.Number({ minimum: -1, maximum: 1 }),
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
