@@ -7,4 +7,5 @@ pub mod channels;
 pub mod chat_message;
 pub mod common;
 pub mod narration;
+pub mod server_data;
 pub mod world_state;

@@ -1,13 +1,28 @@
-package com.bong.client;
+package com.bong.client.network;
 
+import com.bong.client.BongClient;
+import com.bong.client.network.handlers.*;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
 public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = 1;
+
+    private static final Map<String, PayloadHandler> handlers = new HashMap<>();
+
+    static {
+        handlers.put("welcome", new WelcomeHandler());
+        handlers.put("heartbeat", new HeartbeatHandler());
+        handlers.put("narration", new NarrationHandler());
+        handlers.put("zone_info", new ZoneInfoHandler());
+        handlers.put("event_alert", new EventAlertHandler());
+        handlers.put("player_state", new PlayerStateHandler());
+        handlers.put("ui_open", new UiOpenHandler());
+    }
 
     public static void register() {
         ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
@@ -20,8 +35,11 @@ public class BongNetworkHandler {
 
             if (result.success) {
                 client.execute(() -> {
-                    if (client.player != null) {
-                        client.player.sendMessage(Text.literal("[Bong] " + result.payload.type + ": " + result.payload.message), false);
+                    PayloadHandler payloadHandler = handlers.get(result.payload.type);
+                    if (payloadHandler != null) {
+                        payloadHandler.handle(client, result.payload.type, jsonPayload);
+                    } else {
+                        BongClient.LOGGER.warn("Unhandled bong:server_data payload type: {}", result.payload.type);
                     }
                 });
             } else {
@@ -40,11 +58,11 @@ public class BongNetworkHandler {
             if (fields.version != EXPECTED_VERSION) {
                 return ParseResult.error("Unsupported version: " + fields.version);
             }
-            if (fields.type == null || fields.message == null) {
-                return ParseResult.error("Missing required fields 'type' or 'message'");
+            if (fields.type == null) {
+                return ParseResult.error("Missing required field 'type'");
             }
 
-            return ParseResult.success(new Payload(fields.version, fields.type, fields.message));
+            return ParseResult.success(new Payload(fields.version, fields.type));
         } catch (PayloadParseException exception) {
             return ParseResult.error(exception.getMessage());
         }
@@ -71,7 +89,6 @@ public class BongNetworkHandler {
             switch (key) {
                 case "v" -> fields.version = cursor.readInteger();
                 case "type" -> fields.type = cursor.readQuotedString();
-                case "message" -> fields.message = cursor.readQuotedString();
                 default -> cursor.skipSimpleValue();
             }
 
@@ -93,7 +110,6 @@ public class BongNetworkHandler {
     private static final class ParsedPayloadFields {
         private Integer version;
         private String type;
-        private String message;
     }
 
     private static final class JsonCursor {
@@ -183,15 +199,68 @@ public class BongNetworkHandler {
                 throw new PayloadParseException("Malformed JSON: missing value");
             }
 
-            if (input.charAt(index) == '"') {
-                readQuotedString();
+            char current = input.charAt(index);
+            switch (current) {
+                case '"' -> readQuotedString();
+                case '{' -> skipObject();
+                case '[' -> skipArray();
+                default -> skipLiteral();
+            }
+        }
+
+        private void skipObject() throws PayloadParseException {
+            expect('{');
+            skipWhitespace();
+
+            if (tryConsume('}')) {
                 return;
             }
 
+            while (true) {
+                readQuotedString();
+                skipWhitespace();
+                expect(':');
+                skipWhitespace();
+                skipSimpleValue();
+                skipWhitespace();
+
+                if (tryConsume(',')) {
+                    skipWhitespace();
+                    continue;
+                }
+
+                expect('}');
+                return;
+            }
+        }
+
+        private void skipArray() throws PayloadParseException {
+            expect('[');
+            skipWhitespace();
+
+            if (tryConsume(']')) {
+                return;
+            }
+
+            while (true) {
+                skipSimpleValue();
+                skipWhitespace();
+
+                if (tryConsume(',')) {
+                    skipWhitespace();
+                    continue;
+                }
+
+                expect(']');
+                return;
+            }
+        }
+
+        private void skipLiteral() throws PayloadParseException {
             int start = index;
             while (index < input.length()) {
                 char current = input.charAt(index);
-                if (current == ',' || current == '}' || Character.isWhitespace(current)) {
+                if (current == ',' || current == '}' || current == ']' || Character.isWhitespace(current)) {
                     break;
                 }
                 index++;
@@ -216,12 +285,10 @@ public class BongNetworkHandler {
     public static class Payload {
         public final int v;
         public final String type;
-        public final String message;
 
-        public Payload(int v, String type, String message) {
+        public Payload(int v, String type) {
             this.v = v;
             this.type = type;
-            this.message = message;
         }
     }
 

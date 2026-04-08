@@ -1,0 +1,21 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running `target/debug/bong-server`
+[2m2026-04-07T08:07:01.492717Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-07T08:07:01.761553Z[0m [32m INFO[0m [bong][world] registering world setup systems
+[2m2026-04-07T08:07:01.761590Z[0m [32m INFO[0m [bong][world] registering zone registry startup system
+[2m2026-04-07T08:07:01.761648Z[0m [32m INFO[0m [bong][world] registering active events scheduler
+[2m2026-04-07T08:07:01.761713Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-07T08:07:01.761816Z[0m [32m INFO[0m [bong][npc] registering spawn/patrol/sync/brain systems
+[2m2026-04-07T08:07:01.761826Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-07T08:07:01.761873Z[0m [32m INFO[0m [bong][npc] registering patrol system
+[2m2026-04-07T08:07:01.761918Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-07T08:07:01.761948Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-07T08:07:01.763846Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-07T08:07:01.764775Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-07T08:07:01.767030Z[0m [32m INFO[0m [bong][world] no world path configured via BONG_WORLD_PATH, selecting fallback flat bootstrap
+[2m2026-04-07T08:07:01.767037Z[0m [32m INFO[0m [bong][world] no zones config at zones.json, using fallback spawn zone
+[2m2026-04-07T08:07:01.767050Z[0m [32m INFO[0m [bong][world] starting fallback flat world bootstrap
+[2m2026-04-07T08:07:01.767070Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-07T08:07:01.767073Z[0m [32m INFO[0m [bong][world] initialized zone registry with 1 zone(s)
+[2m2026-04-07T08:07:01.806936Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-07T08:07:01.807313Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1

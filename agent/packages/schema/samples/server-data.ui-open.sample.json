@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "ui_open",
+  "ui": "cultivation_panel",
+  "xml": "<flow-layout><label text=\"修仙面板\"/></flow-layout>"
+}

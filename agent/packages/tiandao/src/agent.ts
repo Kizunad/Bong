@@ -6,11 +6,12 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type OpenAI from "openai";
 import type { WorldStateV1 } from "@bong/schema";
-import { type ContextRecipe, assembleContext } from "./context.js";
-import { chat } from "./llm.js";
+import type { ChatSignal } from "@bong/schema";
+import { type ContextRecipe, assembleContext, createContextInput } from "./context.js";
+import type { LlmClient } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
+import type { WorldModel } from "./world-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,8 +28,10 @@ export class TiandaoAgent {
   private recipe: ContextRecipe;
   private lastRunTs = 0;
   readonly intervalMs: number;
+  private latestChatSignals: ChatSignal[] = [];
+  private worldModel?: WorldModel;
 
-  constructor(private config: AgentConfig) {
+  constructor(config: AgentConfig) {
     this.name = config.name;
     this.recipe = config.recipe;
     this.intervalMs = config.intervalMs;
@@ -38,12 +41,20 @@ export class TiandaoAgent {
     );
   }
 
+  setChatSignals(signals: ChatSignal[]): void {
+    this.latestChatSignals = signals;
+  }
+
+  setWorldModel(worldModel: WorldModel): void {
+    this.worldModel = worldModel;
+  }
+
   shouldRun(now: number): boolean {
     return now - this.lastRunTs >= this.intervalMs;
   }
 
   async tick(
-    client: OpenAI,
+    client: LlmClient,
     model: string,
     state: WorldStateV1,
   ): Promise<AgentDecision | null> {
@@ -52,24 +63,25 @@ export class TiandaoAgent {
 
     this.lastRunTs = now;
 
-    const context = assembleContext(this.recipe, state);
+    const nowSeconds = Math.floor(now / 1000);
+    const context = assembleContext(
+      this.recipe,
+      createContextInput(state, this.latestChatSignals, nowSeconds, {
+        agentName: this.name,
+        worldModel: this.worldModel,
+      }),
+    );
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;
 
     console.log(`[tiandao][${this.name}] thinking...`);
 
-    const raw = await chat(client, model, [
+    const raw = await client.chat([
       { role: "system", content: this.systemPrompt },
       { role: "user", content: userPrompt },
-    ]);
+    ], model);
 
     console.log(`[tiandao][${this.name}] response:\n${raw}\n`);
 
-    const decision = parseDecision(raw);
-    decision.commands.forEach((cmd) => {
-      // Tag source for arbiter
-      (cmd as Record<string, unknown>)._source = this.name;
-    });
-
-    return decision;
+    return parseDecision(raw);
   }
 }
