@@ -7,10 +7,12 @@ import com.google.gson.JsonPrimitive;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 public final class ServerDataEnvelope {
     public static final int EXPECTED_VERSION = 1;
     public static final int MAX_PAYLOAD_BYTES = 1024;
+    private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
 
     private final int version;
     private final String type;
@@ -94,7 +96,13 @@ public final class ServerDataEnvelope {
         if (!primitive.isNumber()) {
             throw new IllegalStateException("field '" + fieldName + "' must be a number");
         }
-        return primitive.getAsInt();
+
+        String rawValue = primitive.getAsString();
+        if (!INTEGER_TOKEN_PATTERN.matcher(rawValue).matches()) {
+            throw new IllegalStateException("field '" + fieldName + "' must be an integer");
+        }
+
+        return Integer.parseInt(rawValue);
     }
 
     private static String readRequiredString(JsonObject root, String fieldName) {

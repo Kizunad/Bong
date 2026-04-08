@@ -61,6 +61,40 @@ public class ServerDataEnvelopeTest {
     }
 
     @Test
+    void fractionalVersionReturnsMalformedJsonError() {
+        String json = """
+            {"v":1.9,"type":"welcome","message":"Bong server connected"}
+            """;
+        ServerPayloadParseResult result = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isSuccess());
+        assertEquals("Malformed JSON: field 'v' must be an integer", result.errorMessage());
+    }
+
+    @Test
+    void integerVersionOneParsesSuccessfully() {
+        String json = """
+            {"v":1,"type":"heartbeat","message":"mock agent tick"}
+            """;
+        ServerPayloadParseResult result = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isSuccess(), "integer version token should parse successfully");
+        assertEquals(1, result.envelope().version());
+        assertEquals("heartbeat", result.envelope().type());
+    }
+
+    @Test
+    void unsupportedIntegerVersionReturnsExactVersionError() {
+        String json = """
+            {"v":2,"type":"welcome","message":"Bong server connected"}
+            """;
+        ServerPayloadParseResult result = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isSuccess());
+        assertEquals("Unsupported version: 2", result.errorMessage());
+    }
+
+    @Test
     void unsupportedVersionReturnsError() throws IOException {
         String json = PayloadFixtureLoader.readText("wrong-version-player-state.json");
         ServerPayloadParseResult result = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
