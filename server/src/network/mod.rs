@@ -15,7 +15,6 @@ use big_brain::prelude::{ActionState, Actor};
 use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
-use valence::message::SendMessage;
 use valence::prelude::{
     ident, Added, App, Changed, Client, Entity, EntityKind, IntoSystemConfigs, Or, Position,
     Query, Res, Resource, Update, Username, With,
@@ -588,12 +587,9 @@ fn process_single_narration(
         }
     };
 
-    let chat_mirror = format_narration_chat_mirror(narration);
-
     for entity in routed_targets.iter().copied() {
         if let Ok((_, mut client, _, _)) = clients.get_mut(entity) {
             send_server_data_payload(&mut client, payload_bytes.as_slice());
-            client.send_chat_message(chat_mirror.clone());
         }
     }
 
@@ -669,17 +665,6 @@ fn collect_routed_targets(
         .into_iter()
         .filter_map(|index| recipient_rows.get(index).map(|(entity, _)| *entity))
         .collect()
-}
-
-fn format_narration_chat_mirror(narration: &crate::schema::narration::Narration) -> String {
-    let prefix = match narration.style {
-        crate::schema::common::NarrationStyle::SystemWarning => "§c§l[天道警示] §r§c",
-        crate::schema::common::NarrationStyle::Perception => "§7[感知] §r§7",
-        crate::schema::common::NarrationStyle::Narration => "§f[叙事] §r§f",
-        crate::schema::common::NarrationStyle::EraDecree => "§6§l[§e时代§6§l] §r§6",
-    };
-
-    format!("{prefix}{}", narration.text)
 }
 
 // ─── Legacy mock bridge systems (unchanged) ──────────────
@@ -961,13 +946,13 @@ mod tests {
 
     mod narration_tests {
         use super::*;
-        use crate::schema::common::{NarrationScope, NarrationStyle};
-        use crate::schema::narration::{Narration, NarrationV1};
-        use crate::world::zone::Zone;
-        use crossbeam_channel::Sender;
-        use valence::prelude::DVec3;
-        use valence::protocol::packets::play::CustomPayloadS2c;
-        use valence::testing::MockClientHelper;
+    use crate::schema::common::{NarrationScope, NarrationStyle};
+    use crate::schema::narration::{Narration, NarrationV1};
+    use crate::world::zone::Zone;
+    use crossbeam_channel::Sender;
+    use valence::prelude::DVec3;
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
+    use valence::testing::MockClientHelper;
 
         fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
             let (tx_outbound, _rx_outbound) = unbounded();
@@ -1044,6 +1029,15 @@ mod tests {
             payloads
         }
 
+        fn collect_game_message_packets(helper: &mut MockClientHelper) -> usize {
+            helper
+                .collect_received()
+                .0
+                .into_iter()
+                .filter(|frame| frame.decode::<GameMessageS2c>().is_ok())
+                .count()
+        }
+
         fn assert_single_narration_payload(payloads: &[ServerDataV1], expected_text: &str) {
             assert_eq!(payloads.len(), 1, "expected exactly one typed narration payload");
 
@@ -1057,49 +1051,10 @@ mod tests {
         }
 
         #[test]
-        fn narration_chat_mirror_formats_match_plan_examples() {
-            let cases = [
-                (
-                    NarrationStyle::SystemWarning,
-                    "天道警示之下，雷光将至。",
-                    "§c§l[天道警示] §r§c天道警示之下，雷光将至。",
-                ),
-                (
-                    NarrationStyle::Perception,
-                    "灵脉在远处微微震颤。",
-                    "§7[感知] §r§7灵脉在远处微微震颤。",
-                ),
-                (
-                    NarrationStyle::Narration,
-                    "山风掠过古碑，留下低语。",
-                    "§f[叙事] §r§f山风掠过古碑，留下低语。",
-                ),
-                (
-                    NarrationStyle::EraDecree,
-                    "末法将临，诸法归寂。",
-                    "§6§l[§e时代§6§l] §r§6末法将临，诸法归寂。",
-                ),
-            ];
-
-            for (style, text, expected) in cases {
-                let narration = Narration {
-                    scope: NarrationScope::Broadcast,
-                    target: None,
-                    text: text.to_string(),
-                    style,
-                };
-
-                assert_eq!(format_narration_chat_mirror(&narration), expected);
-            }
-        }
-
-        #[test]
-        fn broadcast_hits_all_clients() {
+        fn broadcast_emits_only_typed_narration_payload() {
             let (mut app, tx_inbound) = setup_narration_app(None);
             let (_alice, mut alice_helper) =
                 spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
-            let (_bob, mut bob_helper) =
-                spawn_test_client_with_helper(&mut app, "Bob", [20.0, 66.0, 20.0]);
 
             enqueue_single_narration(
                 &tx_inbound,
@@ -1115,10 +1070,13 @@ mod tests {
             flush_all_client_packets(&mut app);
 
             let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
+            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
 
             assert_single_narration_payload(alice_payloads.as_slice(), "天地震荡，灵气翻涌。");
-            assert_single_narration_payload(bob_payloads.as_slice(), "天地震荡，灵气翻涌。");
+            assert_eq!(
+                alice_chat_packets, 0,
+                "narration path should not emit mirrored GameMessageS2c chat packets"
+            );
         }
 
         #[test]
@@ -1170,12 +1128,16 @@ mod tests {
 
             let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
             let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
+            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
+            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
                 "spawn zone player should not receive blood_valley scoped narration"
             );
+            assert_eq!(alice_chat_packets, 0, "zone-scoped narration should not mirror chat packets");
             assert_single_narration_payload(bob_payloads.as_slice(), "血谷雷云聚集。");
+            assert_eq!(bob_chat_packets, 0, "zone-scoped narration should not mirror chat packets");
         }
 
         #[test]
@@ -1201,9 +1163,13 @@ mod tests {
 
             let steve_plain = collect_typed_narration_payloads(&mut steve_helper);
             let alex_plain = collect_typed_narration_payloads(&mut alex_helper);
+            let steve_chat_packets = collect_game_message_packets(&mut steve_helper);
+            let alex_chat_packets = collect_game_message_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_plain.as_slice(), "第一段单人叙事。");
             assert!(alex_plain.is_empty(), "non-targeted player must not receive payload");
+            assert_eq!(steve_chat_packets, 0, "player-scoped narration should not mirror chat packets");
+            assert_eq!(alex_chat_packets, 0, "non-targeted player must not receive chat packets");
 
             enqueue_single_narration(
                 &tx_inbound,
@@ -1220,9 +1186,13 @@ mod tests {
 
             let steve_alias = collect_typed_narration_payloads(&mut steve_helper);
             let alex_alias = collect_typed_narration_payloads(&mut alex_helper);
+            let steve_alias_chat_packets = collect_game_message_packets(&mut steve_helper);
+            let alex_alias_chat_packets = collect_game_message_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_alias.as_slice(), "第二段单人叙事。");
             assert!(alex_alias.is_empty(), "non-targeted player must not receive payload");
+            assert_eq!(steve_alias_chat_packets, 0, "player-scoped narration should not mirror chat packets");
+            assert_eq!(alex_alias_chat_packets, 0, "non-targeted player must not receive chat packets");
         }
 
         #[test]
@@ -1248,15 +1218,19 @@ mod tests {
 
             let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
             let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
+            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
+            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
                 "missing player target should not leak payload to Alice"
             );
+            assert_eq!(alice_chat_packets, 0, "missing player target should not leak chat packets to Alice");
             assert!(
                 bob_payloads.is_empty(),
                 "missing player target should not leak payload to Bob"
             );
+            assert_eq!(bob_chat_packets, 0, "missing player target should not leak chat packets to Bob");
         }
     }
 
