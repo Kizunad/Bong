@@ -13,7 +13,7 @@ public class BongClient implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("Initializing Bong Client...");
 
-        com.bong.client.network.BongNetworkHandler.register();
+        BongNetworkHandler.register();
         HudRenderCallback.EVENT.register(BongHud::render);
         CultivationScreenBootstrap.register();
 
