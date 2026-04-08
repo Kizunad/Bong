@@ -20,6 +20,7 @@ public class EventAlertHandlerTest {
 
         assertTrue(dispatch.handled());
         ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+        assertEquals("灵潮回涌：谷中灵气逐渐平稳", toastSpec.text());
         assertEquals(EventAlertHandler.INFO_COLOR, toastSpec.color());
         assertEquals(2_500L, toastSpec.durationMillis());
         assertTrue(dispatch.visualEffectState().isEmpty());
@@ -41,6 +42,20 @@ public class EventAlertHandlerTest {
         } finally {
             Locale.setDefault(previousLocale);
         }
+    }
+
+    @Test
+    void derivesTitleFromEventWhenServerPayloadOmitsTitle() {
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 77L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"event_alert\",\"event\":\"thunder_tribulation\",\"message\":\"天劫将至，请于三十息内离开血谷中央。\",\"duration_ticks\":600}"
+        ));
+
+        assertTrue(dispatch.handled());
+        ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+        assertEquals("Thunder Tribulation：天劫将至，请于三十息内离开血谷中央。", toastSpec.text());
+        assertEquals(EventAlertHandler.WARNING_COLOR, toastSpec.color());
+        assertEquals(5_000L, toastSpec.durationMillis());
+        assertTrue(dispatch.visualEffectState().isEmpty());
     }
 
     @Test

@@ -27,12 +27,12 @@ public final class EventAlertHandler implements ServerDataHandler {
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
-        String title = normalizeText(readOptionalString(payload, "title"));
+        String title = firstNonBlank(readOptionalString(payload, "title"), deriveTitleFromEvent(readOptionalString(payload, "event")));
         String message = normalizeText(readOptionalString(payload, "message"));
-        if (title.isEmpty() || message.isEmpty()) {
+        if (title == null || title.isEmpty() || message.isEmpty()) {
             return ServerDataDispatch.noOp(
                 envelope.type(),
-                "Ignoring event_alert payload because required fields 'title' or 'message' are missing or invalid"
+                "Ignoring event_alert payload because required fields 'message' and either 'title' or 'event' are missing or invalid"
             );
         }
 
@@ -107,6 +107,33 @@ public final class EventAlertHandler implements ServerDataHandler {
             return fallbackDurationMillis;
         }
         return candidateDurationMillis;
+    }
+
+    private static String deriveTitleFromEvent(String eventName) {
+        String normalizedEventName = normalizeText(eventName);
+        if (normalizedEventName.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder titleBuilder = new StringBuilder();
+        for (String rawSegment : normalizedEventName.split("_")) {
+            String normalizedSegment = normalizeText(rawSegment);
+            if (normalizedSegment.isEmpty()) {
+                continue;
+            }
+
+            String lowerCaseSegment = normalizedSegment.toLowerCase(Locale.ROOT);
+            if (titleBuilder.length() > 0) {
+                titleBuilder.append(' ');
+            }
+            titleBuilder.append(Character.toUpperCase(lowerCaseSegment.charAt(0)));
+            if (lowerCaseSegment.length() > 1) {
+                titleBuilder.append(lowerCaseSegment.substring(1));
+            }
+        }
+
+        String derivedTitle = titleBuilder.toString();
+        return derivedTitle.isEmpty() ? null : derivedTitle;
     }
 
     private static String firstNonBlank(String... candidates) {
