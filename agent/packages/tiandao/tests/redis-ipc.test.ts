@@ -33,6 +33,20 @@ class FakeRedisListClient {
     return this;
   }
 
+  off(event: "message", listener: (channel: string, message: string) => void): this {
+    if (event !== "message") {
+      return this;
+    }
+    for (const channel of this.subscribers.keys()) {
+      const listeners = this.subscribers.get(channel) ?? [];
+      this.subscribers.set(
+        channel,
+        listeners.filter((current) => current !== listener),
+      );
+    }
+    return this;
+  }
+
   async unsubscribe(): Promise<number> {
     this.subscribers.clear();
     return 0;
@@ -211,5 +225,57 @@ describe("redis-ipc", () => {
     );
 
     expect(ipc.getLatestState()?.tick).toBe(1);
+  });
+
+  it("keeps world_state callback execution single even if connect is retried without teardown", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const callback = vi.fn();
+    ipc.onWorldState(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      WORLD_STATE,
+      JSON.stringify({
+        v: 1,
+        ts: 1,
+        tick: 1,
+        players: [],
+        npcs: [],
+        zones: [],
+        recent_events: [],
+      }),
+    );
+
+    (ipc as unknown as { connected: boolean }).connected = false;
+    await ipc.connect();
+    await sub.publish(
+      WORLD_STATE,
+      JSON.stringify({
+        v: 1,
+        ts: 2,
+        tick: 2,
+        players: [],
+        npcs: [],
+        zones: [],
+        recent_events: [],
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(ipc.getLatestState()?.tick).toBe(2);
   });
 });

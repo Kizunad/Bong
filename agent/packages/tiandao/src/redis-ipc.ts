@@ -29,6 +29,7 @@ interface RedisMultiLike {
 interface RedisClientLike {
   subscribe(channel: string): Promise<unknown>;
   on(event: "message", listener: (channel: string, message: string) => void): this;
+  off(event: "message", listener: (channel: string, message: string) => void): this;
   unsubscribe(): Promise<unknown>;
   disconnect(): void;
   publish(channel: string, message: string): Promise<number>;
@@ -77,6 +78,7 @@ export class RedisIpc {
     }
 
     await this.sub.subscribe(WORLD_STATE);
+    this.sub.off("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(`[redis-ipc] subscribed to ${WORLD_STATE}`);
@@ -127,6 +129,7 @@ export class RedisIpc {
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    this.sub.off("message", this.onMessage);
     await this.sub.unsubscribe();
     this.sub.disconnect();
     this.pub.disconnect();
