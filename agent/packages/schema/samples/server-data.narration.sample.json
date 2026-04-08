@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "narration",
+  "narrations": [
+    {
+      "scope": "broadcast",
+      "text": "血谷上空乌云翻涌，一道紫雷正在酝酿。",
+      "style": "system_warning"
+    },
+    {
+      "scope": "player",
+      "target": "offline:Steve",
+      "text": "你耳畔隐约听见雷鸣，心神骤紧。",
+      "style": "perception"
+    }
+  ]
+}

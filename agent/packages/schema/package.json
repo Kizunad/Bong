@@ -5,11 +5,23 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./validate": {
+      "types": "./dist/validate.d.ts",
+      "import": "./dist/validate.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc",
     "generate": "tsx src/generate.ts",
+    "generate:check": "tsx src/generate.ts --check",
     "test": "vitest run",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && npm run generate:check"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"

@@ -1,45 +1,65 @@
-/**
- * Context Assembler — 模块化上下文拼装引擎
- * 按 Agent 角色裁剪 world state 为结构化 prompt
- */
+import type {
+  WorldStateV1,
+  PlayerProfile,
+  ZoneSnapshot,
+  GameEvent,
+  ChatSignal,
+} from "@bong/schema";
+import { buildChatSignalsBlock } from "./chat-processor.js";
+import type { WorldModel, TrendDirection } from "./world-model.js";
 
-import type { WorldStateV1, PlayerProfile, ZoneSnapshot, GameEvent } from "@bong/schema";
+export interface ContextInput {
+  state: WorldStateV1;
+  chatSignals: ChatSignal[];
+  nowSeconds?: number;
+  agentName?: string;
+  worldModel?: WorldModel;
+}
 
 export interface ContextBlock {
   name: string;
-  priority: number; // 0=最高，越大越容易被裁剪
+  priority: number;
   required: boolean;
-  render: (state: WorldStateV1) => string;
+  render: (input: ContextInput) => string;
 }
 
 export interface ContextRecipe {
   agentName: string;
   blocks: ContextBlock[];
-  maxTokenEstimate: number; // 粗估 token 上限 (1 token ≈ 4 chars 中英混合按 2 chars)
+  maxTokenEstimate: number;
 }
 
 function estimateTokens(text: string): number {
-  // 粗估：中英文混合平均 2 chars/token
   return Math.ceil(text.length / 2);
 }
 
-export function assembleContext(
-  recipe: ContextRecipe,
+export function createContextInput(
   state: WorldStateV1,
-): string {
+  chatSignals: ChatSignal[] = [],
+  nowSeconds?: number,
+  options: { agentName?: string; worldModel?: WorldModel } = {},
+): ContextInput {
+  return {
+    state,
+    chatSignals,
+    nowSeconds,
+    agentName: options.agentName,
+    worldModel: options.worldModel,
+  };
+}
+
+export function assembleContext(recipe: ContextRecipe, input: ContextInput): string {
   const rendered: { priority: number; required: boolean; text: string }[] = [];
 
   for (const block of recipe.blocks) {
-    const text = block.render(state);
+    const text = block.render(input);
     if (text) {
       rendered.push({ priority: block.priority, required: block.required, text });
     }
   }
 
-  // 按 priority 排序（低数字 = 高优先）
   rendered.sort((a, b) => a.priority - b.priority);
 
-  // 逐步拼装，超预算时裁剪非必需
   let total = 0;
   const included: string[] = [];
 
@@ -55,15 +75,16 @@ export function assembleContext(
   return included.join("\n\n---\n\n");
 }
 
-// ─── 预置 Context Blocks ─────────────────────────────────
-
 export const worldSnapshotBlock: ContextBlock = {
   name: "world_snapshot",
   priority: 1,
   required: true,
-  render(state) {
+  render({ state }) {
     const zones = state.zones
-      .map((z: ZoneSnapshot) => `- ${z.name}: 灵气 ${z.spirit_qi.toFixed(2)}, 危险 ${z.danger_level}/5, 玩家 ${z.player_count}人`)
+      .map(
+        (z: ZoneSnapshot) =>
+          `- ${z.name}: 灵气 ${z.spirit_qi.toFixed(2)}, 危险 ${z.danger_level}/5, 玩家 ${z.player_count}人`,
+      )
       .join("\n");
     return `## 世界快照\nTick: ${state.tick}, 在线: ${state.players.length}人\n\n${zones}`;
   },
@@ -73,7 +94,7 @@ export const playerProfilesBlock: ContextBlock = {
   name: "player_profiles",
   priority: 1,
   required: true,
-  render(state) {
+  render({ state }) {
     if (state.players.length === 0) return "";
     const header = "| 玩家 | 综合实力 | 战斗 | karma | 趋势 | 位置 |";
     const sep = "|------|---------|------|-------|------|------|";
@@ -89,29 +110,156 @@ export const recentEventsBlock: ContextBlock = {
   name: "recent_events",
   priority: 2,
   required: false,
-  render(state) {
+  render({ state }) {
     if (state.recent_events.length === 0) return "";
-    const lines = state.recent_events
-      .slice(-10)
-      .map((e: GameEvent) => {
-        const parts = [`[tick ${e.tick}] ${e.type}`];
-        if (e.player) parts.push(e.player);
-        if (e.zone) parts.push(`@ ${e.zone}`);
-        return parts.join(" ");
-      });
+    const lines = state.recent_events.slice(-10).map((e: GameEvent) => {
+      const parts = [`[tick ${e.tick}] ${e.type}`];
+      if (e.player) parts.push(e.player);
+      if (e.zone) parts.push(`@ ${e.zone}`);
+      return parts.join(" ");
+    });
     return `## 近期事件\n${lines.join("\n")}`;
   },
 };
 
-// ─── 预置 Recipes ─────────────────────────────────────────
+export const chatSignalsBlock: ContextBlock = {
+  name: "chat_signals",
+  priority: 2,
+  required: false,
+  render({ chatSignals, nowSeconds }) {
+    if (chatSignals.length === 0) {
+      return "";
+    }
+
+    return buildChatSignalsBlock({
+      signals: chatSignals,
+      nowSeconds: nowSeconds ?? Math.floor(Date.now() / 1000),
+    });
+  },
+};
+
+export const peerDecisionsBlock: ContextBlock = {
+  name: "peer_decisions",
+  priority: 3,
+  required: false,
+  render({ worldModel, agentName }) {
+    const peerDecisions = worldModel?.getPeerDecisions(agentName) ?? [];
+    if (peerDecisions.length === 0) {
+      return "";
+    }
+
+    const lines = peerDecisions.map(
+      (decision) => `- ${decision.displayName} (上一轮): ${decision.summary}`,
+    );
+    return `## 其他天道意志\n${lines.join("\n")}`;
+  },
+};
+
+export const worldTrendBlock: ContextBlock = {
+  name: "world_trend",
+  priority: 3,
+  required: false,
+  render({ worldModel }) {
+    const summary = worldModel?.getWorldTrendSummary() ?? null;
+    const currentEra = worldModel?.currentEra ?? null;
+    if (!summary && !currentEra) {
+      return "";
+    }
+
+    const sections: string[] = [];
+
+    if (currentEra) {
+      sections.push(
+        [
+          "## 当前时代",
+          `- ${currentEra.name}（始于 tick ${currentEra.sinceTick}）`,
+          `- 律令: ${currentEra.globalEffect.description}`,
+          `- 全局效应: 灵气 ${formatSigned(currentEra.globalEffect.spiritQiDelta)}，危险 ${formatSigned(currentEra.globalEffect.dangerLevelDelta)}`,
+        ].join("\n"),
+      );
+    }
+
+    if (!summary) {
+      return sections.join("\n\n");
+    }
+
+    const zoneLines = summary.zones.map(
+      (zone) =>
+        `- ${zone.name}: 灵气 ${zone.previousSpiritQi.toFixed(2)} → ${zone.currentSpiritQi.toFixed(2)} (${formatTrendArrow(zone.trend)}${formatTrendLabel(zone.trend)})`,
+    );
+
+    sections.push(
+      `## 世界趋势 (最近 10 轮)\n${zoneLines.join("\n")}\n整体灵气: ${describeWorldTrend(summary.trend)} (${formatSigned(summary.delta)})`,
+    );
+
+    return sections.join("\n\n");
+  },
+};
+
+export const balanceBlock: ContextBlock = {
+  name: "balance",
+  priority: 3,
+  required: false,
+  render({ worldModel }) {
+    if (!worldModel) {
+      return "";
+    }
+
+    const balance = worldModel.getBalanceSummary();
+    const strongPlayers =
+      balance.strongPlayers.length > 0
+        ? balance.strongPlayers
+            .map((player) => `${player.name}(${player.compositePower.toFixed(2)})`)
+            .join(", ") +
+          (balance.dominantStrongZone ? ` — 集中在 ${balance.dominantStrongZone}` : "")
+        : "无";
+
+    const weakPlayers =
+      balance.weakPlayers.length > 0
+        ? balance.weakPlayers
+            .map((player) => `${player.name}(${player.compositePower.toFixed(2)})`)
+            .join(", ") +
+          (balance.weakestZone ? ` — ${balance.weakestZone}` : "")
+        : "无";
+
+    return [
+      "## 天道平衡态",
+      `Gini 系数: ${balance.gini.toFixed(2)} (${balance.severityLabel})`,
+      `强者: ${strongPlayers}`,
+      `弱者: ${weakPlayers}`,
+      `建议: ${balance.advice}`,
+    ].join("\n");
+  },
+};
+
+export const keyPlayerBlock: ContextBlock = {
+  name: "key_players",
+  priority: 3,
+  required: false,
+  render({ worldModel }) {
+    const keyPlayers = worldModel?.getKeyPlayers() ?? [];
+    if (keyPlayers.length === 0) {
+      return "";
+    }
+
+    const lines = keyPlayers.map(
+      (player) => `- ${player.name}: ${player.reasons.join("，")} — ${player.note}`,
+    );
+    return `## 关键人物\n${lines.join("\n")}`;
+  },
+};
 
 export const CALAMITY_RECIPE: ContextRecipe = {
   agentName: "calamity",
   maxTokenEstimate: 3000,
   blocks: [
-    { ...playerProfilesBlock, priority: 0, required: true },
-    { ...recentEventsBlock, priority: 1, required: true },
-    { ...worldSnapshotBlock, priority: 2, required: false },
+    { ...keyPlayerBlock, priority: 0, required: true },
+    { ...playerProfilesBlock, priority: 1, required: true },
+    { ...recentEventsBlock, priority: 2, required: true },
+    { ...balanceBlock, priority: 3, required: false },
+    { ...peerDecisionsBlock, priority: 4, required: false },
+    { ...chatSignalsBlock, priority: 5, required: false },
+    { ...worldSnapshotBlock, priority: 6, required: false },
   ],
 };
 
@@ -121,7 +269,10 @@ export const MUTATION_RECIPE: ContextRecipe = {
   blocks: [
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
-    { ...recentEventsBlock, priority: 2, required: false },
+    { ...balanceBlock, priority: 2, required: false },
+    { ...peerDecisionsBlock, priority: 3, required: false },
+    { ...chatSignalsBlock, priority: 4, required: false },
+    { ...recentEventsBlock, priority: 5, required: false },
   ],
 };
 
@@ -130,7 +281,48 @@ export const ERA_RECIPE: ContextRecipe = {
   maxTokenEstimate: 4000,
   blocks: [
     { ...worldSnapshotBlock, priority: 0, required: true },
-    { ...playerProfilesBlock, priority: 1, required: true },
-    { ...recentEventsBlock, priority: 1, required: true },
+    { ...peerDecisionsBlock, priority: 1, required: true },
+    { ...worldTrendBlock, priority: 2, required: true },
+    { ...playerProfilesBlock, priority: 3, required: true },
+    { ...recentEventsBlock, priority: 4, required: true },
+    { ...keyPlayerBlock, priority: 5, required: false },
+    { ...chatSignalsBlock, priority: 6, required: false },
   ],
 };
+
+function formatTrendArrow(trend: TrendDirection): string {
+  switch (trend) {
+    case "rising":
+      return "↑";
+    case "falling":
+      return "↓";
+    case "stable":
+      return "→";
+  }
+}
+
+function formatTrendLabel(trend: TrendDirection): string {
+  switch (trend) {
+    case "rising":
+      return "上升中";
+    case "falling":
+      return "下降中";
+    case "stable":
+      return "稳定";
+  }
+}
+
+function describeWorldTrend(trend: TrendDirection): string {
+  switch (trend) {
+    case "rising":
+      return "微升";
+    case "falling":
+      return "微降";
+    case "stable":
+      return "平稳";
+  }
+}
+
+function formatSigned(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}

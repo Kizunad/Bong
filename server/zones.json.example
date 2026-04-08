@@ -1,0 +1,32 @@
+{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": {
+        "min": [0.0, 64.0, 0.0],
+        "max": [256.0, 80.0, 256.0]
+      },
+      "spirit_qi": 0.9,
+      "danger_level": 0,
+      "active_events": [],
+      "patrol_anchors": [
+        [14.0, 66.0, 14.0],
+        [28.0, 66.0, 28.0]
+      ]
+    },
+    {
+      "name": "blood_valley",
+      "aabb": {
+        "min": [100.0, 64.0, 100.0],
+        "max": [140.0, 80.0, 140.0]
+      },
+      "spirit_qi": 0.35,
+      "danger_level": 4,
+      "active_events": ["beast_tide"],
+      "patrol_anchors": [
+        [108.0, 66.0, 108.0],
+        [132.0, 66.0, 132.0]
+      ]
+    }
+  ]
+}

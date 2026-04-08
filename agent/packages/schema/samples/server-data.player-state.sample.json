@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "player_state",
+  "player": "offline:Steve",
+  "realm": "qi_refining_3",
+  "spirit_qi": 78,
+  "karma": 0.2,
+  "composite_power": 0.35,
+  "breakdown": {
+    "combat": 0.2,
+    "wealth": 0.4,
+    "social": 0.65,
+    "karma": 0.2,
+    "territory": 0.1
+  },
+  "zone": "blood_valley"
+}

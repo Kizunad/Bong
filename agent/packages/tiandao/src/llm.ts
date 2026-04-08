@@ -7,21 +7,43 @@ export interface LlmConfig {
   model: string;
 }
 
-export function createClient(config: LlmConfig): OpenAI {
-  return new OpenAI({
-    baseURL: config.baseURL,
-    apiKey: config.apiKey,
-  });
+export interface LlmClient {
+  chat(messages: ChatCompletionMessageParam[], model: string): Promise<string>;
 }
 
-export async function chat(
-  client: OpenAI,
-  model: string,
-  messages: ChatCompletionMessageParam[],
-): Promise<string> {
-  const response = await client.chat.completions.create({
-    model,
-    messages,
-  });
-  return response.choices[0]?.message?.content ?? "";
+class OpenAiLlmClient implements LlmClient {
+  private readonly client: OpenAI;
+
+  constructor(config: LlmConfig) {
+    this.client = new OpenAI({
+      baseURL: config.baseURL,
+      apiKey: config.apiKey,
+    });
+  }
+
+  async chat(messages: ChatCompletionMessageParam[], model: string): Promise<string> {
+    const response = await this.client.chat.completions.create({
+      model,
+      messages,
+    });
+    return response.choices[0]?.message?.content ?? "";
+  }
+}
+
+const DEFAULT_MOCK_RESPONSE = JSON.stringify({
+  commands: [],
+  narrations: [],
+  reasoning: "mock response",
+});
+
+export function createClient(config: LlmConfig): LlmClient {
+  return new OpenAiLlmClient(config);
+}
+
+export function createMockClient(response = DEFAULT_MOCK_RESPONSE): LlmClient {
+  return {
+    async chat(): Promise<string> {
+      return response;
+    },
+  };
 }
