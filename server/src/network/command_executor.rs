@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use serde_json::Value;
 use valence::prelude::{Entity, Query, ResMut, Resource, With};
 
-use crate::npc::brain::NpcBehaviorConfig;
+use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, MAX_COMMANDS_PER_TICK};
@@ -166,9 +166,9 @@ fn execute_npc_behavior(
 
     let flee_threshold = flee_threshold.clamp(0.0, 1.0) as f32;
 
-    let Some(target_index) = parse_npc_id(command.target.as_str()) else {
+    let Some(target_id) = parse_npc_id(command.target.as_str()) else {
         tracing::warn!(
-            "[bong][network] npc_behavior target `{}` is not a canonical npc id (`npc_{{index}}`)",
+            "[bong][network] npc_behavior target `{}` is not a canonical npc id (`npc_{{index}}v{{generation}}`)",
             command.target
         );
         return;
@@ -176,7 +176,7 @@ fn execute_npc_behavior(
 
     let target_exists = npc_entities
         .iter()
-        .any(|entity| entity.index() == target_index);
+        .any(|entity| canonical_npc_id(entity) == target_id);
     if !target_exists {
         tracing::warn!(
             "[bong][network] npc_behavior target `{}` does not map to a live NPC",
@@ -185,14 +185,13 @@ fn execute_npc_behavior(
         return;
     }
 
-    apply_flee_threshold(npc_behavior, flee_threshold, &command.target, target_index);
+    apply_flee_threshold(npc_behavior, flee_threshold, target_id.as_str());
 }
 
 fn apply_flee_threshold(
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     flee_threshold: f32,
     target: &str,
-    target_index: u32,
 ) {
     let Some(config) = npc_behavior.as_deref_mut() else {
         tracing::warn!(
@@ -201,11 +200,17 @@ fn apply_flee_threshold(
         return;
     };
 
-    config.set_threshold_for_npc_index(target_index, flee_threshold);
+    config.set_threshold_for_npc_id(target, flee_threshold);
 }
 
-fn parse_npc_id(target: &str) -> Option<u32> {
-    target.strip_prefix("npc_")?.parse::<u32>().ok()
+fn parse_npc_id(target: &str) -> Option<String> {
+    let suffix = target.strip_prefix("npc_")?;
+    let (index, generation) = suffix.split_once('v')?;
+    let index = index.parse::<u32>().ok()?;
+    let generation = generation.parse::<u32>().ok()?;
+    let canonical_id = format!("npc_{index}v{generation}");
+
+    (canonical_id == target).then_some(canonical_id)
 }
 
 fn param_as_f64(params: &HashMap<String, Value>, key: &str) -> Option<f64> {
@@ -253,7 +258,7 @@ mod command_executor_tests {
     use serde_json::json;
     use valence::prelude::{App, DVec3, Update};
 
-    use crate::npc::brain::{NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
+    use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
     use crate::schema::agent_command::Command;
     use crate::world::events::{ActiveEventsResource, EVENT_THUNDER_TRIBULATION};
 
@@ -362,13 +367,15 @@ mod command_executor_tests {
     }
 
     #[test]
-    fn updates_flee_threshold() {
+    fn updates_flee_threshold_only_for_generation_aware_canonical_target() {
         let mut app = setup_executor_app();
         let npc_a = app.world_mut().spawn(NpcMarker).id();
         let npc_b = app.world_mut().spawn(NpcMarker).id();
+        let npc_a_id = canonical_npc_id(npc_a);
+        let npc_b_id = canonical_npc_id(npc_b);
 
-        let mut params = HashMap::new();
-        params.insert("flee_threshold".to_string(), json!(0.2));
+        let mut bare_index_params = HashMap::new();
+        bare_index_params.insert("flee_threshold".to_string(), json!(0.2));
 
         {
             let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
@@ -377,7 +384,37 @@ mod command_executor_tests {
                 vec![command(
                     CommandType::NpcBehavior,
                     format!("npc_{}", npc_a.index()).as_str(),
-                    params,
+                    bare_index_params,
+                )],
+            ));
+        }
+
+        app.update();
+
+        {
+            let behavior = app.world().resource::<NpcBehaviorConfig>();
+            assert_eq!(behavior.threshold_for_npc(npc_a), DEFAULT_FLEE_THRESHOLD);
+            assert_eq!(
+                behavior.threshold_for_npc_id(npc_a_id.as_str()),
+                DEFAULT_FLEE_THRESHOLD
+            );
+            assert_eq!(
+                behavior.threshold_for_npc_id(npc_b_id.as_str()),
+                DEFAULT_FLEE_THRESHOLD
+            );
+        }
+
+        let mut canonical_params = HashMap::new();
+        canonical_params.insert("flee_threshold".to_string(), json!(0.2));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            executor.enqueue_batch(batch(
+                "cmd_npc_behavior_canonical",
+                vec![command(
+                    CommandType::NpcBehavior,
+                    npc_a_id.as_str(),
+                    canonical_params,
                 )],
             ));
         }
@@ -385,9 +422,10 @@ mod command_executor_tests {
         app.update();
 
         let behavior = app.world().resource::<NpcBehaviorConfig>();
-        assert!((behavior.threshold_for_npc_index(npc_a.index()) - 0.2).abs() < 1e-6);
+        assert!((behavior.threshold_for_npc(npc_a) - 0.2).abs() < 1e-6);
+        assert_eq!(behavior.threshold_for_npc_id(npc_a_id.as_str()), 0.2);
         assert_eq!(
-            behavior.threshold_for_npc_index(npc_b.index()),
+            behavior.threshold_for_npc_id(npc_b_id.as_str()),
             DEFAULT_FLEE_THRESHOLD
         );
         assert_eq!(behavior.default_flee_threshold, DEFAULT_FLEE_THRESHOLD);
@@ -411,7 +449,7 @@ mod command_executor_tests {
         bad_npc_params.insert("flee_threshold".to_string(), json!(0.1));
         commands.push(command(
             CommandType::NpcBehavior,
-            "npc_999999",
+            "npc_999999v1",
             bad_npc_params,
         ));
 
@@ -457,7 +495,7 @@ mod command_executor_tests {
         let behavior = app.world().resource::<NpcBehaviorConfig>();
         assert_eq!(behavior.default_flee_threshold, DEFAULT_FLEE_THRESHOLD);
         assert_eq!(
-            behavior.threshold_for_npc_index(999_999),
+            behavior.threshold_for_npc_id("npc_999999v1"),
             DEFAULT_FLEE_THRESHOLD
         );
     }

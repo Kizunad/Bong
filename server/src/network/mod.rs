@@ -20,7 +20,7 @@ use valence::prelude::{
     Query, Res, Resource, Update, Username, With,
 };
 
-use crate::npc::brain::FleeAction;
+use crate::npc::brain::{canonical_npc_id, FleeAction};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -323,10 +323,6 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: valence::prelu
         .find_zone(position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
-}
-
-fn canonical_npc_id(entity: Entity) -> String {
-    format!("npc_{}", entity.index())
 }
 
 fn current_unix_timestamp_secs() -> u64 {
@@ -868,7 +864,7 @@ mod tests {
         }
 
         #[test]
-        fn uses_canonical_ids() {
+        fn uses_generation_aware_canonical_ids() {
             let (mut app, rx_outbound) = setup_publish_app(false);
             let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
             let npc_entity = app
@@ -883,6 +879,7 @@ mod tests {
                     EntityKind::ZOMBIE,
                 ))
                 .id();
+            let expected_npc_id = format!("npc_{}v{}", npc_entity.index(), npc_entity.generation());
 
             let state = publish_once(&mut app, &rx_outbound);
             let player = state
@@ -893,13 +890,15 @@ mod tests {
             let npc = state
                 .npcs
                 .iter()
-                .find(|npc| npc.id == format!("npc_{}", npc_entity.index()))
-                .expect("NPC snapshot should use the entity index canonical id");
+                .find(|npc| npc.id == expected_npc_id)
+                .expect("NPC snapshot should use the generation-aware canonical id");
 
             assert_eq!(player.uuid, "offline:Azure");
             assert_eq!(player.name, "Azure");
             assert_eq!(player.zone, DEFAULT_SPAWN_ZONE_NAME);
-            assert_eq!(npc.id, format!("npc_{}", npc_entity.index()));
+            assert_eq!(npc.id, canonical_npc_id(npc_entity));
+            assert_eq!(npc.id, expected_npc_id);
+            assert!(npc.id.contains('v'), "NPC canonical ids must include entity generation");
             assert_eq!(
                 npc.blackboard.get("nearest_player"),
                 Some(&serde_json::Value::String("offline:Azure".to_string()))

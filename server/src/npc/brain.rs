@@ -29,7 +29,7 @@ pub struct FleeAction;
 #[derive(Clone, Debug)]
 pub struct NpcBehaviorConfig {
     pub default_flee_threshold: f32,
-    flee_threshold_overrides: HashMap<u32, f32>,
+    flee_threshold_overrides: HashMap<String, f32>,
 }
 
 impl Default for NpcBehaviorConfig {
@@ -43,17 +43,26 @@ impl Default for NpcBehaviorConfig {
 
 impl Resource for NpcBehaviorConfig {}
 
+pub fn canonical_npc_id(entity: Entity) -> String {
+    format!("npc_{}v{}", entity.index(), entity.generation())
+}
+
 impl NpcBehaviorConfig {
-    pub fn threshold_for_npc_index(&self, npc_index: u32) -> f32 {
+    pub fn threshold_for_npc(&self, npc: Entity) -> f32 {
+        let npc_id = canonical_npc_id(npc);
+        self.threshold_for_npc_id(npc_id.as_str())
+    }
+
+    pub fn threshold_for_npc_id(&self, npc_id: &str) -> f32 {
         self.flee_threshold_overrides
-            .get(&npc_index)
+            .get(npc_id)
             .copied()
             .unwrap_or(self.default_flee_threshold)
     }
 
-    pub fn set_threshold_for_npc_index(&mut self, npc_index: u32, flee_threshold: f32) {
+    pub fn set_threshold_for_npc_id(&mut self, npc_id: impl Into<String>, flee_threshold: f32) {
         self.flee_threshold_overrides
-            .insert(npc_index, flee_threshold.clamp(0.0, 1.0));
+            .insert(npc_id.into(), flee_threshold.clamp(0.0, 1.0));
     }
 }
 
@@ -126,7 +135,7 @@ fn player_proximity_scorer_system(
     for (Actor(actor), mut score) in &mut scorers {
         let flee_threshold = npc_behavior
             .as_deref()
-            .map(|behavior| behavior.threshold_for_npc_index(actor.index()))
+            .map(|behavior| behavior.threshold_for_npc(*actor))
             .unwrap_or(DEFAULT_FLEE_THRESHOLD)
             .clamp(0.0, 1.0);
 
@@ -266,16 +275,27 @@ mod tests {
     fn npc_behavior_config_defaults_to_proximity_threshold() {
         let config = NpcBehaviorConfig::default();
         assert_eq!(config.default_flee_threshold, PROXIMITY_THRESHOLD);
-        assert_eq!(config.threshold_for_npc_index(1), PROXIMITY_THRESHOLD);
+        assert_eq!(config.threshold_for_npc_id("npc_1v1"), PROXIMITY_THRESHOLD);
     }
 
     #[test]
     fn npc_behavior_config_applies_per_npc_override() {
         let mut config = NpcBehaviorConfig::default();
-        config.set_threshold_for_npc_index(7, 0.2);
+        config.set_threshold_for_npc_id("npc_7v3", 0.2);
 
-        assert_eq!(config.threshold_for_npc_index(7), 0.2);
-        assert_eq!(config.threshold_for_npc_index(8), PROXIMITY_THRESHOLD);
+        assert_eq!(config.threshold_for_npc_id("npc_7v3"), 0.2);
+        assert_eq!(config.threshold_for_npc_id("npc_8v3"), PROXIMITY_THRESHOLD);
+    }
+
+    #[test]
+    fn canonical_npc_id_is_generation_aware() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn_empty().id();
+
+        assert_eq!(
+            canonical_npc_id(entity),
+            format!("npc_{}v{}", entity.index(), entity.generation())
+        );
     }
 
     #[test]
