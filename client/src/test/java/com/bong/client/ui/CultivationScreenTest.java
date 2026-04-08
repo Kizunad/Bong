@@ -79,4 +79,28 @@ public class CultivationScreenTest {
         assertEquals("foundation_1", syncedScreen.playerState().realm());
         assertFalse(syncedScreen.playerState().isEmpty());
     }
+
+    @Test
+    void disconnectResetClearsStaleSnapshotBeforeNextScreenBuild() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "core_formation_2",
+            88.0,
+            100.0,
+            0.45,
+            0.82,
+            PlayerStateViewModel.PowerBreakdown.create(0.90, 0.30, 0.50, 0.20),
+            "violet_valley",
+            "紫霞谷",
+            0.91
+        ));
+
+        CultivationScreen staleScreen = CultivationScreenBootstrap.createScreenForCurrentState();
+        assertFalse(staleScreen.playerState().isEmpty());
+
+        CultivationScreenBootstrap.clearPlayerStateSnapshot();
+
+        CultivationScreen clearedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
+        assertTrue(clearedScreen.playerState().isEmpty());
+        assertTrue(CultivationScreen.describe(clearedScreen.playerState()).placeholder());
+    }
 }
