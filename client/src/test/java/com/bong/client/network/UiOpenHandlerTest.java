@@ -29,6 +29,21 @@ public class UiOpenHandlerTest {
     }
 
     @Test
+    void templatePayloadAcceptsServerUiFieldAsScreenIdentifier() {
+        ServerDataDispatch dispatch = defaultHandler.handle(parseEnvelope("""
+            {"v":1,"type":"ui_open","ui":"cultivation_panel","template_id":"player_overview"}
+            """));
+
+        UiOpenState uiOpenState = dispatch.uiOpenState().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertTrue(uiOpenState.opensTemplate());
+        assertEquals("cultivation_panel", uiOpenState.screenId());
+        assertEquals("player_overview", uiOpenState.templateId().orElseThrow());
+        assertTrue(uiOpenState.xmlLayout().isEmpty());
+    }
+
+    @Test
     void templatePathWinsEvenWhenRawXmlIsAlsoPresent() {
         UiOpenHandler handler = new UiOpenHandler(true, true);
 
@@ -59,6 +74,25 @@ public class UiOpenHandlerTest {
             uiOpenState.xmlLayout().orElseThrow()
         );
         assertTrue(dispatch.logMessage().contains("guarded raw XML screen"));
+    }
+
+    @Test
+    void rawXmlPayloadAcceptsServerUiFieldAsScreenIdentifier() {
+        ServerDataDispatch dispatch = new UiOpenHandler(true, true).handle(parseEnvelope("""
+            {"v":1,"type":"ui_open","ui":"cultivation_panel",
+             "xml":"<owo-ui><components><flow-layout><label/></flow-layout></components></owo-ui>"}
+            """));
+
+        UiOpenState uiOpenState = dispatch.uiOpenState().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertTrue(uiOpenState.opensDynamicXml());
+        assertEquals("cultivation_panel", uiOpenState.screenId());
+        assertTrue(uiOpenState.templateId().isEmpty());
+        assertEquals(
+            "<owo-ui><components><flow-layout><label/></flow-layout></components></owo-ui>",
+            uiOpenState.xmlLayout().orElseThrow()
+        );
     }
 
     @Test

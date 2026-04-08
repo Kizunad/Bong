@@ -70,7 +70,7 @@ public final class UiOpenHandler implements ServerDataHandler {
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
-        String screenId = readOptionalString(payload, "screen_id");
+        String screenId = firstNonBlank(readOptionalString(payload, "ui"), readOptionalString(payload, "screen_id"));
         String templateId = readOptionalString(payload, "template_id");
         String xmlLayout = firstNonBlank(readOptionalString(payload, "xml"), readOptionalString(payload, "xml_layout"));
 
@@ -126,7 +126,7 @@ public final class UiOpenHandler implements ServerDataHandler {
             if (!templateModeEnabled) {
                 return Resolution.failure("template-driven ui_open is disabled");
             }
-            return Resolution.failure("template_id requires a non-blank screen_id and template_id");
+            return Resolution.failure("template_id requires a non-blank ui or screen_id plus template_id");
         }
 
         if (!supportedTemplateMatcher.test(uiOpenState.screenId(), uiOpenState.templateId().orElseThrow())) {
