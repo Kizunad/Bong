@@ -63,6 +63,27 @@ public class PlayerStateHandlerTest {
     }
 
     @Test
+    void acceptsServerCompatiblePayloadWhenZoneSpiritQiIsOmitted() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"qi_refining_3","spirit_qi":78.0,
+             "karma":0.2,"composite_power":0.35,
+             "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
+             "zone":"blood_valley"}
+            """));
+
+        PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertEquals("qi_refining_3", playerState.realm());
+        assertEquals(78.0, playerState.spiritQiCurrent(), 0.0001);
+        assertEquals(100.0, playerState.spiritQiMax(), 0.0001);
+        assertEquals(0.78, playerState.spiritQiFillRatio(), 0.0001);
+        assertEquals("blood_valley", playerState.zoneId());
+        assertEquals("blood_valley", playerState.zoneLabel());
+        assertEquals(0.0, playerState.zoneSpiritQiNormalized(), 0.0001);
+    }
+
+    @Test
     void missingRequiredFieldsReturnSafeNoOp() throws IOException {
         String json = PayloadFixtureLoader.readText("invalid-player-state-missing-fields.json");
 

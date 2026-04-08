@@ -44,10 +44,7 @@ public final class PlayerStateHandler implements ServerDataHandler {
             invalidFields.add("zone");
         }
 
-        Double zoneSpiritQi = readRequiredDouble(payload, "zone_spirit_qi");
-        if (zoneSpiritQi == null) {
-            invalidFields.add("zone_spirit_qi");
-        }
+        Double zoneSpiritQi = readOptionalDouble(payload, "zone_spirit_qi", Double.NaN);
 
         if (!invalidFields.isEmpty()) {
             return ServerDataDispatch.noOp(
