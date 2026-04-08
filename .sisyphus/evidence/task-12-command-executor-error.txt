@@ -1,0 +1,26 @@
+Task 12 defensive-path evidence
+
+Verified by direct code review and passing Rust tests:
+
+1. Invalid command targets are rejected safely
+   - command_executor::tests::invalid_zone_target_is_skipped
+   - Unknown zone target does not mutate fallback spawn zone
+
+2. Invalid batch contents are filtered before enqueue
+   - command_executor::tests::validate_and_enqueue_skips_invalid_commands
+   - Mixed batch keeps only validated modify_zone command
+   - Invalid spawn_event and invalid npc_behavior entries are skipped
+
+3. Invalid runtime params do not panic during execution
+   - command_executor::tests::invalid_modify_zone_params_are_skipped_without_panicking
+   - String param in spirit_qi_delta is ignored safely and state remains unchanged
+
+4. Fixed per-frame execution cap is enforced
+   - command_executor::tests::execute_system_respects_fixed_command_cap
+   - One command executes, one remains queued when max_commands=1
+
+5. process_redis_inbound no longer stops at logging
+   - server/src/network/mod.rs routes RedisInbound::AgentCommand into validate_and_enqueue_agent_command_batch(...)
+   - logs are retained, but queue mutation now occurs after validation
+
+No Task 12 blocking errors remain after orchestrator verification.

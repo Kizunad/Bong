@@ -6,11 +6,11 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type OpenAI from "openai";
 import type { WorldStateV1 } from "@bong/schema";
 import { type ContextRecipe, assembleContext } from "./context.js";
-import { chat } from "./llm.js";
+import type { LlmClient, LlmMessage } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
+import type { WorldModel } from "./world-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -19,6 +19,7 @@ export interface AgentConfig {
   skillFile: string; // relative to skills/
   recipe: ContextRecipe;
   intervalMs: number;
+  now?: () => number;
 }
 
 export class TiandaoAgent {
@@ -27,11 +28,13 @@ export class TiandaoAgent {
   private recipe: ContextRecipe;
   private lastRunTs = 0;
   readonly intervalMs: number;
+  private readonly now: () => number;
 
-  constructor(private config: AgentConfig) {
+  constructor(config: AgentConfig) {
     this.name = config.name;
     this.recipe = config.recipe;
     this.intervalMs = config.intervalMs;
+    this.now = config.now ?? (() => Date.now());
     this.systemPrompt = readFileSync(
       resolve(__dirname, "skills", config.skillFile),
       "utf-8",
@@ -43,24 +46,27 @@ export class TiandaoAgent {
   }
 
   async tick(
-    client: OpenAI,
+    client: LlmClient,
     model: string,
     state: WorldStateV1,
+    worldModel?: WorldModel,
   ): Promise<AgentDecision | null> {
-    const now = Date.now();
+    const now = this.now();
     if (!this.shouldRun(now)) return null;
 
     this.lastRunTs = now;
 
-    const context = assembleContext(this.recipe, state);
+    const context = assembleContext(this.recipe, state, { worldModel });
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;
 
     console.log(`[tiandao][${this.name}] thinking...`);
 
-    const raw = await chat(client, model, [
+    const messages: LlmMessage[] = [
       { role: "system", content: this.systemPrompt },
       { role: "user", content: userPrompt },
-    ]);
+    ];
+
+    const raw = await client.chat(model, messages);
 
     console.log(`[tiandao][${this.name}] response:\n${raw}\n`);
 

@@ -1,0 +1,318 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "message"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "welcome",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 160,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "message"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "heartbeat",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 160,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "narrations"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "narration",
+          "type": "string"
+        },
+        "narrations": {
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scope",
+              "text",
+              "style"
+            ],
+            "properties": {
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "broadcast",
+                    "type": "string"
+                  },
+                  {
+                    "const": "zone",
+                    "type": "string"
+                  },
+                  {
+                    "const": "player",
+                    "type": "string"
+                  }
+                ]
+              },
+              "target": {
+                "description": "zone name or player uuid, required when scope != broadcast",
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "const": "system_warning",
+                    "type": "string"
+                  },
+                  {
+                    "const": "perception",
+                    "type": "string"
+                  },
+                  {
+                    "const": "narration",
+                    "type": "string"
+                  },
+                  {
+                    "const": "era_decree",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "zone_info"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "zone_info",
+          "type": "string"
+        },
+        "zone_info": {
+          "type": "object",
+          "required": [
+            "zone",
+            "spirit_qi",
+            "danger_level"
+          ],
+          "properties": {
+            "zone": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "spirit_qi": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "danger_level": {
+              "minimum": 0,
+              "maximum": 5,
+              "type": "integer"
+            },
+            "active_events": {
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "event_alert"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "event_alert",
+          "type": "string"
+        },
+        "event_alert": {
+          "type": "object",
+          "required": [
+            "kind",
+            "title",
+            "detail",
+            "severity"
+          ],
+          "properties": {
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "thunder_tribulation",
+                  "type": "string"
+                },
+                {
+                  "const": "beast_tide",
+                  "type": "string"
+                },
+                {
+                  "const": "realm_collapse",
+                  "type": "string"
+                },
+                {
+                  "const": "karma_backlash",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "minLength": 1,
+              "maxLength": 80,
+              "type": "string"
+            },
+            "detail": {
+              "minLength": 1,
+              "maxLength": 900,
+              "type": "string"
+            },
+            "severity": {
+              "anyOf": [
+                {
+                  "const": "info",
+                  "type": "string"
+                },
+                {
+                  "const": "warning",
+                  "type": "string"
+                },
+                {
+                  "const": "critical",
+                  "type": "string"
+                }
+              ]
+            },
+            "zone": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_state"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "player_state",
+          "type": "string"
+        },
+        "player_state": {
+          "type": "object",
+          "required": [
+            "realm",
+            "spirit_qi",
+            "spirit_qi_max",
+            "karma",
+            "composite_power",
+            "zone"
+          ],
+          "properties": {
+            "realm": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "spirit_qi": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "spirit_qi_max": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "karma": {
+              "minimum": -1,
+              "maximum": 1,
+              "type": "number"
+            },
+            "composite_power": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "zone": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

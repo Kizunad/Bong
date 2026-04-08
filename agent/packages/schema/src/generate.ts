@@ -4,14 +4,23 @@
  *
  * Usage: npx tsx src/generate.ts
  */
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { WorldStateV1 } from "./world-state.js";
 import { AgentCommandV1 } from "./agent-command.js";
-import { NarrationV1 } from "./narration.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
+import {
+  ClientPayloadV1,
+  ClientNarrationPayloadV1,
+  EventAlertPayloadV1,
+  HeartbeatPayloadV1,
+  PlayerStatePayloadV1,
+  WelcomePayloadV1,
+  ZoneInfoPayloadV1,
+} from "./client-payload.js";
+import { NarrationV1 } from "./narration.js";
+import { WorldStateV1 } from "./world-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = join(__dirname, "..", "generated");
@@ -23,11 +32,18 @@ const schemas = {
   "narration-v1": NarrationV1,
   "chat-message-v1": ChatMessageV1,
   "chat-signal": ChatSignal,
+  "client-payload-v1": ClientPayloadV1,
+  "client-payload-welcome-v1": WelcomePayloadV1,
+  "client-payload-heartbeat-v1": HeartbeatPayloadV1,
+  "client-payload-narration-v1": ClientNarrationPayloadV1,
+  "client-payload-zone-info-v1": ZoneInfoPayloadV1,
+  "client-payload-event-alert-v1": EventAlertPayloadV1,
+  "client-payload-player-state-v1": PlayerStatePayloadV1,
 };
 
 for (const [name, schema] of Object.entries(schemas)) {
   const path = join(outDir, `${name}.json`);
-  writeFileSync(path, JSON.stringify(schema, null, 2) + "\n");
+  writeFileSync(path, `${JSON.stringify(schema, null, 2)}\n`);
   console.log(`wrote ${path}`);
 }
 

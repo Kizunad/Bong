@@ -1,13 +1,11 @@
-import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { TSchema } from "@sinclair/typebox";
+import { describe, expect, it } from "vitest";
 
-import { WorldStateV1 } from "../src/world-state.js";
 import { AgentCommandV1 } from "../src/agent-command.js";
-import { NarrationV1 } from "../src/narration.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
-import { validate } from "../src/validate.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
@@ -16,12 +14,58 @@ import {
   NEWBIE_POWER_THRESHOLD,
   SPIRIT_QI_TOTAL,
 } from "../src/common.js";
+import {
+  AgentCommandV1 as RootAgentCommandV1,
+  ChatMessageV1 as RootChatMessageV1,
+  NarrationV1 as RootNarrationV1,
+  WorldStateV1 as RootWorldStateV1,
+  validate as rootValidate,
+} from "../src/index.js";
+import { NarrationV1 } from "../src/narration.js";
+import { validate } from "../src/validate.js";
+import { WorldStateV1 } from "../src/world-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const samplesDir = join(__dirname, "..", "samples");
 
-function loadSample(name: string): unknown {
-  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8"));
+type JsonObject = Record<string, unknown>;
+
+function loadSample<T = unknown>(name: string): T {
+  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8")) as T;
+}
+
+function loadSampleObject(name: string): JsonObject {
+  return loadSample<JsonObject>(name);
+}
+
+function expectObject(value: unknown): JsonObject {
+  expect(typeof value).toBe("object");
+  expect(value).not.toBeNull();
+  expect(Array.isArray(value)).toBe(false);
+
+  return value as JsonObject;
+}
+
+function expectObjectArray(value: unknown): JsonObject[] {
+  expect(Array.isArray(value)).toBe(true);
+
+  return value as JsonObject[];
+}
+
+function expectFirstObject(value: unknown): JsonObject {
+  const items = expectObjectArray(value);
+  const [firstItem] = items;
+
+  expect(firstItem).toBeDefined();
+
+  return expectObject(firstItem);
+}
+
+function expectInvalid(schema: TSchema, data: unknown): void {
+  const result = rootValidate(schema, data);
+
+  expect(result.ok, result.errors.join("; ")).toBe(false);
+  expect(result.errors.length).toBeGreaterThan(0);
 }
 
 // ─── Sample validation ─────────────────────────────────
@@ -29,25 +73,43 @@ function loadSample(name: string): unknown {
 describe("sample files pass schema validation", () => {
   it("world-state.sample.json", () => {
     const data = loadSample("world-state.sample.json");
-    const result = validate(WorldStateV1, data);
+    const result = rootValidate(RootWorldStateV1, data);
+
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("agent-command.sample.json", () => {
     const data = loadSample("agent-command.sample.json");
-    const result = validate(AgentCommandV1, data);
+    const result = rootValidate(RootAgentCommandV1, data);
+
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("narration.sample.json", () => {
     const data = loadSample("narration.sample.json");
-    const result = validate(NarrationV1, data);
+    const result = rootValidate(RootNarrationV1, data);
+
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("chat-message.sample.json", () => {
     const data = loadSample("chat-message.sample.json");
-    const result = validate(ChatMessageV1, data);
+    const result = rootValidate(RootChatMessageV1, data);
+
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("package root exports runtime validation helpers", () => {
+  it("re-exports validate and shared schemas from index", () => {
+    const data = loadSample("world-state.sample.json");
+    const result = validate(WorldStateV1, data);
+
+    expect(rootValidate).toBe(validate);
+    expect(RootWorldStateV1).toBe(WorldStateV1);
+    expect(RootAgentCommandV1).toBe(AgentCommandV1);
+    expect(RootNarrationV1).toBe(NarrationV1);
+    expect(RootChatMessageV1).toBe(ChatMessageV1);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });
@@ -56,17 +118,44 @@ describe("sample files pass schema validation", () => {
 
 describe("schema rejects invalid data", () => {
   it("rejects world state with wrong version", () => {
-    const data = loadSample("world-state.sample.json") as any;
+    const data = loadSampleObject("world-state.sample.json");
+
     data.v = 2;
-    const result = validate(WorldStateV1, data);
-    expect(result.ok).toBe(false);
+
+    expectInvalid(WorldStateV1, data);
   });
 
   it("rejects world state missing players", () => {
-    const data = loadSample("world-state.sample.json") as any;
+    const data = loadSampleObject("world-state.sample.json");
+
     delete data.players;
-    const result = validate(WorldStateV1, data);
-    expect(result.ok).toBe(false);
+
+    expectInvalid(WorldStateV1, data);
+  });
+
+  it("rejects world state with invalid player trend enum", () => {
+    const data = loadSampleObject("world-state.sample.json");
+    const firstPlayer = expectFirstObject(data.players);
+
+    firstPlayer.trend = "ascending";
+
+    expectInvalid(WorldStateV1, data);
+  });
+
+  it("rejects command batch with wrong version", () => {
+    const data = loadSampleObject("agent-command.sample.json");
+
+    data.v = 2;
+
+    expectInvalid(AgentCommandV1, data);
+  });
+
+  it("rejects command batch missing id", () => {
+    const data = loadSampleObject("agent-command.sample.json");
+
+    delete data.id;
+
+    expectInvalid(AgentCommandV1, data);
   });
 
   it("rejects command with invalid type", () => {
@@ -75,8 +164,30 @@ describe("schema rejects invalid data", () => {
       id: "cmd_test",
       commands: [{ type: "delete_world", target: "everywhere", params: {} }],
     };
-    const result = validate(AgentCommandV1, data);
-    expect(result.ok).toBe(false);
+
+    expectInvalid(AgentCommandV1, data);
+  });
+
+  it("rejects command batch exceeding max commands per tick", () => {
+    const data = {
+      v: 1,
+      id: "cmd_over_limit",
+      commands: Array.from({ length: MAX_COMMANDS_PER_TICK + 1 }, (_, index) => ({
+        type: "spawn_event",
+        target: `zone_${index}`,
+        params: {},
+      })),
+    };
+
+    expectInvalid(AgentCommandV1, data);
+  });
+
+  it("rejects narration batch with wrong version", () => {
+    const data = loadSampleObject("narration.sample.json");
+
+    data.v = 2;
+
+    expectInvalid(NarrationV1, data);
   });
 
   it("rejects narration without text", () => {
@@ -84,15 +195,50 @@ describe("schema rejects invalid data", () => {
       v: 1,
       narrations: [{ scope: "broadcast", style: "system_warning" }],
     };
-    const result = validate(NarrationV1, data);
-    expect(result.ok).toBe(false);
+
+    expectInvalid(NarrationV1, data);
+  });
+
+  it("rejects narration with invalid style enum", () => {
+    const data = loadSampleObject("narration.sample.json");
+    const firstNarration = expectFirstObject(data.narrations);
+
+    firstNarration.style = "oracle";
+
+    expectInvalid(NarrationV1, data);
+  });
+
+  it("rejects narration exceeding max text length", () => {
+    const data = loadSampleObject("narration.sample.json");
+    const firstNarration = expectFirstObject(data.narrations);
+
+    firstNarration.text = "天".repeat(MAX_NARRATION_LENGTH + 1);
+
+    expectInvalid(NarrationV1, data);
   });
 
   it("rejects chat message with wrong version", () => {
-    const data = loadSample("chat-message.sample.json") as any;
+    const data = loadSampleObject("chat-message.sample.json");
+
     data.v = 99;
-    const result = validate(ChatMessageV1, data);
-    expect(result.ok).toBe(false);
+
+    expectInvalid(ChatMessageV1, data);
+  });
+
+  it("rejects chat message missing player", () => {
+    const data = loadSampleObject("chat-message.sample.json");
+
+    delete data.player;
+
+    expectInvalid(ChatMessageV1, data);
+  });
+
+  it("rejects chat message exceeding raw length", () => {
+    const data = loadSampleObject("chat-message.sample.json");
+
+    data.raw = "a".repeat(257);
+
+    expectInvalid(ChatMessageV1, data);
   });
 });
 

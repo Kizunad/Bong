@@ -1,0 +1,73 @@
+=== Task 15 Fullstack Smoke (M1) ===
+run_id: 20260407-144010-717531
+run_dir: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531
+smoke_log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-fullstack-smoke.log
+error_log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-fullstack-smoke-error.log
+
+=== [0/7] Pre-cleanup ===
+  ✓ pre-cleanup completed
+
+=== [1/7] Start Redis ===
+  ✓ redis ping
+
+=== [2/7] Start server ===
+  ✓ server world bootstrap
+  ✓ server redis bridge subscribed
+
+=== [3/7] Subscribe Redis evidence channels ===
+  ✓ world_state publish observed on redis pub/sub
+
+=== [4/7] Run Tiandao fake/mock tick against real Redis world_state ===
+  ✓ arbiter merged marker
+  ✓ tiandao published merged command batch
+  ✓ tiandao published narrations
+
+=== [5/7] Assert server consumed commands and narration ===
+  ✓ server received agent command batch
+  ✓ server command queue enqueued
+  ✓ server command executor consumed queue
+  ✓ server narration typed payload marker (single narration per payload)
+  ✓ server narration payload count contract (maxItems=1)
+  ✓ redis pub/sub captured agent_command payload
+  ✓ redis pub/sub captured narration payload
+
+=== [6/7] Client consume verification (JUnit fixture path) ===
+  ✓ client shared narration payload fixture consumed
+  ✓ client narration render state route consumed
+  ✓ gradle test success
+
+=== [7/7] Evidence summary ===
+component logs:
+  redis: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531/redis.log
+  server: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531/server.log
+  redis-sub: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531/redis-sub.log
+  tiandao: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531/tiandao-mock.log
+  client-tests: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-15-run-20260407-144010-717531/client-tests.log
+
+--- snippets: world_state ---
+12:{"v":1,"ts":1775544023,"tick":200,"players":[],"npcs":[],"zones":[{"name":"spawn","spirit_qi":0.9,"danger_level":0,"active_events":[],"player_count":0}],"recent_events":[]}
+15:{"v":1,"ts":1775544033,"tick":400,"players":[],"npcs":[],"zones":[{"name":"spawn","spirit_qi":0.9,"danger_level":0,"active_events":[],"player_count":0}],"recent_events":[]}
+
+--- snippets: arbiter/agent publish ---
+24:[tiandao][arbiter] merged commands: 5, narrations: 3
+25:[redis-ipc] published 5 commands to bong:agent_command (2 subscribers)
+26:[redis-ipc] published 3 narrations to bong:agent_narrate (2 subscribers)
+
+--- snippets: server queue + narration ---
+19:[2m2026-04-07T06:40:33.682358Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775544033677: 5 commands from None
+25:[2m2026-04-07T06:40:33.682854Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 5)
+26:[2m2026-04-07T06:40:33.682979Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+27:[2m2026-04-07T06:40:33.683086Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+28:[2m2026-04-07T06:40:33.683191Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+29:[2m2026-04-07T06:40:33.683360Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775544033677 spirit_qi=0.9 danger_level=3
+30:[2m2026-04-07T06:40:33.683439Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775544033677
+31:[2m2026-04-07T06:40:33.683496Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775544033677
+32:[2m2026-04-07T06:40:33.683568Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775544033677 duration_ticks=120 intensity=0.7
+33:[2m2026-04-07T06:40:33.683657Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775544033677
+
+--- snippets: client consume tests ---
+25:BUILD SUCCESSFUL in 5s
+
+================================
+Result: 18 passed, 0 failed
+ALL PASS

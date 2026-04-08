@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "player_state",
+  "player_state": {
+    "realm": "qi_refining_3",
+    "spirit_qi": 78,
+    "spirit_qi_max": 100,
+    "karma": -0.2,
+    "composite_power": 0.35,
+    "zone": "blood_valley"
+  }
+}

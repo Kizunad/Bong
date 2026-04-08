@@ -1,0 +1,126 @@
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test player::state::tests::save_and_load_roundtrip_by_uuid ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 8 tests
+test player::progression::tests::invalid_non_finite_inputs_do_not_create_nan_or_invalid_state ... ok
+test player::progression::tests::karma_gate_blocks_higher_realm_even_with_high_experience ... ok
+test player::progression::tests::experience_accumulation_is_saturating_and_non_negative ... ok
+test player::progression::tests::promotion_updates_qi_max_and_clamps_qi_to_new_cap ... ok
+test player::progression::tests::cultivation_and_event_inputs_are_deterministic_and_safe ... ok
+test player::progression::tests::karma_is_clamped_for_oversized_positive_and_negative_inputs ... ok
+test player::progression::tests::threshold_crossing_promotes_from_mortal_to_qi_refining_1 ... ok
+test player::progression::tests::progression_changes_are_visible_through_existing_projection_seam ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test network::tests::payload_builder_zone_info_happy_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test network::tests::payload_builder_event_alert_happy_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test network::tests::payload_builder_player_state_happy_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test network::tests::missing_target_route_player_state_does_not_broadcast_to_all_clients ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 1 test
+test network::tests::player_state_periodic_emission_happens_without_component_change ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.02s
+

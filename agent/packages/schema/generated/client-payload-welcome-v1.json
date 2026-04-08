@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "message"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "welcome",
+      "type": "string"
+    },
+    "message": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    }
+  }
+}

@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
 FAIL=0
 
-pass() { echo "  ✓ $1"; ((PASS++)); }
-fail() { echo "  ✗ $1"; ((FAIL++)); }
+pass() { echo "  ✓ $1"; ((PASS+=1)); }
+fail() { echo "  ✗ $1"; ((FAIL+=1)); }
 
 echo "=== [1/4] Rust fmt + clippy ==="
 cd "$ROOT/server"

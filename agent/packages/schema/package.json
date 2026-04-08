@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "generate": "tsx src/generate.ts",
+    "check:generated": "npm run generate && git diff --exit-code -- generated",
     "test": "vitest run",
     "check": "tsc --noEmit"
   },

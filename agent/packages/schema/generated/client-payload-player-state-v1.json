@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "player_state"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "player_state",
+      "type": "string"
+    },
+    "player_state": {
+      "type": "object",
+      "required": [
+        "realm",
+        "spirit_qi",
+        "spirit_qi_max",
+        "karma",
+        "composite_power",
+        "zone"
+      ],
+      "properties": {
+        "realm": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "spirit_qi": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "spirit_qi_max": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "karma": {
+          "minimum": -1,
+          "maximum": 1,
+          "type": "number"
+        },
+        "composite_power": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+scripts/smoke-tiandao-fullstack.sh: line 130: redis-server: command not found

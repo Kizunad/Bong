@@ -5,7 +5,7 @@ use big_brain::prelude::{
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, IntoSystemConfigs, Position,
-    PreUpdate, Query, With, Without,
+    PreUpdate, Query, Res, Resource, With, Without,
 };
 
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
@@ -17,6 +17,21 @@ const FALLBACK_FLEE_DIR: DVec3 = DVec3::new(1.0, 0.0, 0.0);
 const PLATFORM_MIN_XZ: f64 = 0.5;
 const PLATFORM_MAX_XZ: f64 = 255.5;
 const NPC_FIXED_Y: f64 = 66.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct NpcBehaviorRuntimeConfig {
+    pub flee_threshold: f32,
+}
+
+impl Default for NpcBehaviorRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            flee_threshold: PROXIMITY_THRESHOLD,
+        }
+    }
+}
+
+impl Resource for NpcBehaviorRuntimeConfig {}
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct PlayerProximityScorer;
@@ -49,7 +64,8 @@ impl ActionBuilder for FleeAction {
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering brain systems");
-    app.add_plugins(BigBrainPlugin::new(PreUpdate))
+    app.init_resource::<NpcBehaviorRuntimeConfig>()
+        .add_plugins(BigBrainPlugin::new(PreUpdate))
         .add_systems(
             PreUpdate,
             update_npc_blackboard.before(BigBrainSet::Scorers),
@@ -86,11 +102,15 @@ pub fn update_npc_blackboard(
 
 fn player_proximity_scorer_system(
     npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    behavior_config: Res<NpcBehaviorRuntimeConfig>,
     mut scorers: Query<(&Actor, &mut Score), With<PlayerProximityScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok(blackboard) = npcs.get(*actor) {
-            proximity_score(blackboard.player_distance)
+            proximity_score_with_runtime_threshold(
+                blackboard.player_distance,
+                behavior_config.flee_threshold,
+            )
         } else {
             0.0
         };
@@ -148,6 +168,24 @@ fn proximity_score(distance: f32) -> f32 {
     }
 
     ((8.0 - distance) / 8.0).clamp(0.0, 1.0)
+}
+
+fn proximity_score_with_runtime_threshold(distance: f32, flee_threshold: f32) -> f32 {
+    let base = proximity_score(distance);
+
+    if base <= 0.0 {
+        return 0.0;
+    }
+
+    if !flee_threshold.is_finite() {
+        return 0.0;
+    }
+
+    if flee_threshold <= 0.0 {
+        return 1.0;
+    }
+
+    (base / flee_threshold * PROXIMITY_THRESHOLD).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -211,6 +249,23 @@ mod tests {
         app.world_mut().spawn(thinker);
         assert_eq!(PROXIMITY_THRESHOLD, 0.6);
         assert!((proximity_score(3.2) - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn runtime_flee_threshold_reweights_scores() {
+        let score_with_default = proximity_score_with_runtime_threshold(3.2, PROXIMITY_THRESHOLD);
+        let score_with_higher_threshold = proximity_score_with_runtime_threshold(3.2, 0.75);
+        let score_with_lower_threshold = proximity_score_with_runtime_threshold(3.2, 0.4);
+
+        assert!((score_with_default - PROXIMITY_THRESHOLD).abs() < 1e-6);
+        assert!(
+            score_with_higher_threshold < PROXIMITY_THRESHOLD,
+            "higher runtime threshold should make flee less likely"
+        );
+        assert!(
+            score_with_lower_threshold > PROXIMITY_THRESHOLD,
+            "lower runtime threshold should make flee more likely"
+        );
     }
 
     #[test]

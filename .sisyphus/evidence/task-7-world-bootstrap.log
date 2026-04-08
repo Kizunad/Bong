@@ -1,0 +1,88 @@
+=== cargo test world::tests::selects_fallback_without_region_dir -- --nocapture ===
+
+running 1 test
+test world::tests::selects_fallback_without_region_dir ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+
+=== timeout 15s cargo run ===
+[2m2026-04-06T14:08:47.710190Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-06T14:08:49.309634Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-06T14:08:49.309736Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-06T14:08:49.309777Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-06T14:08:49.309786Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-06T14:08:49.309836Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-06T14:08:49.309862Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-06T14:08:49.311910Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-06T14:08:49.312160Z[0m [31mERROR[0m [bong][redis] failed to get pub connection: Connection refused (os error 111)
+[2m2026-04-06T14:08:49.315107Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-06T14:08:49.315126Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-06T14:08:49.362789Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-06T14:08:49.363062Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+EXIT_CODE=124
+=== cargo test world::tests::selects_fallback_without_region_dir -- --nocapture ===
+
+running 1 test
+test world::tests::selects_fallback_without_region_dir ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 0.00s
+
+EXIT_CODE=0
+=== cargo test ===
+
+running 35 tests
+test network::agent_bridge::tests::payload_schema_v1_is_valid_utf8_json ... ok
+test network::agent_bridge::tests::payload_schema_rejects_oversize_messages ... ok
+test network::tests::world_state_zone_data_comes_from_registry ... ok
+test npc::brain::tests::flee_action_clamps_to_platform_bounds ... ok
+test npc::brain::tests::flee_action_handles_zero_vector ... ok
+test player::tests::spawn_defaults_are_preserved ... ok
+test network::tests::bridge_drain_is_non_blocking ... ok
+test player::tests::uses_bootstrap_selected_world_layer_resource ... ok
+test schema::agent_command::tests::deserialize_agent_command_sample ... ok
+test schema::chat_message::tests::deserialize_chat_message_sample ... ok
+test schema::client_payload::tests::deserialize_client_payload_type_literals ... ok
+test schema::agent_command::tests::roundtrip_agent_command ... ok
+test schema::client_payload::tests::deserialize_heartbeat_sample ... ok
+test schema::client_payload::tests::deserialize_narration_sample ... ok
+test schema::client_payload::tests::deserialize_event_alert_sample ... ok
+test schema::client_payload::tests::deserialize_welcome_sample ... ok
+test schema::client_payload::tests::deserialize_zone_info_sample ... ok
+test schema::client_payload::tests::deserialize_player_state_sample ... ok
+test schema::narration::tests::deserialize_narration_sample ... ok
+test world::tests::fallback_spawn_zone_exists ... ok
+test world::tests::missing_world_inputs_require_fallback_warning ... ok
+test world::tests::missing_zone_config_uses_spawn_fallback ... ok
+test world::zone::tests::fallback_has_single_zone ... ok
+test npc::brain::tests::player_proximity_scorer_thresholds ... ok
+test schema::world_state::tests::deserialize_world_state_sample ... ok
+test schema::client_payload::tests::roundtrip_all_client_payload_samples ... ok
+test world::zone::tests::missing_zone_config_returns_spawn_fallback ... ok
+test world::tests::selects_fallback_without_world_path ... ok
+test world::tests::selects_fallback_without_region_dir ... ok
+test world::zone::tests::find_zone_returns_spawn_for_spawn_position ... ok
+test schema::world_state::tests::roundtrip_world_state ... ok
+test npc::brain::tests::bridge_less_no_player_behavior ... ok
+test npc::sync::tests::position_to_transform_sync_is_one_way ... ok
+test npc::brain::tests::flee_action_completes_above_sixteen_blocks ... ok
+test npc::spawn::tests::spawn_npc_creates_single_zombie_with_expected_components ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+EXIT_CODE=0
+=== timeout 15s cargo run ===
+[2m2026-04-06T14:15:29.904631Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-06T14:15:30.378795Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-06T14:15:30.378932Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-06T14:15:30.378975Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-06T14:15:30.378984Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-06T14:15:30.379031Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-06T14:15:30.379058Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-06T14:15:30.380773Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-06T14:15:30.381043Z[0m [31mERROR[0m [bong][redis] failed to get pub connection: Connection refused (os error 111)
+[2m2026-04-06T14:15:30.383928Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-06T14:15:30.383946Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-06T14:15:30.383955Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-06T14:15:30.431361Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-06T14:15:30.431743Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+EXIT_CODE=124

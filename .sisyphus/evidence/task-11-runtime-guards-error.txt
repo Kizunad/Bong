@@ -1,0 +1,37 @@
+Task 11 runtime guard error-path evidence
+
+Verified by direct code review and passing tests:
+
+1. Invalid world_state ingress is rejected safely
+   - File: agent/packages/tiandao/tests/redis-ipc.test.ts
+   - Covered behavior:
+     - invalid JSON payload logs "[redis-ipc] drop invalid world_state payload" with reason: "invalid_json"
+     - schema-invalid payload logs "[redis-ipc] drop invalid world_state payload" with reason: "schema_invalid"
+     - valid payload still reaches onWorldState callback
+
+2. Invalid outbound payloads are skipped safely
+   - File: agent/packages/tiandao/tests/redis-ipc.test.ts
+   - Covered behavior:
+     - invalid agent_command payload logs "[redis-ipc] skip invalid agent_command payload"
+     - invalid narration payload logs "[redis-ipc] skip invalid narration payload"
+
+3. Repeated LLM failures trigger bounded backoff without crashing ticks
+   - File: agent/packages/tiandao/tests/runtime.test.ts
+   - Covered behavior:
+     - backoff client throws LlmBackoffError
+     - runMockTickForTest returns summary with:
+       - totalCommands: 0
+       - totalNarrations: 0
+       - chatSignalCount: 0
+       - skipped: true
+     - tick metrics log includes skipped_by_backoff: 3
+
+4. Redis lifecycle error/reconnect logging is wired and tested
+   - File: agent/packages/tiandao/tests/redis-ipc.test.ts
+   - Covered behavior:
+     - sub/pub ready logs
+     - sub/pub close warnings
+     - sub/pub reconnecting warnings with delay_ms
+     - sub/pub error warnings with formatted error message
+
+No task-11 blocking errors remain after orchestrator verification.

@@ -1,0 +1,47 @@
+
+> @bong/tiandao@0.1.0 test
+> vitest run main redis-ipc
+
+
+ RUN  v3.2.4 /workspace/worktrees/tiandao-fullstack-closure/agent/packages/tiandao
+
+stdout | tests/redis-ipc.test.ts > RedisIpc publish payload > omits source and strips private _source from public command payload
+[redis-ipc] published 1 commands to bong:agent_command (0 subscribers)
+
+ ✓ tests/redis-ipc.test.ts (1 test) 3ms
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao] === tick start ===
+[tiandao] tick: 84000, players: 3, zones: 3
+[tiandao][calamity] thinking...
+[tiandao][mutation] thinking...
+[tiandao][era] thinking...
+[tiandao][calamity] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+[tiandao][mutation] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+[tiandao][era] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao][calamity] commands: 1, narrations: 1
+[tiandao][calamity] reasoning: deterministic mock publish
+[tiandao][mutation] commands: 1, narrations: 1
+[tiandao][mutation] reasoning: deterministic mock publish
+[tiandao][era] commands: 1, narrations: 1
+[tiandao][era] reasoning: deterministic mock publish
+[tiandao][arbiter] merged commands: 1, narrations: 3
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao] === tick end === commands: 3, narrations: 3
+
+
+ ✓ tests/main.test.ts (2 tests) 12ms
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  22:53:26
+   Duration  453ms (transform 117ms, setup 0ms, collect 331ms, tests 16ms, environment 0ms, prepare 163ms)
+

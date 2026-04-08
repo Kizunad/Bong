@@ -1,0 +1,6 @@
+823179:C 07 Apr 2026 19:28:27.106 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+823179:C 07 Apr 2026 19:28:27.106 # Redis version=7.0.15, bits=64, commit=00000000, modified=0, pid=823179, just started
+823179:C 07 Apr 2026 19:28:27.106 # Configuration loaded
+823179:M 07 Apr 2026 19:28:27.106 * monotonic clock: POSIX clock_gettime
+823179:M 07 Apr 2026 19:28:27.106 # Warning: Could not create server TCP listening socket *:6379: bind: Address already in use
+823179:M 07 Apr 2026 19:28:27.106 # Failed listening on port 6379 (TCP), aborting.

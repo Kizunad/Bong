@@ -1,0 +1,33 @@
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.76s
+     Running `/tmp/bong-target/debug/bong-server`
+[2m2026-04-07T06:18:18.849814Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-07T06:18:19.357314Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-07T06:18:19.357418Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-07T06:18:19.357457Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-07T06:18:19.357466Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-07T06:18:19.357510Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-07T06:18:19.357535Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-07T06:18:19.359525Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-07T06:18:19.360509Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-07T06:18:19.362975Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-07T06:18:19.362998Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-07T06:18:19.363007Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-07T06:18:19.407002Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-07T06:18:19.407371Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+[2m2026-04-07T06:18:39.618241Z[0m [32m INFO[0m [bong][redis] received agent command: cmd_1775542719617 (5 cmds)
+[2m2026-04-07T06:18:39.618591Z[0m [32m INFO[0m [bong][redis] received narration (3 entries)
+[2m2026-04-07T06:18:39.644348Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775542719617: 5 commands from None
+[2m2026-04-07T06:18:39.644385Z[0m [32m INFO[0m [bong][network]   cmd: ModifyZone → spawn params={"spirit_qi_delta": Number(0), "danger_level_delta": Number(3)}
+[2m2026-04-07T06:18:39.644399Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:18:39.644412Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:18:39.644419Z[0m [32m INFO[0m [bong][network]   cmd: SpawnEvent → spawn params={"intensity": Number(0.7), "duration_ticks": Number(120), "event": String("thunder_tribulation")}
+[2m2026-04-07T06:18:39.644429Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:18:39.644463Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 5)
+[2m2026-04-07T06:18:39.644502Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 3 narrations, 320 bytes, 0 clients
+[2m2026-04-07T06:18:39.644535Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775542719617 spirit_qi=0.9 danger_level=3
+[2m2026-04-07T06:18:39.644550Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542719617
+[2m2026-04-07T06:18:39.644558Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542719617
+[2m2026-04-07T06:18:39.644570Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775542719617 duration_ticks=120 intensity=0.7
+[2m2026-04-07T06:18:39.644579Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542719617
+[2m2026-04-07T06:18:46.891086Z[0m [33m WARN[0m [bong][redis] subscriber task ended, stopping bridge

@@ -9,17 +9,19 @@
     "start": "tsx src/main.ts",
     "start:mock": "tsx src/main.ts --mock",
     "dev": "tsx watch src/main.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@bong/schema": "*",
-    "openai": "^4.0.0",
     "dotenv": "^16.0.0",
-    "ioredis": "^5.0.0"
+    "ioredis": "^5.0.0",
+    "openai": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
     "tsx": "^4.0.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.4"
   }
 }

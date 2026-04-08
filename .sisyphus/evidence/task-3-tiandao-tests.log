@@ -1,0 +1,68 @@
+
+> @bong/tiandao@0.1.0 check
+> tsc --noEmit
+
+
+> @bong/tiandao@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.4 /workspace/worktrees/tiandao-fullstack-closure/agent/packages/tiandao
+
+ ✓ tests/llm.test.ts (2 tests) 5ms
+stdout | tests/agent.test.ts > TiandaoAgent fake clock seam > respects interval via injected now()
+[tiandao][calamity] thinking...
+
+stdout | tests/agent.test.ts > TiandaoAgent fake clock seam > respects interval via injected now()
+[tiandao][calamity] response:
+{"commands":[],"narrations":[],"reasoning":"mock deterministic noop"}
+
+
+stdout | tests/agent.test.ts > TiandaoAgent fake clock seam > respects interval via injected now()
+[tiandao][calamity] thinking...
+
+stdout | tests/agent.test.ts > TiandaoAgent fake clock seam > respects interval via injected now()
+[tiandao][calamity] response:
+{"commands":[],"narrations":[],"reasoning":"mock deterministic noop"}
+
+
+ ✓ tests/agent.test.ts (1 test) 6ms
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao] === tick start ===
+[tiandao] tick: 84000, players: 3, zones: 3
+[tiandao][calamity] thinking...
+[tiandao][mutation] thinking...
+[tiandao][era] thinking...
+[tiandao][calamity] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+[tiandao][mutation] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+[tiandao][era] response:
+{"commands":[{"type":"spawn_event","target":"blood_valley","params":{"event":"beast_tide","intensity":0.7,"duration_ticks":200}}],"narrations":[{"scope":"broadcast","text":"天象突变，兽潮将至。","style":"system_warning"}],"reasoning":"deterministic mock publish"}
+
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao][calamity] commands: 1, narrations: 1
+[tiandao][calamity] reasoning: deterministic mock publish
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao][mutation] commands: 1, narrations: 1
+[tiandao][mutation] reasoning: deterministic mock publish
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao][era] commands: 1, narrations: 1
+[tiandao][era] reasoning: deterministic mock publish
+
+stdout | tests/main.test.ts > main mock execution > publishes deterministic command and narration through injected sink
+[tiandao] === tick end === commands: 3, narrations: 3
+
+
+ ✓ tests/main.test.ts (2 tests) 11ms
+
+ Test Files  3 passed (3)
+      Tests  5 passed (5)
+   Start at  20:36:31
+   Duration  639ms (transform 135ms, setup 0ms, collect 608ms, tests 21ms, environment 1ms, prepare 315ms)
+

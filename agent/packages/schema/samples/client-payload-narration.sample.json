@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "narration",
+  "narrations": [
+    {
+      "scope": "broadcast",
+      "text": "天道震怒，血谷上空乌云密布，一道紫雷即将降下……",
+      "style": "system_warning"
+    }
+  ]
+}

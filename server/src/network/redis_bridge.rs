@@ -10,7 +10,8 @@ use crossbeam_channel::{Receiver, Sender};
 use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
-use crate::schema::channels::{CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_WORLD_STATE};
+use crate::schema::channels::{CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_PLAYER_CHAT, CH_WORLD_STATE};
+use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::world_state::WorldStateV1;
 
@@ -25,8 +26,8 @@ pub enum RedisInbound {
 #[derive(Debug, Clone)]
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
+    PlayerChat(ChatMessageV1),
 }
-
 
 /// Spawn the Redis bridge daemon on a dedicated Tokio thread.
 /// Returns a JoinHandle (drop-safe) and the channels for the game side.
@@ -180,6 +181,35 @@ pub fn spawn_redis_bridge(
                                 }
                             }
                         }
+                        RedisOutbound::PlayerChat(chat) => match serde_json::to_string(&chat) {
+                            Ok(json) => {
+                                let result: Result<i64, _> = redis::cmd("RPUSH")
+                                    .arg(CH_PLAYER_CHAT)
+                                    .arg(&json)
+                                    .query_async(&mut pub_conn)
+                                    .await;
+
+                                match result {
+                                    Ok(list_len) => {
+                                        tracing::debug!(
+                                            "[bong][redis] rpush player_chat for player {} (list len {})",
+                                            chat.player,
+                                            list_len
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "[bong][redis] failed to rpush player_chat: {e}"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[bong][redis] failed to serialize player_chat message: {e}"
+                                );
+                            }
+                        },
                     }
                 }
 
