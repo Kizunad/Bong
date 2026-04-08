@@ -2,6 +2,8 @@ package com.bong.client.state;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,6 +41,23 @@ public class NarrationStateTest {
 
         assertTrue(state.isEmpty());
         assertEquals(0, state.toastDurationMillis());
+    }
+
+    @Test
+    void createParsesUppercaseWireNamesWithLocaleInvariantNormalization() {
+        Locale previousLocale = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            NarrationState state = NarrationState.create("PLAYER", "  uuid-1  ", "感知到灵气波动", "PERCEPTION");
+
+            assertFalse(state.isEmpty());
+            assertEquals(NarrationState.Scope.PLAYER, state.scope());
+            assertEquals("uuid-1", state.target().orElseThrow());
+            assertEquals(NarrationState.Style.PERCEPTION, state.style());
+            assertEquals(0, state.toastDurationMillis());
+        } finally {
+            Locale.setDefault(previousLocale);
+        }
     }
 
     @Test

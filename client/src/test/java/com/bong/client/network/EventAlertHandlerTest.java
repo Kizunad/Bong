@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,6 +23,24 @@ public class EventAlertHandlerTest {
         assertEquals(EventAlertHandler.INFO_COLOR, toastSpec.color());
         assertEquals(2_500L, toastSpec.durationMillis());
         assertTrue(dispatch.visualEffectState().isEmpty());
+    }
+
+    @Test
+    void parsesUppercaseSeverityWithLocaleInvariantNormalization() {
+        Locale previousLocale = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            ServerDataDispatch dispatch = new EventAlertHandler(() -> 77L).handle(parseEnvelope(
+                "{\"v\":1,\"type\":\"event_alert\",\"title\":\"天道示警\",\"message\":\"试炼将启\",\"severity\":\"INFO\"}"
+            ));
+
+            assertTrue(dispatch.handled());
+            ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
+            assertEquals(EventAlertHandler.INFO_COLOR, toastSpec.color());
+            assertEquals(3_500L, toastSpec.durationMillis());
+        } finally {
+            Locale.setDefault(previousLocale);
+        }
     }
 
     @Test

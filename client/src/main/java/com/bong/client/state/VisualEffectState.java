@@ -1,6 +1,7 @@
 package com.bong.client.state;
 
 import java.util.Objects;
+import java.util.Locale;
 
 public final class VisualEffectState {
     private final EffectType effectType;
@@ -93,7 +94,7 @@ public final class VisualEffectState {
         }
 
         public static EffectType fromWireName(String wireName) {
-            String normalizedWireName = wireName == null ? "" : wireName.trim().toLowerCase();
+            String normalizedWireName = wireName == null ? "" : wireName.trim().toLowerCase(Locale.ROOT);
             return switch (normalizedWireName) {
                 case "screen_shake", "camera_shake" -> SCREEN_SHAKE;
                 case "fog_tint", "fog_pulse" -> FOG_TINT;

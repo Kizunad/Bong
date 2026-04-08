@@ -11,6 +11,7 @@ import net.minecraft.util.Formatting;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public final class NarrationHandler implements ServerDataHandler {
     @Override
@@ -147,7 +148,7 @@ public final class NarrationHandler implements ServerDataHandler {
             return false;
         }
 
-        String normalizedStyleName = styleName.trim().toLowerCase();
+        String normalizedStyleName = styleName.trim().toLowerCase(Locale.ROOT);
         for (NarrationState.Style style : NarrationState.Style.values()) {
             if (style.wireName().equals(normalizedStyleName)) {
                 return true;

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 import java.util.Objects;
+import java.util.Locale;
 import java.util.function.LongSupplier;
 
 public final class EventAlertHandler implements ServerDataHandler {
@@ -187,7 +188,7 @@ public final class EventAlertHandler implements ServerDataHandler {
         }
 
         static Severity fromWireName(String wireName) {
-            String normalizedWireName = wireName == null ? "" : wireName.trim().toLowerCase();
+            String normalizedWireName = wireName == null ? "" : wireName.trim().toLowerCase(Locale.ROOT);
             for (Severity severity : values()) {
                 if (severity.wireName.equals(normalizedWireName)) {
                     return severity;

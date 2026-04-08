@@ -2,6 +2,7 @@ package com.bong.client.state;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Locale;
 
 public final class NarrationState {
     private static final int MAX_TEXT_LENGTH = 500;
@@ -139,6 +140,6 @@ public final class NarrationState {
     }
 
     private static String normalizeWireName(String wireName) {
-        return wireName == null ? "" : wireName.trim().toLowerCase();
+        return wireName == null ? "" : wireName.trim().toLowerCase(Locale.ROOT);
     }
 }
