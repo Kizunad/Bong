@@ -1,0 +1,49 @@
+{
+  "has_precipitation": true,
+  "temperature": 0.9,
+  "downfall": 0.3,
+  "effects": {
+    "sky_color": 7254527,
+    "fog_color": 12638463,
+    "water_color": 4159204,
+    "water_fog_color": 329011,
+    "grass_color": 10735444,
+    "foliage_color": 8702784,
+    "mood_sound": {
+      "sound": "minecraft:ambient.cave",
+      "tick_delay": 6000,
+      "block_search_extent": 8,
+      "offset": 2.0
+    }
+  },
+  "carvers": {
+    "air": "minecraft:cave"
+  },
+  "features": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    ["minecraft:trees_savanna", "minecraft:patch_grass_plain", "minecraft:patch_dead_bush"],
+    []
+  ],
+  "spawners": {
+    "monster": [
+      { "type": "minecraft:zombie", "weight": 80, "minCount": 2, "maxCount": 4 },
+      { "type": "minecraft:spider", "weight": 60, "minCount": 1, "maxCount": 3 }
+    ],
+    "creature": [],
+    "ambient": [],
+    "water_creature": [],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "misc": [],
+    "axolotls": []
+  },
+  "spawn_costs": {}
+}

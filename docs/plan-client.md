@@ -5,381 +5,257 @@
 
 ---
 
-## 当前代码结构
+## 当前代码结构（实际）
 
 ```
 client/src/main/java/com/bong/client/
-├── BongClient.java             # Mod 入口 (ClientModInitializer)
-├── BongNetworkHandler.java     # CustomPayload 监听 (bong:server_data)
-└── BongHud.java                # 简单 HUD "Bong Client Connected"
+├── BongClient.java             [✓] Mod 入口 (K 键绑定 + HUD)
+├── BongClientFeatures.java     [✓] Feature flags (toasts/visual/xml/debug)
+├── BongHud.java                [✓] 总 HUD 渲染入口
+├── BongNetworkHandler.java     [✓] CustomPayload 注册 + 调用 ServerDataRouter
+├── network/
+│   ├── ServerDataRouter.java   [✓] 统一消息分发路由器
+│   ├── ServerDataEnvelope.java [✓] JSON 解析 + type 提取
+│   ├── ServerDataHandler.java  [✓] Handler 接口
+│   ├── ServerDataDispatch.java [✓] 路由结果（含 chat/toast/ui_open/visual_effect）
+│   ├── NarrationHandler.java   [✓] 天道叙事解析 + 格式化
+│   ├── ZoneInfoHandler.java    [✓] 区域信息处理
+│   ├── EventAlertHandler.java  [✓] 事件警报（severity 三级 + visual effect hint）
+│   ├── PlayerStateHandler.java [✓] 玩家状态同步
+│   ├── UiOpenHandler.java      [✓] 动态 UI 打开（template + guarded XML）
+│   └── LegacyMessageServerDataHandler.java [✓] welcome/heartbeat 兼容
+├── state/
+│   ├── NarrationState.java     [✓] Narration 状态模型（scope/style/toast eligibility）
+│   ├── ZoneState.java          [✓] Zone 状态模型
+│   ├── VisualEffectState.java  [✓] 视觉效果状态（SCREEN_SHAKE/FOG_TINT/TITLE_FLASH）
+│   ├── PlayerStateStore.java   [✓] 玩家状态缓存
+│   ├── PlayerStateViewModel.java [✓] 面板展示用 ViewModel
+│   └── UiOpenState.java        [✓] UI 打开状态（template 或 dynamic XML）
+├── hud/
+│   ├── BongHudOrchestrator.java [✓] HUD 编排器（统一管理各层渲染）
+│   ├── BongHudStateStore.java   [✓] HUD 状态管理
+│   ├── BongHudStateSnapshot.java [✓] HUD 快照（线程安全）
+│   ├── BongToast.java           [✓] 居中 Toast 提示
+│   ├── BongZoneHud.java         [✓] 区域名 + 灵气条 + 危险等级
+│   ├── ToastHudRenderer.java    [✓] Toast 渲染层
+│   ├── ZoneHudRenderer.java     [✓] Zone HUD 渲染层
+│   ├── VisualHudRenderer.java   [✓] 视觉效果渲染层
+│   ├── HudRenderCommand.java    [✓] 渲染指令（数据驱动）
+│   ├── HudRenderLayer.java      [✓] 渲染层级枚举
+│   └── HudTextHelper.java       [✓] 文本裁剪 + alpha 工具
+├── visual/
+│   ├── VisualEffectController.java [✓] 效果接受/覆盖/重触发窗口
+│   ├── VisualEffectPlanner.java    [✓] 效果计划调度
+│   └── VisualEffectProfile.java    [✓] 三种效果配置（SCREEN_SHAKE/FOG_TINT/TITLE_FLASH）
+└── ui/
+    ├── CultivationScreen.java      [✓] owo-ui 修仙面板（K 键打开）
+    ├── CultivationScreenBootstrap.java [✓] 面板启动胶水
+    ├── DynamicXmlScreen.java       [✓] 动态 XML UI 渲染
+    └── UiOpenScreens.java          [✓] 模板注册表
+```
 
-client/src/main/resources/
-├── fabric.mod.json
-└── bong-client.mixins.json     # 空
+**测试**：21 个测试类 | 103 个 test case 全部通过
 ```
 
 ---
 
-## M1 — 天道闭环
+## M1 — 天道闭环 [✓]
 
-### C1. Narration 频道监听与渲染
+### C1. Narration 频道监听与渲染 [✓]
 
 **目标**：接收 server 转发的天道叙事，按风格分类渲染到聊天栏。
 
-**改动**：`BongNetworkHandler.java`
+**实现状态**：✅ **完成**（比计划更完善的架构）
 
-**当前状态**：只监听 `bong:server_data` 频道，解析 JSON 打印原始内容。
+**实现细节**：
 
-**改造**：
-
-```java
-// 注册新频道（或复用 bong:server_data 加 type 字段区分）
-// 建议方案：server 发不同 type 的 JSON 到 bong:server_data
-
-public static void handleServerData(MinecraftClient client, PacketByteBuf buf) {
-    String json = buf.readString();
-    JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
-    String type = obj.get("type").getAsString();
-
-    switch (type) {
-        case "narration" -> handleNarration(client, obj);
-        case "zone_info" -> handleZoneInfo(client, obj);  // M2
-        case "event_alert" -> handleEventAlert(client, obj); // M2
-        default -> {} // ignore unknown
-    }
-}
-```
-
-**Narration 渲染**：
-
-```java
-private static void handleNarration(MinecraftClient client, JsonObject obj) {
-    JsonArray narrations = obj.getAsJsonArray("narrations");
-    for (JsonElement el : narrations) {
-        JsonObject n = el.getAsJsonObject();
-        String style = n.get("style").getAsString();
-        String text = n.get("text").getAsString();
-
-        // MC 格式化颜色码
-        String formatted = switch (style) {
-            case "system_warning" -> "§c§l[天道警示]§r §c" + text;
-            case "perception"     -> "§7[感知]§r §7" + text;
-            case "narration"      -> "§f[叙事]§r §f" + text;
-            case "era_decree"     -> "§6§l[§e时代§6§l]§r §6" + text;
-            default               -> "§f" + text;
-        };
-
-        // 发送到聊天栏
-        client.execute(() -> {
-            if (client.player != null) {
-                client.player.sendMessage(Text.literal(formatted), false);
-            }
-        });
-    }
-}
-```
-
-**验证**：
-- Server 运行 + Agent 运行
-- 玩家进入游戏，30 秒内聊天栏出现彩色天道消息
+- ✅ `NarrationHandler` 接收 `ServerDataEnvelope`（type = "narration"），解析 `narrations[]` 数组
+- ✅ 每条 narration 解析为 `NarrationState`（scope/target/text/style）
+- ✅ 按 style 用 **MC Formatting API**（非原始颜色码）渲染带前缀聊天文本：
+  - `SYSTEM_WARNING` → 红色粗体 `[天道警示]`
+  - `PERCEPTION` → 灰色 `[感知]`
+  - `NARRATION` → 白色 `[叙事]`
+  - `ERA_DECREE` → 金色粗体 `[时代法旨]`
+- ✅ 产出 `ServerDataDispatch`（含 chatMessages + toast trigger + narrationState）
+- ✅ 支持多条 narration 批量处理，跳过无效条目并计数
 
 ---
 
-### C2. Narration HUD Toast（可选增强）
+### C2. Narration HUD Toast [✓]
 
-**目标**：重要 narration（system_warning / era_decree）不仅在聊天栏，还在屏幕中央弹出醒目提示。
+**目标**：重要 narration 在屏幕中央弹出醒目提示。
 
-**新增**：`BongToast.java`
+**实现状态**：✅ **完成**（比计划更完善）
 
-```java
-public class BongToast {
-    private static String currentToast = null;
-    private static long toastExpiry = 0;
-    private static int toastColor = 0xFFFFFF;
+**实现细节**：
 
-    public static void show(String text, int color, int durationMs) {
-        currentToast = text;
-        toastColor = color;
-        toastExpiry = System.currentTimeMillis() + durationMs;
-    }
-
-    // 在 HudRenderCallback 中调用
-    public static void render(DrawContext context, int scaledWidth, int scaledHeight) {
-        if (currentToast == null || System.currentTimeMillis() > toastExpiry) {
-            currentToast = null;
-            return;
-        }
-
-        TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
-        int width = textRenderer.getWidth(currentToast);
-        int x = (scaledWidth - width) / 2;
-        int y = scaledHeight / 4; // 屏幕上方 1/4 处
-
-        // 半透明背景
-        context.fill(x - 4, y - 4, x + width + 4, y + 12, 0x88000000);
-        // 文字
-        context.drawText(textRenderer, currentToast, x, y, toastColor, true);
-    }
-}
-```
-
-**触发**：
-- `system_warning` → Toast 红色，持续 5 秒
-- `era_decree` → Toast 金色，持续 8 秒
-- `perception` / `narration` → 不触发 Toast，只在聊天栏
+- ✅ `BongToast` — 线程安全的 volatile 单例 toast 管理
+- ✅ 通过 `NarrationState.isToastEligible()` 判断是否触发 toast
+  - `SYSTEM_WARNING` → 红色粗体 "天道警示：" + 内容
+  - `ERA_DECREE` → 金色粗体 "时代法旨：" + 内容
+  - `PERCEPTION` / `NARRATION` → 不触发 toast
+- ✅ 渲染：半透明背景 + 居中文字 + 文本宽度裁剪
+- ✅ feature flag 控制：`BongClientFeatures.ENABLE_TOASTS`
+- ✅ toast 也可由 `EventAlertHandler` 独立触发（按 severity 着色）
 
 ---
 
-### C3. 天象视觉反馈（可选增强）
+### C3. 天象视觉反馈 [✓]
 
-**目标**：天劫等事件时有简单的视觉暗示。
+**目标**：天劫等事件时有视觉暗示。
 
-**实现方式**：不需要 Shader，用原版手段：
+**实现状态**：✅ **完成**（无 Mixin，纯数据驱动）
 
-```
-天劫 (system_warning)：
-  → 持续 3 秒每 tick 摇晃玩家视角（bobbing 叠加微量偏移）
-  → 用 Mixin 注入 GameRenderer.renderWorld，添加微小 pitch 抖动
-  → 或更简单：连续发送 Title 消息模拟闪烁
+**实现细节**：
 
-灵气变化 (perception)：
-  → 短暂改变 fog color（Mixin FogRenderer）
-  → 灵气上升 → 偏蓝绿，灵气下降 → 偏暗红
-  → 持续 2 秒后渐变恢复
+- ✅ `VisualEffectState` — 效果状态模型（effectType/intensity/duration/startedAt）
+- ✅ `VisualEffectProfile` — 三种效果配置：
+  - `SCREEN_SHAKE` (天道警示) → 橙色 0xF07C3E, maxIntensity 0.85, 最长 2.4s, 重触发窗口 1.2s
+  - `FOG_TINT` (灵气感知) → 蓝灰色 0x5F7693, maxIntensity 0.55, 最长 4.5s, 重触发窗口 1.5s
+  - `TITLE_FLASH` (时代法旨) → 金色 0xF2CC6B, maxIntensity 0.75, 最长 3.2s, 重触发窗口 2.2s
+- ✅ `VisualEffectController` — 效果接受/覆盖逻辑 + retrigger window 防抖
+- ✅ `VisualEffectPlanner` — 效果计划调度
+- ✅ `VisualHudRenderer` — HUD 渲染层
+- ✅ feature flag 控制：`BongClientFeatures.ENABLE_VISUAL_EFFECTS`
+- ✅ `EventAlertHandler` 可携带 `effect` hint（JSON 对象/字符串）驱动视觉效果
 
-时代宣言 (era_decree)：
-  → 全屏 Title：金色大字，渐入渐出
-  → client.player.sendMessage 配合 Title 包
-```
-
-**注意**：Mixin 是可选的，M1 可以先只做 Title/聊天栏，M2 再加 Mixin 增强。
+**无 Mixin**：通过 HUD overlay + alpha 混合实现，不侵入原版渲染管线
 
 ---
 
-## M2 — 有意义的世界
+## M2 — 有意义的世界 [✓]
 
-### C4. 区域 HUD
+### C4. 区域 HUD [✓]
 
 **目标**：玩家进入不同区域时，屏幕显示区域名和灵气浓度。
 
-**实现**：Server 在玩家跨区域时发送 `zone_info` 类型的 CustomPayload。
+**实现状态**：✅ **完成**（带淡入淡出 + 常驻 overlay）
 
-**新增**：`BongZoneHud.java`
+**实现细节**：
 
-```java
-public class BongZoneHud {
-    private static String zoneName = "";
-    private static double spiritQi = 0;
-    private static int dangerLevel = 0;
-    private static long zoneChangeTime = 0;
-
-    public static void update(String name, double qi, int danger) {
-        zoneName = name;
-        spiritQi = qi;
-        dangerLevel = danger;
-        zoneChangeTime = System.currentTimeMillis();
-    }
-
-    public static void render(DrawContext context, int scaledWidth, int scaledHeight) {
-        if (zoneName.isEmpty()) return;
-
-        TextRenderer tr = MinecraftClient.getInstance().textRenderer;
-
-        // 区域名 + 淡入效果（进入后 2 秒渐隐）
-        long elapsed = System.currentTimeMillis() - zoneChangeTime;
-        boolean showBig = elapsed < 2000;
-
-        if (showBig) {
-            // 大字居中显示区域名
-            String display = "— " + zoneName + " —";
-            int w = tr.getWidth(display);
-            int alpha = elapsed < 1500 ? 255 : (int)(255 * (2000 - elapsed) / 500.0);
-            int color = (alpha << 24) | 0xFFD700; // 金色
-            context.drawText(tr, display, (scaledWidth - w) / 2, scaledHeight / 3, color, true);
-        }
-
-        // 常驻小字：左上角灵气条
-        String qiBar = qiToBar(spiritQi);
-        String dangerText = "☠".repeat(dangerLevel);
-        context.drawText(tr, "§b灵气 " + qiBar, 4, 20, 0xFFFFFF, false);
-        if (dangerLevel > 0) {
-            context.drawText(tr, "§c危险 " + dangerText, 4, 32, 0xFFFFFF, false);
-        }
-    }
-
-    private static String qiToBar(double qi) {
-        int filled = (int)(qi * 10);
-        return "§a" + "█".repeat(filled) + "§8" + "█".repeat(10 - filled);
-    }
-}
-```
-
-**Server 侧配合**：
-- 玩家 Position 变化时检查是否跨 zone
-- 跨 zone 时发 `{ type: "zone_info", zone: "blood_valley", spirit_qi: 0.42, danger_level: 3 }`
+- ✅ `BongZoneHud` — 纯静态工具，构建 `HudRenderCommand` 列表
+- ✅ 居中大字区域名 "— {zone} —"，金色（0xFFD700），进入后 1.5s 全亮 → 2s 内线性淡出
+- ✅ 常驻小字 overlay：`区域{name} 灵气[████████░░] 危☠☠☠`
+- ✅ 灵气条 10 段（`█` 填充 + `░` 空余），危险等级 ☠ 重复
+- ✅ `ZoneState` 状态模型 — zone name / spirit_qi / danger_level / changedAtMillis
+- ✅ `ZoneInfoHandler` 解析 server 下发的 zone_info payload
 
 ---
 
-### C5. CustomPayload 路由器
+### C5. CustomPayload 路由器 [✓]
 
 **目标**：统一的消息分发框架，便于后续扩展。
 
-**改造**：`BongNetworkHandler.java`
+**实现状态**：✅ **完成**（远超计划的架构完善度）
 
-```java
-public class BongNetworkHandler {
-    // Handler 注册表
-    private static final Map<String, BiConsumer<MinecraftClient, JsonObject>> HANDLERS = Map.of(
-        "narration",   NarrationHandler::handle,
-        "zone_info",   ZoneInfoHandler::handle,
-        "event_alert", EventAlertHandler::handle,
-        "welcome",     WelcomeHandler::handle
-    );
+**实现细节**：
 
-    public static void register() {
-        ClientPlayNetworking.registerGlobalReceiver(
-            new Identifier("bong", "server_data"),
-            (client, handler, buf, sender) -> {
-                String json = buf.readString(32767);
-                try {
-                    JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
-                    String type = obj.has("type") ? obj.get("type").getAsString() : "unknown";
-                    BiConsumer<MinecraftClient, JsonObject> h = HANDLERS.get(type);
-                    if (h != null) {
-                        client.execute(() -> h.accept(client, obj));
-                    }
-                } catch (Exception e) {
-                    // ignore malformed
-                }
-            }
-        );
-    }
-}
-```
+- ✅ `ServerDataRouter` — 类型安全的路由器（`Map<String, ServerDataHandler>`）
+  - 已注册类型：`welcome`, `heartbeat`, `narration`, `zone_info`, `event_alert`, `player_state`, `ui_open`
+- ✅ `ServerDataEnvelope` — JSON 解析 + type 提取 + payload 隔离
+- ✅ `ServerDataDispatch` — 路由结果封装（含 chatMessages / toastSpec / narrationState / visualEffect / uiOpenState）
+- ✅ `RouteResult` — 统一的成功/解析错误/无处理器 三状态
+- ✅ 每个 Handler 返回结构化的 `ServerDataDispatch`，由上层统一执行副作用
+- ✅ 未知 payload type 安全忽略 + 日志
+- ✅ Handler 异常被安全捕获，不会崩溃客户端
 
-每种消息类型一个 Handler 类，职责清晰。
+**超出计划**：增加了 `event_alert`（M2 事件警报）和 `player_state`（M3 玩家状态同步）handler
 
 ---
 
-## M3 — 修仙体验
+## M3 — 修仙体验 [✓]
 
-### C6. 修仙 UI 面板（owo-ui）
+### C6. 修仙 UI 面板（owo-ui）[✓]
 
 **目标**：按键打开修仙面板，显示境界、真元池、karma 等。
 
-**新增**：`ui/CultivationScreen.java`
+**实现状态**：✅ **完成**
 
-**触发**：按 `K` 键打开（KeyBinding 注册）
+**实现细节**：
 
-**面板内容**：
-
-```
-┌─────────────────────────────────┐
-│         修 仙 面 板              │
-├─────────────────────────────────┤
-│  境界: 练气三层                  │
-│                                  │
-│  真元: ████████░░ 78/100         │
-│                                  │
-│  因果 (karma): +0.20             │
-│  [═══════●════] 善 ←→ 恶        │
-│                                  │
-│  综合实力: 0.35                  │
-│  ├ 战斗: 0.20                   │
-│  ├ 财富: 0.40                   │
-│  ├ 社交: 0.65                   │
-│  └ 领地: 0.10                   │
-│                                  │
-│  当前区域: 青云峰                │
-│  灵气浓度: ████████░░            │
-└─────────────────────────────────┘
-```
-
-**数据来源**：Server 通过 CustomPayload 定期（每 5 秒）发送 `{ type: "player_state", realm: "qi_refining_3", spirit_qi: 78, ... }`
-
-**owo-ui 实现**：
-```java
-// 使用 owo-ui 的 FlowLayout
-public class CultivationScreen extends BaseOwoScreen<FlowLayout> {
-    @Override
-    protected OwoUIAdapter<FlowLayout> createAdapter() {
-        return OwoUIAdapter.create(this, Containers::verticalFlow);
-    }
-
-    @Override
-    protected void build(FlowLayout root) {
-        root.child(Components.label(Text.literal("境界: " + realm)));
-        root.child(buildQiBar());
-        root.child(buildKarmaSlider());
-        root.child(buildPowerBreakdown());
-    }
-}
-```
+- ✅ `CultivationScreen` — owo-ui BaseOwoScreen + FlowLayout
+- ✅ K 键绑定（`BongClient.registerCultivationKeybinding`）
+- ✅ 面板内容（全部从 `PlayerStateViewModel` 数据驱动）：
+  - 境界名称
+  - 真元条：`████████░░ 78/100`
+  - 因果 (karma)：`+0.20`
+  - 善恶刻度：`[═══════●════] 善 ←→ 恶`
+  - 综合实力 + 四维细分（战斗/财富/社交/领地）
+  - 当前区域 + 灵气浓度条 + 百分比
+- ✅ 空数据时显示 placeholder："当前尚未同步修仙数据"
+- ✅ `PlayerStateViewModel` — 纯粹的展示 ViewModel（从 `PlayerStateHandler` 解析 server payload）
+- ✅ `PlayerStateStore` — 玩家状态缓存
 
 ---
 
-### C7. 动态 UI 下发（可选/远期）
+### C7. 动态 UI 下发 [✓]
 
 **目标**：Server 可以下发 UI 布局 XML，Client 动态渲染。
 
-**实现**（tech-audit.md 已验证可行）：
+**实现状态**：✅ **完成**（比计划更安全）
 
-```java
-// Server 发: { type: "ui_open", xml: "<flow-layout ...>...</flow-layout>" }
+**实现细节**：
 
-// Client 收到后:
-InputStream is = new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8));
-UIModel model = UIModel.load(is);
-OwoUIAdapter<?> adapter = model.createAdapter(FlowLayout.class, screen);
-screen.uiAdapter = adapter;
-```
+- ✅ `UiOpenHandler` — 支持两种模式：
+  1. **Template 模式** (`template_id`)：从 `UiOpenScreens` 预注册表查找，安全打开
+  2. **Dynamic XML 模式** (`xml`/`xml_layout`)：解析后动态渲染
+- ✅ `DynamicXmlScreen` — 使用 owo-ui `UIModel.load()` 渲染
+- ✅ feature flag 独立控制：`ENABLE_XML_TEMPLATE_MODE` = true, `ENABLE_DYNAMIC_XML_UI` = false（默认关闭）
 
-**安全**：
-- XML 解析需配置 XXE 防护
-- 预注册允许的 UI 组件白名单
-- 限制 XML 大小（< 10KB）
-
----
-
-## 文件规划总览
-
-```
-client/src/main/java/com/bong/client/
-├── BongClient.java                # Mod 入口
-├── network/
-│   ├── BongNetworkHandler.java    # CustomPayload 路由器 (C5)
-│   ├── NarrationHandler.java      # 天道叙事处理 (C1)
-│   ├── ZoneInfoHandler.java       # 区域信息处理 (C4)
-│   ├── EventAlertHandler.java     # 事件警报处理 (M2)
-│   └── WelcomeHandler.java        # 欢迎消息
-├── hud/
-│   ├── BongHud.java               # 总 HUD 渲染入口
-│   ├── BongToast.java             # 居中 Toast 提示 (C2)
-│   └── BongZoneHud.java           # 区域信息 HUD (C4)
-├── visual/
-│   └── SkyEffects.java            # 天象视觉（Mixin, M2+）
-└── ui/
-    └── CultivationScreen.java     # 修仙面板 (C6, M3)
-```
+**安全措施**（远超计划要求）：
+- ✅ XML 大小限制：**512 bytes / 384 characters**（比计划的 10KB 严格得多）
+- ✅ XXE 防护：禁用 DOCTYPE/ENTITY/external entities/external DTD
+- ✅ `XMLConstants.FEATURE_SECURE_PROCESSING` 启用
+- ✅ **白名单组件**：仅允许 `flow-layout` 和 `label`（不允许任何属性）
+- ✅ **结构验证**：必须 `<owo-ui><components>` 根结构，单根组件
+- ✅ 递归 validateComponentTree 验证每个子节点
 
 ---
 
-## 开发顺序建议
+## 超出计划的新增部分
+
+### EventAlertHandler（计划外，M2 级）
+
+- ✅ 接收 `event_alert` payload（title/message/severity/duration_ms/effect）
+- ✅ Severity 三级：INFO (蓝 3.5s) / WARNING (橙 5s) / CRITICAL (红 6.5s)
+- ✅ 自动从 `event` 字段派生 title（下划线转首字母大写）
+- ✅ 可携带 `effect` hint（字符串或对象），驱动 VisualEffectController
+- ✅ 产出 toast + visual effect
+
+### HUD 编排层（计划外）
+
+- ✅ `BongHudOrchestrator` — 统一 HUD 渲染编排（Toast / Zone / Visual 三层）
+- ✅ `HudRenderCommand` — 数据驱动渲染指令（text/toast 两种类型）
+- ✅ `HudRenderLayer` 枚举控制渲染优先级
+- ✅ `HudTextHelper` — 文本裁剪到最大像素宽度 + alpha 计算
+- ✅ `BongHudStateStore` / `BongHudStateSnapshot` — 线程安全状态管理
+
+---
+
+## 开发历程总结
 
 ```
-M1 顺序：
-  C1 Narration 渲染（核心，先做）
-  C2 Toast 提示（简单增强，可并行）
-  C3 天象视觉（可选，M1 先跳过也可）
+✅ M1 天道闭环 — 完全实现
+   C1 Narration 聊天渲染（MC Formatting API，非原始颜色码）
+   C2 Toast 提示（NarrationState 驱动 + EventAlert 驱动）
+   C3 天象视觉（SCREEN_SHAKE / FOG_TINT / TITLE_FLASH，纯 HUD overlay）
 
-M2 顺序：
-  C5 Payload 路由器（先重构，后续都依赖）
-  C4 区域 HUD（依赖 C5 + Server 的 zone_info 下发）
+✅ M2 有意义的世界 — 完全实现
+   C4 区域 HUD（居中大字淡出 + 常驻灵气条/危险等级）
+   C5 CustomPayload 路由器（ServerDataRouter + 7 种类型 handler）
 
-M3 顺序：
-  C6 修仙 UI 面板（依赖 Server 的 player_state 下发）
-  C7 动态 UI（远期，可选）
+✅ M3 修仙体验 — 完全实现
+   C6 修仙 UI 面板（owo-ui CultivationScreen，K 键打开）
+   C7 动态 UI 下发（template + guarded XML 双模式，严格安全校验）
+
+额外完成：
+   EventAlertHandler（severity 三级 + visual effect hint）
+   HUD 编排层（BongHudOrchestrator + 数据驱动渲染指令）
+   Feature flags（BongClientFeatures：toasts / visual / xml / debug）
+   完整状态层（state/ 包：Narration / Zone / VisualEffect / PlayerState / UiOpen）
 ```
+
+**数字**：38 个 Java 源文件 + 21 个测试类 + 103 个 test case 全部通过
 
 ---
 
@@ -411,6 +287,6 @@ sdk use java 17.0.18-amzn
 |------|------|------|
 | Fabric Loader | 0.16.10 | Mod 加载 |
 | Fabric API | 0.92.3+1.20.1 | Networking, Rendering |
-| owo-lib | 0.11.2+1.20 | UI 框架 (M3) |
+| owo-lib | 0.11.2+1.20 | UI 框架 |
 | Minecraft | 1.20.1 | 基座 |
 | Yarn Mappings | 1.20.1+build.10 | 反编译映射 |

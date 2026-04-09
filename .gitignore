@@ -10,6 +10,18 @@ client/run/
 client/.idea/
 client/*.iml
 
+# Worldgen server runtime (generated, cached, too large for git)
+worldgen/server/*.jar
+worldgen/server/libraries/
+worldgen/server/versions/
+worldgen/server/.fabric/
+worldgen/server/generated-data/
+worldgen/server/logs/
+worldgen/server/crash-reports/
+worldgen/server/config/
+worldgen/server/mofa-world/
+worldgen/.venv/
+
 # IDE
 .idea/
 .vscode/
@@ -34,6 +46,11 @@ world/
 # Node.js (Agent)
 node_modules/
 dist/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
 
 # Env
 .env
