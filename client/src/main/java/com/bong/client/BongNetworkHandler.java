@@ -1,0 +1,201 @@
+package com.bong.client;
+
+import com.bong.client.hud.BongHudStateSnapshot;
+import com.bong.client.hud.BongHudStateStore;
+import com.bong.client.hud.BongToast;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerDataRouter;
+import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.UiOpenState;
+import com.bong.client.state.VisualEffectState;
+import com.bong.client.state.ZoneState;
+import com.bong.client.ui.UiOpenScreens;
+import com.bong.client.visual.VisualEffectController;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
+
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+public class BongNetworkHandler {
+    private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
+    private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
+    private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
+    private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
+
+    public static void register() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            ServerDataRouter.RouteResult result = ROUTER.route(jsonPayload, readableBytes);
+
+            if (result.isParseError()) {
+                BongClient.LOGGER.error("Failed to parse bong:server_data payload: {}", result.logMessage());
+                return;
+            }
+
+            ServerDataDispatch dispatch = result.dispatch();
+            if (dispatch == null) {
+                BongClient.LOGGER.warn("Ignoring bong:server_data payload without dispatch result");
+                return;
+            }
+
+            if (result.isNoOp()) {
+                logNoOp(result);
+                return;
+            }
+
+            BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
+            if (!dispatch.chatMessages().isEmpty()
+                || dispatch.narrationState().isPresent()
+                || dispatch.toastNarrationState().isPresent()
+                || dispatch.legacyMessage().isPresent()
+                || dispatch.playerStateViewModel().isPresent()
+                || dispatch.zoneState().isPresent()
+                || dispatch.visualEffectState().isPresent()
+                || dispatch.alertToast().isPresent()
+                || dispatch.uiOpenState().isPresent()) {
+                client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
+            }
+        });
+    }
+
+    private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
+        dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
+        dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
+        dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
+        dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);
+        dispatch.visualEffectState().ifPresent(visualEffectState ->
+            replaceVisualEffectState(visualEffectState, System.currentTimeMillis())
+        );
+        dispatch.alertToast().ifPresent(alertToast -> BongToast.show(
+            alertToast.text(),
+            alertToast.color(),
+            System.currentTimeMillis(),
+            alertToast.durationMillis()
+        ));
+        dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
+
+        if (client.player == null) {
+            return;
+        }
+
+        for (Text chatMessage : dispatch.chatMessages()) {
+            client.player.sendMessage(chatMessage, false);
+        }
+
+        dispatch.legacyMessage().ifPresent(message ->
+            client.player.sendMessage(Text.literal("[Bong] " + envelopeType + ": " + message), false)
+        );
+    }
+
+    private static void applyUiOpen(net.minecraft.client.MinecraftClient client, UiOpenState uiOpenState, String envelopeType) {
+        net.minecraft.client.gui.screen.Screen screen = UiOpenScreens.createScreen(uiOpenState);
+        if (screen == null) {
+            BongClient.LOGGER.warn(
+                "Ignoring {} ui_open dispatch for screen '{}' because no client screen could be created",
+                envelopeType,
+                uiOpenState.screenId()
+            );
+            return;
+        }
+
+        client.setScreen(screen);
+    }
+
+    private static void replaceNarrationState(NarrationState narrationState) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            currentSnapshot.zoneState(),
+            narrationState,
+            currentSnapshot.visualEffectState()
+        ));
+    }
+
+    private static void replaceZoneState(ZoneState zoneState) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            zoneState,
+            currentSnapshot.narrationState(),
+            currentSnapshot.visualEffectState()
+        ));
+    }
+
+    private static void replaceVisualEffectState(VisualEffectState visualEffectState, long nowMillis) {
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        VisualEffectState nextVisualEffectState = VisualEffectController.acceptIncoming(
+            currentSnapshot.visualEffectState(),
+            visualEffectState,
+            nowMillis,
+            BongClientFeatures.ENABLE_VISUAL_EFFECTS
+        );
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
+            currentSnapshot.zoneState(),
+            currentSnapshot.narrationState(),
+            nextVisualEffectState
+        ));
+    }
+
+    private static void logNoOp(ServerDataRouter.RouteResult result) {
+        String payloadType = result.envelope() != null ? result.envelope().type() : "unknown";
+        if (shouldLogNoOp(payloadType)) {
+            BongClient.LOGGER.warn("Ignoring bong:server_data payload: {}", result.logMessage());
+        }
+    }
+
+    static boolean shouldLogNoOp(String payloadType) {
+        return shouldLogNoOp(payloadType, System.currentTimeMillis());
+    }
+
+    static boolean shouldLogNoOp(String payloadType, long nowMillis) {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            pruneExpiredUnknownTypeLogTimes(nowMillis);
+
+            Long previous = UNKNOWN_TYPE_LOG_TIMES.put(payloadType, nowMillis);
+            trimUnknownTypeLogTimes();
+            return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
+        }
+    }
+
+    static void resetUnknownTypeLogTimesForTests() {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            UNKNOWN_TYPE_LOG_TIMES.clear();
+        }
+    }
+
+    static int unknownTypeLogCacheSizeForTests() {
+        synchronized (UNKNOWN_TYPE_LOG_TIMES) {
+            return UNKNOWN_TYPE_LOG_TIMES.size();
+        }
+    }
+
+    static int unknownTypeLogCacheLimitForTests() {
+        return UNKNOWN_TYPE_LOG_CACHE_LIMIT;
+    }
+
+    private static void pruneExpiredUnknownTypeLogTimes(long nowMillis) {
+        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+            if (nowMillis - entry.getValue() >= UNKNOWN_LOG_THROTTLE_MS) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private static void trimUnknownTypeLogTimes() {
+        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
+        while (UNKNOWN_TYPE_LOG_TIMES.size() > UNKNOWN_TYPE_LOG_CACHE_LIMIT && iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
+        }
+    }
+
+}

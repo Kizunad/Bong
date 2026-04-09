@@ -3,7 +3,7 @@
   "id": "bong-client",
   "version": "${version}",
   "name": "Bong Client",
-  "description": "Bong MVP Client",
+  "description": "Bong MVP Client bootstrap skeleton",
   "authors": [
     "OhMyOpenCode"
   ],

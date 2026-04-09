@@ -1,4 +1,4 @@
 {
-  "key.bong.open_cultivation": "Open Cultivation Panel",
-  "key.categories.bong": "Bong Client"
+  "category.bong-client.controls": "Bong Controls",
+  "key.bong-client.open_cultivation_screen": "Open Cultivation Screen"
 }
