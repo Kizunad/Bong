@@ -1,3 +1,5 @@
+name: mofa-library
+
 services:
   library:
     build:
@@ -10,6 +12,24 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+
+  refresh-api:
+    build:
+      context: .
+      dockerfile: refresh-api/Dockerfile
+    environment:
+      REFRESH_TOKEN: ${REFRESH_TOKEN}
+      PROJECT_ROOT: /workspace/app
+      COMPOSE_FILE: /workspace/app/docker-compose.yml
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-mofa-library}
+    volumes:
+      - ./:/workspace/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8080"
+    restart: unless-stopped
+    depends_on:
+      - library
 
   cloudflared:
     image: cloudflare/cloudflared:latest
