@@ -67,6 +67,7 @@
           "maxItems": 1,
           "type": "array",
           "items": {
+            "additionalProperties": false,
             "type": "object",
             "required": [
               "scope",
