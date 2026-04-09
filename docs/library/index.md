@@ -23,4 +23,4 @@
 | 地理志 | 1 | 0/5 | [进入](./geography/index.md) |
 | 众生谱 | 0 | — | [进入](./peoples/index.md) |
 | 生态录 | 1 | 0/4 | [进入](./ecology/index.md) |
-| 修行藏 | 1 | 0/4 | [进入](./cultivation/index.md) |
+| 修行藏 | 2 | 0/8 | [进入](./cultivation/index.md) |
