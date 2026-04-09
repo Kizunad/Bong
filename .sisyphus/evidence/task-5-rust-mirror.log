@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src/main.rs (target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 14 tests
+test schema::chat_message::tests::deserialize_chat_message_sample ... ok
+test schema::client_payload::tests::deserialize_client_payload_type_literals ... ok
+test schema::agent_command::tests::deserialize_agent_command_sample ... ok
+test schema::client_payload::tests::deserialize_heartbeat_sample ... ok
+test schema::client_payload::tests::deserialize_event_alert_sample ... ok
+test schema::agent_command::tests::roundtrip_agent_command ... ok
+test schema::client_payload::tests::deserialize_narration_sample ... ok
+test schema::client_payload::tests::deserialize_player_state_sample ... ok
+test schema::client_payload::tests::deserialize_welcome_sample ... ok
+test schema::client_payload::tests::deserialize_zone_info_sample ... ok
+test schema::narration::tests::deserialize_narration_sample ... ok
+test schema::world_state::tests::deserialize_world_state_sample ... ok
+test schema::client_payload::tests::roundtrip_all_client_payload_samples ... ok
+test schema::world_state::tests::roundtrip_world_state ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+

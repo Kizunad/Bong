@@ -1,0 +1,23 @@
+=== cargo test world::tests::selects_fallback_without_region_dir -- --nocapture ===
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.02s
+     Running unittests src/main.rs (target/debug/deps/bong_server-6c0041934713f9ac)
+=== timeout 15s cargo run ===
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.55s
+     Running `target/debug/bong-server`
+EXIT_CODE=124
+=== cargo test world::tests::selects_fallback_without_region_dir -- --nocapture ===
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.35s
+     Running unittests src/main.rs (target/debug/deps/bong_server-6c0041934713f9ac)
+EXIT_CODE=0
+=== cargo test ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (target/debug/deps/bong_server-6c0041934713f9ac)
+EXIT_CODE=0
+=== timeout 15s cargo run ===
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.75s
+     Running `target/debug/bong-server`
+EXIT_CODE=124

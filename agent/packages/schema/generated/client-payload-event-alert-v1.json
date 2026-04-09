@@ -1,0 +1,80 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "event_alert"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "event_alert",
+      "type": "string"
+    },
+    "event_alert": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "detail",
+        "severity"
+      ],
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "const": "thunder_tribulation",
+              "type": "string"
+            },
+            {
+              "const": "beast_tide",
+              "type": "string"
+            },
+            {
+              "const": "realm_collapse",
+              "type": "string"
+            },
+            {
+              "const": "karma_backlash",
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "minLength": 1,
+          "maxLength": 80,
+          "type": "string"
+        },
+        "detail": {
+          "minLength": 1,
+          "maxLength": 900,
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "info",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ]
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        }
+      }
+    }
+  }
+}

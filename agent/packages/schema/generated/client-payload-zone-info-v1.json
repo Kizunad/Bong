@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "zone_info"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "zone_info",
+      "type": "string"
+    },
+    "zone_info": {
+      "type": "object",
+      "required": [
+        "zone",
+        "spirit_qi",
+        "danger_level"
+      ],
+      "properties": {
+        "zone": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "spirit_qi": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "danger_level": {
+          "minimum": 0,
+          "maximum": 5,
+          "type": "integer"
+        },
+        "active_events": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 64,
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

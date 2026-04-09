@@ -1,0 +1,48 @@
+Task 11 verification evidence
+
+Worktree: /workspace/worktrees/tiandao-fullstack-closure
+Date: 2026-04-07
+
+Verified commands
+1. cd agent/packages/tiandao && npm test -- redis-ipc runtime
+   Result: PASS
+   Summary:
+   - tests/redis-ipc.test.ts passed (6 tests)
+   - tests/runtime.test.ts passed (2 tests)
+   - Test Files: 2 passed
+   - Tests: 8 passed
+
+2. cd agent/packages/tiandao && npm run check
+   Result: PASS
+
+3. cd agent/packages/tiandao && npm run build
+   Result: PASS
+
+4. cd agent/packages/tiandao && env -u LLM_BASE_URL -u LLM_API_KEY npm run start:mock
+   Result: PASS
+   Relevant output markers:
+   - [tiandao] mode: mock (single-tick)
+   - [tiandao] === tick start ===
+   - [tiandao][arbiter] merged commands: 0, narrations: 0
+   - [tiandao][tick-metrics] {
+       duration_ms: 3,
+       command_count: 0,
+       narration_count: 0,
+       chat_signal_count: 0,
+       skipped: false,
+       skipped_by_backoff: 0
+     }
+   - [tiandao] mock tick complete: deterministic
+
+5. cd agent/packages/tiandao && npm test
+   Result: PASS
+   Summary:
+   - Test Files: 11 passed
+   - Tests: 41 passed
+
+Accepted Task 11 scope
+- world_state ingress validation stays enforced
+- outbound AgentCommandV1 / NarrationV1 publish validation stays enforced
+- LLM timeout / repeated-failure backoff stays enforced
+- tick metrics logging is present in main loop
+- Redis lifecycle logging now covers ready / close / reconnecting / error events for sub and pub clients

@@ -1,0 +1,78 @@
+{
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "narrations"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "narration",
+      "type": "string"
+    },
+    "narrations": {
+      "minItems": 1,
+      "maxItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope",
+          "text",
+          "style"
+        ],
+        "properties": {
+          "scope": {
+            "anyOf": [
+              {
+                "const": "broadcast",
+                "type": "string"
+              },
+              {
+                "const": "zone",
+                "type": "string"
+              },
+              {
+                "const": "player",
+                "type": "string"
+              }
+            ]
+          },
+          "target": {
+            "description": "zone name or player uuid, required when scope != broadcast",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "style": {
+            "anyOf": [
+              {
+                "const": "system_warning",
+                "type": "string"
+              },
+              {
+                "const": "perception",
+                "type": "string"
+              },
+              {
+                "const": "narration",
+                "type": "string"
+              },
+              {
+                "const": "era_decree",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

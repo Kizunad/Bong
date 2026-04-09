@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "zone_info",
+  "zone_info": {
+    "zone": "blood_valley",
+    "spirit_qi": 0.42,
+    "danger_level": 3,
+    "active_events": [
+      "beast_tide_warning"
+    ]
+  }
+}

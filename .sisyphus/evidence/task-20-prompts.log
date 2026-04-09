@@ -1,0 +1,91 @@
+
+> @bong/tiandao@0.1.0 test
+> vitest run prompts narration era
+
+
+ RUN  v3.2.4 /workspace/worktrees/tiandao-fullstack-closure/agent/packages/tiandao
+
+stdout | tests/prompts-narration-era.test.ts > Tiandao prompts narration era coverage > allows era_decree narration to survive parse and reach downstream world model assertions
+[tiandao] === tick start ===
+[tiandao] tick: 84000, players: 3, zones: 3
+[tiandao][calamity] thinking...
+[tiandao][mutation] thinking...
+[tiandao][era] thinking...
+[tiandao][calamity] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：赤霄纪已至，皆因诸域强弱久失其衡，今朝赤云压野、灵脉微灼；若众修仍竞逐杀伐，下一轮诸方火性异变将更炽，宜早作收敛。","style":"era_decree"}],"reasoning":"deterministic era decree"}
+
+[tiandao][mutation] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：赤霄纪已至，皆因诸域强弱久失其衡，今朝赤云压野、灵脉微灼；若众修仍竞逐杀伐，下一轮诸方火性异变将更炽，宜早作收敛。","style":"era_decree"}],"reasoning":"deterministic era decree"}
+
+[tiandao][era] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：赤霄纪已至，皆因诸域强弱久失其衡，今朝赤云压野、灵脉微灼；若众修仍竞逐杀伐，下一轮诸方火性异变将更炽，宜早作收敛。","style":"era_decree"}],"reasoning":"deterministic era decree"}
+
+
+stdout | tests/prompts-narration-era.test.ts > Tiandao prompts narration era coverage > allows era_decree narration to survive parse and reach downstream world model assertions
+[tiandao][calamity] commands: 0, narrations: 1
+[tiandao][calamity] reasoning: deterministic era decree
+[tiandao][mutation] commands: 0, narrations: 1
+[tiandao][mutation] reasoning: deterministic era decree
+[tiandao][era] commands: 0, narrations: 1
+[tiandao][era] reasoning: deterministic era decree
+[tiandao][era] current era updated {
+  name: [32m'赤霄纪'[39m,
+  sinceTick: [33m84000[39m,
+  globalEffect: [32m'天道昭告 赤霄纪已至，皆因诸域强弱久失其衡，今朝赤云压野、灵脉微灼；若众修仍竞逐杀伐，下一轮诸方火性异变将更炽，宜早作收敛。'[39m
+}
+[tiandao][arbiter] merged commands: 0, narrations: 3
+[tiandao][tick-metrics] {
+  duration_ms: [33m6[39m,
+  command_count: [33m0[39m,
+  narration_count: [33m3[39m,
+  chat_signal_count: [33m0[39m,
+  skipped: [33mfalse[39m,
+  skipped_by_backoff: [33m0[39m
+}
+[tiandao] === tick end === commands: 0, narrations: 3
+
+
+ ✓ tests/prompts-narration-era.test.ts (5 tests) 14ms
+stdout | tests/era-key-player.test.ts > era + key-player focused coverage > updates retained currentEra from era agent output deterministically
+[tiandao] === tick start ===
+[tiandao] tick: 84000, players: 3, zones: 3
+[tiandao][calamity] thinking...
+[tiandao][mutation] thinking...
+[tiandao][era] thinking...
+[tiandao][calamity] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：灵潮纪已至，诸域灵机渐盛。","style":"era_decree"}],"reasoning":"Era declaration for deterministic test"}
+
+[tiandao][mutation] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：灵潮纪已至，诸域灵机渐盛。","style":"era_decree"}],"reasoning":"Era declaration for deterministic test"}
+
+[tiandao][era] response:
+{"commands":[],"narrations":[{"scope":"broadcast","text":"天道昭告：灵潮纪已至，诸域灵机渐盛。","style":"era_decree"}],"reasoning":"Era declaration for deterministic test"}
+
+
+stdout | tests/era-key-player.test.ts > era + key-player focused coverage > updates retained currentEra from era agent output deterministically
+[tiandao][calamity] commands: 0, narrations: 1
+[tiandao][calamity] reasoning: Era declaration for deterministic test
+[tiandao][mutation] commands: 0, narrations: 1
+[tiandao][mutation] reasoning: Era declaration for deterministic test
+[tiandao][era] commands: 0, narrations: 1
+[tiandao][era] reasoning: Era declaration for deterministic test
+[tiandao][era] current era updated { name: [32m'灵潮纪'[39m, sinceTick: [33m84000[39m, globalEffect: [32m'天道昭告 灵潮纪已至，诸域灵机渐盛。'[39m }
+[tiandao][arbiter] merged commands: 0, narrations: 3
+[tiandao][tick-metrics] {
+  duration_ms: [33m3[39m,
+  command_count: [33m0[39m,
+  narration_count: [33m3[39m,
+  chat_signal_count: [33m0[39m,
+  skipped: [33mfalse[39m,
+  skipped_by_backoff: [33m0[39m
+}
+[tiandao] === tick end === commands: 0, narrations: 3
+
+
+ ✓ tests/era-key-player.test.ts (3 tests) 9ms
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  06:42:31
+   Duration  791ms (transform 177ms, setup 0ms, collect 469ms, tests 23ms, environment 0ms, prepare 257ms)
+

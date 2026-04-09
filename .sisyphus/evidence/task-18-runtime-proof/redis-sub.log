@@ -1,0 +1,6 @@
+subscribe
+bong:world_state
+1
+message
+bong:world_state
+{"v":1,"ts":1775562656,"tick":200,"players":[{"uuid":"offline:1392832f-d07c-439a-a1be-189d0f6eb6bc","name":"T180","realm":"mortal","composite_power":0.1,"breakdown":{"combat":0.1,"wealth":0.1,"social":0.1,"karma":0.0,"territory":0.0},"trend":"stable","active_hours":0.0,"zone":"spawn","pos":[8.0,66.0,8.0],"recent_kills":0,"recent_deaths":0}],"npcs":[],"zones":[{"name":"spawn","spirit_qi":0.9,"danger_level":0,"active_events":[],"player_count":1}],"recent_events":[]}

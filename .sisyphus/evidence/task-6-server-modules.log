@@ -1,0 +1,92 @@
+
+running 1 test
+test world::tests::fallback_spawn_zone_exists ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+running 1 test
+test player::tests::spawn_defaults_are_preserved ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+=== git status --short ===
+ M server/src/network/mod.rs
+?? server/src/player/
+
+=== git diff --stat -- server/src/main.rs server/src/world server/src/player server/src/network/mod.rs ===
+ server/src/network/mod.rs | 133 +++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 95 insertions(+), 38 deletions(-)
+
+=== rerun cargo test fallback_spawn_zone_exists -- --nocapture ===
+
+=== rerun cargo test spawn_defaults_are_preserved -- --nocapture ===
+
+=== rerun cargo test world::tests::missing_zone_config_uses_spawn_fallback -- --nocapture ===
+
+=== rerun cargo test world_state_zone_data_comes_from_registry -- --nocapture ===
+
+=== rerun cargo test ===
+
+=== rerun cargo build ===
+
+running 1 test
+test world::tests::fallback_spawn_zone_exists ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+running 1 test
+test player::tests::spawn_defaults_are_preserved ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+running 1 test
+test world::tests::missing_zone_config_uses_spawn_fallback ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+running 31 tests
+test network::agent_bridge::tests::payload_schema_v1_is_valid_utf8_json ... ok
+test network::tests::world_state_zone_data_comes_from_registry ... ok
+test network::agent_bridge::tests::payload_schema_rejects_oversize_messages ... ok
+test npc::brain::tests::flee_action_clamps_to_platform_bounds ... ok
+test npc::brain::tests::flee_action_handles_zero_vector ... ok
+test network::tests::bridge_drain_is_non_blocking ... ok
+test player::tests::spawn_defaults_are_preserved ... ok
+test schema::agent_command::tests::deserialize_agent_command_sample ... ok
+test schema::chat_message::tests::deserialize_chat_message_sample ... ok
+test schema::client_payload::tests::deserialize_client_payload_type_literals ... ok
+test schema::agent_command::tests::roundtrip_agent_command ... ok
+test schema::client_payload::tests::deserialize_heartbeat_sample ... ok
+test schema::client_payload::tests::deserialize_event_alert_sample ... ok
+test schema::client_payload::tests::deserialize_narration_sample ... ok
+test schema::client_payload::tests::deserialize_player_state_sample ... ok
+test schema::client_payload::tests::deserialize_welcome_sample ... ok
+test schema::client_payload::tests::deserialize_zone_info_sample ... ok
+test world::tests::missing_zone_config_uses_spawn_fallback ... ok
+test world::tests::fallback_spawn_zone_exists ... ok
+test schema::narration::tests::deserialize_narration_sample ... ok
+test world::zone::tests::fallback_has_single_zone ... ok
+test world::zone::tests::find_zone_returns_spawn_for_spawn_position ... ok
+test world::zone::tests::missing_zone_config_returns_spawn_fallback ... ok
+test npc::brain::tests::player_proximity_scorer_thresholds ... ok
+test schema::client_payload::tests::roundtrip_all_client_payload_samples ... ok
+test schema::world_state::tests::deserialize_world_state_sample ... ok
+test schema::world_state::tests::roundtrip_world_state ... ok
+test npc::brain::tests::bridge_less_no_player_behavior ... ok
+test npc::sync::tests::position_to_transform_sync_is_one_way ... ok
+test npc::brain::tests::flee_action_completes_above_sixteen_blocks ... ok
+test npc::spawn::tests::spawn_npc_creates_single_zombie_with_expected_components ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test network::tests::world_state_zone_data_comes_from_registry ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+

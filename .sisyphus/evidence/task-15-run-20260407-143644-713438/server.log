@@ -1,0 +1,54 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running `/tmp/bong-target/debug/bong-server`
+[2m2026-04-07T06:36:47.170958Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-07T06:36:47.431715Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-07T06:36:47.431824Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-07T06:36:47.431870Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-07T06:36:47.431879Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-07T06:36:47.431927Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-07T06:36:47.431955Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-07T06:36:47.433428Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-07T06:36:47.434285Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-07T06:36:47.436749Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-07T06:36:47.436768Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-07T06:36:47.436777Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-07T06:36:47.480862Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-07T06:36:47.481232Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+[2m2026-04-07T06:37:07.693278Z[0m [32m INFO[0m [bong][redis] received agent command: cmd_1775543827692 (5 cmds)
+[2m2026-04-07T06:37:07.693365Z[0m [32m INFO[0m [bong][redis] received agent command: cmd_1775543827692 (5 cmds)
+[2m2026-04-07T06:37:07.693613Z[0m [32m INFO[0m [bong][redis] received narration (3 entries)
+[2m2026-04-07T06:37:07.693675Z[0m [32m INFO[0m [bong][redis] received narration (3 entries)
+[2m2026-04-07T06:37:07.728582Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775543827692: 5 commands from None
+[2m2026-04-07T06:37:07.728625Z[0m [32m INFO[0m [bong][network]   cmd: ModifyZone → spawn params={"spirit_qi_delta": Number(0), "danger_level_delta": Number(3)}
+[2m2026-04-07T06:37:07.728639Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728654Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728663Z[0m [32m INFO[0m [bong][network]   cmd: SpawnEvent → spawn params={"duration_ticks": Number(120), "event": String("thunder_tribulation"), "intensity": Number(0.7)}
+[2m2026-04-07T06:37:07.728673Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728710Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 5)
+[2m2026-04-07T06:37:07.728719Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775543827692: 5 commands from None
+[2m2026-04-07T06:37:07.728726Z[0m [32m INFO[0m [bong][network]   cmd: ModifyZone → spawn params={"danger_level_delta": Number(3), "spirit_qi_delta": Number(0)}
+[2m2026-04-07T06:37:07.728735Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728744Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728752Z[0m [32m INFO[0m [bong][network]   cmd: SpawnEvent → spawn params={"duration_ticks": Number(120), "event": String("thunder_tribulation"), "intensity": Number(0.7)}
+[2m2026-04-07T06:37:07.728771Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:37:07.728789Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 10)
+[2m2026-04-07T06:37:07.728815Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728831Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728845Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728861Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728875Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728890Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-07T06:37:07.728935Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775543827692 spirit_qi=0.9 danger_level=3
+[2m2026-04-07T06:37:07.728957Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:07.728966Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:07.728980Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775543827692 duration_ticks=120 intensity=0.7
+[2m2026-04-07T06:37:07.728992Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:07.778666Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775543827692 spirit_qi=0.9 danger_level=5
+[2m2026-04-07T06:37:07.778715Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:07.778729Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:07.778747Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775543827692 duration_ticks=120 intensity=0.7
+[2m2026-04-07T06:37:07.778761Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775543827692
+[2m2026-04-07T06:37:18.012263Z[0m [33m WARN[0m [bong][redis] subscriber task ended, stopping bridge
