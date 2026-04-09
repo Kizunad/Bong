@@ -7,6 +7,7 @@ const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 const PROJECT_ROOT = process.env.PROJECT_ROOT || "/workspace/app";
 const COMPOSE_FILE = process.env.COMPOSE_FILE || `${PROJECT_ROOT}/docker-compose.yml`;
 const COMPOSE_PROJECT_NAME = process.env.COMPOSE_PROJECT_NAME || "mofa-library";
+const REFRESH_TIMEOUT_MS = Number(process.env.REFRESH_TIMEOUT_MS || 300_000); // 5 min
 
 let refreshInFlight = false;
 
@@ -20,12 +21,9 @@ function json(res, statusCode, payload) {
 }
 
 function timingSafeEqualString(a, b) {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) {
-    return false;
-  }
-  return crypto.timingSafeEqual(aBuf, bBuf);
+  const aHash = crypto.createHash("sha256").update(a).digest();
+  const bHash = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(aHash, bHash);
 }
 
 function isAuthorized(req) {
@@ -34,11 +32,10 @@ function isAuthorized(req) {
   if (!header || !header.startsWith("Bearer ")) return false;
   const provided = header.slice("Bearer ".length).trim();
   if (!provided) return false;
-  if (provided.length !== REFRESH_TOKEN.length) return false;
   return timingSafeEqualString(provided, REFRESH_TOKEN);
 }
 
-function runCommand(args) {
+function runCommand(args, timeoutMs = REFRESH_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, {
       cwd: PROJECT_ROOT,
@@ -48,6 +45,13 @@ function runCommand(args) {
 
     let stdout = "";
     let stderr = "";
+    let killed = false;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 5_000);
+    }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -57,8 +61,18 @@ function runCommand(args) {
       stderr += chunk.toString();
     });
 
-    child.on("error", reject);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
     child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) {
+        const error = new Error(`docker ${args.join(" ")} timed out after ${timeoutMs}ms`);
+        error.stdout = stdout;
+        error.stderr = stderr;
+        return reject(error);
+      }
       if (code === 0) {
         resolve({ stdout, stderr });
         return;
@@ -73,7 +87,7 @@ function runCommand(args) {
 
 async function refreshLibrary() {
   const commonArgs = ["compose", "-f", COMPOSE_FILE, "-p", COMPOSE_PROJECT_NAME];
-  await runCommand([...commonArgs, "up", "-d", "--build", "--force-recreate", "--no-deps", "library"]);
+  return runCommand([...commonArgs, "up", "-d", "--build", "--force-recreate", "--no-deps", "library"]);
 }
 
 const server = http.createServer(async (req, res) => {

@@ -6,7 +6,6 @@ import halls from "../lib/halls.json";
 
 const books = await getCollection("books");
 
-// 按分馆分组
 const hallOrder = ["cultivation", "geography", "peoples", "ecology", "world"];
 const grouped: Record<string, typeof books> = {};
 for (const slug of hallOrder) {
@@ -15,60 +14,53 @@ for (const slug of hallOrder) {
 ---
 
 <Base title="总目">
-  <!-- 馆题 -->
-  <header class="text-center mb-12 animate-fade-in">
-    <h1 class="font-song text-4xl font-black text-cinnabar mb-3">
-      末法残土图书馆
-    </h1>
-    <p class="font-kai text-lg text-ink-light">
+  <header class="text-center mb-20 ink-reveal">
+    <h1 class="lib-title text-5xl mb-5 ink-brush">末法残土图书馆</h1>
+    <p class="lib-subtitle font-kai text-base leading-relaxed">
       天地灵气将尽，唯文字不灭。此间所录，皆残土之真。
     </p>
-    <div class="mt-4 flex justify-center gap-6 text-sm text-ink-light">
-      <span>馆藏 <strong class="text-cinnabar">{books.length}</strong> 册</span>
-      <span>分馆 <strong class="text-gold">{hallOrder.length}</strong> 座</span>
+    <div class="lib-stats mt-6 flex justify-center gap-5">
+      <span>馆藏 <strong class="ct">{books.length}</strong> 册</span>
+      <span style="opacity:0.2">·</span>
+      <span>分馆 <strong class="gd">{hallOrder.length}</strong> 座</span>
     </div>
   </header>
 
-  <!-- 分馆列表 -->
   {
     hallOrder.map(
-      (slug, i) =>
+      (slug) =>
         grouped[slug] &&
         grouped[slug].length > 0 && (
-          <section
-            class="mb-12 animate-fade-in"
-            style={`animation-delay: ${i * 0.1}s`}
-          >
-            {/* 分馆标题 */}
-            <div class="flex items-baseline gap-4 mb-6">
-              <h2 class="font-song text-2xl font-bold text-cinnabar">
-                {(halls as any)[slug]?.name || slug}
-              </h2>
-              <span class="text-sm text-ink-light font-kai">
-                {(halls as any)[slug]?.desc || ""}
-              </span>
-              <span class="ml-auto text-sm text-gold-dim">
-                {grouped[slug].length} 册
-              </span>
-            </div>
+          <section class="hall-section ink-reveal">
+            <button
+              class="hall-toggle"
+              data-hall={slug}
+              aria-expanded="false"
+            >
+              <span class="hall-name">{(halls as any)[slug]?.name || slug}</span>
+              <span class="hall-line" />
+              <span class="hall-desc font-kai">{(halls as any)[slug]?.desc || ""}</span>
+              <span class="hall-count font-kai">{grouped[slug].length} 册</span>
+              <span class="hall-arrow">›</span>
+            </button>
 
-            {/* 书架 */}
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {grouped[slug].map((book) => (
-                <BookCard book={book} />
-              ))}
+            <div class="hall-body" data-hall-body={slug}>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4">
+                {grouped[slug].map((book) => (
+                  <BookCard book={book} />
+                ))}
+              </div>
             </div>
           </section>
         )
     )
   }
 
-  <!-- 空馆提示 -->
   {
     books.length === 0 && (
-      <div class="text-center py-20">
-        <p class="font-kai text-xl text-ink-light">馆中尚无藏书。</p>
-        <p class="text-sm text-ink-light opacity-50 mt-2">
+      <div class="text-center py-24 ink-reveal">
+        <p class="font-kai text-lg" style="color:#8a7e70">馆中尚无藏书。</p>
+        <p class="text-sm mt-3" style="color:#a09486;opacity:0.5">
           运行 npm run fetch 从仓库拉取馆藏。
         </p>
       </div>

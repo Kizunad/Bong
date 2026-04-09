@@ -17,45 +17,27 @@ const d = book.data;
 ---
 
 <Base title={d.title}>
-  <article class="animate-fade-in max-w-3xl mx-auto">
-    <!-- 返回 -->
-    <a
-      href="/"
-      class="inline-block mb-8 text-sm text-ink-light hover:text-cinnabar transition-colors font-kai"
-    >
+  <article class="max-w-3xl mx-auto">
+    <a href="/" class="back-link inline-block mb-12 font-kai ink-reveal">
       ← 返回总目
     </a>
 
-    <!-- 书名 -->
-    <header class="mb-10 text-center">
-      <h1 class="font-song text-3xl font-black text-ink mb-4">
-        《{d.title}》
-      </h1>
-      {
-        d.quote && (
-          <p class="font-kai text-ink-light italic text-lg leading-relaxed max-w-xl mx-auto">
-            "{d.quote}"
-          </p>
-        )
-      }
+    <header class="mb-14 ink-reveal">
+      <h1 class="article-title mb-6 ink-brush">《{d.title}》</h1>
+      {d.quote && <p class="article-quote font-kai">"{d.quote}"</p>}
     </header>
 
-    <!-- 编目信息条 -->
-    <CatalogBadge data={d} />
+    <div class="ink-reveal">
+      <CatalogBadge data={d} />
+    </div>
 
-    <!-- 正文 -->
-    <div class="book-content mt-12">
+    <div class="book-content mt-16">
       <Content />
     </div>
 
-    <!-- 底部回到顶部 -->
-    <div class="mt-20 text-center">
-      <a
-        href="#"
-        class="inline-block text-sm text-gold-dim hover:text-gold transition-colors font-kai"
-      >
-        ▲ 回到卷首
-      </a>
+    <div class="mt-28 text-center ink-reveal">
+      <div class="colophon mb-8">卷 终</div>
+      <a href="#" class="back-link font-kai">▲ 回到卷首</a>
     </div>
   </article>
 </Base>

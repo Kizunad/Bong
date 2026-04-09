@@ -10,8 +10,11 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "astro": "^4.16.18",
     "@astrojs/tailwind": "^5.1.4",
+    "@fontsource/lxgw-wenkai": "^5.2.5",
+    "@fontsource/noto-serif-sc": "^5.2.9",
+    "@fontsource/zhi-mang-xing": "^5.2.8",
+    "astro": "^4.16.18",
     "tailwindcss": "^3.4.17"
   }
 }

@@ -1,4 +1,14 @@
 ---
+import "@fontsource/lxgw-wenkai/300.css";
+import "@fontsource/lxgw-wenkai/index.css";
+import "@fontsource/lxgw-wenkai/700.css";
+import "@fontsource/noto-serif-sc/400.css";
+import "@fontsource/noto-serif-sc/700.css";
+import "@fontsource/noto-serif-sc/900.css";
+import "@fontsource/zhi-mang-xing/chinese-simplified.css";
+import "../styles/global.css";
+import { ViewTransitions } from "astro:transitions";
+
 interface Props {
   title: string;
   description?: string;
@@ -16,46 +26,121 @@ const { title, description = "末法残土图书馆 — 骨币会贬，记载不
     <meta name="description" content={description} />
     <title>{title} — 末法残土图书馆</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <ViewTransitions />
   </head>
-  <body class="min-h-screen text-ink">
-    <!-- 顶部装饰：双线 -->
-    <div class="pt-3 pb-1 max-w-5xl mx-auto px-6">
-      <div class="h-px bg-gradient-to-r from-transparent via-cinnabar/50 to-transparent"></div>
-      <div class="h-px mt-1 bg-gradient-to-r from-transparent via-gold/30 to-transparent"></div>
-    </div>
+  <body class="min-h-screen">
+    <canvas id="dust-canvas"></canvas>
 
     <!-- 导航 -->
-    <nav class="max-w-5xl mx-auto px-8 py-5 flex items-center justify-between">
-      <a href="/" class="group flex items-center gap-3 no-underline">
-        <span class="font-song text-2xl font-bold text-cinnabar group-hover:text-cinnabar-light transition-colors tracking-wider">
-          末法残土图书馆
-        </span>
-      </a>
-      <span class="text-sm text-ink-light font-kai opacity-60 tracking-wide">
-        骨币会贬，记载不朽
-      </span>
+    <nav class="site-nav">
+      <a href="/" class="font-shufa" style="font-size:1.1rem">末法残土图书馆</a>
+      <span class="tagline hidden sm:inline">骨币会贬，记载不朽</span>
     </nav>
 
-    <div class="scroll-top"></div>
-
-    <!-- 正文区域 — 书页 -->
-    <main class="max-w-5xl mx-auto px-10 py-12">
+    <!-- 纸面 -->
+    <main class="page page-reveal">
+      <!-- 烛光层 -->
+      <div class="page-glow" id="page-glow"></div>
       <slot />
     </main>
 
-    <div class="scroll-bottom"></div>
-
     <!-- 页脚 -->
-    <footer class="max-w-5xl mx-auto px-8 py-10 text-center">
-      <p class="text-sm text-ink-light opacity-40 font-kai tracking-wider">
-        凡可立卷者，皆应先入馆藏，再论买卖与实现。
-      </p>
+    <footer class="site-footer font-kai">
+      凡可立卷者，皆应先入馆藏，再论买卖与实现。
     </footer>
 
-    <!-- 底部装饰：双线 -->
-    <div class="pb-3 pt-1 max-w-5xl mx-auto px-6">
-      <div class="h-px bg-gradient-to-r from-transparent via-gold/30 to-transparent"></div>
-      <div class="h-px mt-1 bg-gradient-to-r from-transparent via-cinnabar/40 to-transparent"></div>
-    </div>
+    <script is:inline>
+      function initPage() {
+        // 纸面烛光
+        var page = document.querySelector(".page");
+        var glow = document.getElementById("page-glow");
+        if (page && glow) {
+          page.addEventListener("mousemove", function(e) {
+            var rect = page.getBoundingClientRect();
+            glow.style.setProperty("--px", (e.clientX - rect.left) + "px");
+            glow.style.setProperty("--py", (e.clientY - rect.top) + "px");
+          });
+        }
+
+        // 墨迹显现
+        var revealObs = new IntersectionObserver(
+          function(es) { es.forEach(function(e) { if (e.isIntersecting) e.target.classList.add("visible"); }); },
+          { threshold: 0, rootMargin: "0px 0px -20px 0px" }
+        );
+        document.querySelectorAll(".ink-reveal").forEach(function(el) { revealObs.observe(el); });
+
+        // 详情页段落逐段浮现
+        var content = document.querySelector(".book-content");
+        if (content) {
+          content.classList.add("animated");
+          var contentObs = new IntersectionObserver(
+            function(es) { es.forEach(function(e) {
+              if (e.isIntersecting) { e.target.classList.add("shown"); contentObs.unobserve(e.target); }
+            }); },
+            { threshold: 0.1, rootMargin: "0px 0px -30px 0px" }
+          );
+          Array.from(content.children).forEach(function(el) { contentObs.observe(el); });
+        }
+
+        // 分馆折叠
+        document.querySelectorAll(".hall-toggle").forEach(function(btn) {
+          // 避免重复绑定
+          if (btn.dataset.bound) return;
+          btn.dataset.bound = "1";
+          btn.addEventListener("click", function() {
+            var hall = btn.dataset.hall;
+            var body = document.querySelector('[data-hall-body="' + hall + '"]');
+            if (!body) return;
+            var expanded = btn.getAttribute("aria-expanded") === "true";
+            btn.setAttribute("aria-expanded", String(!expanded));
+            body.classList.toggle("open", !expanded);
+          });
+        });
+      }
+
+      // 微光跟随
+      if (!window.__mouseInit) {
+        window.__mouseInit = true;
+        document.addEventListener("mousemove", function(e) {
+          document.body.style.setProperty("--mx", e.clientX + "px");
+          document.body.style.setProperty("--my", e.clientY + "px");
+        });
+      }
+
+      // 浮尘
+      if (!window.__dustInit) {
+        window.__dustInit = true;
+        var c = document.getElementById("dust-canvas");
+        if (c) {
+          var ctx = c.getContext("2d");
+          var w = c.width = innerWidth;
+          var h = c.height = innerHeight;
+          addEventListener("resize", function() { w = c.width = innerWidth; h = c.height = innerHeight; });
+          var ps = [];
+          function mk() {
+            return { x:Math.random()*w, y:Math.random()*h, vx:(Math.random()-0.5)*0.2, vy:-Math.random()*0.15-0.03, s:Math.random()*1.2+0.3, a:0, l:0, ml:Math.random()*500+250 };
+          }
+          for (var i=0;i<30;i++) { var p=mk(); p.l=Math.random()*p.ml; ps.push(p); }
+          (function loop() {
+            ctx.clearRect(0,0,w,h);
+            for (var i=0;i<ps.length;i++) {
+              var p=ps[i]; p.l++; p.x+=p.vx; p.y+=p.vy;
+              var r=p.l/p.ml;
+              p.a = r<0.2 ? r/0.2 : r>0.8 ? (1-r)/0.2 : 1;
+              p.a *= 0.4;
+              if (p.l>=p.ml||p.y<-10||p.x<-10||p.x>w+10) { ps[i]=mk(); continue; }
+              ctx.beginPath(); ctx.arc(p.x,p.y,p.s,0,Math.PI*2);
+              ctx.fillStyle = "rgba(180,165,130," + p.a + ")";
+              ctx.fill();
+            }
+            requestAnimationFrame(loop);
+          })();
+        }
+      }
+
+      // 首次 + View Transitions
+      initPage();
+      document.addEventListener("astro:page-load", initPage);
+    </script>
   </body>
 </html>

@@ -28,26 +28,22 @@ const fields = [
 ].filter((f) => f.value);
 ---
 
-<div
-  class="rounded-lg border border-gold/25 bg-gradient-to-r from-parchment-dark/30 to-transparent p-5"
->
-  <h4 class="font-song text-sm font-bold text-gold-dim mb-3 tracking-wider">
-    编目信息
-  </h4>
-  <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+<div class="catalog-badge">
+  <div class="badge-title">编目信息</div>
+  <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2">
     {
       fields.map((f) => (
         <div>
-          <span class="text-ink-light text-xs">{f.label}</span>
-          <p
+          <div class="field-label">{f.label}</div>
+          <div
             class:list={[
-              "font-kai",
+              "field-value font-kai",
               f.label === "稀有度" && `rarity-${f.value}`,
               f.label === "状态" && f.value === "在架" && "text-jade",
             ]}
           >
             {f.value}
-          </p>
+          </div>
         </div>
       ))
     }
