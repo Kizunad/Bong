@@ -22,10 +22,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class BongNetworkHandler {
+    public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
+
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
     private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
+
+    public static ParseResult parseServerPayload(String jsonPayload) {
+        return BongServerPayloadParser.parse(jsonPayload);
+    }
 
     public static void register() {
         ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
@@ -178,6 +184,26 @@ public class BongNetworkHandler {
 
     static int unknownTypeLogCacheLimitForTests() {
         return UNKNOWN_TYPE_LOG_CACHE_LIMIT;
+    }
+
+    public static final class ParseResult {
+        public final boolean success;
+        public final BongServerPayload payload;
+        public final String errorMessage;
+
+        private ParseResult(boolean success, BongServerPayload payload, String errorMessage) {
+            this.success = success;
+            this.payload = payload;
+            this.errorMessage = errorMessage;
+        }
+
+        static ParseResult success(BongServerPayload payload) {
+            return new ParseResult(true, payload, null);
+        }
+
+        static ParseResult error(String errorMessage) {
+            return new ParseResult(false, null, errorMessage);
+        }
     }
 
     private static void pruneExpiredUnknownTypeLogTimes(long nowMillis) {
