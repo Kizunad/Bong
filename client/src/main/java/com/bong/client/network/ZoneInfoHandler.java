@@ -6,9 +6,12 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.function.LongSupplier;
 
 public final class ZoneInfoHandler implements ServerDataHandler {
+    private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
+
     private final LongSupplier nowMillisSupplier;
 
     public ZoneInfoHandler() {
@@ -74,7 +77,13 @@ public final class ZoneInfoHandler implements ServerDataHandler {
         if (primitive == null || !primitive.isNumber()) {
             return null;
         }
-        return primitive.getAsInt();
+
+        String rawValue = primitive.getAsString();
+        if (!INTEGER_TOKEN_PATTERN.matcher(rawValue).matches()) {
+            return null;
+        }
+
+        return Integer.parseInt(rawValue);
     }
 
     private static JsonPrimitive readPrimitive(JsonObject object, String fieldName) {

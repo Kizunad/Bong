@@ -45,6 +45,17 @@ public class ZoneInfoHandlerTest {
         assertTrue(dispatch.logMessage().contains("required fields"));
     }
 
+    @Test
+    void fractionalDangerLevelBecomesSafeNoOp() {
+        ServerDataDispatch dispatch = new ZoneInfoHandler(() -> 1L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"zone_info\",\"zone\":\"blood_valley\",\"spirit_qi\":0.75,\"danger_level\":3.9}"
+        ));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.zoneState().isEmpty());
+        assertTrue(dispatch.logMessage().contains("required fields"));
+    }
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertTrue(parseResult.isSuccess(), () -> "Expected payload to parse successfully but got: " + parseResult.errorMessage());
