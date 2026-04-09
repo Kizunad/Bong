@@ -1,0 +1,28 @@
+
+> @bong/tiandao@0.1.0 start:mock
+> tsx src/main.ts --mock
+
+[tiandao] model: gpt-5.4-mini, base_url: (mock/no-remote)
+[tiandao] mode: mock (single-tick)
+[tiandao] === tick start ===
+[tiandao] tick: 84000, players: 3, zones: 3
+[tiandao][calamity] thinking...
+[tiandao][mutation] thinking...
+[tiandao][era] thinking...
+[tiandao][calamity] response:
+{"commands":[],"narrations":[],"reasoning":"mock response"}
+
+[tiandao][mutation] response:
+{"commands":[],"narrations":[],"reasoning":"mock response"}
+
+[tiandao][era] response:
+{"commands":[],"narrations":[],"reasoning":"mock response"}
+
+[tiandao][calamity] commands: 0, narrations: 0
+[tiandao][calamity] reasoning: mock response
+[tiandao][mutation] commands: 0, narrations: 0
+[tiandao][mutation] reasoning: mock response
+[tiandao][era] commands: 0, narrations: 0
+[tiandao][era] reasoning: mock response
+[tiandao] === tick end === commands: 0, narrations: 0
+

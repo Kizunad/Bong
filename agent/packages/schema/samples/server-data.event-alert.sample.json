@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "event_alert",
+  "event": "thunder_tribulation",
+  "message": "天劫将至，请于三十息内离开血谷中央。",
+  "zone": "blood_valley",
+  "duration_ticks": 600
+}

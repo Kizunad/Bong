@@ -7,8 +7,9 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorldStateV1 } from "@bong/schema";
-import { type ContextRecipe, assembleContext } from "./context.js";
-import type { LlmClient, LlmMessage } from "./llm.js";
+import type { ChatSignal } from "@bong/schema";
+import { type ContextRecipe, assembleContext, createContextInput } from "./context.js";
+import type { LlmClient } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
 import type { WorldModel } from "./world-model.js";
 
@@ -19,7 +20,6 @@ export interface AgentConfig {
   skillFile: string; // relative to skills/
   recipe: ContextRecipe;
   intervalMs: number;
-  now?: () => number;
 }
 
 export class TiandaoAgent {
@@ -28,17 +28,25 @@ export class TiandaoAgent {
   private recipe: ContextRecipe;
   private lastRunTs = 0;
   readonly intervalMs: number;
-  private readonly now: () => number;
+  private latestChatSignals: ChatSignal[] = [];
+  private worldModel?: WorldModel;
 
   constructor(config: AgentConfig) {
     this.name = config.name;
     this.recipe = config.recipe;
     this.intervalMs = config.intervalMs;
-    this.now = config.now ?? (() => Date.now());
     this.systemPrompt = readFileSync(
       resolve(__dirname, "skills", config.skillFile),
       "utf-8",
     );
+  }
+
+  setChatSignals(signals: ChatSignal[]): void {
+    this.latestChatSignals = signals;
+  }
+
+  setWorldModel(worldModel: WorldModel): void {
+    this.worldModel = worldModel;
   }
 
   shouldRun(now: number): boolean {
@@ -49,33 +57,31 @@ export class TiandaoAgent {
     client: LlmClient,
     model: string,
     state: WorldStateV1,
-    worldModel?: WorldModel,
   ): Promise<AgentDecision | null> {
-    const now = this.now();
+    const now = Date.now();
     if (!this.shouldRun(now)) return null;
 
     this.lastRunTs = now;
 
-    const context = assembleContext(this.recipe, state, { worldModel });
+    const nowSeconds = Math.floor(now / 1000);
+    const context = assembleContext(
+      this.recipe,
+      createContextInput(state, this.latestChatSignals, nowSeconds, {
+        agentName: this.name,
+        worldModel: this.worldModel,
+      }),
+    );
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;
 
     console.log(`[tiandao][${this.name}] thinking...`);
 
-    const messages: LlmMessage[] = [
+    const raw = await client.chat([
       { role: "system", content: this.systemPrompt },
       { role: "user", content: userPrompt },
-    ];
-
-    const raw = await client.chat(model, messages);
+    ], model);
 
     console.log(`[tiandao][${this.name}] response:\n${raw}\n`);
 
-    const decision = parseDecision(raw);
-    decision.commands.forEach((cmd) => {
-      // Tag source for arbiter
-      (cmd as Record<string, unknown>)._source = this.name;
-    });
-
-    return decision;
+    return parseDecision(raw);
   }
 }

@@ -1,24 +1,23 @@
-pub mod progression;
+pub mod gameplay;
 pub mod state;
 
 use self::state::{
-    load_or_init_player_state, save_player_state, PlayerState, PlayerStateAutosaveTimer,
+    load_player_state, save_player_state, PlayerState, PlayerStateAutosaveTimer,
     PlayerStatePersistence, PLAYER_STATE_AUTOSAVE_INTERVAL_TICKS,
 };
 use valence::message::SendMessage;
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EntityLayerId, GameMode, Position, Query,
-    RemovedComponents, Res, ResMut, UniqueId, Update, VisibleChunkLayer, VisibleEntityLayers,
+    Added, App, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId, GameMode,
+    IntoSystemConfigs, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
+    VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
-use crate::world::{ActiveWorldLayer, ZoneRegistry};
-
+const SPAWN_POSITION: [f64; 3] = [8.0, 66.0, 8.0];
 const WELCOME_MESSAGE: &str = "Welcome to Bong! You spawned in the test world.";
 
 type ClientInitQueryItem<'a> = (
     Entity,
     &'a mut Client,
-    &'a UniqueId,
     &'a mut EntityLayerId,
     &'a mut VisibleChunkLayer,
     &'a mut VisibleEntityLayers,
@@ -26,34 +25,46 @@ type ClientInitQueryItem<'a> = (
     &'a mut GameMode,
 );
 
+type JoinedClientsWithoutStateQueryItem<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
+
 pub fn register(app: &mut App) {
-    tracing::info!("[bong][player] registering player init systems");
+    tracing::info!("[bong][player] registering player init/cleanup systems");
     app.insert_resource(PlayerStatePersistence::default());
     app.insert_resource(PlayerStateAutosaveTimer::default());
+    gameplay::register(app);
     app.add_systems(
         Update,
         (
             init_clients,
+            attach_player_state_to_joined_clients.after(init_clients),
             autosave_player_states,
-            persist_disconnected_player_states,
+            despawn_disconnected_clients,
         ),
     );
 }
 
+pub fn spawn_position() -> [f64; 3] {
+    SPAWN_POSITION
+}
+
+pub fn welcome_message() -> &'static str {
+    WELCOME_MESSAGE
+}
+
+pub fn initial_game_mode() -> GameMode {
+    GameMode::Adventure
+}
+
 fn init_clients(
-    mut commands: Commands,
     mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
-    active_world_layer: Res<ActiveWorldLayer>,
-    zone_registry: Res<ZoneRegistry>,
-    persistence: Res<PlayerStatePersistence>,
+    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
 ) {
-    let layer = active_world_layer.0;
-    let spawn_position = resolve_spawn_position(zone_registry.as_ref());
+    let layer = layers.single();
 
     for (
         entity,
         mut client,
-        unique_id,
         mut layer_id,
         mut visible_chunk_layer,
         mut visible_entity_layers,
@@ -61,22 +72,20 @@ fn init_clients(
         mut game_mode,
     ) in &mut clients
     {
-        let player_uuid = unique_id.0;
-        let player_state = load_or_init_player_state(persistence.as_ref(), player_uuid);
-        let loaded_realm = player_state.realm.clone();
+        apply_spawn_defaults(
+            layer,
+            &mut layer_id,
+            &mut visible_chunk_layer,
+            &mut visible_entity_layers,
+            &mut position,
+            &mut game_mode,
+        );
 
-        layer_id.0 = layer;
-        visible_chunk_layer.0 = layer;
-        visible_entity_layers.0.insert(layer);
-        position.set(spawn_position);
-        *game_mode = default_game_mode();
+        client.send_chat_message(welcome_message());
 
-        client.send_chat_message(WELCOME_MESSAGE);
-
-        commands.entity(entity).insert(player_state);
-
+        let spawn_position = spawn_position();
         tracing::info!(
-            "[bong][player] initialized client entity {entity:?} at [{}, {}, {}] in Adventure with state realm={loaded_realm}",
+            "[bong][player] initialized client entity {entity:?} at [{}, {}, {}] in Adventure",
             spawn_position[0],
             spawn_position[1],
             spawn_position[2]
@@ -84,10 +93,79 @@ fn init_clients(
     }
 }
 
+pub(crate) fn attach_player_state_to_joined_clients(
+    mut commands: Commands,
+    persistence: Res<PlayerStatePersistence>,
+    joined_clients: Query<
+        JoinedClientsWithoutStateQueryItem<'_>,
+        JoinedClientsWithoutStateQueryFilter,
+    >,
+) {
+    for (entity, username) in &joined_clients {
+        let player_state = load_player_state(&persistence, username.0.as_str());
+        let realm = player_state.realm.clone();
+        let composite_power = player_state.composite_power();
+
+        commands.entity(entity).insert(player_state);
+        tracing::info!(
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3})",
+            username.0,
+            realm,
+        );
+    }
+}
+
+fn apply_spawn_defaults(
+    layer: Entity,
+    layer_id: &mut EntityLayerId,
+    visible_chunk_layer: &mut VisibleChunkLayer,
+    visible_entity_layers: &mut VisibleEntityLayers,
+    position: &mut Position,
+    game_mode: &mut GameMode,
+) {
+    layer_id.0 = layer;
+    visible_chunk_layer.0 = layer;
+    visible_entity_layers.0.insert(layer);
+    position.set(spawn_position());
+    *game_mode = initial_game_mode();
+}
+
+fn despawn_disconnected_clients(
+    mut commands: Commands,
+    persistence: Res<PlayerStatePersistence>,
+    mut disconnected_clients: RemovedComponents<Client>,
+    persisted_players: Query<(&Username, &PlayerState)>,
+) {
+    for entity in disconnected_clients.read() {
+        if let Ok((username, player_state)) = persisted_players.get(entity) {
+            match save_player_state(&persistence, username.0.as_str(), player_state) {
+                Ok(path) => tracing::info!(
+                    "[bong][player] saved PlayerState for disconnected client `{}` to {} before cleanup",
+                    username.0,
+                    path.display()
+                ),
+                Err(error) => tracing::warn!(
+                    "[bong][player] failed to save PlayerState for disconnected client `{}`: {error}",
+                    username.0,
+                ),
+            }
+        } else {
+            tracing::warn!(
+                "[bong][player] disconnected client entity {entity:?} had no username/PlayerState to persist before cleanup"
+            );
+        }
+
+        tracing::info!("[bong][player] cleaning up disconnected client entity {entity:?}");
+        if let Some(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn();
+        }
+    }
+}
+
 fn autosave_player_states(
     persistence: Res<PlayerStatePersistence>,
     mut timer: ResMut<PlayerStateAutosaveTimer>,
-    players: Query<(&UniqueId, &PlayerState), valence::prelude::With<Client>>,
+    players: Query<(&Username, &PlayerState), With<Client>>,
 ) {
     timer.ticks += 1;
     if !timer
@@ -98,12 +176,13 @@ fn autosave_player_states(
     }
 
     let mut saved_count = 0usize;
-    for (unique_id, player_state) in &players {
-        match save_player_state(persistence.as_ref(), unique_id.0, player_state) {
+
+    for (username, player_state) in &players {
+        match save_player_state(&persistence, username.0.as_str(), player_state) {
             Ok(_) => saved_count += 1,
             Err(error) => tracing::warn!(
-                "[bong][player] autosave failed for {}: {error}",
-                unique_id.0
+                "[bong][player] autosave failed for `{}`: {error}",
+                username.0,
             ),
         }
     }
@@ -113,80 +192,40 @@ fn autosave_player_states(
     );
 }
 
-pub fn save_player_state_on_disconnect(
-    persistence: &PlayerStatePersistence,
-    entity: Entity,
-    players: &Query<(&UniqueId, &PlayerState)>,
-) {
-    let Ok((unique_id, player_state)) = players.get(entity) else {
-        tracing::warn!(
-            "[bong][player] disconnected client entity {entity:?} had no Client/PlayerState to persist"
-        );
-        return;
-    };
-
-    match save_player_state(persistence, unique_id.0, player_state) {
-        Ok(path) => tracing::info!(
-            "[bong][player] saved PlayerState for disconnected client {} to {}",
-            unique_id.0,
-            path.display()
-        ),
-        Err(error) => tracing::warn!(
-            "[bong][player] failed to save PlayerState for disconnected client {}: {error}",
-            unique_id.0
-        ),
-    }
-}
-
-fn persist_disconnected_player_states(
-    persistence: Res<PlayerStatePersistence>,
-    mut disconnected_clients: RemovedComponents<Client>,
-    players: Query<(&UniqueId, &PlayerState)>,
-) {
-    for entity in disconnected_clients.read() {
-        save_player_state_on_disconnect(persistence.as_ref(), entity, &players);
-    }
-}
-
-fn resolve_spawn_position(zone_registry: &ZoneRegistry) -> [f64; 3] {
-    zone_registry.default_zone().spawn_position
-}
-
-fn default_game_mode() -> GameMode {
-    GameMode::Adventure
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::{App, DVec3};
 
     #[test]
     fn spawn_defaults_are_preserved() {
-        let registry = ZoneRegistry::fallback();
+        let mut app = App::new();
+        let initial_layer = app.world_mut().spawn_empty().id();
+        let spawn_layer = app.world_mut().spawn_empty().id();
+        let mut layer_id = EntityLayerId(initial_layer);
+        let mut visible_chunk_layer = VisibleChunkLayer(initial_layer);
+        let mut visible_entity_layers = VisibleEntityLayers::default();
+        let mut position = Position::new([0.0, 0.0, 0.0]);
+        let mut game_mode = GameMode::Survival;
 
-        assert_eq!(
-            resolve_spawn_position(&registry),
-            crate::world::DEFAULT_SPAWN_POSITION
+        visible_entity_layers.0.insert(initial_layer);
+
+        apply_spawn_defaults(
+            spawn_layer,
+            &mut layer_id,
+            &mut visible_chunk_layer,
+            &mut visible_entity_layers,
+            &mut position,
+            &mut game_mode,
         );
-        assert_eq!(default_game_mode(), GameMode::Adventure);
-        assert_eq!(
-            WELCOME_MESSAGE,
-            "Welcome to Bong! You spawned in the test world."
-        );
-        assert_eq!(
-            registry.default_zone().name,
-            crate::world::DEFAULT_SPAWN_ZONE
-        );
-    }
 
-    #[test]
-    fn uses_bootstrap_selected_world_layer_resource() {
-        let layer = Entity::from_raw(77);
-
-        assert_eq!(resolve_active_world_layer(ActiveWorldLayer(layer)), layer);
-    }
-
-    fn resolve_active_world_layer(active_world_layer: ActiveWorldLayer) -> Entity {
-        active_world_layer.0
+        assert_eq!(spawn_position(), [8.0, 66.0, 8.0]);
+        assert_eq!(position.get(), DVec3::new(8.0, 66.0, 8.0));
+        assert_eq!(initial_game_mode(), GameMode::Adventure);
+        assert_eq!(game_mode, GameMode::Adventure);
+        assert_eq!(welcome_message(), WELCOME_MESSAGE);
+        assert_eq!(layer_id.0, spawn_layer);
+        assert_eq!(visible_chunk_layer.0, spawn_layer);
+        assert!(visible_entity_layers.0.contains(&spawn_layer));
     }
 }

@@ -3,312 +3,490 @@ import {
   INTENSITY_MIN,
   MAX_COMMANDS_PER_TICK,
   NEWBIE_POWER_THRESHOLD,
-  type Command,
-  type Narration,
-  type WorldStateV1,
 } from "@bong/schema";
+import type { Command, Narration, WorldStateV1 } from "@bong/schema";
 import type { AgentDecision } from "./parse.js";
+import type { CurrentEra } from "./world-model.js";
+
+const MAX_NARRATIONS_PER_TICK = 10;
+const SPIRIT_QI_CONSERVATION_EPSILON = 0.01;
+const GLOBAL_ERA_TARGETS = new Set(["all_zones", "all", "global", "全局"]);
 
 const SOURCE_PRIORITY: Record<string, number> = {
-  calamity: 0,
-  mutation: 1,
-  era: 2,
+  calamity: 1,
+  mutation: 2,
+  era: 3,
 };
 
-export const MAX_NARRATIONS_PER_TICK = 10;
-export const NEWBIE_HIGH_INTENSITY_THRESHOLD = 0.5;
-const SPIRIT_QI_REBALANCE_THRESHOLD = 0.01;
-const FLOAT_EPSILON = 1e-9;
-
-type PrivateCommand = Command & {
-  _source?: unknown;
-  source?: unknown;
-};
-
-interface IndexedCommand {
-  index: number;
-  command: PrivateCommand;
-}
-
-interface ZoneSpawnCandidate {
-  index: number;
-  command: PrivateCommand;
-}
-
-interface ZoneModifyAccumulator {
-  index: number;
-  target: string;
-  spirit_qi_delta: number;
-  hasSpiritQiDelta: boolean;
-  danger_level_delta: number;
-  hasDangerLevelDelta: boolean;
+export interface SourcedDecision {
+  source: string;
+  decision: AgentDecision;
 }
 
 export interface MergedResult {
   commands: Command[];
   narrations: Narration[];
+  currentEra: CurrentEra | null;
 }
 
-function getSourcePriority(command: PrivateCommand): number {
-  const source = command._source;
-  if (typeof source !== "string") return -1;
-  return SOURCE_PRIORITY[source] ?? -1;
+interface TaggedCommand {
+  source: string;
+  command: Command;
+  index: number;
+  bypassSpiritQiConservation: boolean;
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+interface FlattenedCommands {
+  commands: TaggedCommand[];
+  currentEra: CurrentEra | null;
 }
 
-function getCommandParams(command: PrivateCommand): Record<string, unknown> {
-  return command.params && typeof command.params === "object"
-    ? (command.params as Record<string, unknown>)
-    : {};
+interface ZoneConflictBucket {
+  zone: string;
+  firstIndex: number;
+  firstCommandType: "spawn_event" | "modify_zone";
+  spawnEvents: TaggedCommand[];
+  modifyZones: TaggedCommand[];
 }
 
-function getSpiritQiDelta(command: PrivateCommand): number {
-  const params = getCommandParams(command);
-  const delta = params.spirit_qi_delta;
-  return isFiniteNumber(delta) ? delta : 0;
-}
-
-function getNewbieZones(state: WorldStateV1): Set<string> {
-  const newbieZones = new Set<string>();
-  for (const player of state.players) {
-    if (player.composite_power < NEWBIE_POWER_THRESHOLD) {
-      newbieZones.add(player.zone);
-    }
-  }
-  return newbieZones;
-}
-
-function getPlayerPowerLookup(state: WorldStateV1): Map<string, number> {
-  const lookup = new Map<string, number>();
-  for (const player of state.players) {
-    lookup.set(player.uuid, player.composite_power);
-    lookup.set(player.name, player.composite_power);
-  }
-  return lookup;
-}
-
-function isHighIntensityNewbieSpawnBlocked(
-  command: PrivateCommand,
-  newbieZones: Set<string>,
-  playerPowerLookup: Map<string, number>,
-): boolean {
-  if (command.type !== "spawn_event") return false;
-
-  const params = getCommandParams(command);
-  const intensity = params.intensity;
-  if (!isFiniteNumber(intensity)) return true;
-
-  if (intensity <= NEWBIE_HIGH_INTENSITY_THRESHOLD) return false;
-
-  const targetPlayer = params.target_player;
-  if (typeof targetPlayer === "string") {
-    const targetPower = playerPowerLookup.get(targetPlayer);
-    if (targetPower !== undefined && targetPower < NEWBIE_POWER_THRESHOLD) {
-      return true;
-    }
-  }
-
-  return newbieZones.has(command.target);
-}
-
-function isLegalZoneCommand(command: PrivateCommand, zones: Set<string>): boolean {
-  if (command.type !== "spawn_event" && command.type !== "modify_zone") {
-    return true;
-  }
-  return zones.has(command.target);
-}
-
-function isLegalSpawnCommand(command: PrivateCommand): boolean {
-  if (command.type !== "spawn_event") return true;
-  const params = getCommandParams(command);
-  const intensity = params.intensity;
-  if (!isFiniteNumber(intensity)) return false;
-  return intensity >= INTENSITY_MIN && intensity <= INTENSITY_MAX;
-}
-
-function cloneAsPublicCommand(command: PrivateCommand): Command {
-  const params = getCommandParams(command);
-  const { _source: _ignoredPrivateSource, ...publicParams } = params;
-  return {
-    type: command.type,
-    target: command.target,
-    params: { ...publicParams },
-  };
-}
-
-function toZoneModifyCommand(item: ZoneModifyAccumulator): PrivateCommand {
-  const params: Record<string, unknown> = {};
-  if (item.hasSpiritQiDelta) {
-    params.spirit_qi_delta = item.spirit_qi_delta;
-  }
-  if (item.hasDangerLevelDelta) {
-    params.danger_level_delta = item.danger_level_delta;
-  }
-  return {
-    type: "modify_zone",
-    target: item.target,
-    params,
-  };
-}
-
-function scaleSpiritQiTowardZero(indexedCommands: IndexedCommand[]): void {
-  const modifyCommands = indexedCommands.filter((item) => item.command.type === "modify_zone");
-  if (modifyCommands.length === 0) return;
-
-  let net = 0;
-  let positiveTotal = 0;
-  let negativeMagnitude = 0;
-
-  for (const item of modifyCommands) {
-    const delta = getSpiritQiDelta(item.command);
-    net += delta;
-    if (delta > 0) positiveTotal += delta;
-    if (delta < 0) negativeMagnitude += Math.abs(delta);
-  }
-
-  if (Math.abs(net) <= SPIRIT_QI_REBALANCE_THRESHOLD + FLOAT_EPSILON) return;
-
-  if (net > 0 && positiveTotal > 0) {
-    const targetPositive = Math.max(0, positiveTotal - net);
-    const factor = targetPositive / positiveTotal;
-    for (const item of modifyCommands) {
-      const params = getCommandParams(item.command);
-      const delta = params.spirit_qi_delta;
-      if (isFiniteNumber(delta) && delta > 0) {
-        params.spirit_qi_delta = delta * factor;
-      }
-    }
-    return;
-  }
-
-  if (net < 0 && negativeMagnitude > 0) {
-    const targetNegativeMagnitude = Math.max(0, negativeMagnitude - Math.abs(net));
-    const factor = targetNegativeMagnitude / negativeMagnitude;
-    for (const item of modifyCommands) {
-      const params = getCommandParams(item.command);
-      const delta = params.spirit_qi_delta;
-      if (isFiniteNumber(delta) && delta < 0) {
-        params.spirit_qi_delta = delta * factor;
-      }
-    }
-  }
+interface OrderedTaggedCommand {
+  order: number;
+  tagged: TaggedCommand;
 }
 
 export class Arbiter {
-  merge(decisions: AgentDecision[], state: WorldStateV1): MergedResult {
-    const allNarrations = decisions.flatMap((decision) => decision.narrations);
-    const narrations = allNarrations.slice(0, MAX_NARRATIONS_PER_TICK);
+  constructor(private readonly state: WorldStateV1) {}
 
-    const knownZones = new Set(state.zones.map((zone) => zone.name));
-    const newbieZones = getNewbieZones(state);
-    const playerPowerLookup = getPlayerPowerLookup(state);
+  merge(decisions: SourcedDecision[]): MergedResult {
+    const flattened = this.flattenCommands(decisions);
+    const narrations = decisions
+      .flatMap(({ decision }) => decision.narrations)
+      .slice(0, MAX_NARRATIONS_PER_TICK);
 
-    const legalCommands: IndexedCommand[] = [];
-    let index = 0;
-
-    for (const decision of decisions) {
-      for (const command of decision.commands as PrivateCommand[]) {
-        if (!isLegalZoneCommand(command, knownZones)) {
-          index += 1;
-          continue;
-        }
-        if (!isLegalSpawnCommand(command)) {
-          index += 1;
-          continue;
-        }
-        if (isHighIntensityNewbieSpawnBlocked(command, newbieZones, playerPowerLookup)) {
-          index += 1;
-          continue;
-        }
-        legalCommands.push({ index, command });
-        index += 1;
-      }
-    }
-
-    const spawnByZone = new Map<string, ZoneSpawnCandidate>();
-    const modifyByZone = new Map<string, ZoneModifyAccumulator>();
-    const passthrough: IndexedCommand[] = [];
-
-    for (const item of legalCommands) {
-      const { command } = item;
-
-      if (command.type === "spawn_event") {
-        const existing = spawnByZone.get(command.target);
-        if (!existing) {
-          spawnByZone.set(command.target, { ...item });
-          continue;
-        }
-
-        const currentPriority = getSourcePriority(command);
-        const existingPriority = getSourcePriority(existing.command);
-        if (currentPriority > existingPriority) {
-          spawnByZone.set(command.target, { ...item });
-        }
-        continue;
-      }
-
-      if (command.type === "modify_zone") {
-        const params = getCommandParams(command);
-        const acc =
-          modifyByZone.get(command.target) ??
-          {
-            index: item.index,
-            target: command.target,
-            spirit_qi_delta: 0,
-            hasSpiritQiDelta: false,
-            danger_level_delta: 0,
-            hasDangerLevelDelta: false,
-          };
-
-        const spiritDelta = params.spirit_qi_delta;
-        if (isFiniteNumber(spiritDelta)) {
-          acc.spirit_qi_delta += spiritDelta;
-          acc.hasSpiritQiDelta = true;
-        }
-
-        const dangerDelta = params.danger_level_delta;
-        if (isFiniteNumber(dangerDelta)) {
-          acc.danger_level_delta += dangerDelta;
-          acc.hasDangerLevelDelta = true;
-        }
-
-        modifyByZone.set(command.target, acc);
-        continue;
-      }
-
-      passthrough.push(item);
-    }
-
-    const merged: IndexedCommand[] = [];
-    for (const candidate of spawnByZone.values()) {
-      merged.push(candidate);
-    }
-    for (const acc of modifyByZone.values()) {
-      if (!acc.hasSpiritQiDelta && !acc.hasDangerLevelDelta) {
-        continue;
-      }
-      merged.push({
-        index: acc.index,
-        command: toZoneModifyCommand(acc),
-      });
-    }
-    for (const item of passthrough) {
-      merged.push(item);
-    }
-
-    merged.sort((a, b) => a.index - b.index);
-    scaleSpiritQiTowardZero(merged);
-
-    const commands = merged
-      .slice(0, MAX_COMMANDS_PER_TICK)
-      .map((item) => cloneAsPublicCommand(item.command));
+    const constrained = flattened.commands.filter((tagged) => this.passesHardConstraints(tagged));
+    const conservedLocals = this.applySpiritQiConservation(
+      this.resolveZoneConflicts(constrained.filter((tagged) => !tagged.bypassSpiritQiConservation)),
+    );
+    const resolved = this.resolveZoneConflicts([
+      ...conservedLocals,
+      ...constrained.filter((tagged) => tagged.bypassSpiritQiConservation),
+    ]);
 
     return {
-      commands,
+      commands: resolved.map((tagged) => tagged.command).slice(0, MAX_COMMANDS_PER_TICK),
       narrations,
+      currentEra: flattened.currentEra,
     };
   }
+
+  private flattenCommands(decisions: SourcedDecision[]): FlattenedCommands {
+    const flattened: TaggedCommand[] = [];
+
+    const pushCommand = (
+      source: string,
+      command: Command,
+      options: { bypassSpiritQiConservation?: boolean } = {},
+    ): void => {
+      flattened.push({
+        source,
+        command: cloneCommand(command),
+        index: flattened.length,
+        bypassSpiritQiConservation: options.bypassSpiritQiConservation ?? false,
+      });
+    };
+
+    let currentEra: CurrentEra | null = null;
+
+    for (const { source, decision } of decisions) {
+      for (const command of decision.commands) {
+        const materialized = this.materializeEraCommand(source, command);
+        if (materialized) {
+          currentEra = materialized.currentEra;
+          for (const eraCommand of materialized.commands) {
+            pushCommand(source, eraCommand, { bypassSpiritQiConservation: true });
+          }
+          continue;
+        }
+
+        pushCommand(source, command);
+      }
+    }
+
+    return {
+      commands: flattened,
+      currentEra,
+    };
+  }
+
+  private passesHardConstraints(tagged: TaggedCommand): boolean {
+    const { command } = tagged;
+    if (isZoneScopedCommand(command) && !this.hasZone(command.target)) {
+      return false;
+    }
+
+    if (command.type === "modify_zone") {
+      return getNumericParam(command.params, "spirit_qi_delta") !== null;
+    }
+
+    if (command.type !== "spawn_event") {
+      return true;
+    }
+
+    const hasIntensity = Object.hasOwn(command.params, "intensity");
+    if (hasIntensity) {
+      const intensity = getNumericParam(command.params, "intensity");
+      if (intensity === null || intensity < INTENSITY_MIN || intensity > INTENSITY_MAX) {
+        return false;
+      }
+    }
+
+    const targetPlayer = getStringParam(command.params, "target_player");
+    if (!targetPlayer) {
+      return true;
+    }
+
+    const playerPower = this.getPlayerPower(targetPlayer);
+    if (playerPower === null) {
+      return true;
+    }
+
+    return playerPower >= NEWBIE_POWER_THRESHOLD;
+  }
+
+  private materializeEraCommand(
+    source: string,
+    command: Command,
+  ): { commands: Command[]; currentEra: CurrentEra } | null {
+    if (source.toLowerCase() !== "era") {
+      return null;
+    }
+
+    if (command.type !== "modify_zone" || !isGlobalEraTarget(command.target)) {
+      return null;
+    }
+
+    const spiritQiDelta = getNumericParam(command.params, "spirit_qi_delta");
+    if (spiritQiDelta === null) {
+      return null;
+    }
+
+    const dangerLevelDelta = getNumericParam(command.params, "danger_level_delta") ?? 0;
+    const eraName =
+      getStringParam(command.params, "era_name") ??
+      getStringParam(command.params, "name") ??
+      "未名时代";
+    const effectDescription =
+      getStringParam(command.params, "global_effect") ??
+      describeEraEffect(spiritQiDelta, dangerLevelDelta);
+
+    return {
+      commands: this.state.zones.map((zone) => ({
+        type: "modify_zone",
+        target: zone.name,
+        params: buildModifyZoneParams(spiritQiDelta, dangerLevelDelta),
+      })),
+      currentEra: {
+        name: eraName,
+        sinceTick: this.state.tick,
+        globalEffect: {
+          description: effectDescription,
+          spiritQiDelta,
+          dangerLevelDelta,
+        },
+      },
+    };
+  }
+
+  private resolveZoneConflicts(commands: TaggedCommand[]): TaggedCommand[] {
+    const zoneBuckets = new Map<string, ZoneConflictBucket>();
+    const passthrough: OrderedTaggedCommand[] = [];
+
+    for (const tagged of commands) {
+      const { command } = tagged;
+      if (!isZoneScopedCommand(command)) {
+        passthrough.push({ order: tagged.index, tagged });
+        continue;
+      }
+
+      const existing = zoneBuckets.get(command.target);
+      if (!existing) {
+        zoneBuckets.set(command.target, {
+          zone: command.target,
+          firstIndex: tagged.index,
+          firstCommandType: command.type,
+          spawnEvents: command.type === "spawn_event" ? [tagged] : [],
+          modifyZones: command.type === "modify_zone" ? [tagged] : [],
+        });
+        continue;
+      }
+
+      if (command.type === "spawn_event") {
+        existing.spawnEvents.push(tagged);
+      } else {
+        existing.modifyZones.push(tagged);
+      }
+    }
+
+    const resolvedZoneCommands: OrderedTaggedCommand[] = [];
+    for (const bucket of zoneBuckets.values()) {
+      const mergedModify = this.mergeModifyZoneCommands(bucket);
+      const selectedSpawn = this.selectHighestPrioritySpawn(bucket.spawnEvents);
+
+      const orderedZoneCommands =
+        bucket.firstCommandType === "spawn_event"
+          ? [selectedSpawn, mergedModify]
+          : [mergedModify, selectedSpawn];
+
+      let orderOffset = 0;
+      for (const command of orderedZoneCommands) {
+        if (!command) {
+          continue;
+        }
+        resolvedZoneCommands.push({
+          order: bucket.firstIndex + orderOffset,
+          tagged: command,
+        });
+        orderOffset += 0.001;
+      }
+    }
+
+    return [...passthrough, ...resolvedZoneCommands]
+      .sort((a, b) => a.order - b.order)
+      .map((entry) => entry.tagged);
+  }
+
+  private mergeModifyZoneCommands(bucket: ZoneConflictBucket): TaggedCommand | null {
+    if (bucket.modifyZones.length === 0) {
+      return null;
+    }
+
+    let spiritQiDelta = 0;
+    let dangerLevelDelta = 0;
+    let hasDangerLevelDelta = false;
+
+    for (const tagged of bucket.modifyZones) {
+      const delta = getNumericParam(tagged.command.params, "spirit_qi_delta");
+      if (delta !== null) {
+        spiritQiDelta += delta;
+      }
+
+      const dangerDelta = getNumericParam(tagged.command.params, "danger_level_delta");
+      if (dangerDelta !== null) {
+        dangerLevelDelta += dangerDelta;
+        hasDangerLevelDelta = true;
+      }
+    }
+
+    const params: Record<string, unknown> = {
+      spirit_qi_delta: spiritQiDelta,
+    };
+
+    if (hasDangerLevelDelta) {
+      params["danger_level_delta"] = dangerLevelDelta;
+    }
+
+    const primary = bucket.modifyZones[0];
+    return {
+      source: primary.source,
+      index: primary.index,
+      bypassSpiritQiConservation: bucket.modifyZones.some(
+        (tagged) => tagged.bypassSpiritQiConservation,
+      ),
+      command: {
+        type: "modify_zone",
+        target: bucket.zone,
+        params,
+      },
+    };
+  }
+
+  private selectHighestPrioritySpawn(spawnEvents: TaggedCommand[]): TaggedCommand | null {
+    if (spawnEvents.length === 0) {
+      return null;
+    }
+
+    let selected = spawnEvents[0];
+    for (let i = 1; i < spawnEvents.length; i++) {
+      const current = spawnEvents[i];
+      const currentPriority = sourcePriority(current.source);
+      const selectedPriority = sourcePriority(selected.source);
+      if (currentPriority > selectedPriority) {
+        selected = current;
+      }
+    }
+
+    return selected;
+  }
+
+  private applySpiritQiConservation(commands: TaggedCommand[]): TaggedCommand[] {
+    const clones = commands.map((tagged) => ({
+      ...tagged,
+      command: cloneCommand(tagged.command),
+    }));
+
+    const deltas: number[] = [];
+    const indexes: number[] = [];
+
+    for (let i = 0; i < clones.length; i++) {
+      const tagged = clones[i];
+      const command = tagged.command;
+      if (command.type !== "modify_zone" || tagged.bypassSpiritQiConservation) {
+        continue;
+      }
+
+      const delta = getNumericParam(command.params, "spirit_qi_delta");
+      if (delta === null) {
+        continue;
+      }
+
+      indexes.push(i);
+      deltas.push(delta);
+    }
+
+    const netDelta = deltas.reduce((acc, delta) => acc + delta, 0);
+    if (Math.abs(netDelta) <= SPIRIT_QI_CONSERVATION_EPSILON) {
+      return clones;
+    }
+
+    const positiveSum = deltas.filter((delta) => delta > 0).reduce((acc, delta) => acc + delta, 0);
+    const negativeAbsSum = deltas
+      .filter((delta) => delta < 0)
+      .reduce((acc, delta) => acc + Math.abs(delta), 0);
+
+    if (netDelta > 0) {
+      if (positiveSum === 0) {
+        return clones;
+      }
+
+      const positiveScale = negativeAbsSum === 0 ? 0 : negativeAbsSum / positiveSum;
+      for (let i = 0; i < indexes.length; i++) {
+        if (deltas[i] <= 0) {
+          continue;
+        }
+
+        const commandIndex = indexes[i];
+        const command = clones[commandIndex].command;
+        const current = getNumericParam(command.params, "spirit_qi_delta");
+        if (current === null) {
+          continue;
+        }
+
+        command.params["spirit_qi_delta"] = current * positiveScale;
+      }
+
+      return clones;
+    }
+
+    if (negativeAbsSum === 0) {
+      return clones;
+    }
+
+    const negativeScale = positiveSum === 0 ? 0 : positiveSum / negativeAbsSum;
+    for (let i = 0; i < indexes.length; i++) {
+      if (deltas[i] >= 0) {
+        continue;
+      }
+
+      const commandIndex = indexes[i];
+      const command = clones[commandIndex].command;
+      const current = getNumericParam(command.params, "spirit_qi_delta");
+      if (current === null) {
+        continue;
+      }
+
+      command.params["spirit_qi_delta"] = current * negativeScale;
+    }
+
+    return clones;
+  }
+
+  private hasZone(zoneName: string): boolean {
+    return this.state.zones.some((zone) => zone.name === zoneName);
+  }
+
+  private getPlayerPower(targetPlayer: string): number | null {
+    const byUuid = this.state.players.find((player) => player.uuid === targetPlayer);
+    if (byUuid) {
+      return byUuid.composite_power;
+    }
+
+    const normalizedName = targetPlayer.startsWith("offline:")
+      ? targetPlayer.slice("offline:".length)
+      : targetPlayer;
+    const byName = this.state.players.find((player) => player.name === normalizedName);
+    if (byName) {
+      return byName.composite_power;
+    }
+
+    return null;
+  }
+}
+
+function isZoneScopedCommand(command: Command): command is Command & { type: "spawn_event" | "modify_zone" } {
+  return command.type === "spawn_event" || command.type === "modify_zone";
+}
+
+function sourcePriority(source: string): number {
+  return SOURCE_PRIORITY[source.toLowerCase()] ?? 0;
+}
+
+function getNumericParam(params: Record<string, unknown>, key: string): number | null {
+  const value = params[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function getStringParam(params: Record<string, unknown>, key: string): string | null {
+  const value = params[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  return value;
+}
+
+function isGlobalEraTarget(target: string): boolean {
+  return GLOBAL_ERA_TARGETS.has(target.trim().toLowerCase());
+}
+
+function buildModifyZoneParams(
+  spiritQiDelta: number,
+  dangerLevelDelta: number,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    spirit_qi_delta: spiritQiDelta,
+  };
+
+  if (dangerLevelDelta !== 0) {
+    params["danger_level_delta"] = dangerLevelDelta;
+  }
+
+  return params;
+}
+
+function describeEraEffect(spiritQiDelta: number, dangerLevelDelta: number): string {
+  const parts: string[] = [];
+
+  if (spiritQiDelta !== 0) {
+    parts.push(`诸域灵气 ${formatSigned(spiritQiDelta)}`);
+  }
+
+  if (dangerLevelDelta !== 0) {
+    parts.push(`诸域危险 ${formatSigned(dangerLevelDelta)}`);
+  }
+
+  return parts.length > 0 ? parts.join("，") : "诸域法则微调";
+}
+
+function formatSigned(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function cloneCommand(command: Command): Command {
+  return {
+    type: command.type,
+    target: command.target,
+    params: { ...command.params },
+  };
 }

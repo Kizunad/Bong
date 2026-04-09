@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TSchema } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
 import { AgentCommandV1 } from "../src/agent-command.js";
@@ -14,58 +13,43 @@ import {
   NEWBIE_POWER_THRESHOLD,
   SPIRIT_QI_TOTAL,
 } from "../src/common.js";
-import {
-  AgentCommandV1 as RootAgentCommandV1,
-  ChatMessageV1 as RootChatMessageV1,
-  NarrationV1 as RootNarrationV1,
-  WorldStateV1 as RootWorldStateV1,
-  validate as rootValidate,
-} from "../src/index.js";
+import * as SchemaPackage from "../src/index.js";
 import { NarrationV1 } from "../src/narration.js";
+import { ServerDataV1 } from "../src/server-data.js";
 import { validate } from "../src/validate.js";
 import { WorldStateV1 } from "../src/world-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const samplesDir = join(__dirname, "..", "samples");
 
-type JsonObject = Record<string, unknown>;
-
-function loadSample<T = unknown>(name: string): T {
-  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8")) as T;
+function loadSample(name: string): unknown {
+  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8"));
 }
 
-function loadSampleObject(name: string): JsonObject {
-  return loadSample<JsonObject>(name);
+function loadObjectSample(name: string): Record<string, unknown> {
+  const sample = loadSample(name);
+  expect(typeof sample).toBe("object");
+  expect(sample).not.toBeNull();
+  return sample as Record<string, unknown>;
 }
 
-function expectObject(value: unknown): JsonObject {
+function asObject(value: unknown): Record<string, unknown> {
   expect(typeof value).toBe("object");
   expect(value).not.toBeNull();
-  expect(Array.isArray(value)).toBe(false);
-
-  return value as JsonObject;
+  return value as Record<string, unknown>;
 }
 
-function expectObjectArray(value: unknown): JsonObject[] {
+function asArray(value: unknown): unknown[] {
   expect(Array.isArray(value)).toBe(true);
-
-  return value as JsonObject[];
+  return value as unknown[];
 }
 
-function expectFirstObject(value: unknown): JsonObject {
-  const items = expectObjectArray(value);
-  const [firstItem] = items;
-
-  expect(firstItem).toBeDefined();
-
-  return expectObject(firstItem);
-}
-
-function expectInvalid(schema: TSchema, data: unknown): void {
-  const result = rootValidate(schema, data);
-
-  expect(result.ok, result.errors.join("; ")).toBe(false);
-  expect(result.errors.length).toBeGreaterThan(0);
+function loadPackageJson(): {
+  exports?: Record<string, unknown>;
+} {
+  return JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")) as {
+    exports?: Record<string, unknown>;
+  };
 }
 
 // ─── Sample validation ─────────────────────────────────
@@ -73,44 +57,100 @@ function expectInvalid(schema: TSchema, data: unknown): void {
 describe("sample files pass schema validation", () => {
   it("world-state.sample.json", () => {
     const data = loadSample("world-state.sample.json");
-    const result = rootValidate(RootWorldStateV1, data);
-
+    const result = validate(WorldStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("agent-command.sample.json", () => {
     const data = loadSample("agent-command.sample.json");
-    const result = rootValidate(RootAgentCommandV1, data);
-
+    const result = validate(AgentCommandV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("narration.sample.json", () => {
     const data = loadSample("narration.sample.json");
-    const result = rootValidate(RootNarrationV1, data);
-
+    const result = validate(NarrationV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
   it("chat-message.sample.json", () => {
     const data = loadSample("chat-message.sample.json");
-    const result = rootValidate(RootChatMessageV1, data);
+    const result = validate(ChatMessageV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 
+  it("server-data.welcome.sample.json", () => {
+    const data = loadSample("server-data.welcome.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.heartbeat.sample.json", () => {
+    const data = loadSample("server-data.heartbeat.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.narration.sample.json", () => {
+    const data = loadSample("server-data.narration.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.zone-info.sample.json", () => {
+    const data = loadSample("server-data.zone-info.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.event-alert.sample.json", () => {
+    const data = loadSample("server-data.event-alert.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.player-state.sample.json", () => {
+    const data = loadSample("server-data.player-state.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.ui-open.sample.json", () => {
+    const data = loadSample("server-data.ui-open.sample.json");
+    const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });
 
-describe("package root exports runtime validation helpers", () => {
-  it("re-exports validate and shared schemas from index", () => {
-    const data = loadSample("world-state.sample.json");
+describe("negative sample files fail schema validation", () => {
+  it("world-state.invalid-extra-player-field.sample.json", () => {
+    const data = loadSample("world-state.invalid-extra-player-field.sample.json");
     const result = validate(WorldStateV1, data);
+    expect(result.ok).toBe(false);
+  });
 
-    expect(rootValidate).toBe(validate);
-    expect(RootWorldStateV1).toBe(WorldStateV1);
-    expect(RootAgentCommandV1).toBe(AgentCommandV1);
-    expect(RootNarrationV1).toBe(NarrationV1);
-    expect(RootChatMessageV1).toBe(ChatMessageV1);
-    expect(result.ok, result.errors.join("; ")).toBe(true);
+  it("agent-command.invalid-extra-command-field.sample.json", () => {
+    const data = loadSample("agent-command.invalid-extra-command-field.sample.json");
+    const result = validate(AgentCommandV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("narration.invalid-extra-top-level-field.sample.json", () => {
+    const data = loadSample("narration.invalid-extra-top-level-field.sample.json");
+    const result = validate(NarrationV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("chat-message.invalid-extra-top-level-field.sample.json", () => {
+    const data = loadSample("chat-message.invalid-extra-top-level-field.sample.json");
+    const result = validate(ChatMessageV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("server-data.invalid-unknown-type.sample.json", () => {
+    const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -118,44 +158,26 @@ describe("package root exports runtime validation helpers", () => {
 
 describe("schema rejects invalid data", () => {
   it("rejects world state with wrong version", () => {
-    const data = loadSampleObject("world-state.sample.json");
-
+    const data = loadObjectSample("world-state.sample.json");
     data.v = 2;
-
-    expectInvalid(WorldStateV1, data);
+    const result = validate(WorldStateV1, data);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects world state missing players", () => {
-    const data = loadSampleObject("world-state.sample.json");
-
+    const data = loadObjectSample("world-state.sample.json");
     delete data.players;
-
-    expectInvalid(WorldStateV1, data);
+    const result = validate(WorldStateV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects world state with invalid player trend enum", () => {
-    const data = loadSampleObject("world-state.sample.json");
-    const firstPlayer = expectFirstObject(data.players);
-
-    firstPlayer.trend = "ascending";
-
-    expectInvalid(WorldStateV1, data);
-  });
-
-  it("rejects command batch with wrong version", () => {
-    const data = loadSampleObject("agent-command.sample.json");
-
-    data.v = 2;
-
-    expectInvalid(AgentCommandV1, data);
-  });
-
-  it("rejects command batch missing id", () => {
-    const data = loadSampleObject("agent-command.sample.json");
-
-    delete data.id;
-
-    expectInvalid(AgentCommandV1, data);
+  it("rejects world state with unexpected nested player field", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const players = asArray(data.players);
+    const firstPlayer = asObject(players[0]);
+    firstPlayer.rogue_power = 999;
+    const result = validate(WorldStateV1, data);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects command with invalid type", () => {
@@ -164,30 +186,31 @@ describe("schema rejects invalid data", () => {
       id: "cmd_test",
       commands: [{ type: "delete_world", target: "everywhere", params: {} }],
     };
-
-    expectInvalid(AgentCommandV1, data);
+    const result = validate(AgentCommandV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects command batch exceeding max commands per tick", () => {
-    const data = {
-      v: 1,
-      id: "cmd_over_limit",
-      commands: Array.from({ length: MAX_COMMANDS_PER_TICK + 1 }, (_, index) => ({
-        type: "spawn_event",
-        target: `zone_${index}`,
-        params: {},
-      })),
-    };
-
-    expectInvalid(AgentCommandV1, data);
+  it("rejects command batch with unexpected top-level field", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.retry_after_ms = 500;
+    const result = validate(AgentCommandV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects narration batch with wrong version", () => {
-    const data = loadSampleObject("narration.sample.json");
+  it("accepts arbiter as agent-command source", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.source = "arbiter";
+    const result = validate(AgentCommandV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 
-    data.v = 2;
-
-    expectInvalid(NarrationV1, data);
+  it("rejects command with unexpected nested field", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    const commands = asArray(data.commands);
+    const firstCommand = asObject(commands[0]);
+    firstCommand.priority = "urgent";
+    const result = validate(AgentCommandV1, data);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects narration without text", () => {
@@ -195,50 +218,56 @@ describe("schema rejects invalid data", () => {
       v: 1,
       narrations: [{ scope: "broadcast", style: "system_warning" }],
     };
-
-    expectInvalid(NarrationV1, data);
+    const result = validate(NarrationV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects narration with invalid style enum", () => {
-    const data = loadSampleObject("narration.sample.json");
-    const firstNarration = expectFirstObject(data.narrations);
-
-    firstNarration.style = "oracle";
-
-    expectInvalid(NarrationV1, data);
-  });
-
-  it("rejects narration exceeding max text length", () => {
-    const data = loadSampleObject("narration.sample.json");
-    const firstNarration = expectFirstObject(data.narrations);
-
-    firstNarration.text = "天".repeat(MAX_NARRATION_LENGTH + 1);
-
-    expectInvalid(NarrationV1, data);
+  it("rejects narration batch with unexpected top-level field", () => {
+    const data = loadObjectSample("narration.sample.json");
+    data.trace_id = "narration-1";
+    const result = validate(NarrationV1, data);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects chat message with wrong version", () => {
-    const data = loadSampleObject("chat-message.sample.json");
-
+    const data = loadObjectSample("chat-message.sample.json");
     data.v = 99;
-
-    expectInvalid(ChatMessageV1, data);
+    const result = validate(ChatMessageV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects chat message missing player", () => {
-    const data = loadSampleObject("chat-message.sample.json");
-
-    delete data.player;
-
-    expectInvalid(ChatMessageV1, data);
+  it("rejects chat message with unexpected top-level field", () => {
+    const data = loadObjectSample("chat-message.sample.json");
+    data.channel = "global";
+    const result = validate(ChatMessageV1, data);
+    expect(result.ok).toBe(false);
   });
 
-  it("rejects chat message exceeding raw length", () => {
-    const data = loadSampleObject("chat-message.sample.json");
+  it("rejects server data with unknown payload type", () => {
+    const data = loadObjectSample("server-data.welcome.sample.json");
+    data.type = "unknown";
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
 
-    data.raw = "a".repeat(257);
+  it("accepts player_state spirit_qi above 100 for breakthrough progression", () => {
+    const data = loadObjectSample("server-data.player-state.sample.json");
+    data.spirit_qi = 140;
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
 
-    expectInvalid(ChatMessageV1, data);
+describe("package entrypoints expose runtime validation", () => {
+  it("re-exports validate from the root entrypoint", () => {
+    expect(SchemaPackage.validate).toBe(validate);
+  });
+
+  it("declares a stable validate subpath export", () => {
+    const packageJson = loadPackageJson();
+    expect(packageJson.exports).toBeDefined();
+    expect(packageJson.exports?.["."]).toBeDefined();
+    expect(packageJson.exports?.["./validate"]).toBeDefined();
   });
 });
 

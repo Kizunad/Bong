@@ -1,203 +1,263 @@
-import {
-  ChatMessageV1,
-  ChatSignal,
-  type ChatIntent,
-  type ChatMessageV1 as ChatMessage,
-  type ChatSignal as ChatSignalRecord,
-  validate,
-} from "@bong/schema";
+import { ChatMessageV1, ChatSignal, validate, type ChatIntent } from "@bong/schema";
+import type { LlmClient } from "./llm.js";
 
-export interface ChatProcessorLogger {
-  warn(message: string, details?: Record<string, unknown>): void;
-}
+const CHAT_CONTEXT_WINDOW_SECONDS = 5 * 60;
+const CHAT_CONTEXT_MAX_SIGNALS = 20;
 
-export interface ChatAnnotator {
-  annotate(messages: ChatMessage[]): Promise<ChatSignalRecord[]>;
-}
-
-const DEFAULT_LOGGER: ChatProcessorLogger = {
-  warn(message, details) {
-    console.warn(message, details ?? {});
-  },
+export const DEFAULT_CHAT_SIGNAL: Pick<ChatSignal, "sentiment" | "intent" | "influence_weight"> = {
+  sentiment: 0,
+  intent: "unknown",
+  influence_weight: 0,
 };
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-interface HeuristicHint {
+export interface ChatSignalInput {
+  player: string;
+  zone: string;
+  raw: string;
   sentiment: number;
   intent: ChatIntent;
-  mentionsMechanic?: string;
-  influenceWeight: number;
+  influence_weight: number;
+  mentions_mechanic?: string;
 }
 
-const COMPLAINT_HINTS = ["太", "太少", "不够", "垃圾", "坑", "难受", "崩", "卡", "痛苦"];
-const HELP_HINTS = ["救", "帮", "怎么", "求", "不会", "求助", "求带", "请问"];
-const PROVOKE_HINTS = ["来战", "敢不敢", "单挑", "废物", "怂", "打你", "挑衅"];
-const BOAST_HINTS = ["我无敌", "我最强", "轻松", "拿下", "乱杀", "稳赢"];
-const SOCIAL_HINTS = ["哈哈", "hi", "hello", "早", "晚安", "谢谢", "好耶"];
-
-const MECHANIC_HINTS: Array<{ keyword: string; mechanic: string }> = [
-  { keyword: "灵气", mechanic: "spirit_qi" },
-  { keyword: "karma", mechanic: "karma" },
-  { keyword: "功德", mechanic: "karma" },
-  { keyword: "劫", mechanic: "event" },
-  { keyword: "兽潮", mechanic: "event" },
-  { keyword: "区域", mechanic: "zone" },
-  { keyword: "zone", mechanic: "zone" },
-  { keyword: "npc", mechanic: "npc" },
-];
-
-function inferHeuristic(raw: string): HeuristicHint {
-  const lower = raw.toLowerCase();
-
-  let intent: ChatIntent = "unknown";
-  let sentiment = 0;
-  let influenceWeight = 0.35;
-
-  if (COMPLAINT_HINTS.some((token) => raw.includes(token) || lower.includes(token.toLowerCase()))) {
-    intent = "complaint";
-    sentiment = -0.65;
-    influenceWeight = 0.85;
-  } else if (HELP_HINTS.some((token) => raw.includes(token) || lower.includes(token.toLowerCase()))) {
-    intent = "help";
-    sentiment = -0.15;
-    influenceWeight = 0.75;
-  } else if (PROVOKE_HINTS.some((token) => raw.includes(token) || lower.includes(token.toLowerCase()))) {
-    intent = "provoke";
-    sentiment = -0.45;
-    influenceWeight = 0.65;
-  } else if (BOAST_HINTS.some((token) => raw.includes(token) || lower.includes(token.toLowerCase()))) {
-    intent = "boast";
-    sentiment = 0.45;
-    influenceWeight = 0.55;
-  } else if (SOCIAL_HINTS.some((token) => raw.includes(token) || lower.includes(token.toLowerCase()))) {
-    intent = "social";
-    sentiment = 0.2;
-    influenceWeight = 0.25;
-  }
-
-  if (raw.includes("!")) {
-    influenceWeight += 0.1;
-  }
-  if (raw.includes("？") || raw.includes("?")) {
-    influenceWeight += 0.05;
-  }
-
-  const mechanic = MECHANIC_HINTS.find((entry) =>
-    raw.includes(entry.keyword) || lower.includes(entry.keyword.toLowerCase()),
-  )?.mechanic;
-
-  return {
-    sentiment: clamp(sentiment, -1, 1),
-    intent,
-    mentionsMechanic: mechanic,
-    influenceWeight: clamp(influenceWeight, 0, 1),
-  };
+export interface ProcessChatBatchOptions {
+  messages: ChatMessageV1[];
+  llmClient: LlmClient;
+  model: string;
+  logger: Pick<typeof console, "warn">;
 }
 
-export class FakeHeuristicChatAnnotator implements ChatAnnotator {
-  async annotate(messages: ChatMessage[]): Promise<ChatSignalRecord[]> {
-    return messages.map((message) => {
-      const hint = inferHeuristic(message.raw);
-      return {
-        player: message.player,
-        raw: message.raw,
-        sentiment: hint.sentiment,
-        intent: hint.intent,
-        mentions_mechanic: hint.mentionsMechanic,
-        influence_weight: hint.influenceWeight,
-      };
-    });
-  }
+export interface BuildChatSignalsBlockArgs {
+  signals: ChatSignal[];
+  nowSeconds: number;
 }
 
-export interface ProcessedChatBatch {
-  messages: ChatMessage[];
-  signals: ChatSignalRecord[];
-}
+export function parseChatMessages(rawMessages: string[], logger: Pick<typeof console, "warn">): ChatMessageV1[] {
+  const messages: ChatMessageV1[] = [];
 
-export class ChatProcessor {
-  constructor(
-    private readonly annotator: ChatAnnotator = new FakeHeuristicChatAnnotator(),
-    private readonly logger: ChatProcessorLogger = DEFAULT_LOGGER,
-  ) {}
-
-  async processRawEntries(rawEntries: string[]): Promise<ProcessedChatBatch> {
-    const messages = this.parseAndValidate(rawEntries);
-    if (messages.length === 0) {
-      return {
-        messages: [],
-        signals: [],
-      };
-    }
-
-    const annotated = await this.annotator.annotate(messages);
-    const signals = this.validateAnnotatedSignals(annotated);
-
-    return {
-      messages,
-      signals,
-    };
-  }
-
-  private parseAndValidate(rawEntries: string[]): ChatMessage[] {
-    const validMessages: ChatMessage[] = [];
-
-    for (let i = 0; i < rawEntries.length; i++) {
-      const rawEntry = rawEntries[i];
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(rawEntry);
-      } catch (error) {
-        this.logger.warn("[chat-processor] drop invalid chat json", {
-          reason: "invalid_json",
-          index: i,
-          error: error instanceof Error ? error.message : String(error),
-          raw: rawEntry,
-        });
-        continue;
-      }
-
+  for (const payload of rawMessages) {
+    try {
+      const parsed = JSON.parse(payload) as unknown;
       const validation = validate(ChatMessageV1, parsed);
       if (!validation.ok) {
-        this.logger.warn("[chat-processor] drop schema-invalid chat message", {
-          reason: "schema_invalid",
-          index: i,
-          errors: validation.errors,
-          raw: rawEntry,
-        });
+        logger.warn(`[chat-processor] dropped invalid chat payload: ${validation.errors.join("; ")}`);
         continue;
       }
-
-      validMessages.push(parsed as ChatMessage);
+      messages.push(parsed as ChatMessageV1);
+    } catch {
+      logger.warn("[chat-processor] dropped malformed chat payload");
     }
-
-    return validMessages;
   }
 
-  private validateAnnotatedSignals(signals: ChatSignalRecord[]): ChatSignalRecord[] {
-    const validSignals: ChatSignalRecord[] = [];
+  return messages;
+}
 
-    for (let i = 0; i < signals.length; i++) {
-      const signal = signals[i];
-      const validation = validate(ChatSignal, signal);
+export function parseChatSignalBatch(raw: string, logger: Pick<typeof console, "warn">): ChatSignalInput[] {
+  const jsonMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const jsonStr = jsonMatch ? jsonMatch[1] : raw;
 
-      if (!validation.ok) {
-        this.logger.warn("[chat-processor] drop schema-invalid chat signal", {
-          reason: "signal_schema_invalid",
-          index: i,
-          errors: validation.errors,
-          signal,
-        });
-        continue;
-      }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr.trim());
+  } catch {
+    logger.warn("[chat-processor] failed to parse chat signal batch JSON");
+    throw new Error("failed to parse chat signal batch JSON");
+  }
 
-      validSignals.push(signal);
+  if (!Array.isArray(parsed)) {
+    logger.warn("[chat-processor] chat signal batch is not an array");
+    throw new Error("chat signal batch is not an array");
+  }
+
+  const rows: ChatSignalInput[] = [];
+  for (const item of parsed) {
+    if (!isChatSignalInput(item)) {
+      continue;
     }
 
-    return validSignals;
+    rows.push({
+      player: item.player,
+      zone: item.zone,
+      raw: item.raw,
+      sentiment: item.sentiment,
+      intent: item.intent,
+      influence_weight: item.influence_weight,
+      mentions_mechanic: item.mentions_mechanic,
+    });
   }
+
+  return rows;
+}
+
+export async function processChatBatch(options: ProcessChatBatchOptions): Promise<ChatSignal[]> {
+  const { messages, llmClient, model, logger } = options;
+  if (messages.length === 0) {
+    return [];
+  }
+
+  const prompt = buildAnnotatePrompt(messages);
+  const raw = await llmClient.chat(
+    [
+      {
+        role: "system",
+        content:
+          "你是聊天信号标注器。严格输出 JSON 数组，每项字段: player, zone, raw, sentiment(-1~1), intent(complaint|boast|social|help|provoke|unknown), influence_weight(0~1)。不得输出解释。",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    model,
+  );
+
+  const batch = parseChatSignalBatch(raw, logger);
+  const byKey = new Map(batch.map((entry) => [chatKey(entry.player, entry.zone, entry.raw), entry]));
+
+  const signals: ChatSignal[] = [];
+  for (const msg of messages) {
+    const fallback: ChatSignal = {
+      player: msg.player,
+      raw: msg.raw,
+      sentiment: DEFAULT_CHAT_SIGNAL.sentiment,
+      intent: DEFAULT_CHAT_SIGNAL.intent,
+      influence_weight: DEFAULT_CHAT_SIGNAL.influence_weight,
+    };
+
+    const picked = byKey.get(chatKey(msg.player, msg.zone, msg.raw));
+    if (!picked) {
+      signals.push(fallback);
+      continue;
+    }
+
+    const candidate: ChatSignal = {
+      player: picked.player,
+      raw: picked.raw,
+      sentiment: picked.sentiment,
+      intent: picked.intent,
+      influence_weight: picked.influence_weight,
+      mentions_mechanic: picked.mentions_mechanic,
+    };
+
+    const validation = validate(ChatSignal, candidate);
+    if (!validation.ok) {
+      logger.warn(
+        `[chat-processor] invalid chat signal, fallback to unknown: ${validation.errors.join("; ")}`,
+      );
+      signals.push(fallback);
+      continue;
+    }
+
+    signals.push(candidate);
+  }
+
+  return signals;
+}
+
+export function mergeChatSignals(
+  existingSignals: ChatSignal[],
+  incomingSignals: ChatSignal[],
+  nowSeconds: number,
+): ChatSignal[] {
+  const recentExisting = selectRecentSignals(existingSignals, nowSeconds);
+  const recentIncoming = selectRecentSignals(incomingSignals, nowSeconds);
+  const merged = [...recentExisting, ...recentIncoming];
+  if (merged.length <= CHAT_CONTEXT_MAX_SIGNALS) {
+    return merged;
+  }
+  return merged.slice(-CHAT_CONTEXT_MAX_SIGNALS);
+}
+
+export function selectRecentSignals(signals: ChatSignal[], nowSeconds: number): ChatSignal[] {
+  return signals.filter((signal) => isRecentSignal(signal, nowSeconds));
+}
+
+export function isRecentSignal(signal: ChatSignal, nowSeconds: number): boolean {
+  const observedTs = extractSignalTimestamp(signal);
+  if (observedTs === null) {
+    return true;
+  }
+  return observedTs >= nowSeconds - CHAT_CONTEXT_WINDOW_SECONDS;
+}
+
+export function buildChatSignalsBlock(args: BuildChatSignalsBlockArgs): string {
+  const recentSignals = selectRecentSignals(args.signals, args.nowSeconds).slice(-5);
+  if (recentSignals.length === 0) {
+    return "";
+  }
+
+  const totalSentiment = recentSignals.reduce((sum, signal) => sum + signal.sentiment, 0);
+  const avgSentiment = totalSentiment / recentSignals.length;
+  const trendLabel = avgSentiment > 0.2 ? "偏正面" : avgSentiment < -0.2 ? "偏负面" : "中性";
+
+  const lines = recentSignals.map((signal) => {
+    return `- ${signal.player}: ${signal.raw} (intent=${signal.intent}, sentiment=${signal.sentiment.toFixed(2)}, weight=${signal.influence_weight.toFixed(2)})`;
+  });
+
+  return `## 近期民意 (最近 5 分钟)\n${lines.join("\n")}\n民意倾向: ${trendLabel} (${avgSentiment.toFixed(2)})`;
+}
+
+function buildAnnotatePrompt(messages: ChatMessageV1[]): string {
+  const serialized = messages.map((message) => ({
+    player: message.player,
+    zone: message.zone,
+    raw: message.raw,
+  }));
+
+  return ["请批量标注以下玩家聊天。", "只输出 JSON 数组，不要 markdown，不要解释。", JSON.stringify(serialized)].join(
+    "\n",
+  );
+}
+
+function isChatSignalInput(input: unknown): input is ChatSignalInput {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  const row = input as Record<string, unknown>;
+  if (typeof row.player !== "string") {
+    return false;
+  }
+  if (typeof row.zone !== "string") {
+    return false;
+  }
+  if (typeof row.raw !== "string") {
+    return false;
+  }
+  if (typeof row.sentiment !== "number" || !Number.isFinite(row.sentiment)) {
+    return false;
+  }
+  if (typeof row.intent !== "string") {
+    return false;
+  }
+  if (typeof row.influence_weight !== "number" || !Number.isFinite(row.influence_weight)) {
+    return false;
+  }
+  if (typeof row.mentions_mechanic !== "undefined" && typeof row.mentions_mechanic !== "string") {
+    return false;
+  }
+
+  return true;
+}
+
+function chatKey(player: string, zone: string, raw: string): string {
+  return `${player}|${zone}|${raw}`;
+}
+
+function extractSignalTimestamp(signal: ChatSignal): number | null {
+  if (typeof signal.mentions_mechanic !== "string") {
+    return null;
+  }
+
+  const matched = signal.mentions_mechanic.match(/(?:^|;)ts:(\d+)(?:;|$)/);
+  if (!matched) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(matched[1], 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed;
 }

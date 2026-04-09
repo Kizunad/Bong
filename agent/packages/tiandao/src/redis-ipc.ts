@@ -1,171 +1,87 @@
-/**
- * Redis IPC — connects 天道 Agent to the Valence server
- *
- * Channels:
- *   bong:world_state  (subscribe) — server publishes world snapshots
- *   bong:agent_command (publish)  — agent sends commands to server
- *   bong:agent_narrate (publish)  — agent sends narrations to server
- */
-
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
-import {
-  AgentCommandV1 as AgentCommandV1Schema,
-  CHANNELS,
-  NarrationV1 as NarrationV1Schema,
-  WorldStateV1 as WorldStateV1Schema,
-  validate,
+import { CHANNELS } from "@bong/schema";
+import type {
+  WorldStateV1,
+  AgentCommandV1,
+  NarrationV1,
+  Command,
+  Narration,
+  ChatMessageV1,
 } from "@bong/schema";
-import type { WorldStateV1, AgentCommandV1, NarrationV1, Command, Narration } from "@bong/schema";
+import { parseChatMessages } from "./chat-processor.js";
 
-const { WORLD_STATE, PLAYER_CHAT, AGENT_COMMAND, AGENT_NARRATE } = CHANNELS;
+const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, PLAYER_CHAT } = CHANNELS;
 
-const DRAIN_PLAYER_CHAT_ATOMIC_LUA = `
-local chatKey = KEYS[1]
-local counterKey = KEYS[2]
+const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 
-if redis.call("EXISTS", chatKey) == 0 then
-  return {}
-end
-
-local suffix = redis.call("INCR", counterKey)
-local drainingKey = chatKey .. ":drain:" .. suffix
-
-redis.call("RENAME", chatKey, drainingKey)
-local drained = redis.call("LRANGE", drainingKey, 0, -1)
-redis.call("DEL", drainingKey)
-
-return drained
-`;
-
-const PLAYER_CHAT_DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
-
-type RedisMessageListener = (channel: string, message: string) => void;
-type RedisLifecycleEvent = "close" | "reconnecting" | "ready" | "error";
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
+interface MultiExecResult<T = unknown> {
+  0: Error | null;
+  1: T;
 }
 
-function stripPrivateSource(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => stripPrivateSource(item));
-  }
-
-  if (value && typeof value === "object") {
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (key === "_source") continue;
-      output[key] = stripPrivateSource(child);
-    }
-    return output;
-  }
-
-  return value;
+interface RedisMultiLike {
+  lrange(key: string, start: number, stop: number): RedisMultiLike;
+  ltrim(key: string, start: number, stop: number): RedisMultiLike;
+  exec(): Promise<Array<MultiExecResult<unknown>> | null>;
 }
 
-export interface RedisIpcClient {
-  subscribe(channel: string): Promise<number>;
-  on(event: "message", listener: RedisMessageListener): unknown;
-  on(event: RedisLifecycleEvent, listener: (...args: unknown[]) => void): unknown;
-  publish(channel: string, message: string): Promise<number>;
-  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
-  unsubscribe(...channels: string[]): Promise<unknown>;
+interface RedisClientLike {
+  subscribe(channel: string): Promise<unknown>;
+  on(event: "message", listener: (channel: string, message: string) => void): this;
+  off(event: "message", listener: (channel: string, message: string) => void): this;
+  unsubscribe(): Promise<unknown>;
   disconnect(): void;
+  publish(channel: string, message: string): Promise<number>;
+  multi(): RedisMultiLike;
 }
 
-function createDefaultClient(url: string): RedisIpcClient {
-  return new IORedis(url) as unknown as RedisIpcClient;
+export interface RedisIpcDeps {
+  createClient?: (url: string) => RedisClientLike;
 }
 
 export interface RedisIpcConfig {
   url: string;
-  createClient?: (url: string) => RedisIpcClient;
 }
 
 export class RedisIpc {
-  private sub: RedisIpcClient;
-  private pub: RedisIpcClient;
+  private sub: RedisClientLike;
+  private pub: RedisClientLike;
   private latestState: WorldStateV1 | null = null;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
+  private connected = false;
+  private readonly onMessage = (channel: string, message: string): void => {
+    if (channel !== WORLD_STATE) {
+      return;
+    }
 
-  constructor(config: RedisIpcConfig) {
-    const createClient = config.createClient ?? createDefaultClient;
+    try {
+      const state = JSON.parse(message) as WorldStateV1;
+      this.latestState = state;
+      for (const cb of this.stateCallbacks) {
+        cb(state);
+      }
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse world_state:", e);
+    }
+  };
+
+  constructor(config: RedisIpcConfig, deps: RedisIpcDeps = {}) {
+    const createClient = deps.createClient ?? ((url: string) => new IORedis(url));
     this.sub = createClient(config.url);
     this.pub = createClient(config.url);
   }
 
-  private registerLifecycleLogs(client: RedisIpcClient, role: "sub" | "pub"): void {
-    client.on("close", () => {
-      console.warn("[redis-ipc] redis connection closed", {
-        client: role,
-      });
-    });
-
-    client.on("reconnecting", (delay: unknown) => {
-      console.warn("[redis-ipc] redis reconnecting", {
-        client: role,
-        delay_ms: typeof delay === "number" ? delay : undefined,
-      });
-    });
-
-    client.on("ready", () => {
-      console.log("[redis-ipc] redis connection ready", {
-        client: role,
-      });
-    });
-
-    client.on("error", (error: unknown) => {
-      console.warn("[redis-ipc] redis connection error", {
-        client: role,
-        error: formatError(error),
-      });
-    });
-  }
-
   async connect(): Promise<void> {
-    this.registerLifecycleLogs(this.sub, "sub");
-    this.registerLifecycleLogs(this.pub, "pub");
+    if (this.connected) {
+      return;
+    }
 
     await this.sub.subscribe(WORLD_STATE);
+    this.sub.off("message", this.onMessage);
+    this.sub.on("message", this.onMessage);
+    this.connected = true;
     console.log(`[redis-ipc] subscribed to ${WORLD_STATE}`);
-
-    this.sub.on("message", (channel: string, message: string) => {
-      if (channel === WORLD_STATE) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(message);
-        } catch (error) {
-          console.warn("[redis-ipc] drop invalid world_state payload", {
-            channel,
-            reason: "invalid_json",
-            error: formatError(error),
-            payload_size: message.length,
-          });
-          return;
-        }
-
-        const validation = validate(WorldStateV1Schema, parsed);
-        if (!validation.ok) {
-          console.warn("[redis-ipc] drop invalid world_state payload", {
-            channel,
-            reason: "schema_invalid",
-            errors: validation.errors,
-            payload_size: message.length,
-          });
-          return;
-        }
-
-        const state = parsed as WorldStateV1;
-        this.latestState = state;
-        for (const cb of this.stateCallbacks) {
-          cb(state);
-        }
-      }
-    });
   }
 
   getLatestState(): WorldStateV1 | null {
@@ -177,42 +93,17 @@ export class RedisIpc {
   }
 
   async publishCommands(
-    source: string,
+    source: "arbiter",
     commands: Command[],
   ): Promise<void> {
     if (commands.length === 0) return;
 
-    void source;
-
-    const publicCommands: Command[] = commands.map((command) => {
-      const publicParams =
-        command.params && typeof command.params === "object"
-          ? (stripPrivateSource(command.params) as Record<string, unknown>)
-          : {};
-      return {
-        type: command.type,
-        target: command.target,
-        params: {
-          ...publicParams,
-        },
-      };
-    });
-
     const msg: AgentCommandV1 = {
       v: 1,
-      id: `cmd_${Date.now()}`,
-      commands: publicCommands,
+      id: `cmd_${Date.now()}_${source}`,
+      source,
+      commands,
     };
-
-    const validation = validate(AgentCommandV1Schema, msg);
-    if (!validation.ok) {
-      console.warn("[redis-ipc] skip invalid agent_command payload", {
-        reason: "schema_invalid",
-        command_count: publicCommands.length,
-        errors: validation.errors,
-      });
-      return;
-    }
 
     const json = JSON.stringify(msg);
     const subscribers = await this.pub.publish(AGENT_COMMAND, json);
@@ -229,16 +120,6 @@ export class RedisIpc {
       narrations,
     };
 
-    const validation = validate(NarrationV1Schema, msg);
-    if (!validation.ok) {
-      console.warn("[redis-ipc] skip invalid narration payload", {
-        reason: "schema_invalid",
-        narration_count: narrations.length,
-        errors: validation.errors,
-      });
-      return;
-    }
-
     const json = JSON.stringify(msg);
     const subscribers = await this.pub.publish(AGENT_NARRATE, json);
     console.log(
@@ -246,40 +127,48 @@ export class RedisIpc {
     );
   }
 
-  async drainPlayerChatRaw(): Promise<string[]> {
-    const drained = await this.pub.eval(
-      DRAIN_PLAYER_CHAT_ATOMIC_LUA,
-      2,
-      PLAYER_CHAT,
-      PLAYER_CHAT_DRAIN_COUNTER_KEY,
-    );
-
-    if (!Array.isArray(drained)) {
-      console.warn("[redis-ipc] player_chat drain returned unexpected value", {
-        valueType: typeof drained,
-      });
-      return [];
-    }
-
-    const rawEntries: string[] = [];
-    for (const item of drained) {
-      if (typeof item === "string") {
-        rawEntries.push(item);
-        continue;
-      }
-
-      console.warn("[redis-ipc] player_chat drain dropped non-string item", {
-        valueType: typeof item,
-      });
-    }
-
-    return rawEntries;
-  }
-
   async disconnect(): Promise<void> {
+    this.connected = false;
+    this.sub.off("message", this.onMessage);
     await this.sub.unsubscribe();
     this.sub.disconnect();
     this.pub.disconnect();
     console.log("[redis-ipc] disconnected");
+  }
+
+  async drainPlayerChat(options: { maxItems?: number; logger?: Pick<typeof console, "warn"> } = {}): Promise<ChatMessageV1[]> {
+    const maxItems = options.maxItems ?? DEFAULT_CHAT_DRAIN_WINDOW;
+    const logger = options.logger ?? console;
+    const raw = await this.drainListAtomically(PLAYER_CHAT, maxItems);
+    if (raw.length === 0) {
+      return [];
+    }
+    return parseChatMessages(raw, logger);
+  }
+
+  private async drainListAtomically(key: string, maxItems: number): Promise<string[]> {
+    if (!Number.isFinite(maxItems) || maxItems <= 0) {
+      return [];
+    }
+
+    const endIndex = maxItems - 1;
+    const trimStart = maxItems;
+
+    const pipeline = this.pub.multi().lrange(key, 0, endIndex).ltrim(key, trimStart, -1);
+    const result = await pipeline.exec();
+    if (!result) {
+      return [];
+    }
+
+    const [lrangeResult, ltrimResult] = result as [MultiExecResult<string[]>, MultiExecResult<unknown>];
+    if (lrangeResult[0]) {
+      throw lrangeResult[0];
+    }
+    if (ltrimResult[0]) {
+      throw ltrimResult[0];
+    }
+
+    const rows = lrangeResult[1];
+    return Array.isArray(rows) ? rows : [];
   }
 }

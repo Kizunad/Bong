@@ -1,0 +1,5 @@
+{
+  "v": 1,
+  "type": "heartbeat",
+  "message": "mock agent tick"
+}
