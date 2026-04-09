@@ -1,3 +1,4 @@
+mod progression;
 pub mod gameplay;
 pub mod state;
 

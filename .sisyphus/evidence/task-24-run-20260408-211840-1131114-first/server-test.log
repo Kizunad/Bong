@@ -1,0 +1,94 @@
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bong-server` (bin "bong-server" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.72s
+     Running unittests src/main.rs (/tmp/bong-target/debug/deps/bong_server-6c0041934713f9ac)
+
+running 77 tests
+test network::chat_collector::tests::chat_collector_encodes_chat_message_v1_with_zone_lookup ... ok
+test network::chat_collector::tests::chat_collector_message_is_json_roundtrippable ... ok
+test network::agent_bridge::tests::payload_schema_v1_is_valid_utf8_json ... ok
+test network::command_executor::tests::invalid_modify_zone_params_are_skipped_without_panicking ... ok
+test network::command_executor::tests::execute_system_respects_fixed_command_cap ... ok
+test network::chat_collector::tests::chat_collector_uses_uuid_identity_even_with_name_present ... ok
+test network::agent_bridge::tests::payload_schema_rejects_oversize_messages ... ok
+test network::command_executor::tests::invalid_zone_target_is_skipped ... ok
+test network::command_executor::tests::modify_zone_applies_and_clamps_values ... ok
+test network::command_executor::tests::validate_and_enqueue_skips_invalid_commands ... ok
+test network::command_executor::tests::npc_behavior_updates_runtime_flee_threshold ... ok
+test network::command_executor::tests::thunder_tribulation_event_is_recorded ... ok
+test network::tests::event_alert_gating_allows_reannounce_after_event_disappears ... ok
+test network::tests::event_alert_gating_only_emits_new_event_keys ... ok
+test network::tests::narration_payload_always_contains_single_item ... ok
+test network::tests::narration_payload_serializes_as_typed_server_data ... ok
+test network::tests::world_state_projection_uses_player_state_not_hardcoded_defaults ... ok
+test network::tests::payload_builder_event_alert_happy_path ... ok
+test network::tests::world_state_uses_real_identity_not_placeholder ... ok
+test network::tests::world_state_zone_data_comes_from_registry ... ok
+test network::tests::bridge_drain_is_non_blocking ... ok
+test network::tests::zone_gating_detects_join_then_zone_change_without_repeat ... ok
+test npc::brain::tests::flee_action_clamps_to_platform_bounds ... ok
+test network::tests::payload_builder_zone_info_happy_path ... ok
+test network::tests::should_emit_zone_info_emits_once_then_on_change ... ok
+test npc::brain::tests::flee_action_handles_zero_vector ... ok
+test network::tests::payload_builder_player_state_rejects_oversize ... ok
+test network::tests::payload_builder_player_state_happy_path ... ok
+test network::tests::payload_builder_zone_info_rejects_oversize ... ok
+test npc::brain::tests::runtime_flee_threshold_reweights_scores ... ok
+test player::progression::tests::cultivation_and_event_inputs_are_deterministic_and_safe ... ok
+test player::progression::tests::experience_accumulation_is_saturating_and_non_negative ... ok
+test player::progression::tests::invalid_non_finite_inputs_do_not_create_nan_or_invalid_state ... ok
+test player::progression::tests::karma_gate_blocks_higher_realm_even_with_high_experience ... ok
+test player::progression::tests::karma_is_clamped_for_oversized_positive_and_negative_inputs ... ok
+test network::tests::payload_builder_event_alert_rejects_oversize ... ok
+test player::progression::tests::promotion_updates_qi_max_and_clamps_qi_to_new_cap ... ok
+test player::progression::tests::progression_changes_are_visible_through_existing_projection_seam ... ok
+test player::progression::tests::threshold_crossing_promotes_from_mortal_to_qi_refining_1 ... ok
+test player::state::tests::normalized_clamps_invalid_values ... ok
+test player::state::tests::load_or_init_uses_default_when_file_missing ... ok
+test player::tests::spawn_defaults_are_preserved ... ok
+test player::state::tests::save_json_roundtrip_preserves_fields ... ok
+test player::tests::uses_bootstrap_selected_world_layer_resource ... ok
+test schema::agent_command::tests::deserialize_agent_command_sample ... ok
+test schema::chat_message::tests::deserialize_chat_message_sample ... ok
+test schema::client_payload::tests::deserialize_client_payload_type_literals ... ok
+test schema::agent_command::tests::roundtrip_agent_command ... ok
+test npc::brain::tests::player_proximity_scorer_thresholds ... ok
+test schema::client_payload::tests::deserialize_heartbeat_sample ... ok
+test schema::client_payload::tests::deserialize_event_alert_sample ... ok
+test player::state::tests::save_and_load_roundtrip_by_uuid ... ok
+test schema::client_payload::tests::deserialize_narration_sample ... ok
+test schema::client_payload::tests::deserialize_welcome_sample ... ok
+test schema::client_payload::tests::deserialize_player_state_sample ... ok
+test schema::client_payload::tests::deserialize_zone_info_sample ... ok
+test schema::narration::tests::deserialize_narration_sample ... ok
+test world::tests::fallback_spawn_zone_exists ... ok
+test schema::world_state::tests::deserialize_world_state_sample ... ok
+test world::tests::flat_path_still_boots ... ok
+test schema::client_payload::tests::roundtrip_all_client_payload_samples ... ok
+test world::tests::missing_world_inputs_require_fallback_warning ... ok
+test world::tests::missing_zone_config_uses_spawn_fallback ... ok
+test world::tests::selects_fallback_without_world_path ... ok
+test world::zone::tests::find_zone_returns_spawn_for_spawn_position ... ok
+test world::zone::tests::fallback_has_single_zone ... ok
+test world::tests::selects_fallback_without_region_dir ... ok
+test world::tests::anvil_path_falls_back_on_error ... ok
+test schema::world_state::tests::roundtrip_world_state ... ok
+test world::tests::anvil_path_is_selected_when_region_file_exists ... ok
+test world::zone::tests::missing_zone_config_returns_spawn_fallback ... ok
+test npc::brain::tests::bridge_less_no_player_behavior ... ok
+test npc::brain::tests::flee_action_completes_above_sixteen_blocks ... ok
+test npc::sync::tests::position_to_transform_sync_is_one_way ... ok
+test network::tests::missing_target_route_player_state_does_not_broadcast_to_all_clients ... ok
+test npc::spawn::tests::spawn_npc_creates_single_zombie_with_expected_components ... ok
+test network::tests::player_state_periodic_emission_happens_without_component_change ... ok
+
+test result: ok. 77 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

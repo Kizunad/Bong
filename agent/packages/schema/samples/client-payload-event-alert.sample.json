@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "event_alert",
+  "event_alert": {
+    "kind": "thunder_tribulation",
+    "title": "雷劫将至",
+    "detail": "血谷上空劫云汇聚，三十息内可能落雷。",
+    "severity": "critical",
+    "zone": "blood_valley"
+  }
+}

@@ -1,0 +1,18 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running `target/debug/bong-server`
+[2m2026-04-07T11:50:45.403836Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-07T11:50:46.124691Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-07T11:50:46.124795Z[0m [32m INFO[0m [bong][player] registering player init systems
+[2m2026-04-07T11:50:46.124843Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-07T11:50:46.124853Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-07T11:50:46.124901Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-07T11:50:46.124929Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-07T11:50:46.126280Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-07T11:50:46.127149Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-07T11:50:46.129254Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-07T11:50:46.129273Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-07T11:50:46.129283Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-07T11:50:46.172946Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-07T11:50:46.173293Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+[2m2026-04-07T11:50:48.258870Z[0m [32m INFO[0m [bong][network] sent bong:server_data welcome payload to client entity Entity { index: 4, generation: 1 }
+[2m2026-04-07T11:50:48.259479Z[0m [32m INFO[0m [bong][player] initialized client entity Entity { index: 4, generation: 1 } at [8, 66, 8] in Adventure

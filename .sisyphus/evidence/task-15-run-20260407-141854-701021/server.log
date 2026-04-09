@@ -1,0 +1,32 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running `/tmp/bong-target/debug/bong-server`
+[2m2026-04-07T06:18:57.653655Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-07T06:18:58.317578Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-07T06:18:58.317682Z[0m [32m INFO[0m [bong][player] registering player init/cleanup systems
+[2m2026-04-07T06:18:58.317723Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-07T06:18:58.317732Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-07T06:18:58.317778Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-07T06:18:58.317805Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-07T06:18:58.319861Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-07T06:18:58.320740Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-07T06:18:58.322834Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-07T06:18:58.322856Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-07T06:18:58.322865Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-07T06:18:58.364380Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-07T06:18:58.364707Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+[2m2026-04-07T06:19:18.586673Z[0m [32m INFO[0m [bong][redis] received agent command: cmd_1775542758582 (5 cmds)
+[2m2026-04-07T06:19:18.587793Z[0m [32m INFO[0m [bong][redis] received narration (3 entries)
+[2m2026-04-07T06:19:18.597959Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775542758582: 5 commands from None
+[2m2026-04-07T06:19:18.598028Z[0m [32m INFO[0m [bong][network]   cmd: ModifyZone → spawn params={"spirit_qi_delta": Number(0), "danger_level_delta": Number(3)}
+[2m2026-04-07T06:19:18.598053Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:19:18.598078Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:19:18.598093Z[0m [32m INFO[0m [bong][network]   cmd: SpawnEvent → spawn params={"intensity": Number(0.7), "event": String("thunder_tribulation"), "duration_ticks": Number(120)}
+[2m2026-04-07T06:19:18.598114Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-07T06:19:18.598176Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 5)
+[2m2026-04-07T06:19:18.598278Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 3 narrations, 320 bytes, 0 clients
+[2m2026-04-07T06:19:18.598360Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775542758582 spirit_qi=0.9 danger_level=3
+[2m2026-04-07T06:19:18.598391Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542758582
+[2m2026-04-07T06:19:18.598408Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542758582
+[2m2026-04-07T06:19:18.598433Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775542758582 duration_ticks=120 intensity=0.7
+[2m2026-04-07T06:19:18.598452Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775542758582
+[2m2026-04-07T06:19:24.842416Z[0m [33m WARN[0m [bong][redis] subscriber task ended, stopping bridge

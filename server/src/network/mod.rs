@@ -151,6 +151,76 @@ fn build_world_state_snapshot(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn build_player_state_payload(
+    player_state: &PlayerState,
+    zone: impl Into<String>,
+) -> Result<Vec<u8>, PayloadBuildError> {
+    let payload = player_state.server_payload(None, zone.into());
+    serialize_server_data_payload(&payload)
+}
+
+#[cfg(test)]
+pub(crate) fn collect_players_for_world_state<'a, I>(
+    clients: I,
+    zone_registry: &ZoneRegistry,
+) -> (Vec<PlayerProfile>, HashMap<String, u32>)
+where
+    I: IntoIterator<
+        Item = (
+            &'a str,
+            valence::prelude::Uuid,
+            valence::prelude::DVec3,
+            Option<&'a PlayerState>,
+        ),
+    >,
+{
+    let mut player_counts_by_zone = HashMap::new();
+    let mut players = clients
+        .into_iter()
+        .map(|(name, _uuid, position, player_state)| {
+            let zone_name = zone_name_for_position(zone_registry, position);
+            let (realm, composite_power, breakdown) = player_state
+                .map(|state| {
+                    let normalized = state.normalized();
+                    (
+                        normalized.realm.clone(),
+                        normalized.composite_power(),
+                        normalized.power_breakdown(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    let default_state = PlayerState::default();
+                    (
+                        default_state.realm.clone(),
+                        default_state.composite_power(),
+                        default_state.power_breakdown(),
+                    )
+                });
+
+            *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
+
+            PlayerProfile {
+                uuid: canonical_player_id(name),
+                name: name.to_string(),
+                realm,
+                composite_power,
+                breakdown,
+                trend: PlayerTrend::Stable,
+                active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
+                zone: zone_name,
+                pos: vec3_to_array(position),
+                recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
+                recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    players.sort_by(|left, right| left.uuid.cmp(&right.uuid));
+
+    (players, player_counts_by_zone)
+}
+
 fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
@@ -1389,6 +1459,40 @@ mod tests {
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
+        fn emit_player_state_payloads_periodically_without_change(
+            zone_registry: Option<Res<ZoneRegistry>>,
+            mut tick_counter: valence::prelude::Local<u64>,
+            mut clients: Query<(Entity, &mut Client, &Username, &Position, &PlayerState), With<Client>>,
+        ) {
+            *tick_counter += 1;
+            if !tick_counter.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
+                return;
+            }
+
+            let zone_registry = effective_zone_registry(zone_registry.as_deref());
+
+            for (entity, mut client, username, position, player_state) in &mut clients {
+                let zone_name = zone_name_for_position(&zone_registry, position.get());
+                let payload = player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+                let payload_type = payload_type_label(payload.payload_type());
+                let payload_bytes = match serialize_server_data_payload(&payload) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        log_payload_build_error(payload_type, &error);
+                        continue;
+                    }
+                };
+
+                send_server_data_payload(&mut client, payload_bytes.as_slice());
+                tracing::info!(
+                    "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` (periodic test seam)",
+                    SERVER_DATA_CHANNEL,
+                    payload_type,
+                    username.0,
+                );
+            }
+        }
+
         fn setup_player_state_payload_app() -> App {
             let mut app = App::new();
             app.insert_resource(ZoneRegistry::fallback());
@@ -1497,6 +1601,94 @@ mod tests {
                 }
                 other => panic!("expected player_state payload, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn missing_target_route_player_state_does_not_broadcast_to_all_clients() {
+            let mut app = setup_player_state_payload_app();
+            let (azure_entity, mut azure_helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            let (_bob_entity, mut bob_helper) =
+                spawn_test_client_with_helper(&mut app, "Bob", [20.0, 66.0, 20.0]);
+
+            app.world_mut().entity_mut(azure_entity).insert(PlayerState {
+                realm: "qi_refining_3".to_string(),
+                spirit_qi: 78.0,
+                spirit_qi_max: 100.0,
+                karma: 0.2,
+                experience: 1_200,
+                inventory_score: 0.4,
+            });
+            app.world_mut().entity_mut(_bob_entity).insert(PlayerState {
+                realm: "mortal".to_string(),
+                spirit_qi: 0.0,
+                spirit_qi_max: 100.0,
+                karma: 0.0,
+                experience: 0,
+                inventory_score: 0.0,
+            });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let _ = collect_player_state_payloads(&mut azure_helper);
+            let _ = collect_player_state_payloads(&mut bob_helper);
+
+            {
+                let mut query = app.world_mut().query::<&mut PlayerState>();
+                let mut azure_state = query
+                    .get_mut(app.world_mut(), azure_entity)
+                    .expect("azure state should be mutable");
+                azure_state.spirit_qi = 81.0;
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let azure_payloads = collect_player_state_payloads(&mut azure_helper);
+            let bob_payloads = collect_player_state_payloads(&mut bob_helper);
+
+            assert_eq!(
+                azure_payloads.len(),
+                1,
+                "changed target should receive one payload"
+            );
+            assert!(
+                bob_payloads.is_empty(),
+                "missing-route/fallthrough must not broadcast player_state to other clients"
+            );
+        }
+
+        #[test]
+        fn player_state_periodic_emission_happens_without_component_change() {
+            let mut app = App::new();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, emit_player_state_payloads_periodically_without_change);
+
+            let (entity, mut helper) = spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            app.world_mut().entity_mut(entity).insert(PlayerState {
+                realm: "qi_refining_3".to_string(),
+                spirit_qi: 78.0,
+                spirit_qi_max: 100.0,
+                karma: 0.0,
+                experience: 0,
+                inventory_score: 0.0,
+            });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let _ = collect_player_state_payloads(&mut helper);
+
+            for _ in 0..(WORLD_STATE_PUBLISH_INTERVAL_TICKS - 1) {
+                app.update();
+            }
+            flush_all_client_packets(&mut app);
+
+            let periodic_payloads = collect_player_state_payloads(&mut helper);
+            assert_eq!(
+                periodic_payloads.len(),
+                1,
+                "periodic cadence should emit one player_state payload without Changed<PlayerState>"
+            );
         }
     }
 

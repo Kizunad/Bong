@@ -5,6 +5,7 @@
 pub mod agent_command;
 pub mod channels;
 pub mod chat_message;
+pub mod client_payload;
 pub mod common;
 pub mod narration;
 pub mod server_data;

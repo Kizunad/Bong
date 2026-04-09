@@ -1,0 +1,48 @@
+openjdk version "17.0.18" 2026-01-20
+OpenJDK Runtime Environment (build 17.0.18+8-Ubuntu-124.04.1)
+OpenJDK 64-Bit Server VM (build 17.0.18+8-Ubuntu-124.04.1, mixed mode, sharing)
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+
+> Configure project :
+Fabric Loom: 1.6.12
+"Lock for cache='/root/.gradle/caches/fabric-loom', project=':'" is currently held by pid '714060'.
+Run with --info or --debug to show arguments, may reveal sensitive info
+- pid: 714060
+- command: /usr/lib/jvm/java-17-openjdk-amd64/bin/java
+- started at: 2026-04-07T06:37:08.620Z
+- user: root
+- parent:
+	- pid: 713898
+	- command: /usr/lib/jvm/java-17-openjdk-amd64/bin/java
+	- started at: 2026-04-07T06:37:07.990Z
+	- user: root
+	- parent:
+		- pid: 713438
+		- command: /usr/bin/bash
+		- started at: 2026-04-07T06:36:43.530Z
+		- user: root
+		- parent:
+			- pid: 1
+			- command: /opt/bun/bin/bun
+			- started at: 2026-04-06T11:35:22.730Z
+			- user: root
+Waiting for lock to be released...
+Not publishing sources jar as it was not found. Use java.withSourcesJar() to fix.
+
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :compileTestJava UP-TO-DATE
+> Task :processTestResources UP-TO-DATE
+> Task :testClasses UP-TO-DATE
+> Task :test UP-TO-DATE
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 8s
+5 actionable tasks: 5 up-to-date

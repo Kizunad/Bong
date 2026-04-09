@@ -1,0 +1,76 @@
+=== Task 24 Final Fullstack Matrix (M1-M3) ===
+run_label: second
+run_id: 20260408-220158-1155299-second
+run_dir: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second
+smoke_log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-final-matrix.log
+error_log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-final-matrix-error.log
+
+=== [0/11] Pre-cleanup ===
+  ✓ pre-cleanup completed
+
+=== [1/11] schema -> check/test/generate ===
+  ✓ schema check
+  ✓ schema test
+  ✓ schema generate
+
+=== [2/11] tiandao -> check/test/start:mock (+chat drain proof) ===
+  ✓ tiandao check
+  ✓ tiandao test
+  ✓ tiandao start:mock
+  ✓ chat drain proof
+
+=== [3/11] server -> fmt/clippy/test + persistence/progression/payload proofs ===
+  ✓ server fmt
+  ✓ server clippy
+  ✓ server cargo test
+  ✓ server proof tests
+  ✓ persistence proof marker
+  ✓ progression proof marker
+  ✓ zone_info proof marker
+  ✓ event_alert proof marker
+  ✓ player_state proof marker
+
+=== [4/11] client -> test/build + typed payload anchors ===
+  ✓ client gradle test
+  ✓ client gradle build
+  ✓ client sharedNarration fixture anchor
+  ✓ client sharedZoneInfo fixture anchor
+  ✓ client sharedEventAlert fixture anchor
+  ✓ client sharedPlayerState fixture anchor
+  ✓ client typed narration anchor
+
+=== [5/11] fullstack runtime -> redis + server + deterministic tiandao mock ===
+  ✓ redis ping
+  ✓ server world bootstrap
+  ✓ server redis bridge subscribed
+  ✓ world_state proof
+  ✓ merged command proof
+  ✓ chat drain proof (from tiandao tests)
+  ✓ typed narration proof
+
+=== [6/11] Evidence paths (task-24 run layer) ===
+  run_dir: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second
+  schema: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/schema.log
+  agent-check: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/agent-check.log
+  agent-test: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/agent-test.log
+  agent-start-mock: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/agent-start-mock.log
+  server-fmt: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/server-fmt.log
+  server-clippy: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/server-clippy.log
+  server-test: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/server-test.log
+  server-proof: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/server-proof.log
+  client-test: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/client-test.log
+  client-build: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/client-build.log
+  fullstack-redis: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/fullstack-redis.log
+  fullstack-server: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/fullstack-server.log
+  fullstack-redis-sub: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/fullstack-redis-sub.log
+  fullstack-tiandao: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-run-20260408-220158-1155299-second/fullstack-tiandao.log
+
+=== [7/11] Consolidated smoke evidence files ===
+  matrix stdout log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-final-matrix.log
+  matrix failure log: /workspace/worktrees/tiandao-fullstack-closure/.sisyphus/evidence/task-24-final-matrix-error.log
+
+=== [8/11] Result ===
+Result: 31 passed, 0 failed
+ALL PASS
+
+=== [9/11] Exit ===

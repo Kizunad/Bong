@@ -1,0 +1,136 @@
+   Compiling bong-server v0.1.0 (/workspace/worktrees/tiandao-fullstack-closure/server)
+warning: constant `MAX_EVENT_RESOLUTION_TICKS` is never used
+ --> src/player/progression.rs:3:7
+  |
+3 | const MAX_EVENT_RESOLUTION_TICKS: u64 = 1_200;
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `ProgressionInput` is never constructed
+ --> src/player/progression.rs:6:12
+  |
+6 | pub struct ProgressionInput {
+  |            ^^^^^^^^^^^^^^^^
+
+warning: associated function `new` is never used
+  --> src/player/progression.rs:13:18
+   |
+12 | impl ProgressionInput {
+   | --------------------- associated function in this implementation
+13 |     pub const fn new(experience_gain: i64, karma_delta: f64, spirit_qi_delta: f64) -> Self {
+   |                  ^^^
+
+warning: struct `RealmRule` is never constructed
+  --> src/player/progression.rs:23:8
+   |
+23 | struct RealmRule {
+   |        ^^^^^^^^^
+
+warning: constant `REALM_LADDER` is never used
+  --> src/player/progression.rs:30:7
+   |
+30 | const REALM_LADDER: [RealmRule; 15] = [
+   |       ^^^^^^^^^^^^
+
+warning: function `synthetic_gain_input` is never used
+   --> src/player/progression.rs:123:8
+    |
+123 | pub fn synthetic_gain_input(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cultivation_tick_input` is never used
+   --> src/player/progression.rs:131:8
+    |
+131 | pub fn cultivation_tick_input(zone_spirit_qi: f64) -> ProgressionInput {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `active_event_resolution_input` is never used
+   --> src/player/progression.rs:140:8
+    |
+140 | pub fn active_event_resolution_input(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `apply_progression` is never used
+   --> src/player/progression.rs:170:8
+    |
+170 | pub fn apply_progression(state: &PlayerState, input: ProgressionInput) -> PlayerState {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `apply_progression_in_place` is never used
+   --> src/player/progression.rs:201:8
+    |
+201 | pub fn apply_progression_in_place(state: &mut PlayerState, input: ProgressionInput) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `apply_experience_gain` is never used
+   --> src/player/progression.rs:205:4
+    |
+205 | fn apply_experience_gain(experience: u64, gain: i64) -> u64 {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `apply_karma_delta` is never used
+   --> src/player/progression.rs:217:4
+    |
+217 | fn apply_karma_delta(current_karma: f64, karma_delta: f64) -> f64 {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `apply_spirit_qi_delta` is never used
+   --> src/player/progression.rs:225:4
+    |
+225 | fn apply_spirit_qi_delta(current_qi: f64, qi_delta: f64, qi_max: f64) -> f64 {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `clamp_unit_finite` is never used
+   --> src/player/progression.rs:233:4
+    |
+233 | fn clamp_unit_finite(value: f64) -> f64 {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_realm_promotion` is never used
+   --> src/player/progression.rs:241:4
+    |
+241 | fn resolve_realm_promotion(current_index: usize, experience: u64, karma: f64) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `realm_index` is never used
+   --> src/player/progression.rs:256:4
+    |
+256 | fn realm_index(realm: &str) -> usize {
+    |    ^^^^^^^^^^^
+
+warning: `bong-server` (bin "bong-server") generated 16 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.80s
+     Running `/tmp/bong-target/debug/bong-server`
+[2m2026-04-08T13:19:48.632750Z[0m [32m INFO[0m [bong][bridge] tokio runtime started
+[2m2026-04-08T13:19:49.324899Z[0m [32m INFO[0m [bong][world] registering world setup system
+[2m2026-04-08T13:19:49.325022Z[0m [32m INFO[0m [bong][player] registering player init systems
+[2m2026-04-08T13:19:49.325098Z[0m [32m INFO[0m [bong][npc] registering spawn/sync/brain systems
+[2m2026-04-08T13:19:49.325111Z[0m [32m INFO[0m [bong][npc] registering startup spawn systems
+[2m2026-04-08T13:19:49.325164Z[0m [32m INFO[0m [bong][npc] registering sync system
+[2m2026-04-08T13:19:49.325203Z[0m [32m INFO[0m [bong][npc] registering brain systems
+[2m2026-04-08T13:19:49.326659Z[0m [32m INFO[0m [bong][redis] connecting to redis://127.0.0.1:6379
+[2m2026-04-08T13:19:49.327717Z[0m [32m INFO[0m [bong][redis] subscribed to bong:agent_command and bong:agent_narrate
+[2m2026-04-08T13:19:49.329703Z[0m [33m WARN[0m [bong][world] fallback bootstrap: using FallbackFlat because world path missing or not a directory (preferred: AnvilIfPresent, world_path: world, region_dir: world/region)
+[2m2026-04-08T13:19:49.329722Z[0m [32m INFO[0m [bong][world] selected bootstrap mode: FallbackFlat (preferred: AnvilIfPresent, world_path: world, region_dir: world/region, reason: world path missing or not a directory)
+[2m2026-04-08T13:19:49.329732Z[0m [32m INFO[0m [bong][world] creating overworld test area (16x16 chunks)
+[2m2026-04-08T13:19:49.374635Z[0m [32m INFO[0m [bong][npc] spawned zombie npc entity Entity { index: 1, generation: 1 } at [14, 66, 14]
+[2m2026-04-08T13:19:49.374986Z[0m [32m INFO[0m [bong][npc] startup marker count with NpcMarker: 1
+[2m2026-04-08T13:20:09.644227Z[0m [32m INFO[0m [bong][redis] received agent command: cmd_1775654409643 (5 cmds)
+[2m2026-04-08T13:20:09.644565Z[0m [32m INFO[0m [bong][redis] received narration (3 entries)
+[2m2026-04-08T13:20:09.681289Z[0m [32m INFO[0m [bong][network] received agent command batch cmd_1775654409643: 5 commands from None
+[2m2026-04-08T13:20:09.681340Z[0m [32m INFO[0m [bong][network]   cmd: ModifyZone → spawn params={"danger_level_delta": Number(3), "spirit_qi_delta": Number(0)}
+[2m2026-04-08T13:20:09.681357Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-08T13:20:09.681371Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-08T13:20:09.681381Z[0m [32m INFO[0m [bong][network]   cmd: SpawnEvent → spawn params={"intensity": Number(0.7), "duration_ticks": Number(120), "event": String("thunder_tribulation")}
+[2m2026-04-08T13:20:09.681394Z[0m [32m INFO[0m [bong][network]   cmd: NpcBehavior → global params={"flee_threshold": Number(0.65)}
+[2m2026-04-08T13:20:09.681433Z[0m [32m INFO[0m [bong][network] enqueued 5 agent commands (pending: 5)
+[2m2026-04-08T13:20:09.681465Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-08T13:20:09.681487Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-08T13:20:09.681507Z[0m [32m INFO[0m [bong][network] sent bong:server_data narration payload: 1 narrations, 134 bytes, 0 clients
+[2m2026-04-08T13:20:09.681549Z[0m [32m INFO[0m [bong][network][command_executor] modify_zone applied for target=spawn batch_id=cmd_1775654409643 spirit_qi=0.9 danger_level=3
+[2m2026-04-08T13:20:09.681569Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775654409643
+[2m2026-04-08T13:20:09.681580Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775654409643
+[2m2026-04-08T13:20:09.681597Z[0m [32m INFO[0m [bong][network][command_executor] spawn_event thunder_tribulation recorded for target=spawn batch_id=cmd_1775654409643 duration_ticks=120 intensity=0.7
+[2m2026-04-08T13:20:09.681610Z[0m [32m INFO[0m [bong][network][command_executor] npc_behavior updated runtime flee_threshold=0.65 for batch_id=cmd_1775654409643
+[2m2026-04-08T13:20:10.702189Z[0m [33m WARN[0m [bong][redis] subscriber task ended, stopping bridge

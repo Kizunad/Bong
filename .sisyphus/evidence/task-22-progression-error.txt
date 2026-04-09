@@ -1,0 +1,6 @@
+
+running 1 test
+test player::progression::tests::invalid_non_finite_inputs_do_not_create_nan_or_invalid_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+

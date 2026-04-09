@@ -1,0 +1,14 @@
+
+> @bong/tiandao@0.1.0 test
+> vitest run chat-processor
+
+
+ RUN  v3.2.4 /workspace/worktrees/tiandao-fullstack-closure/agent/packages/tiandao
+
+ ✓ tests/chat-processor.test.ts (3 tests) 9ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  22:36:58
+   Duration  363ms (transform 69ms, setup 0ms, collect 119ms, tests 9ms, environment 0ms, prepare 93ms)
+
