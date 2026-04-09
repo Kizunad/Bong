@@ -306,8 +306,8 @@ fn realm_index(realm: &str) -> usize {
 mod tests {
     use super::*;
     use crate::network::{build_player_state_payload, collect_players_for_world_state};
-    use crate::schema::client_payload::ClientPayloadV1;
-    use crate::world::{ZoneRegistry, DEFAULT_SPAWN_POSITION};
+    use crate::schema::server_data::ServerDataV1;
+    use crate::world::zone::{default_spawn_bounds, ZoneRegistry};
     use valence::prelude::{DVec3, Uuid};
 
     #[test]
@@ -429,26 +429,32 @@ mod tests {
 
         let payload = build_player_state_payload(&after, "spawn")
             .expect("progressed state should serialize in player_state payload");
-        let decoded: ClientPayloadV1 =
+        let decoded: ServerDataV1 =
             serde_json::from_slice(&payload).expect("player_state payload should decode");
 
-        let player_state = match decoded {
-            ClientPayloadV1::PlayerState { player_state, .. } => player_state,
+        let player_state = match decoded.payload {
+            crate::schema::server_data::ServerDataPayloadV1::PlayerState {
+                realm,
+                spirit_qi,
+                composite_power,
+                ..
+            } => (realm, spirit_qi, composite_power),
             _ => unreachable!("expected player_state payload"),
         };
-        assert_eq!(player_state.realm, "qi_refining_1");
-        assert!(player_state.spirit_qi > 0.0);
-        assert!(player_state.spirit_qi_max >= 120.0);
+        assert_eq!(player_state.0, "qi_refining_1");
+        assert!(player_state.1 > 0.0);
+        assert!(player_state.2 > 0.0);
 
         let registry = ZoneRegistry::fallback();
+        let (spawn_min, spawn_max) = default_spawn_bounds();
         let (profiles, _) = collect_players_for_world_state(
             [(
                 "Azure",
                 Uuid::nil(),
                 DVec3::new(
-                    DEFAULT_SPAWN_POSITION[0],
-                    DEFAULT_SPAWN_POSITION[1],
-                    DEFAULT_SPAWN_POSITION[2],
+                    spawn_min.x.min(spawn_max.x),
+                    spawn_min.y.min(spawn_max.y),
+                    spawn_min.z.min(spawn_max.z),
                 ),
                 Some(&after),
             )],

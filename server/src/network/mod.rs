@@ -151,6 +151,76 @@ fn build_world_state_snapshot(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn build_player_state_payload(
+    player_state: &PlayerState,
+    zone: impl Into<String>,
+) -> Result<Vec<u8>, PayloadBuildError> {
+    let payload = player_state.server_payload(None, zone.into());
+    serialize_server_data_payload(&payload)
+}
+
+#[cfg(test)]
+pub(crate) fn collect_players_for_world_state<'a, I>(
+    clients: I,
+    zone_registry: &ZoneRegistry,
+) -> (Vec<PlayerProfile>, HashMap<String, u32>)
+where
+    I: IntoIterator<
+        Item = (
+            &'a str,
+            valence::prelude::Uuid,
+            valence::prelude::DVec3,
+            Option<&'a PlayerState>,
+        ),
+    >,
+{
+    let mut player_counts_by_zone = HashMap::new();
+    let mut players = clients
+        .into_iter()
+        .map(|(name, _uuid, position, player_state)| {
+            let zone_name = zone_name_for_position(zone_registry, position);
+            let (realm, composite_power, breakdown) = player_state
+                .map(|state| {
+                    let normalized = state.normalized();
+                    (
+                        normalized.realm.clone(),
+                        normalized.composite_power(),
+                        normalized.power_breakdown(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    let default_state = PlayerState::default();
+                    (
+                        default_state.realm.clone(),
+                        default_state.composite_power(),
+                        default_state.power_breakdown(),
+                    )
+                });
+
+            *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
+
+            PlayerProfile {
+                uuid: canonical_player_id(name),
+                name: name.to_string(),
+                realm,
+                composite_power,
+                breakdown,
+                trend: PlayerTrend::Stable,
+                active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
+                zone: zone_name,
+                pos: vec3_to_array(position),
+                recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
+                recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    players.sort_by(|left, right| left.uuid.cmp(&right.uuid));
+
+    (players, player_counts_by_zone)
+}
+
 fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
