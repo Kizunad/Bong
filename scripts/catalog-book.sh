@@ -6,7 +6,7 @@ source "$(dirname "$0")/library-common.sh"
 usage() {
   cat <<'EOF'
 用法：
-  bash scripts/catalog-book.sh "docs/library/<分馆>/<书名>.md"
+  bash scripts/catalog-book.sh "docs/library/<分馆>/<书名>.json"
 EOF
 }
 
@@ -18,32 +18,39 @@ fi
 BOOK_PATH="$(to_abs_path "$1")"
 validate_book_file "$BOOK_PATH"
 
-DISPLAY_NAME="$(meta_value "$BOOK_PATH" "分馆")"
+DISPLAY_NAME="$(json_field "$BOOK_PATH" "catalog.hall")"
 CATEGORY_SLUG="$(category_slug_from_display "$DISPLAY_NAME")"
-TITLE="$(book_title "$BOOK_PATH")"
+TITLE="$(json_field "$BOOK_PATH" "title")"
 
-STATUS="$(meta_value "$BOOK_PATH" "收录状态")"
-COLLECTED_AT="$(meta_value "$BOOK_PATH" "收录时间")"
+STATUS="$(json_field "$BOOK_PATH" "catalog.status")"
+COLLECTED_AT="$(json_field "$BOOK_PATH" "catalog.date")"
 
 if [[ -z "$STATUS" || "$STATUS" == "待收录" ]]; then
-  update_meta_line "$BOOK_PATH" "收录状态" "在架"
+  json_set_field "$BOOK_PATH" "catalog.status" "在架"
 fi
 
 if [[ -z "$COLLECTED_AT" || "$COLLECTED_AT" == "待收录" ]]; then
-  update_meta_line "$BOOK_PATH" "收录时间" "$TODAY"
+  json_set_field "$BOOK_PATH" "catalog.date" "$TODAY"
 fi
 
-update_meta_line "$BOOK_PATH" "最后整理" "$TODAY"
+json_set_field "$BOOK_PATH" "catalog.lastEdit" "$TODAY"
 
 bash "$ROOT/scripts/rebuild-library-index.sh" "$CATEGORY_SLUG"
 
-PROGRESS="$(implementation_progress "$BOOK_PATH")"
-BOOK_ID="$(meta_value "$BOOK_PATH" "藏书编号")"
-VALUE="$(meta_value "$BOOK_PATH" "估值")"
+PROGRESS="$(json_count_todos "$BOOK_PATH")"
+BOOK_ID="$(json_field "$BOOK_PATH" "catalog.id")"
+VALUE="$(json_field "$BOOK_PATH" "catalog.value")"
+read -r DONE TOTAL <<< "$PROGRESS"
 
-echo "✓ 已收录：$TITLE"
+if [[ "$TOTAL" -eq 0 ]]; then
+  PROGRESS_STR="—"
+else
+  PROGRESS_STR="${DONE}/${TOTAL}"
+fi
+
+echo "✓ 已收录：《${TITLE}》"
 echo "  分馆：$DISPLAY_NAME"
 echo "  藏书编号：$BOOK_ID"
 echo "  估值：$VALUE"
-echo "  实现进度：$PROGRESS"
+echo "  实现进度：$PROGRESS_STR"
 echo "  路径：$(relative_to_root "$BOOK_PATH")"

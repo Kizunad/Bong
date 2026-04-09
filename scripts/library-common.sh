@@ -108,86 +108,6 @@ resolve_category_slug() {
   echo "$arg"
 }
 
-meta_value() {
-  local file="$1"
-  local key="$2"
-
-  awk -v prefix="- ${key}：" '
-    index($0, prefix) == 1 {
-      print substr($0, length(prefix) + 1)
-      exit
-    }
-  ' "$file"
-}
-
-book_title() {
-  local file="$1"
-
-  awk '
-    /^# / {
-      sub(/^# /, "")
-      print
-      exit
-    }
-  ' "$file"
-}
-
-update_meta_line() {
-  local file="$1"
-  local key="$2"
-  local value="$3"
-  local prefix="- ${key}："
-  local tmp
-
-  tmp="$(mktemp)"
-
-  awk -v prefix="$prefix" -v value="$value" '
-    BEGIN { updated = 0 }
-    index($0, prefix) == 1 {
-      print prefix value
-      updated = 1
-      next
-    }
-    { print }
-    END {
-      if (updated == 0) {
-        exit 2
-      }
-    }
-  ' "$file" > "$tmp" || {
-    rm -f "$tmp"
-    die "未找到元信息字段：$key ($file)"
-  }
-
-  mv "$tmp" "$file"
-}
-
-count_implementation() {
-  local file="$1"
-
-  awk '
-    BEGIN { in_section = 0; done_count = 0; total = 0 }
-    /^## 实现挂钩$/ { in_section = 1; next }
-    in_section && /^---$/ { in_section = 0 }
-    in_section && /^- \[x\] / { done_count++; total++; next }
-    in_section && /^- \[ \] / { total++; next }
-    END { printf "%d %d\n", done_count, total }
-  ' "$file"
-}
-
-implementation_progress() {
-  local file="$1"
-  local done_count
-  local total
-
-  read -r done_count total <<< "$(count_implementation "$file")"
-  if [[ "$total" -eq 0 ]]; then
-    echo "—"
-  else
-    echo "${done_count}/${total}"
-  fi
-}
-
 relative_to_root() {
   local absolute_path="$1"
   local prefix="$ROOT/"
@@ -200,42 +120,76 @@ relative_to_root() {
   echo "$absolute_path"
 }
 
-require_heading() {
-  local file="$1"
-  local heading="$2"
+# ── JSON 操作（需要 node） ──────────────────────────
 
-  grep -q "^## ${heading}$" "$file" || die "$file 缺少章节：## ${heading}"
+json_field() {
+  local file="$1"
+  local field_path="$2"
+  node -e "
+    const d = require('${file}');
+    const keys = '${field_path}'.split('.');
+    let v = d;
+    for (const k of keys) { v = v?.[k]; }
+    if (v !== undefined && v !== null) process.stdout.write(String(v));
+  " 2>/dev/null
+}
+
+json_set_field() {
+  local file="$1"
+  local field_path="$2"
+  local value="$3"
+  node -e "
+    const fs = require('fs');
+    const d = JSON.parse(fs.readFileSync('${file}', 'utf-8'));
+    const keys = '${field_path}'.split('.');
+    let obj = d;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!obj[keys[i]]) obj[keys[i]] = {};
+      obj = obj[keys[i]];
+    }
+    obj[keys[keys.length - 1]] = '${value}';
+    fs.writeFileSync('${file}', JSON.stringify(d, null, 2) + '\n', 'utf-8');
+  "
+}
+
+json_count_todos() {
+  local file="$1"
+  node -e "
+    const d = require('${file}');
+    const todos = d.implementation?.todos || [];
+    const done = todos.filter(t => t.done).length;
+    process.stdout.write(done + ' ' + todos.length);
+  " 2>/dev/null
 }
 
 validate_book_file() {
   local file="$1"
 
   [[ -f "$file" ]] || die "文件不存在：$file"
-  [[ "$file" == *.md ]] || die "只支持 Markdown 条目：$file"
+  [[ "$file" == *.json ]] || die "只支持 JSON 条目：$file"
 
   local base
   base="$(basename "$file")"
-  [[ "$base" != "index.md" ]] || die "index.md 不是可收录条目：$file"
   [[ "$file" != "$LIBRARY_ROOT/templates/"* ]] || die "模板目录下的文件不可收录：$file"
   [[ "$file" == "$LIBRARY_ROOT/"* ]] || die "条目必须位于 docs/library/ 下：$file"
 
-  local title
-  title="$(book_title "$file")"
-  [[ -n "$title" ]] || die "$file 缺少书名标题"
-
-  require_heading "$file" "编目信息"
-  require_heading "$file" "摘要"
-  require_heading "$file" "正文"
-  require_heading "$file" "实现挂钩"
-
-  local key
-  for key in 分馆 书架 藏书编号 估值 稀有度 收录状态 锚点来源 收录时间 最后整理; do
-    [[ -n "$(meta_value "$file" "$key")" ]] || die "$file 缺少元信息字段：$key"
-  done
+  # 验证 JSON 可解析且有必要字段
+  node -e "
+    const d = require('${file}');
+    if (!d.title) { process.stderr.write('缺少 title'); process.exit(1); }
+    if (!d.catalog) { process.stderr.write('缺少 catalog'); process.exit(1); }
+    const required = ['hall','shelf','id','value','rarity','status','anchor','date','lastEdit'];
+    for (const k of required) {
+      if (!d.catalog[k] && d.catalog[k] !== '') {
+        process.stderr.write('缺少 catalog.' + k);
+        process.exit(1);
+      }
+    }
+  " 2>&1 || die "$file JSON 校验失败"
 
   local display_name
   local slug
-  display_name="$(meta_value "$file" "分馆")"
+  display_name="$(json_field "$file" "catalog.hall")"
   slug="$(category_slug_from_display "$display_name" 2>/dev/null)" || die "$file 的分馆字段无效：$display_name"
 
   [[ "$file" == "$LIBRARY_ROOT/$slug/"* ]] || die "$file 的路径与分馆字段不一致：应位于 docs/library/$slug/"

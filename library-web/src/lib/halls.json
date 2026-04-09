@@ -1,0 +1,27 @@
+{
+  "world": {
+    "name": "世界总志",
+    "desc": "天地初开至末法降临，万年兴衰总录",
+    "bookCount": 0
+  },
+  "geography": {
+    "name": "地理志",
+    "desc": "残土山川、秘境裂隙、灵脉分布",
+    "bookCount": 1
+  },
+  "peoples": {
+    "name": "众生谱",
+    "desc": "宗门遗脉、散修百态、异兽图鉴",
+    "bookCount": 1
+  },
+  "ecology": {
+    "name": "生态录",
+    "desc": "灵草药材、毒物异种、生态链",
+    "bookCount": 1
+  },
+  "cultivation": {
+    "name": "修行藏",
+    "desc": "功法残篇、境界注解、修行笔记",
+    "bookCount": 2
+  }
+}

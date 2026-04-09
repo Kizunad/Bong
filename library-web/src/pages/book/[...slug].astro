@@ -1,0 +1,61 @@
+---
+import Base from "../../layouts/Base.astro";
+import CatalogBadge from "../../components/CatalogBadge.astro";
+import { getCollection } from "astro:content";
+
+export async function getStaticPaths() {
+  const books = await getCollection("books");
+  return books.map((book) => ({
+    params: { slug: book.slug },
+    props: { book },
+  }));
+}
+
+const { book } = Astro.props;
+const { Content } = await book.render();
+const d = book.data;
+---
+
+<Base title={d.title}>
+  <article class="animate-fade-in max-w-3xl mx-auto">
+    <!-- 返回 -->
+    <a
+      href="/"
+      class="inline-block mb-8 text-sm text-ink-light hover:text-cinnabar transition-colors font-kai"
+    >
+      ← 返回总目
+    </a>
+
+    <!-- 书名 -->
+    <header class="mb-10 text-center">
+      <h1 class="font-song text-3xl font-black text-ink mb-4">
+        《{d.title}》
+      </h1>
+      {
+        d.quote && (
+          <p class="font-kai text-ink-light italic text-lg leading-relaxed max-w-xl mx-auto">
+            "{d.quote}"
+          </p>
+        )
+      }
+    </header>
+
+    <!-- 编目信息条 -->
+    <CatalogBadge data={d} />
+
+    <!-- 正文 -->
+    <div class="book-content mt-12">
+      <Content />
+    </div>
+
+    <!-- 底部回到顶部 -->
+    <div class="mt-20 text-center">
+      <a
+        href="#"
+        class="inline-block text-sm text-gold-dim hover:text-gold transition-colors font-kai"
+      >
+        ▲ 回到卷首
+      </a>
+    </div>
+  </article>
+</Base>

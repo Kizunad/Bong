@@ -1,0 +1,55 @@
+---
+interface Props {
+  data: {
+    hall: string;
+    shelf: string;
+    catalogId: string;
+    value: string;
+    rarity: string;
+    status: string;
+    anchor: string;
+    catalogDate: string;
+    lastEdit: string;
+  };
+}
+
+const { data: d } = Astro.props;
+
+const fields = [
+  { label: "分馆", value: d.hall },
+  { label: "书架", value: d.shelf },
+  { label: "编号", value: d.catalogId },
+  { label: "估值", value: d.value },
+  { label: "稀有度", value: d.rarity },
+  { label: "状态", value: d.status },
+  { label: "锚点", value: d.anchor },
+  { label: "收录", value: d.catalogDate },
+  { label: "整理", value: d.lastEdit },
+].filter((f) => f.value);
+---
+
+<div
+  class="rounded-lg border border-gold/25 bg-gradient-to-r from-parchment-dark/30 to-transparent p-5"
+>
+  <h4 class="font-song text-sm font-bold text-gold-dim mb-3 tracking-wider">
+    编目信息
+  </h4>
+  <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+    {
+      fields.map((f) => (
+        <div>
+          <span class="text-ink-light text-xs">{f.label}</span>
+          <p
+            class:list={[
+              "font-kai",
+              f.label === "稀有度" && `rarity-${f.value}`,
+              f.label === "状态" && f.value === "在架" && "text-jade",
+            ]}
+          >
+            {f.value}
+          </p>
+        </div>
+      ))
+    }
+  </div>
+</div>

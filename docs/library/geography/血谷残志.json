@@ -1,0 +1,122 @@
+{
+  "title": "血谷残志",
+  "quote": "血谷灵脉又枯了三分。仍有蠢人在那里打坐。",
+  "catalog": {
+    "hall": "地理志",
+    "shelf": "东域·矿谷",
+    "id": "geography-0001",
+    "value": "45 骨币",
+    "rarity": "少见",
+    "status": "在架",
+    "anchor": "docs/worldview.md 十二、世界地理",
+    "date": "2026-04-08",
+    "lastEdit": "2026-04-08"
+  },
+  "summary": "本卷详录血谷（中心坐标 3000, -2500，范围 800×1500）之地形、灵气、生态与路径。血谷是末法残土中少数仍可稳定产出矿脉的区域，亦是天劫多发之地。本卷旨在解决以下设定问题：\n\n1. 血谷内部的空间异质性——何处可采、何处当避、何处是死地；\n2. 灵气动态衰减的触发条件与天道的干预节奏；\n3. 生物分布与灵压环境的耦合关系；\n4. 从初醒原至血谷的路径规划及谷内战术节点；\n5. 服务端实现所需的 ECS 组件与系统设计。\n\n本卷所载坐标、灵气数值均锚定于 worldview.md。涉及天道行为推演的部分标注\"本卷推演\"。\n\n> **勘误备注**：worldview.md 区域详情表记血谷距出生点为\"~3900格/8分钟\"，按疾跑速度 340格/分钟实算应为 11-12 分钟，待勘误。",
+  "sections": [
+    {
+      "title": "一、地形分区",
+      "body": "血谷呈西北—东南走向的狭长裂谷，南北长约 1500 格，东西宽约 800 格。谷地两侧为风化砂岩崖壁，高 20-40 格，不可攀爬。谷底被上古时期某场大战的真元冲击撕裂，形成六处特征迥异的子区域。\n\n| 子区域 | 坐标范围（相对中心） | 地貌特征 | 灵气基准 | 资源 | 核心风险 |\n|--------|---------------------|---------|---------|------|---------|\n| **裂口滩** | X: -400~-200, Z: -600~-400 | 谷地入口，碎石斜坡，散落巨型兽骨 | 0.25 | 低级矿脉（铁矿/铜矿），偶见骨片 | 噬元鼠群密度高，入口处常有人蹲守 |\n| **赤髓沟** | X: -200~200, Z: -400~0 | 红色砂岩裸露，地表渗出赤髓草 | 0.30 | 赤髓草（凝脉散材料），次级矿脉 | 异变缝合兽固定刷新点×2，玩家争夺激烈 |\n| **坠星坑** | X: -100~150, Z: 100~350 | 直径约 120 格的陨坑，坑底有晶体残骸 | 0.20（坑底） / 0.05（坑壁） | 灵晶矿脉（高价值），偶见残卷碎片 | 坑底叠加负灵压 -0.8（见下注），境界越高越危险 |\n| **狭喉** | X: 100~250, Z: -300~-100 | 宽度仅 15-30 格的峡谷窄道 | 0.35 | 无显著资源 | 伏击热点，地师阵法密集区 |\n| **骨堆台** | X: 200~400, Z: 200~500 | 高出谷底 15 格的天然石台，遍布异兽遗骸 | 0.28 | 异变兽核（击杀残留），封灵骨币材料 | 天劫多发区，道伥出没 |\n| **断脊渊** | X: -350~-150, Z: 300~600 | 谷地最深处，崖壁崩塌形成的乱石堆 | 0.10（地表） / 叠加负灵压 -0.3（裂隙） | 深层矿脉（需挖掘至 Y<40），上古禁制残迹 | 负灵域裂隙，诡影（空兽）游荡 |\n\n> **注**：表中\"灵气基准\"指用于资源产出、生态判定的环境灵气值；\"负灵压\"指叠加在特定子区域的负灵域分量，独立作用于玩家真元抽吸。二者独立计算——坠星坑坑底环境灵气 0.20 决定矿脉品级，负灵压 -0.8 决定玩家被抽吸的速度。断脊渊裂隙同理。\n\n**本卷推演**：血谷的地形破碎源于上古大能斗法——某位化虚境修士在此自爆真元核心，冲击波撕裂地层，其陨落处即今坠星坑。坑底至今残留其真元抽空后的负压空洞。"
+    },
+    {
+      "title": "二、灵气动态",
+      "body": "#### 2.1 基准状态与衰减规则\n\n血谷全境基准灵气值 0.3（见 worldview 十二节）。子区域实际值在 0.05-0.35 间波动。衰减遵循以下规则：\n\n| 衰减触发条件 | 衰减量 | 影响范围 | 恢复条件 |\n|-------------|--------|---------|---------|\n| 任意修士在区域内打坐（每 30 秒） | -0.01 | 所在子区域 | 连续 10 分钟无修士停留，天道缓慢回补 0.005/分钟 |\n| 异变缝合兽触发「灵压狂暴」（血量<30%） | -0.05/秒 | 半径 50 格 | 缝合兽死亡后停止 |\n| 玩家在区域内突破境界 | 永久 -0.03 | 所在子区域 | 不可恢复 |\n| 矿脉被完整采掘（矿脉方块归零） | 永久 -0.02 | 所在子区域 | 不可恢复 |\n| 区域内同时存在 ≥5 名修士（持续 3 分钟） | 启动「域崩」倒计时 | 全血谷 | 修士数量降至 3 人以下则重置计时 |\n\n**域崩事件**（本卷推演）：\n当血谷内同时存在 ≥5 名修士且持续满 3 分钟，天道判定此区域\"灵压负荷过载\"，启动 10 分钟倒计时。倒计时归零时：\n\n- 全血谷灵气强制归零，持续 30 分钟\n- 所有修士获得一条叙事：\"血谷灵脉不堪重负，暂时沉寂。尔等……好自为之。\"\n- 区域内所有矿脉停止生长\n- 随机在骨堆台或赤髓沟刷新一只「天劫异变兽」（属性为普通缝合兽的 1.5 倍）\n- 30 分钟后灵气恢复至基准值的 80%，永久扣除 20% 上限\n\n**设计意图**：域崩是天道对\"过度聚集\"的惩罚。玩家要么在倒计时结束前撤离，要么留下争夺天劫异变兽的兽核——但战斗本身会加速灵气消耗，形成恶性循环。\n\n#### 2.2 伪灵脉\n\n血谷内不自然生成伪灵脉。但天道在以下条件满足时，会在血谷外围荒野（距谷口 300-500 格）投放伪灵脉：\n\n- 血谷内连续 2 小时无玩家死亡\n- 全服通灵境以上修士 ≥2 人存活\n\n伪灵脉灵气值 0.55，维持 30 分钟。投放时全服不广播，但血谷内修士收到叙事：\"谷外似有灵气波动。是机缘……还是饵？\"\n\n#### 2.3 天道干预节奏\n\n血谷的天劫触发权重高于其他区域（base_weight = 1.8，初醒原为 0.5）：\n\n- 固元境以上修士在骨堆台打坐 → 每 5 分钟 15% 概率触发小型天劫（落雷×3，单发伤害 20+真元灼烧）\n- 任意修士在坠星坑坑底停留超过 30 秒 → 天道叙事：\"负压之地，久留无益。\"→ 不触发天劫，但负灵域吸速翻倍\n- 域崩倒计时期间 → 天劫概率翻倍"
+    },
+    {
+      "title": "三、生态分布",
+      "body": "血谷的生物分布与子区域灵气强相关。高灵气吸引竞争者，低灵气筛选耐受种。\n\n| 生物 | 主要出没子区域 | 密度（只/100格²） | 行为与灵气关系 |\n|------|---------------|------------------|----------------|\n| **噬元鼠群** | 裂口滩、狭喉入口 | 8-12 | 灵气 >0.2 时活跃。打坐修士吸引半径 30 格内所有鼠群 |\n| **拟态灰烬蛛** | 狭喉崖壁、断脊渊乱石 | 3-5 | 静止时材质与砂岩/残灰方块一致。玩家真元 >50% 时优先伏击 |\n| **异变缝合兽** | 赤髓沟（固定×2）、骨堆台（概率×1） | 2-3 | 血量<30% 触发灵压狂暴，周围灵气快速下降。兽核为突破通灵必需 |\n| **道伥** | 骨堆台、坠星坑边缘 | 1-2 | 模拟玩家行为（挖矿、蹲伏）。玩家真元 <20% 或背对时发动绝杀。击杀掉落残卷 |\n| **诡影（空兽）** | 断脊渊裂隙、坠星坑坑底 | 1 | 不可见实体，碰撞后直接扣除 15-30 真元并击退。无击杀掉落 |\n| **拾荒散修 NPC** | 裂口滩、赤髓沟外围 | 1-2 | 动态评估玩家状态。真元见底时转为敌对 |\n\n**生态联动**（本卷推演）：\n当赤髓沟灵气因过度修炼降至 0.15 以下时，两处缝合兽固定刷新点中的一处会迁往骨堆台，与当地道伥形成\"双威胁叠加区\"。原刷新点变为死域，不再产出赤髓草，直至灵气恢复至 0.2 以上。"
+    },
+    {
+      "title": "四、路径与战术",
+      "body": "#### 4.1 从初醒原至血谷\n\n**主路线**（约 3900 格，疾跑 11-12 分钟）：\n\n```\n初醒原 (0,0) → 向东偏北行进至 (1500, -500) → 穿越荒野至 (2500, -1500) → 抵达血谷裂口滩 (-400~-200, -600~-400)\n```\n\n**荒野段风险**：\n- (800~1500, -200~-800)：噬元鼠群密度峰值区（12-15 只/100格²）。建议真元保持 >50% 快速通过，不恋战。\n- (1800, -1000) 附近：一处固定鲸落遗骸。外围骨块可采集，核心被灰烬蛛群守护（4-6 只）。新手慎入。\n- (2200~2600, -1200~-1800)：天道伪灵脉高发区。若见地面有异色光点，绕行——那是伪灵脉的视觉标识，也是伏击者的掩体。\n\n**替代路线**（绕行青云残峰，+800 格，更安全）：\n\n```\n初醒原 → 青云残峰外围 (-2000, -1500) → 沿峰脚向东 → 血谷西北侧断脊渊\n```\n\n此路线灵气稍高（荒野段 0.15-0.2），但途经青云残峰散修 NPC 活动区，需评估 NPC 状态。\n\n#### 4.2 谷内关键路线\n\n| 路线 | 途径子区域 | 距离 | 风险 | 战术建议 |\n|------|----------|------|------|---------|\n| 入口→赤髓沟（采草） | 裂口滩→赤髓沟 | ~250 格 | 入口常有人蹲守，赤髓沟缝合兽 | 贴北侧崖壁行进，利用砂岩阴影减少可视距离。采草前先观察缝合兽位置 |\n| 赤髓沟→骨堆台（打兽核） | 赤髓沟→狭喉→骨堆台 | ~400 格 | 狭喉是伏击热点 | 勿走谷底中央。贴崖壁，每 30 格停下感知。若见地面有不自然方块排列——地师诡雷，绕行 |\n| 骨堆台→坠星坑（探矿） | 骨堆台→坠星坑 | ~200 格 | 坠星坑负灵域，诡影 | 固元境以下勿入坑底。在坑缘采集灵晶碎片即可。必须入坑时，真元保持 >80%，停留不超过 20 秒 |\n| 任意→断脊渊（深矿/遗迹） | 经由狭喉或坠星坑 | — | 负灵域裂隙，诡影，禁制 | 高境界者最危险的区域。通灵境在此被吸速可达 8 真元/秒。建议组队，一人探路一人接应 |\n\n#### 4.3 伏击与反伏击点\n\n**伏击热点**：\n1. **狭喉中段**（X: 180, Z: -200）：宽度仅 12 格，两侧崖壁有天然凹陷可藏身。地师常在此预埋真元诡雷。\n2. **裂口滩兽骨堆**（X: -320, Z: -520）：巨型兽骨提供掩体，视线受阻。器修暗器流优选狙击位。\n3. **赤髓沟缝合兽刷新点**：老手不会立刻击杀缝合兽——留着当\"看门狗\"，采草时缝合兽帮你筛选其他玩家。\n\n**反伏击策略**：\n- 穿越狭喉前，投掷一块凡石（无真元附着）探路。若触发诡雷，爆炸不伤你，但暴露阵法位置。\n- 被追杀时，向断脊渊裂隙区跑。追兵若是高境界，负灵域会迅速抽干其真元——这就是\"溺水暗杀术\"的应用。\n- 在裂口滩入口处故意留一只未杀死的灰烬蛛。追兵踩过时蛛暴起，为你争取逃跑时间。"
+    }
+  ],
+  "fragments": [
+    {
+      "title": "残卷·其一（裂口滩入口石碑）",
+      "text": "此地原无名。后因土石赤红，如凝血浸染，往来者呼之'血谷'。\n碑立之年，灵脉尚厚三分。今碑文已漫漶，灵脉亦将尽。\n留此碑者，早化白骨。读此碑者，亦不远矣。\"",
+      "note": "获取位置：裂口滩 X:-380 Z:-580，半埋于碎石中。"
+    },
+    {
+      "title": "残卷·其二（坠星坑坑壁刻字）",
+      "text": "吾名已不重要。吾在此自碎真元，只因身后追兵太众，而吾不愿一身修为落入宵小之手。\n三百年来，坑底灵压至今为负。入坑者，便是通灵，亦撑不过半炷香。\n若汝至此，勿学吾。逃便是。\"",
+      "note": "获取位置：坠星坑东侧坑壁 Y:12，需挖掘表层砂岩后可见。"
+    },
+    {
+      "title": "残卷·其三（骨堆台异兽头骨内侧）",
+      "text": "此兽非天生。乃天道以三兽缝合而成，专为清理吾辈。\n杀之可取核，然核中残留此兽死前执念——汝会看见它被缝合时的痛苦。\n心智不坚者，服核即疯。\n坚者，通灵有望。\"",
+      "note": "获取位置：骨堆台一处可交互的巨型头骨，需击杀守护道伥后方可阅读。"
+    },
+    {
+      "title": "残卷·其四（断脊渊深处禁制残片）——提案，需 world-lore 分馆确认",
+      "text": "……封于此渊之下的，非宝，非丹，非功法。\n是一句话。\n那句话说出之日，便是天道收回此界所有灵气之时。\n故上古众修合力将其封入渊底，以负灵域为锁。\n锁在，话在。锁破，皆亡。\n汝还欲往下挖么？\"",
+      "note": "获取位置：断脊渊 Y<25 的禁制方块，触碰后显示。触碰同时触发一次天道叙事：\"有些东西，埋着比挖出来好。\""
+    }
+  ],
+  "implementation": {
+    "files": [
+      "server/src/world/regions/blood_valley.rs",
+      "server/src/world/systems/spirit_decay.rs",
+      "server/src/world/systems/domain_collapse.rs",
+      "server/src/world/systems/negative_spirit_drain.rs",
+      "server/src/world/systems/ecology_migration.rs",
+      "agent/packages/tiandao/src/triggers/blood_valley.ts",
+      "client/src/main/java/com/bong/client/world/BloodValleyHints.java"
+    ],
+    "todos": [
+      {
+        "done": false,
+        "text": "世界设定已定稿"
+      },
+      {
+        "done": false,
+        "text": "服务端机制已实现"
+      },
+      {
+        "done": false,
+        "text": "`BloodValleyRegion` 与 `ZoneSpirit` 组件定义"
+      },
+      {
+        "done": false,
+        "text": "灵气衰减系统（打坐/突破/采矿触发）"
+      },
+      {
+        "done": false,
+        "text": "域崩倒计时与触发逻辑"
+      },
+      {
+        "done": false,
+        "text": "负灵域境界倍率吸速"
+      },
+      {
+        "done": false,
+        "text": "缝合兽生态迁移逻辑"
+      },
+      {
+        "done": false,
+        "text": "客户端表现已实现"
+      },
+      {
+        "done": false,
+        "text": "残卷文本渲染与交互"
+      },
+      {
+        "done": false,
+        "text": "域崩倒计时 HUD 显示"
+      },
+      {
+        "done": false,
+        "text": "负灵域视觉效果（屏幕边缘暗化/真元条闪烁）"
+      },
+      {
+        "done": false,
+        "text": "断脊渊封印设定需 world-lore 分馆确认"
+      },
+      {
+        "done": false,
+        "text": "已加入测试或验收说明"
+      }
+    ],
+    "notes": "\n\n### 五、Bevy ECS 设计\n\n> 以下组件与系统均为设计稿，引用的类型（`PlayerCultivation`、`TrueQi`、`PlayerAction`、`NarrationEvent`、`SpawnMonsterEvent` 等）尚未在 `server/` 中实现。\n\n#### 5.1 组件结构\n\n```rust\n// server/src/world/regions/blood_valley.rs\n\nuse bevy::prelude::*;\n\n/// 区域配置组件——标记血谷整体范围\n#[derive(Component, Clone, Debug)]\npub struct BloodValleyRegion {\n    pub center: Vec2,           // (3000.0, -2500.0)\n    pub bounds: Vec2,           // (800.0, 1500.0) 东西×南北\n    pub base_spirit: f32,       // 0.3\n    pub domain_collapse_timer: Option<f32>, // 域崩倒计时（秒）\n    pub player_count: u32,\n    pub player_count_timer: f32, // 连续满员计时\n}\n\nimpl Default for BloodValleyRegion {\n    fn default() -> Self {\n        Self {\n            center: Vec2::new(3000.0, -2500.0),\n            bounds: Vec2::new(800.0, 1500.0),\n            base_spirit: 0.3,\n            domain_collapse_timer: None,\n            player_count: 0,\n            player_count_timer: 0.0,\n        }\n    }\n}\n\n/// 子区域灵气组件——每个子区域独立追踪\n#[derive(Component, Clone, Debug)]\npub struct ZoneSpirit {\n    pub zone_type: BloodValleyZone,\n    pub current_spirit: f32,\n    pub permanent_decay: f32,    // 永久衰减累计值\n    pub last_player_activity: f32, // 上次有玩家活动的时间戳\n    pub ore_remaining: u32,      // 矿脉剩余方块数\n}\n\n#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\npub enum BloodValleyZone {\n    CleftBeach,      // 裂口滩\n    RedMarrowGully,  // 赤髓沟\n    StarfallPit,     // 坠星坑\n    NarrowThroat,    // 狭喉\n    BoneHeapTerrace, // 骨堆台\n    BrokenSpineAbyss,// 断脊渊\n}\n\nimpl ZoneSpirit {\n    pub fn new(zone: BloodValleyZone) -> Self {\n        let base = match zone {\n            BloodValleyZone::CleftBeach => 0.25,\n            BloodValleyZone::RedMarrowGully => 0.30,\n            BloodValleyZone::StarfallPit => 0.20,\n            BloodValleyZone::NarrowThroat => 0.35,\n            BloodValleyZone::BoneHeapTerrace => 0.28,\n            BloodValleyZone::BrokenSpineAbyss => 0.10,\n        };\n        Self {\n            zone_type: zone,\n            current_spirit: base,\n            permanent_decay: 0.0,\n            last_player_activity: 0.0,\n            ore_remaining: Self::initial_ore(zone),\n        }\n    }\n    \n    fn initial_ore(zone: BloodValleyZone) -> u32 {\n        match zone {\n            BloodValleyZone::CleftBeach => 200,\n            BloodValleyZone::RedMarrowGully => 350,\n            BloodValleyZone::StarfallPit => 500,\n            BloodValleyZone::BoneHeapTerrace => 150,\n            BloodValleyZone::BrokenSpineAbyss => 800,\n            _ => 100,\n        }\n    }\n}\n\n/// 负灵域标记组件——用于坠星坑坑底和断脊渊裂隙\n#[derive(Component)]\npub struct NegativeSpiritZone {\n    pub spirit_value: f32,      // 负数，如 -0.8\n    pub drain_rate_multiplier: f32, // 境界越高吸速倍率越高\n}\n\n/// 血谷专属生物生成表\n#[derive(Component, Clone)]\npub struct BloodValleySpawnTable {\n    pub zone: BloodValleyZone,\n    pub spirit_threshold: f32,   // 灵气低于此值触发生态迁移\n    pub max_spawns: u32,\n    pub current_spawns: u32,\n}\n```\n\n#### 5.2 系统函数签名\n\n```rust\n// server/src/world/systems/spirit_decay.rs\n\nuse bevy::prelude::*;\nuse crate::world::regions::blood_valley::{BloodValleyRegion, ZoneSpirit, BloodValleyZone};\n\n/// 血谷灵气衰减系统\n/// 每 30 秒执行一次，检测玩家打坐、突破、采矿行为并扣减灵气\npub fn blood_valley_spirit_decay_system(\n    time: Res<Time>,\n    mut region_query: Query<&mut BloodValleyRegion>,\n    mut zone_query: Query<(Entity, &mut ZoneSpirit, &Transform)>,\n    player_query: Query<(&Transform, &PlayerCultivation, &PlayerAction), With<Player>>,\n    mut narration_events: EventWriter<NarrationEvent>,\n) {\n    // 实现要点：\n    // 1. 遍历玩家，判断所在子区域（通过 Transform 坐标）\n    // 2. 若玩家状态为 Meditating，对应 zone.current_spirit -= 0.01\n    // 3. 若玩家触发 Breakthrough 事件，对应 zone.current_spirit -= 0.03（永久）\n    // 4. 更新 region.player_count，检测是否触发域崩倒计时\n    // 5. 无玩家活动的 zone，每 10 分钟恢复 current_spirit = min(base, current_spirit + 0.005)\n}\n```\n\n```rust\n// server/src/world/systems/domain_collapse.rs\n\n/// 域崩事件系统\n/// 检测倒计时归零，执行全区域灵气归零、刷新天劫异变兽\npub fn domain_collapse_system(\n    mut region_query: Query<&mut BloodValleyRegion>,\n    mut zone_query: Query<&mut ZoneSpirit>,\n    mut spawn_events: EventWriter<SpawnMonsterEvent>,\n    mut narration: EventWriter<NarrationEvent>,\n) {\n    // 实现要点：\n    // 1. 遍历 BloodValleyRegion，若 domain_collapse_timer.is_some()\n    // 2. timer -= delta，归零时触发：\n    //    - 所有 ZoneSpirit.current_spirit = 0.0\n    //    - 发送叙事：\"血谷灵脉不堪重负，暂时沉寂。尔等……好自为之。\"\n    //    - 在骨堆台或赤髓沟坐标生成 EliteStitchedBeast\n    //    - 30 分钟后恢复灵气为基准值的 80%\n}\n```\n\n```rust\n// server/src/world/systems/negative_spirit_drain.rs\n\n/// 负灵域抽吸系统\n/// 境界越高（真元上限越大）吸速越快\npub fn negative_spirit_drain_system(\n    mut player_query: Query<(&Transform, &mut PlayerCultivation, &mut TrueQi)>,\n    negative_zone_query: Query<(&NegativeSpiritZone, &Transform)>,\n    time: Res<Time>,\n) {\n    // 实现要点：\n    // 1. 检测玩家坐标是否在 NegativeSpiritZone 范围内\n    // 2. drain_rate = base_rate * (1.0 + player.max_qi / 100.0) * |spirit_value|\n    // 3. 示例：通灵境(max=300)在 -0.8 区域 = 0.8 * 4.0 = 3.2 真元/秒\n    // 4. 真元归零后继续停留，扣除境界经验值（可能导致降阶）\n}\n```\n\n```rust\n// server/src/world/systems/ecology_migration.rs\n\n/// 生态迁移系统——缝合兽根据灵气变化转移刷新点\npub fn ecology_migration_system(\n    mut zone_query: Query<(&ZoneSpirit, &mut BloodValleySpawnTable)>,\n    mut spawn_points: Query<&mut MonsterSpawnPoint>,\n) {\n    // 实现要点：\n    // 1. 检测赤髓沟 ZoneSpirit.current_spirit < 0.15\n    // 2. 将其一处固定刷新点的 spawn_enabled = false\n    // 3. 在骨堆台对应刷新点 spawn_enabled = true\n    // 4. 记录迁移状态，灵气恢复至 0.2 后复原\n}\n```"
+  }
+}

@@ -1,0 +1,77 @@
+---
+import Base from "../layouts/Base.astro";
+import BookCard from "../components/BookCard.astro";
+import { getCollection } from "astro:content";
+import halls from "../lib/halls.json";
+
+const books = await getCollection("books");
+
+// 按分馆分组
+const hallOrder = ["cultivation", "geography", "peoples", "ecology", "world"];
+const grouped: Record<string, typeof books> = {};
+for (const slug of hallOrder) {
+  grouped[slug] = books.filter((b) => b.data.hallSlug === slug);
+}
+---
+
+<Base title="总目">
+  <!-- 馆题 -->
+  <header class="text-center mb-12 animate-fade-in">
+    <h1 class="font-song text-4xl font-black text-cinnabar mb-3">
+      末法残土图书馆
+    </h1>
+    <p class="font-kai text-lg text-ink-light">
+      天地灵气将尽，唯文字不灭。此间所录，皆残土之真。
+    </p>
+    <div class="mt-4 flex justify-center gap-6 text-sm text-ink-light">
+      <span>馆藏 <strong class="text-cinnabar">{books.length}</strong> 册</span>
+      <span>分馆 <strong class="text-gold">{hallOrder.length}</strong> 座</span>
+    </div>
+  </header>
+
+  <!-- 分馆列表 -->
+  {
+    hallOrder.map(
+      (slug, i) =>
+        grouped[slug] &&
+        grouped[slug].length > 0 && (
+          <section
+            class="mb-12 animate-fade-in"
+            style={`animation-delay: ${i * 0.1}s`}
+          >
+            {/* 分馆标题 */}
+            <div class="flex items-baseline gap-4 mb-6">
+              <h2 class="font-song text-2xl font-bold text-cinnabar">
+                {(halls as any)[slug]?.name || slug}
+              </h2>
+              <span class="text-sm text-ink-light font-kai">
+                {(halls as any)[slug]?.desc || ""}
+              </span>
+              <span class="ml-auto text-sm text-gold-dim">
+                {grouped[slug].length} 册
+              </span>
+            </div>
+
+            {/* 书架 */}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {grouped[slug].map((book) => (
+                <BookCard book={book} />
+              ))}
+            </div>
+          </section>
+        )
+    )
+  }
+
+  <!-- 空馆提示 -->
+  {
+    books.length === 0 && (
+      <div class="text-center py-20">
+        <p class="font-kai text-xl text-ink-light">馆中尚无藏书。</p>
+        <p class="text-sm text-ink-light opacity-50 mt-2">
+          运行 npm run fetch 从仓库拉取馆藏。
+        </p>
+      </div>
+    )
+  }
+</Base>

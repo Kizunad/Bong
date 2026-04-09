@@ -1,0 +1,21 @@
+services:
+  library:
+    build:
+      context: .
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+        GITHUB_OWNER: ${GITHUB_OWNER:-Kizunad}
+        GITHUB_REPO: ${GITHUB_REPO:-Bong}
+        GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - library
