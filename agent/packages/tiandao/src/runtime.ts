@@ -87,25 +87,28 @@ export function resolveRuntimeConfig(
   };
 }
 
-export function createDefaultAgents(): TiandaoAgent[] {
+export function createDefaultAgents(now?: () => number): TiandaoAgent[] {
   return [
     new TiandaoAgent({
       name: "calamity",
       skillFile: "calamity.md",
       recipe: CALAMITY_RECIPE,
       intervalMs: 30_000,
+      now,
     }),
     new TiandaoAgent({
       name: "mutation",
       skillFile: "mutation.md",
       recipe: MUTATION_RECIPE,
       intervalMs: 60_000,
+      now,
     }),
     new TiandaoAgent({
       name: "era",
       skillFile: "era.md",
       recipe: ERA_RECIPE,
       intervalMs: 300_000,
+      now,
     }),
   ];
 }

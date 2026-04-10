@@ -174,7 +174,7 @@ describe("WorldModel", () => {
       expect.arrayContaining(["综合最强(0.98)", "karma 偏负(-0.45)", "连续击杀 8 次"]),
     );
     expect(steve?.note).toBe("因果将至");
-    expect(freshFace?.reasons).toEqual(expect.arrayContaining(["新入世(0.02)", "综合最弱(0.02)"]));
+    expect(freshFace?.reasons).toEqual(expect.arrayContaining(["新入世(0.02)"]));
     expect(freshFace?.note).toBe("天道可扶");
     expect(peerDecisions.map((decision) => decision.agentName)).toEqual(["mutation", "era"]);
     expect(peerDecisions[0]?.summary).toContain("blood_valley 灵气 -0.05");
@@ -188,21 +188,13 @@ describe("WorldModel", () => {
     model.setCurrentEra({
       name: "末法纪",
       sinceTick: 321,
-      globalEffect: {
-        description: "灵机渐枯，诸域修行更艰",
-        spiritQiDelta: -0.02,
-        dangerLevelDelta: 1,
-      },
+      globalEffect: "灵机渐枯，诸域修行更艰",
     });
 
     expect(model.currentEra).toEqual({
       name: "末法纪",
       sinceTick: 321,
-      globalEffect: {
-        description: "灵机渐枯，诸域修行更艰",
-        spiritQiDelta: -0.02,
-        dangerLevelDelta: 1,
-      },
+      globalEffect: "灵机渐枯，诸域修行更艰",
     });
   });
 });

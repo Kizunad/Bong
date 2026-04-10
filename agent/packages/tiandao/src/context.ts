@@ -48,7 +48,22 @@ export function createContextInput(
   };
 }
 
-export function assembleContext(recipe: ContextRecipe, input: ContextInput): string {
+export function assembleContext(
+  recipe: ContextRecipe,
+  inputOrState: ContextInput | WorldStateV1,
+  options?: { worldModel?: WorldModel; chatSignals?: ChatSignal[] },
+): string {
+  let input: ContextInput;
+  if ("v" in inputOrState && "tick" in inputOrState) {
+    const worldModel = options?.worldModel;
+    worldModel?.updateState(inputOrState);
+    input = createContextInput(inputOrState, options?.chatSignals ?? [], undefined, {
+      worldModel,
+    });
+  } else {
+    input = inputOrState as ContextInput;
+  }
+
   const rendered: { priority: number; required: boolean; text: string }[] = [];
 
   for (const block of recipe.blocks) {
@@ -173,8 +188,7 @@ export const worldTrendBlock: ContextBlock = {
         [
           "## 当前时代",
           `- ${currentEra.name}（始于 tick ${currentEra.sinceTick}）`,
-          `- 律令: ${currentEra.globalEffect.description}`,
-          `- 全局效应: 灵气 ${formatSigned(currentEra.globalEffect.spiritQiDelta)}，危险 ${formatSigned(currentEra.globalEffect.dangerLevelDelta)}`,
+          `- 律令: ${currentEra.globalEffect}`,
         ].join("\n"),
       );
     }
@@ -283,10 +297,11 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
-    { ...playerProfilesBlock, priority: 3, required: true },
-    { ...recentEventsBlock, priority: 4, required: true },
-    { ...keyPlayerBlock, priority: 5, required: false },
-    { ...chatSignalsBlock, priority: 6, required: false },
+    { ...balanceBlock, priority: 3, required: false },
+    { ...playerProfilesBlock, priority: 4, required: true },
+    { ...recentEventsBlock, priority: 5, required: true },
+    { ...keyPlayerBlock, priority: 6, required: false },
+    { ...chatSignalsBlock, priority: 7, required: false },
   ],
 };
 

@@ -14,6 +14,18 @@ import { parseChatMessages } from "./chat-processor.js";
 const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, PLAYER_CHAT } = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
+const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
+
+const DRAIN_SCRIPT = `
+local items = redis.call('lrange', ARGV[1], 0, -1)
+if #items == 0 then return {} end
+local counter = redis.call('incr', ARGV[2])
+local drainKey = ARGV[1] .. ':drain:' .. counter
+redis.call('rename', ARGV[1], drainKey)
+local result = redis.call('lrange', drainKey, 0, -1)
+redis.call('del', drainKey)
+return result
+`;
 
 interface MultiExecResult<T = unknown> {
   0: Error | null;
@@ -26,27 +38,29 @@ interface RedisMultiLike {
   exec(): Promise<Array<MultiExecResult<unknown>> | null>;
 }
 
-interface RedisClientLike {
+export interface RedisIpcClient {
   subscribe(channel: string): Promise<unknown>;
-  on(event: "message", listener: (channel: string, message: string) => void): this;
-  off(event: "message", listener: (channel: string, message: string) => void): this;
+  on(event: string, listener: (channel: string, message: string) => void): unknown;
+  off?(event: string, listener: (channel: string, message: string) => void): unknown;
   unsubscribe(): Promise<unknown>;
   disconnect(): void;
   publish(channel: string, message: string): Promise<number>;
-  multi(): RedisMultiLike;
-}
-
-export interface RedisIpcDeps {
-  createClient?: (url: string) => RedisClientLike;
+  multi?(): RedisMultiLike;
+  eval?(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
 }
 
 export interface RedisIpcConfig {
   url: string;
+  createClient?: (url: string) => RedisIpcClient;
+}
+
+export interface RedisIpcDeps {
+  createClient?: (url: string) => RedisIpcClient;
 }
 
 export class RedisIpc {
-  private sub: RedisClientLike;
-  private pub: RedisClientLike;
+  private sub: RedisIpcClient;
+  private pub: RedisIpcClient;
   private latestState: WorldStateV1 | null = null;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private connected = false;
@@ -66,8 +80,11 @@ export class RedisIpc {
     }
   };
 
-  constructor(config: RedisIpcConfig, deps: RedisIpcDeps = {}) {
-    const createClient = deps.createClient ?? ((url: string) => new IORedis(url));
+  constructor(config: RedisIpcConfig, deps?: RedisIpcDeps) {
+    const createClient =
+      config.createClient ??
+      deps?.createClient ??
+      ((url: string) => new IORedis(url) as unknown as RedisIpcClient);
     this.sub = createClient(config.url);
     this.pub = createClient(config.url);
   }
@@ -78,7 +95,7 @@ export class RedisIpc {
     }
 
     await this.sub.subscribe(WORLD_STATE);
-    this.sub.off("message", this.onMessage);
+    this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(`[redis-ipc] subscribed to ${WORLD_STATE}`);
@@ -129,7 +146,7 @@ export class RedisIpc {
 
   async disconnect(): Promise<void> {
     this.connected = false;
-    this.sub.off("message", this.onMessage);
+    this.sub.off?.("message", this.onMessage);
     await this.sub.unsubscribe();
     this.sub.disconnect();
     this.pub.disconnect();
@@ -146,8 +163,20 @@ export class RedisIpc {
     return parseChatMessages(raw, logger);
   }
 
+  async drainPlayerChatRaw(): Promise<string[]> {
+    if (!this.pub.eval) {
+      return [];
+    }
+    const result = await this.pub.eval(DRAIN_SCRIPT, 0, PLAYER_CHAT, DRAIN_COUNTER_KEY);
+    return Array.isArray(result) ? (result as string[]) : [];
+  }
+
   private async drainListAtomically(key: string, maxItems: number): Promise<string[]> {
     if (!Number.isFinite(maxItems) || maxItems <= 0) {
+      return [];
+    }
+
+    if (!this.pub.multi) {
       return [];
     }
 

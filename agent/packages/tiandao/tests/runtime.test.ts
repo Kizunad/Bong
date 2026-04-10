@@ -63,7 +63,7 @@ describe("createRuntimeClient", () => {
       },
     );
 
-    expect(await client.chat([], DEFAULT_MODEL)).toBe("mock");
+    expect(await client.chat(DEFAULT_MODEL, [])).toBe("mock");
     expect(chat).toHaveBeenCalledTimes(1);
   });
 
@@ -87,7 +87,7 @@ describe("createRuntimeClient", () => {
       },
     );
 
-    expect(await client.chat([], DEFAULT_MODEL)).toBe("mock-only");
+    expect(await client.chat(DEFAULT_MODEL, [])).toBe("mock-only");
     expect(mockChat).toHaveBeenCalledTimes(1);
     expect(createClient).not.toHaveBeenCalled();
   });
@@ -274,11 +274,7 @@ describe("runTick", () => {
     expect(worldModel.currentEra).toEqual({
       name: "末法纪",
       sinceTick: 123,
-      globalEffect: {
-        description: "灵机渐枯，诸域修行更艰",
-        spiritQiDelta: -0.02,
-        dangerLevelDelta: 1,
-      },
+      globalEffect: "灵机渐枯，诸域修行更艰",
     });
     expect(publishCommands).toHaveBeenCalledWith(
       "arbiter",

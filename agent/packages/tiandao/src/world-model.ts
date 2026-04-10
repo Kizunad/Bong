@@ -1,11 +1,12 @@
 import type { PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
+import { NEWBIE_POWER_THRESHOLD } from "@bong/schema";
 import type { AgentDecision } from "./parse.js";
 import { summarizeBalance, type BalanceSummary } from "./balance.js";
 
 const MAX_ZONE_HISTORY = 10;
 const TREND_WINDOW = 3;
 const TREND_EPSILON = 0.02;
-const KEY_PLAYER_LIMIT = 4;
+const KEY_PLAYER_LIMIT = 3;
 
 const AGENT_ORDER = ["calamity", "mutation", "era"] as const;
 
@@ -33,16 +34,10 @@ export interface WorldTrendSummary {
   trend: TrendDirection;
 }
 
-export interface EraGlobalEffect {
-  description: string;
-  spiritQiDelta: number;
-  dangerLevelDelta: number;
-}
-
 export interface CurrentEra {
   name: string;
   sinceTick: number;
-  globalEffect: EraGlobalEffect;
+  globalEffect: string;
 }
 
 export interface PeerDecisionSummary {
@@ -126,6 +121,10 @@ export class WorldModel {
     this.currentEraValue = cloneCurrentEra(currentEra);
   }
 
+  rememberCurrentEra(currentEra: CurrentEra): void {
+    this.setCurrentEra(currentEra);
+  }
+
   getZoneHistory(zoneName: string): ZoneSnapshot[] {
     return (this.zoneHistory.get(zoneName) ?? []).map(cloneZoneSnapshot);
   }
@@ -207,7 +206,11 @@ export class WorldModel {
     }
 
     const weakest = byPowerAsc[0];
-    if (weakest && (!strongest || weakest.uuid !== strongest.uuid)) {
+    if (
+      weakest &&
+      (!strongest || weakest.uuid !== strongest.uuid) &&
+      weakest.composite_power >= NEWBIE_POWER_THRESHOLD
+    ) {
       addKeyPlayerReason(tracked, weakest, `综合最弱(${weakest.composite_power.toFixed(2)})`);
     }
 
@@ -497,10 +500,6 @@ function cloneCurrentEra(currentEra: CurrentEra | null): CurrentEra | null {
   return {
     name: currentEra.name,
     sinceTick: currentEra.sinceTick,
-    globalEffect: {
-      description: currentEra.globalEffect.description,
-      spiritQiDelta: currentEra.globalEffect.spiritQiDelta,
-      dangerLevelDelta: currentEra.globalEffect.dangerLevelDelta,
-    },
+    globalEffect: currentEra.globalEffect,
   };
 }

@@ -327,11 +327,7 @@ describe("Arbiter", () => {
     expect(result.currentEra).toEqual({
       name: "末法纪",
       sinceTick: 888,
-      globalEffect: {
-        description: "灵机渐枯，诸域修行更艰",
-        spiritQiDelta: -0.02,
-        dangerLevelDelta: 1,
-      },
+      globalEffect: "灵机渐枯，诸域修行更艰",
     });
     expect(result.narrations[0]?.style).toBe("era_decree");
 

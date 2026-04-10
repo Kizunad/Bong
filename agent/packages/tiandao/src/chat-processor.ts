@@ -97,6 +97,7 @@ export async function processChatBatch(options: ProcessChatBatchOptions): Promis
 
   const prompt = buildAnnotatePrompt(messages);
   const raw = await llmClient.chat(
+    model,
     [
       {
         role: "system",
@@ -108,7 +109,6 @@ export async function processChatBatch(options: ProcessChatBatchOptions): Promis
         content: prompt,
       },
     ],
-    model,
   );
 
   const batch = parseChatSignalBatch(raw, logger);

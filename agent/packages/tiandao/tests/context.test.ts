@@ -138,11 +138,7 @@ function createSeededWorldModel(): { model: WorldModel; state: WorldStateV1 } {
   model.setCurrentEra({
     name: "末法纪",
     sinceTick: 4,
-    globalEffect: {
-      description: "灵机渐枯，诸域修行更艰",
-      spiritQiDelta: -0.02,
-      dangerLevelDelta: 1,
-    },
+    globalEffect: "灵机渐枯，诸域修行更艰",
   });
 
   const latestState = createState({
@@ -266,7 +262,6 @@ describe("context with task-21 world model blocks", () => {
     expect(trendText).toContain("## 当前时代");
     expect(trendText).toContain("末法纪（始于 tick 4）");
     expect(trendText).toContain("律令: 灵机渐枯，诸域修行更艰");
-    expect(trendText).toContain("全局效应: 灵气 -0.02，危险 +1.00");
     expect(trendText).toContain("## 世界趋势 (最近 10 轮)");
     expect(trendText).toContain("blood_valley: 灵气 0.60 → 0.48 (↓下降中)");
     expect(trendText).toContain("green_cloud_peak: 灵气 0.83 → 0.88 (↑上升中)");
@@ -278,7 +273,7 @@ describe("context with task-21 world model blocks", () => {
 
     expect(keyPlayerText).toContain("## 关键人物");
     expect(keyPlayerText).toContain("Steve: 综合最强(0.98)");
-    expect(keyPlayerText).toContain("FreshFace: 综合最弱(0.02)，新入世(0.02)");
+    expect(keyPlayerText).toContain("FreshFace: 新入世(0.02)");
   });
 
   it("injects task-21 blocks into the existing recipes", () => {

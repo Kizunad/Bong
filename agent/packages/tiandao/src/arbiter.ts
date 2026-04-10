@@ -72,10 +72,15 @@ export class Arbiter {
       ...constrained.filter((tagged) => tagged.bypassSpiritQiConservation),
     ]);
 
+    let currentEra = flattened.currentEra;
+    if (!currentEra) {
+      currentEra = this.detectEraFromNarrations(decisions);
+    }
+
     return {
       commands: resolved.map((tagged) => tagged.command).slice(0, MAX_COMMANDS_PER_TICK),
       narrations,
-      currentEra: flattened.currentEra,
+      currentEra,
     };
   }
 
@@ -188,13 +193,27 @@ export class Arbiter {
       currentEra: {
         name: eraName,
         sinceTick: this.state.tick,
-        globalEffect: {
-          description: effectDescription,
-          spiritQiDelta,
-          dangerLevelDelta,
-        },
+        globalEffect: effectDescription,
       },
     };
+  }
+
+  private detectEraFromNarrations(decisions: SourcedDecision[]): CurrentEra | null {
+    for (const { source, decision } of decisions) {
+      if (source.toLowerCase() !== "era") continue;
+      for (const narration of decision.narrations) {
+        if (narration.style !== "era_decree") continue;
+        const eraName = extractEraName(narration.text);
+        if (eraName) {
+          return {
+            name: eraName,
+            sinceTick: this.state.tick,
+            globalEffect: narration.text,
+          };
+        }
+      }
+    }
+    return null;
   }
 
   private resolveZoneConflicts(commands: TaggedCommand[]): TaggedCommand[] {
@@ -481,6 +500,11 @@ function describeEraEffect(spiritQiDelta: number, dangerLevelDelta: number): str
 
 function formatSigned(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function extractEraName(text: string): string | null {
+  const match = text.match(/([\u4e00-\u9fff]{1,6}(?:纪|时代|劫|世))/);
+  return match?.[1] ?? null;
 }
 
 function cloneCommand(command: Command): Command {

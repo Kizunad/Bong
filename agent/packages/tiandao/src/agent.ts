@@ -20,6 +20,7 @@ export interface AgentConfig {
   skillFile: string; // relative to skills/
   recipe: ContextRecipe;
   intervalMs: number;
+  now?: () => number;
 }
 
 export class TiandaoAgent {
@@ -30,11 +31,13 @@ export class TiandaoAgent {
   readonly intervalMs: number;
   private latestChatSignals: ChatSignal[] = [];
   private worldModel?: WorldModel;
+  private readonly now: () => number;
 
   constructor(config: AgentConfig) {
     this.name = config.name;
     this.recipe = config.recipe;
     this.intervalMs = config.intervalMs;
+    this.now = config.now ?? (() => Date.now());
     this.systemPrompt = readFileSync(
       resolve(__dirname, "skills", config.skillFile),
       "utf-8",
@@ -58,7 +61,7 @@ export class TiandaoAgent {
     model: string,
     state: WorldStateV1,
   ): Promise<AgentDecision | null> {
-    const now = Date.now();
+    const now = this.now();
     if (!this.shouldRun(now)) return null;
 
     this.lastRunTs = now;
@@ -75,10 +78,10 @@ export class TiandaoAgent {
 
     console.log(`[tiandao][${this.name}] thinking...`);
 
-    const raw = await client.chat([
+    const raw = await client.chat(model, [
       { role: "system", content: this.systemPrompt },
       { role: "user", content: userPrompt },
-    ], model);
+    ]);
 
     console.log(`[tiandao][${this.name}] response:\n${raw}\n`);
 
