@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createMockClient } from "../src/llm.js";
+import * as runtime from "../src/runtime.js";
 import {
   getMockCompletionMarker,
   main,
@@ -139,5 +140,29 @@ describe("main mock execution", () => {
     expect(second.skipped).toBe(false);
     expect(worldModel.currentEra).toEqual(sameEra);
     expect(worldModel.lastDecisions.size).toBeGreaterThanOrEqual(1);
+  });
+
+  it("forwards redisUrl to runtime in non-mock mode", async () => {
+    const runRuntimeSpy = vi.spyOn(runtime, "runRuntime").mockResolvedValue(undefined);
+
+    try {
+      await main({
+        mockMode: false,
+        redisUrl: "redis://unit-test:6380",
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+        model: "mock-model",
+      });
+
+      expect(runRuntimeSpy).toHaveBeenCalledWith({
+        mockMode: false,
+        redisUrl: "redis://unit-test:6380",
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+        model: "mock-model",
+      });
+    } finally {
+      runRuntimeSpy.mockRestore();
+    }
   });
 });

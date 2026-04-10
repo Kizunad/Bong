@@ -18,6 +18,7 @@ export interface PublishSink {
 
 export interface MainOptions {
   mockMode: boolean;
+  redisUrl?: string;
   baseUrl?: string;
   apiKey?: string;
   model: string;
@@ -117,7 +118,7 @@ export async function main(options: MainOptions): Promise<void> {
   const config = {
     mockMode: false,
     model: options.model,
-    redisUrl: "redis://127.0.0.1:6379",
+    redisUrl: options.redisUrl ?? "redis://127.0.0.1:6379",
     baseUrl: options.baseUrl ?? null,
     apiKey: options.apiKey ?? null,
   };
@@ -129,7 +130,13 @@ const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] === __filename) {
   loadEnv();
   const config = resolveRuntimeConfig(process.argv, process.env);
-  runRuntime(config).catch((err) => {
+  main({
+    mockMode: config.mockMode,
+    redisUrl: config.redisUrl,
+    baseUrl: config.baseUrl ?? undefined,
+    apiKey: config.apiKey ?? undefined,
+    model: config.model,
+  }).catch((err) => {
     console.error("[tiandao] fatal:", err);
     process.exit(1);
   });
