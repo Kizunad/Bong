@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Rust 工具链
 export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+RUNTIME_PATH="$PATH"
 
 SESSION="bong"
 
@@ -27,12 +28,12 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" -n main
 
 # Pane 0: Redis
-tmux send-keys -t "$SESSION:main" "redis-server --loglevel warning" Enter
+tmux send-keys -t "$SESSION:main" "if redis-cli ping >/dev/null 2>&1; then printf '[bong] redis already running on :6379\n'; else redis-server --loglevel warning; fi" Enter
 
 # Pane 1: Server
 tmux split-window -h -t "$SESSION:main"
 tmux send-keys -t "$SESSION:main.1" \
-  "export PATH='/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:\$PATH' && \
+  "export PATH='${RUNTIME_PATH}' && \
    export CARGO_TARGET_DIR='${CARGO_TARGET_DIR}' && \
    cd '$ROOT/server' && \
    echo '[bong] starting server...' && \

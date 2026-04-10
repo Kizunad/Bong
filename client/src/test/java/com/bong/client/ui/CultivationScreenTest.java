@@ -103,4 +103,12 @@ public class CultivationScreenTest {
         assertTrue(clearedScreen.playerState().isEmpty());
         assertTrue(CultivationScreen.describe(clearedScreen.playerState()).placeholder());
     }
+
+    @Test
+    void keypressGateOnlyOpensWhenDifferentScreenIsActive() {
+        assertTrue(CultivationScreenBootstrap.shouldOpenCultivationScreen(null));
+        assertFalse(CultivationScreenBootstrap.shouldOpenCultivationScreen(
+            new CultivationScreen(PlayerStateViewModel.empty())
+        ));
+    }
 }
