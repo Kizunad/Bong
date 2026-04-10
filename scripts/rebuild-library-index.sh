@@ -49,7 +49,7 @@ EOF
         read -r done_count total_count <<< "$(count_implementation "$book")"
         done_sum=$((done_sum + done_count))
         total_sum=$((total_sum + total_count))
-      done < <(find "$category_dir" -type f -name '*.md' ! -name 'index.md' -print0 | sort -z)
+      done < <(find "$category_dir" -type f -name '*.json' ! -name 'index.md' -print0 | sort -z)
 
       local progress="—"
       if [[ "$total_sum" -gt 0 ]]; then
@@ -127,7 +127,7 @@ write_category_index() {
         "$rarity" \
         "$progress" \
         "$updated_at"
-    done < <(find "$category_dir" -type f -name '*.md' ! -name 'index.md' -print0 | sort -z)
+    done < <(find "$category_dir" -type f -name '*.json' ! -name 'index.md' -print0 | sort -z)
 
     if [[ "$book_found" -eq 0 ]]; then
       echo "| — | 暂无馆藏 | — | — | — | — | — |"

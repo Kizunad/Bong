@@ -162,6 +162,40 @@ json_count_todos() {
   " 2>/dev/null
 }
 
+book_title() {
+  local file="$1"
+  json_field "$file" "title"
+}
+
+meta_value() {
+  local file="$1"
+  local label="$2"
+
+  case "$label" in
+    书架) json_field "$file" "catalog.shelf" ;;
+    藏书编号) json_field "$file" "catalog.id" ;;
+    估值) json_field "$file" "catalog.value" ;;
+    稀有度) json_field "$file" "catalog.rarity" ;;
+    最后整理) json_field "$file" "catalog.lastEdit" ;;
+    *) die "未知元数据字段：$label" ;;
+  esac
+}
+
+count_implementation() {
+  json_count_todos "$1"
+}
+
+implementation_progress() {
+  local file="$1"
+  local done total
+  read -r done total <<< "$(count_implementation "$file")"
+  if [[ "$total" -eq 0 ]]; then
+    echo "—"
+  else
+    echo "${done}/${total}"
+  fi
+}
+
 validate_book_file() {
   local file="$1"
 
