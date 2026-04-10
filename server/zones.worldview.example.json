@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "world": {
+    "name": "mofa_worldview_example",
+    "spawn_zone": "spawn",
+    "bounds_xz": {
+      "min": [-10000.0, -10000.0],
+      "max": [10000.0, 10000.0]
+    },
+    "notes": [
+      "Negative Z is north; positive Z is south.",
+      "This file is both a server zones example and a worldgen blueprint seed.",
+      "Unknown fields are intended for future worldgen/postprocess consumers."
+    ]
+  },
+  "zones": [
+    {
+      "name": "spawn",
+      "display_name": "初醒原",
+      "aabb": {
+        "min": [-750.0, -64.0, -750.0],
+        "max": [750.0, 320.0, 750.0]
+      },
+      "center_xz": [0.0, 0.0],
+      "size_xz": [1500.0, 1500.0],
+      "spirit_qi": 0.3,
+      "danger_level": 1,
+      "active_events": [],
+      "patrol_anchors": [
+        [-240.0, 70.0, -160.0],
+        [180.0, 70.0, 140.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "spawn_plain",
+        "shape": "ellipse",
+        "boundary": { "mode": "soft", "width": 96 },
+        "height_model": { "base": [66, 78], "peak": 84 },
+        "surface_palette": ["grass_block", "dirt", "coarse_dirt", "gravel"],
+        "biome_mix": ["mofa:spawn_haven", "mofa:kui_zeng"],
+        "landmarks": ["starter_ruin", "broken_road", "hidden_shelter"],
+        "notes": "Low rolling plain, sparse vegetation, safe-ish first foothold."
+      }
+    },
+    {
+      "name": "qingyun_peaks",
+      "display_name": "青云残峰",
+      "aabb": {
+        "min": [-3600.0, -64.0, -2600.0],
+        "max": [-2400.0, 320.0, -1400.0]
+      },
+      "center_xz": [-3000.0, -2000.0],
+      "size_xz": [1200.0, 1200.0],
+      "spirit_qi": 0.5,
+      "danger_level": 2,
+      "active_events": [],
+      "patrol_anchors": [
+        [-3380.0, 128.0, -2320.0],
+        [-2740.0, 164.0, -1810.0],
+        [-2510.0, 148.0, -1510.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "broken_peaks",
+        "shape": "massif",
+        "boundary": { "mode": "soft", "width": 128 },
+        "height_model": { "base": [110, 170], "peak": 210 },
+        "surface_palette": ["stone", "andesite", "deepslate", "gravel"],
+        "biome_mix": ["mofa:kui_zeng", "mofa:si_yu"],
+        "landmarks": ["ridge_path", "needle_rocks", "abandoned_watchpost"],
+        "notes": "Raised mountain basin with bare stone ribs, narrow routes, and mining ledges."
+      }
+    },
+    {
+      "name": "lingquan_marsh",
+      "display_name": "灵泉湿地",
+      "aabb": {
+        "min": [-3000.0, -64.0, 2000.0],
+        "max": [-2000.0, 320.0, 3000.0]
+      },
+      "center_xz": [-2500.0, 2500.0],
+      "size_xz": [1000.0, 1000.0],
+      "spirit_qi": 0.7,
+      "danger_level": 3,
+      "active_events": [],
+      "patrol_anchors": [
+        [-2860.0, 66.0, 2250.0],
+        [-2460.0, 64.0, 2480.0],
+        [-2180.0, 65.0, 2840.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "spring_marsh",
+        "shape": "basin",
+        "boundary": { "mode": "soft", "width": 128 },
+        "height_model": { "base": [60, 68], "peak": 74 },
+        "surface_palette": ["mud", "clay", "grass_block", "moss_block"],
+        "water_model": { "coverage": 0.38, "depth": "shallow" },
+        "biome_mix": ["mofa:kui_zeng_rich", "mofa:kui_zeng"],
+        "landmarks": ["spring_eye", "reed_channels", "soft_islets"],
+        "notes": "Low wet basin with shallow water, dense herbs, and a few exposed meditation spots."
+      }
+    },
+    {
+      "name": "blood_valley",
+      "display_name": "血谷",
+      "aabb": {
+        "min": [2600.0, -64.0, -3250.0],
+        "max": [3400.0, 320.0, -1750.0]
+      },
+      "center_xz": [3000.0, -2500.0],
+      "size_xz": [800.0, 1500.0],
+      "spirit_qi": 0.3,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [2720.0, 74.0, -3000.0],
+        [2980.0, 70.0, -2470.0],
+        [3280.0, 78.0, -1910.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "rift_valley",
+        "shape": "rotated_rift",
+        "boundary": { "mode": "hard", "width": 72 },
+        "height_model": { "rim": [90, 120], "floor": [35, 58] },
+        "surface_palette": ["red_sandstone", "terracotta", "stone", "gravel"],
+        "rift_axis": "northwest_southeast",
+        "biome_mix": ["mofa:si_yu", "mofa:kui_zeng", "mofa:fu_ling"],
+        "landmarks": ["rift_gate", "scarlet_gully", "bone_mesa", "broken_abyss"],
+        "notes": "Long cracked valley trending northwest to southeast with exposed red stone and mine shelves."
+      }
+    },
+    {
+      "name": "youan_depths",
+      "display_name": "幽暗地穴",
+      "aabb": {
+        "min": [1400.0, -64.0, 2400.0],
+        "max": [2600.0, 120.0, 3600.0]
+      },
+      "center_xz": [2000.0, 3000.0],
+      "size_xz": [1200.0, 1200.0],
+      "spirit_qi": 0.4,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [1760.0, 28.0, 2720.0],
+        [2120.0, 16.0, 3080.0],
+        [2400.0, 10.0, 3400.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "cave_network",
+        "shape": "subterranean_cluster",
+        "boundary": { "mode": "semi_hard", "width": 88 },
+        "height_model": { "surface": [68, 92], "underground": [0, 48] },
+        "surface_palette": ["stone", "coarse_dirt", "gravel", "deepslate"],
+        "entrance_density": "medium",
+        "biome_mix": ["mofa:kui_zeng", "mofa:fu_ling"],
+        "landmarks": ["sinkhole_gate", "forbidden_halls", "red_vines", "sealed_relic_room"],
+        "notes": "Surface entrance cluster over a broad underground cave network with pockets of high and low qi."
+      }
+    },
+    {
+      "name": "north_wastes",
+      "display_name": "北荒",
+      "aabb": {
+        "min": [-1500.0, -64.0, -8000.0],
+        "max": [1500.0, 320.0, -6000.0]
+      },
+      "center_xz": [0.0, -7000.0],
+      "size_xz": [3000.0, 2000.0],
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [
+        [-900.0, 72.0, -7600.0],
+        [0.0, 68.0, -7020.0],
+        [940.0, 74.0, -6360.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "waste_plateau",
+        "shape": "plateau",
+        "boundary": { "mode": "hard", "width": 96 },
+        "height_model": { "base": [72, 96], "peak": 108 },
+        "surface_palette": ["stone", "gravel", "sand", "dead_bush"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling", "mofa:fu_ling_abyss"],
+        "landmarks": ["collapsed_abyss", "whalefall_fossil", "ancient_ruin_field"],
+        "negative_pressure_patches": [
+          { "center_xz": [-620.0, -7440.0], "radius": 260.0, "strength": -0.35 },
+          { "center_xz": [580.0, -6710.0], "radius": 340.0, "strength": -0.55 }
+        ],
+        "notes": "Sparse dead plateau with embedded null-pressure scars and a few high-risk ruin pockets."
+      }
+    }
+  ],
+  "paths": [
+    {
+      "from": "spawn",
+      "to": "qingyun_peaks",
+      "kind": "ancient_trail",
+      "approx_distance": 3600
+    },
+    {
+      "from": "spawn",
+      "to": "lingquan_marsh",
+      "kind": "wetland_route",
+      "approx_distance": 3500
+    },
+    {
+      "from": "spawn",
+      "to": "blood_valley",
+      "kind": "rift_road",
+      "approx_distance": 3900
+    },
+    {
+      "from": "spawn",
+      "to": "youan_depths",
+      "kind": "sinkhole_route",
+      "approx_distance": 3600
+    },
+    {
+      "from": "spawn",
+      "to": "north_wastes",
+      "kind": "long_exile_road",
+      "approx_distance": 7000
+    }
+  ]
+}

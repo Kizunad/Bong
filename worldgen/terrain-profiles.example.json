@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "profiles": {
+    "spawn_plain": {
+      "height": { "base": [66, 78], "peak": 84 },
+      "boundary": { "mode": "soft", "width": 96 },
+      "surface": ["grass_block", "dirt", "coarse_dirt", "gravel"],
+      "water": { "level": "low", "coverage": 0.05 },
+      "passability": "high"
+    },
+    "broken_peaks": {
+      "height": { "base": [110, 170], "peak": 210 },
+      "boundary": { "mode": "soft", "width": 128 },
+      "surface": ["stone", "andesite", "deepslate", "gravel"],
+      "water": { "level": "very_low", "coverage": 0.01 },
+      "passability": "low"
+    },
+    "spring_marsh": {
+      "height": { "base": [60, 68], "peak": 74 },
+      "boundary": { "mode": "soft", "width": 128 },
+      "surface": ["mud", "clay", "grass_block", "moss_block"],
+      "water": { "level": "high", "coverage": 0.38 },
+      "passability": "low"
+    },
+    "rift_valley": {
+      "height": { "rim": [90, 120], "floor": [35, 58] },
+      "boundary": { "mode": "hard", "width": 72 },
+      "surface": ["red_sandstone", "terracotta", "stone", "gravel"],
+      "water": { "level": "very_low", "coverage": 0.0 },
+      "passability": "medium_low"
+    },
+    "cave_network": {
+      "height": { "surface": [68, 92], "underground": [0, 48] },
+      "boundary": { "mode": "semi_hard", "width": 88 },
+      "surface": ["stone", "coarse_dirt", "gravel", "deepslate"],
+      "water": { "level": "low", "coverage": 0.06 },
+      "passability": "surface_medium_underground_low"
+    },
+    "waste_plateau": {
+      "height": { "base": [72, 96], "peak": 108 },
+      "boundary": { "mode": "hard", "width": 96 },
+      "surface": ["stone", "gravel", "sand", "dead_bush"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "high"
+    }
+  }
+}

@@ -5,6 +5,18 @@
 通过 MC 1.20.1 原生 Datapack Worldgen 机制，用 JSON 定义 6 个自定义 biome 覆盖默认 overworld 生成。
 配合 Chunky mod 预生成 chunk，输出 Anvil (.mca) 存档供 Valence 服务端加载。
 
+当前建议把 `../server/zones.worldview.example.json` 作为世界蓝图输入：
+
+- Server 用它定义 authoritative zones
+- `scripts/postprocess.py` 用它筛选需要处理的 zone/chunk
+- 后续 worldgen/postprocess 可继续消费其中的 `worldgen.*` 扩展字段
+
+第一版地貌规则见：
+
+- `../docs/worldgen-terrain-profiles.md`
+- `../docs/worldgen-pipeline-v2.md`
+- `terrain-profiles.example.json`
+
 ---
 
 ## 目录结构
@@ -13,6 +25,7 @@
 worldgen/
 ├── README.md                          ← 本文档
 ├── worldgen.sh                        ← Phase A 一键预生成脚本
+├── pipeline.sh                        ← Phase A + Phase B 串联脚本
 ├── scripts/
 │   └── postprocess.py                 ← Phase B Python 后处理脚本
 ├── .venv/                             ← Python 虚拟环境（不提交到 git）
@@ -37,6 +50,33 @@ worldgen/
     │   ├── fabric-api.jar
     │   └── chunky-fabric.jar
     └── mofa-world/region/             ← 生成的世界存档
+```
+
+---
+
+## 快速开始
+
+```bash
+cd worldgen
+
+# 1) 初始化 Python 环境（只需一次）
+bash setup.sh
+
+# 2) 跑完整 pipeline（预生成 + 后处理）
+bash pipeline.sh 512 ../server/zones.worldview.example.json
+
+# 3) 启动 Rust server 读取生成世界
+cd ../server
+BONG_WORLD_PATH=/home/kiz/Code/Bong/worldgen/server/mofa-world cargo run
+```
+
+也可以分开运行：
+
+```bash
+cd worldgen
+bash worldgen.sh 512
+source .venv/bin/activate
+python3 scripts/postprocess.py server/mofa-world --blueprint ../server/zones.worldview.example.json
 ```
 
 ---

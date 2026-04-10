@@ -14,6 +14,7 @@ cd "$SERVER_DIR"
 echo "=== 末法残土世界预生成 ==="
 echo "半径: ${RADIUS} 格"
 echo "服务端: $SERVER_DIR"
+echo "提示: 如需完整流程，优先使用 pipeline.sh + blueprint"
 
 # 确保 datapack 已安装
 mkdir -p "$WORLD_NAME/datapacks"
