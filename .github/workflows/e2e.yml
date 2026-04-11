@@ -77,6 +77,10 @@ jobs:
           npm run check
           npm test
 
+      - name: Build server release binary
+        working-directory: server
+        run: cargo build --release
+
       - name: Server stage (cargo test)
         working-directory: server
         run: cargo test
