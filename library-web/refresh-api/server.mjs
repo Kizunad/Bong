@@ -1,11 +1,11 @@
-import http from "node:http";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import http from "node:http";
+
+import { resolveComposeConfig } from "./compose-path.mjs";
 
 const PORT = Number(process.env.PORT || 8080);
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
-const PROJECT_ROOT = process.env.PROJECT_ROOT || "/workspace/app";
-const COMPOSE_FILE = process.env.COMPOSE_FILE || `${PROJECT_ROOT}/docker-compose.yml`;
 const COMPOSE_PROJECT_NAME = process.env.COMPOSE_PROJECT_NAME || "mofa-library";
 const REFRESH_TIMEOUT_MS = Number(process.env.REFRESH_TIMEOUT_MS || 300_000); // 5 min
 
@@ -28,17 +28,17 @@ function timingSafeEqualString(a, b) {
 
 function isAuthorized(req) {
   if (!REFRESH_TOKEN) return false;
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) return false;
+  const header = req.headers?.authorization;
+  if (!header?.startsWith("Bearer ")) return false;
   const provided = header.slice("Bearer ".length).trim();
   if (!provided) return false;
   return timingSafeEqualString(provided, REFRESH_TOKEN);
 }
 
-function runCommand(args, timeoutMs = REFRESH_TIMEOUT_MS) {
+function runCommand(args, cwd, timeoutMs = REFRESH_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, {
-      cwd: PROJECT_ROOT,
+      cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -86,8 +86,18 @@ function runCommand(args, timeoutMs = REFRESH_TIMEOUT_MS) {
 }
 
 async function refreshLibrary() {
-  const commonArgs = ["compose", "-f", COMPOSE_FILE, "-p", COMPOSE_PROJECT_NAME];
-  return runCommand([...commonArgs, "up", "-d", "--build", "--force-recreate", "--no-deps", "library"]);
+  const { composeFile, projectRoot } = resolveComposeConfig();
+  const commonArgs = ["compose", "-f", composeFile, "-p", COMPOSE_PROJECT_NAME];
+  const result = await runCommand(
+    [...commonArgs, "up", "-d", "--build", "--force-recreate", "--no-deps", "library"],
+    projectRoot
+  );
+
+  return {
+    ...result,
+    composeFile,
+    projectRoot,
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -128,6 +138,8 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       message: "library refreshed",
       durationMs: Date.now() - startedAt,
+      composeFile: result.composeFile,
+      projectRoot: result.projectRoot,
       stdout: result.stdout.trim() || undefined,
     });
   } catch (error) {
