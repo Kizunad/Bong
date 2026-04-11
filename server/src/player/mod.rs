@@ -1,5 +1,5 @@
-mod progression;
 pub mod gameplay;
+mod progression;
 pub mod state;
 
 use self::state::{
@@ -7,14 +7,16 @@ use self::state::{
     PlayerStatePersistence, PLAYER_STATE_AUTOSAVE_INTERVAL_TICKS,
 };
 use valence::message::SendMessage;
+use valence::prelude::Despawned;
 use valence::prelude::{
     Added, App, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId, GameMode,
     IntoSystemConfigs, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
     VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
-const SPAWN_POSITION: [f64; 3] = [8.0, 66.0, 8.0];
-const WELCOME_MESSAGE: &str = "Welcome to Bong! You spawned in the test world.";
+const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
+const WELCOME_MESSAGE: &str =
+    "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -54,7 +56,7 @@ pub fn welcome_message() -> &'static str {
 }
 
 pub fn initial_game_mode() -> GameMode {
-    GameMode::Adventure
+    GameMode::Creative
 }
 
 fn init_clients(
@@ -158,7 +160,7 @@ fn despawn_disconnected_clients(
 
         tracing::info!("[bong][player] cleaning up disconnected client entity {entity:?}");
         if let Some(mut entity_commands) = commands.get_entity(entity) {
-            entity_commands.despawn();
+            entity_commands.insert(Despawned);
         }
     }
 }
@@ -220,10 +222,10 @@ mod tests {
             &mut game_mode,
         );
 
-        assert_eq!(spawn_position(), [8.0, 66.0, 8.0]);
-        assert_eq!(position.get(), DVec3::new(8.0, 66.0, 8.0));
-        assert_eq!(initial_game_mode(), GameMode::Adventure);
-        assert_eq!(game_mode, GameMode::Adventure);
+        assert_eq!(spawn_position(), [8.0, 150.0, 8.0]);
+        assert_eq!(position.get(), DVec3::new(8.0, 150.0, 8.0));
+        assert_eq!(initial_game_mode(), GameMode::Creative);
+        assert_eq!(game_mode, GameMode::Creative);
         assert_eq!(welcome_message(), WELCOME_MESSAGE);
         assert_eq!(layer_id.0, spawn_layer);
         assert_eq!(visible_chunk_layer.0, spawn_layer);

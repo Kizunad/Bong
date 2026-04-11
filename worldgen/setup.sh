@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — 初始化 worldgen Python 后处理环境
+# setup.sh — 初始化 worldgen terrain_gen 环境
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,10 +17,9 @@ fi
 
 source .venv/bin/activate
 pip install --quiet --upgrade pip
-pip install --quiet mcworldlib nbtlib
-echo "[✓] Python 依赖已安装 (mcworldlib, nbtlib)"
+echo "[✓] terrain_gen 当前不依赖额外第三方 Python 包"
 
 echo ""
 echo "完成。后续用法："
 echo "  source .venv/bin/activate"
-echo "  python3 scripts/postprocess.py [world_path]"
+echo "  python3 -m scripts.terrain_gen --backend raster"

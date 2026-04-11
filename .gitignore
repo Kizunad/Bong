@@ -21,6 +21,7 @@ worldgen/server/crash-reports/
 worldgen/server/config/
 worldgen/server/mofa-world/
 worldgen/.venv/
+worldgen/generated/
 
 # IDE
 .idea/
@@ -54,3 +55,7 @@ __pycache__/
 
 # Env
 .env
+
+
+#drafts
+local_images/

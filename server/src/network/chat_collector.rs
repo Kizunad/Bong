@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
 use valence::message::ChatMessageEvent;
+use valence::message::SendMessage;
 use valence::prelude::{
-    DVec3, Entity, EventReader, Position, Query, Res, Resource, Username, With,
+    Client, DVec3, Entity, EventReader, GameMode, ParamSet, Position, Query, Res, Resource,
+    Username, With,
 };
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::player::gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction};
 use crate::schema::chat_message::ChatMessageV1;
+use crate::world::terrain::TerrainProvider;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
@@ -24,7 +27,11 @@ impl Resource for ChatCollectorRateLimit {}
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    players: Query<(&Username, &Position), With<valence::prelude::Client>>,
+    terrain: Option<Res<TerrainProvider>>,
+    mut player_sets: ParamSet<(
+        Query<(&Username, &Position), With<Client>>,
+        Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
+    )>,
     mut events: EventReader<ChatMessageEvent>,
     mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
     mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
@@ -42,12 +49,22 @@ pub fn collect_player_chat(
         timestamp,
     } in events.read()
     {
+        let player_info = {
+            let players = player_sets.p0();
+            players
+                .get(*client)
+                .ok()
+                .map(|(username, position)| (username.0.clone(), position.get()))
+        };
+
         let Some(message_outcome) = classify_player_message(
             *client,
             message,
             *timestamp,
-            &players,
+            player_info,
+            &mut player_sets.p1(),
             &zone_registry,
+            terrain.as_deref(),
             &mut rate_limit,
         ) else {
             continue;
@@ -84,8 +101,10 @@ fn classify_player_message(
     player_entity: Entity,
     message: &str,
     timestamp: u64,
-    players: &Query<(&Username, &Position), With<valence::prelude::Client>>,
+    player_info: Option<(String, DVec3)>,
+    clients: &mut Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
     zone_registry: &ZoneRegistry,
+    terrain: Option<&TerrainProvider>,
     rate_limit: &mut ChatCollectorRateLimit,
 ) -> Option<CollectedPlayerMessage> {
     let too_long = is_oversize_message(message);
@@ -95,13 +114,17 @@ fn classify_player_message(
         return None;
     }
 
-    let Ok((username, position)) = players.get(player_entity) else {
+    let Some((username, position)) = player_info else {
         return None;
     };
 
+    if try_handle_dev_command(player_entity, message, clients, zone_registry, terrain) {
+        return None;
+    }
+
     if let Some(action) = parse_gameplay_action(message) {
         return Some(CollectedPlayerMessage::GameplayAction {
-            player: canonical_player_id(username.0.as_str()),
+            player: canonical_player_id(username.as_str()),
             action,
         });
     }
@@ -110,8 +133,8 @@ fn classify_player_message(
         return None;
     }
 
-    let zone = zone_name_for_position(zone_registry, position.get());
-    let canonical_player = canonical_player_id(username.0.as_str());
+    let zone = zone_name_for_position(zone_registry, position);
+    let canonical_player = canonical_player_id(username.as_str());
 
     Some(CollectedPlayerMessage::RedisOutbound(
         RedisOutbound::PlayerChat(ChatMessageV1 {
@@ -148,6 +171,107 @@ fn parse_gameplay_action(message: &str) -> Option<GameplayAction> {
             Some(GameplayAction::AttemptBreakthrough)
         }
         _ => None,
+    }
+}
+
+fn try_handle_dev_command(
+    player_entity: Entity,
+    message: &str,
+    clients: &mut Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
+    zone_registry: &ZoneRegistry,
+    terrain: Option<&TerrainProvider>,
+) -> bool {
+    let trimmed = message.trim();
+    if !trimmed.starts_with('!') {
+        return false;
+    }
+
+    let mut tokens = trimmed.split_whitespace();
+    let Some(command) = tokens.next() else {
+        return false;
+    };
+
+    let Ok((mut position, mut game_mode, mut client, _username)) = clients.get_mut(player_entity)
+    else {
+        return false;
+    };
+
+    match command {
+        "!spawn" => {
+            position.set(crate::player::spawn_position());
+            client.send_chat_message("Teleported to spawn.");
+            true
+        }
+        "!top" => {
+            let current = position.get();
+            let target_y = if let Some(terrain) = terrain {
+                let sample = terrain.sample(current.x.floor() as i32, current.z.floor() as i32);
+                let surface_y = sample.height.round() as f64;
+                let water_y = if sample.water_level >= 0.0 {
+                    sample.water_level.round() as f64
+                } else {
+                    surface_y
+                };
+                surface_y.max(water_y) + 3.0
+            } else {
+                current.y + 24.0
+            };
+
+            position.set([current.x, target_y, current.z]);
+            client.send_chat_message(format!("Teleported to top at Y={target_y:.0}."));
+            true
+        }
+        "!gm" | "!gamemode" => {
+            let Some(mode) = tokens.next() else {
+                client.send_chat_message("Usage: !gm <c|a|s>");
+                return true;
+            };
+            match mode {
+                "c" | "creative" => {
+                    *game_mode = GameMode::Creative;
+                    client.send_chat_message("Gamemode set to Creative.");
+                }
+                "a" | "adventure" => {
+                    *game_mode = GameMode::Adventure;
+                    client.send_chat_message("Gamemode set to Adventure.");
+                }
+                "s" | "spectator" => {
+                    *game_mode = GameMode::Spectator;
+                    client.send_chat_message("Gamemode set to Spectator.");
+                }
+                _ => client.send_chat_message("Usage: !gm <c|a|s>"),
+            }
+            true
+        }
+        "!tpzone" => {
+            let Some(zone_name) = tokens.next() else {
+                client.send_chat_message(
+                    "Usage: !tpzone <spawn|qingyun_peaks|lingquan_marsh|blood_valley|youan_depths|north_wastes>",
+                );
+                return true;
+            };
+
+            let Some(zone) = zone_registry.find_zone_by_name(zone_name) else {
+                client.send_chat_message("Unknown zone.");
+                return true;
+            };
+
+            let center = zone.center();
+            position.set([center.x, center.y + 24.0, center.z]);
+            client.send_chat_message(format!("Teleported to zone `{zone_name}`."));
+            true
+        }
+        "!zones" => {
+            let names = zone_registry
+                .zones
+                .iter()
+                .map(|zone| zone.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            client.send_chat_message(format!("Zones: {names}"));
+            true
+        }
+        _ => false,
     }
 }
 

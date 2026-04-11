@@ -1,37 +1,44 @@
 #!/usr/bin/env bash
-# pipeline.sh — 末法残土世界生成总流程
+# pipeline.sh — terrain_gen 主流程
 # 用法:
 #   cd worldgen && bash pipeline.sh
-#   cd worldgen && bash pipeline.sh 768 ../server/zones.worldview.example.json
+#   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/terrain-gen-smoke raster
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORLD_DIR="$SCRIPT_DIR/server/mofa-world"
-RADIUS="${1:-512}"
-BLUEPRINT_REL="${2:-../server/zones.worldview.example.json}"
+BLUEPRINT_REL="${1:-../server/zones.worldview.example.json}"
+OUTPUT_REL="${2:-generated/terrain-gen-smoke}"
+BACKEND="${3:-raster}"
 
-echo "=== 末法残土世界生成 Pipeline ==="
-echo "半径: ${RADIUS} 格"
+echo "=== 末法残土 terrain_gen Pipeline ==="
 echo "蓝图: ${BLUEPRINT_REL}"
-echo "世界目录: ${WORLD_DIR}"
+echo "输出目录: ${OUTPUT_REL}"
+echo "Bake backend: ${BACKEND}"
 echo ""
 
-echo "[1/3] Datapack 预生成"
-bash "$SCRIPT_DIR/worldgen.sh" "$RADIUS"
-echo ""
+python3 -m scripts.terrain_gen \
+  --blueprint "$BLUEPRINT_REL" \
+  --output-dir "$OUTPUT_REL" \
+  --backend "$BACKEND"
 
-echo "[2/3] Python 后处理"
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    echo "[!] 未找到 .venv，先执行: bash setup.sh"
-    exit 1
+echo ""
+echo "主要产物:"
+echo "  plan: ${OUTPUT_REL}/terrain-plan.json"
+echo "  summary: ${OUTPUT_REL}/terrain-fields-summary.json"
+echo "  focus layout: ${OUTPUT_REL}/focus-layout-preview.png"
+echo "  focus surface: ${OUTPUT_REL}/focus-surface-preview.png"
+echo "  focus height: ${OUTPUT_REL}/focus-height-preview.png"
+if [ "$BACKEND" = "worldpainter" ]; then
+  echo "  worldpainter dir: ${OUTPUT_REL}/worldpainter"
 fi
-
-source "$SCRIPT_DIR/.venv/bin/activate"
-python3 "$SCRIPT_DIR/scripts/postprocess.py" "server/mofa-world" --blueprint "$BLUEPRINT_REL"
+if [ "$BACKEND" = "raster" ]; then
+  echo "  raster dir: ${OUTPUT_REL}/rasters"
+  echo "  raster manifest: ${OUTPUT_REL}/rasters/manifest.json"
+fi
 echo ""
-
-echo "[3/3] Valence 接入提示"
-echo "导出环境变量后启动 server:"
-echo "  BONG_WORLD_PATH=$WORLD_DIR cargo run"
+echo "分区预览示例:"
+echo "  ${OUTPUT_REL}/zone-blood_valley-surface-preview.png"
+echo "  ${OUTPUT_REL}/zone-qingyun_peaks-height-preview.png"
+echo "  ${OUTPUT_REL}/zone-north_wastes-layout-preview.png"
 echo ""
 echo "完成。"

@@ -103,7 +103,8 @@ impl ZoneRegistry {
     }
 
     pub fn load() -> Self {
-        Self::load_from_path(DEFAULT_ZONES_PATH)
+        let manifest_dir_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ZONES_PATH);
+        Self::load_from_path(manifest_dir_path)
     }
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Self {

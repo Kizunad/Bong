@@ -1,4 +1,5 @@
 pub mod events;
+pub mod terrain;
 pub mod zone;
 
 use std::fs;
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 use valence::anvil::AnvilLevel;
 use valence::prelude::{
     ident, App, BiomeRegistry, BlockState, Commands, DimensionTypeRegistry, LayerBundle, Res,
-    Server, Startup, UnloadedChunk,
+    ResMut, Server, Startup, UnloadedChunk,
 };
 
 const TEST_AREA_CHUNKS: i32 = 16;
@@ -15,12 +16,14 @@ const CHUNK_WIDTH: i32 = 16;
 const BEDROCK_Y: i32 = 64;
 const GRASS_Y: i32 = BEDROCK_Y + 1;
 pub(crate) const TEST_AREA_BLOCK_EXTENT: i32 = TEST_AREA_CHUNKS * CHUNK_WIDTH;
+const TERRAIN_RASTER_PATH_ENV_VAR: &str = "BONG_TERRAIN_RASTER_PATH";
 const WORLD_PATH_ENV_VAR: &str = "BONG_WORLD_PATH";
 const ANVIL_REGION_DIR_NAME: &str = "region";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WorldBootstrap {
     FallbackFlat(FallbackFlatBootstrap),
+    TerrainRaster(terrain::RasterBootstrapConfig),
     AnvilIfPresent(AnvilBootstrapConfig),
 }
 
@@ -31,14 +34,26 @@ struct FallbackFlatBootstrap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FallbackFlatReason {
-    NoWorldPathConfigured,
+    NoWorldBootstrapConfigured,
+    TerrainManifestMissing(PathBuf),
+    TerrainManifestNotFile(PathBuf),
+    TerrainManifestUnreadable {
+        manifest_path: PathBuf,
+        error: String,
+    },
     WorldPathMissing(PathBuf),
     WorldPathNotDirectory(PathBuf),
-    WorldPathUnreadable { world_path: PathBuf, error: String },
+    WorldPathUnreadable {
+        world_path: PathBuf,
+        error: String,
+    },
     RegionDirMissing(PathBuf),
     RegionDirEmpty(PathBuf),
     RegionDirInvalid(PathBuf),
-    RegionDirUnreadable { region_dir: PathBuf, error: String },
+    RegionDirUnreadable {
+        region_dir: PathBuf,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,13 +66,14 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering world setup systems");
     zone::register(app);
     events::register(app);
+    terrain::register(app);
     app.add_systems(Startup, setup_world);
 }
 
 fn setup_world(
     commands: Commands,
     server: Res<Server>,
-    dimensions: Res<DimensionTypeRegistry>,
+    dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
 ) {
     match select_world_bootstrap() {
@@ -65,6 +81,13 @@ fn setup_world(
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
             spawn_fallback_flat_world(commands, server, dimensions, biomes);
+        }
+        WorldBootstrap::TerrainRaster(config) => {
+            tracing::info!(
+                "[bong][world] selected terrain raster bootstrap from {}",
+                config.manifest_path.display()
+            );
+            terrain::spawn_raster_world(commands, server, dimensions, biomes, config);
         }
         WorldBootstrap::AnvilIfPresent(anvil) => {
             tracing::info!(
@@ -78,7 +101,20 @@ fn setup_world(
 }
 
 fn select_world_bootstrap() -> WorldBootstrap {
-    select_world_bootstrap_from_configured_path(configured_world_path())
+    select_world_bootstrap_from_configured_paths(
+        configured_terrain_raster_path(),
+        configured_world_path(),
+    )
+}
+
+fn configured_terrain_raster_path() -> Option<PathBuf> {
+    std::env::var_os(TERRAIN_RASTER_PATH_ENV_VAR).and_then(|value| {
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
 }
 
 fn configured_world_path() -> Option<PathBuf> {
@@ -91,9 +127,44 @@ fn configured_world_path() -> Option<PathBuf> {
     })
 }
 
-fn select_world_bootstrap_from_configured_path(world_path: Option<PathBuf>) -> WorldBootstrap {
+fn select_world_bootstrap_from_configured_paths(
+    terrain_manifest_path: Option<PathBuf>,
+    world_path: Option<PathBuf>,
+) -> WorldBootstrap {
+    if let Some(manifest_path) = terrain_manifest_path {
+        match fs::metadata(&manifest_path) {
+            Ok(metadata) if metadata.is_file() => {
+                let raster_dir = match terrain::raster_dir_from_manifest_path(&manifest_path) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return fallback_flat(FallbackFlatReason::TerrainManifestUnreadable {
+                            manifest_path,
+                            error,
+                        });
+                    }
+                };
+                return WorldBootstrap::TerrainRaster(terrain::RasterBootstrapConfig {
+                    manifest_path,
+                    raster_dir,
+                });
+            }
+            Ok(_) => {
+                return fallback_flat(FallbackFlatReason::TerrainManifestNotFile(manifest_path));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return fallback_flat(FallbackFlatReason::TerrainManifestMissing(manifest_path));
+            }
+            Err(error) => {
+                return fallback_flat(FallbackFlatReason::TerrainManifestUnreadable {
+                    manifest_path,
+                    error: error.to_string(),
+                });
+            }
+        }
+    }
+
     let Some(world_path) = world_path else {
-        return fallback_flat(FallbackFlatReason::NoWorldPathConfigured);
+        return fallback_flat(FallbackFlatReason::NoWorldBootstrapConfigured);
     };
 
     match fs::metadata(&world_path) {
@@ -211,10 +282,32 @@ fn is_anvil_region_file_name(file_name: &str) -> bool {
 
 fn log_fallback_flat_selection(reason: &FallbackFlatReason) {
     match reason {
-        FallbackFlatReason::NoWorldPathConfigured => {
+        FallbackFlatReason::NoWorldBootstrapConfigured => {
             tracing::info!(
-                "[bong][world] no world path configured via {}, selecting fallback flat bootstrap",
+                "[bong][world] no world bootstrap configured via {} or {}, selecting fallback flat bootstrap",
+                TERRAIN_RASTER_PATH_ENV_VAR,
                 WORLD_PATH_ENV_VAR
+            );
+        }
+        FallbackFlatReason::TerrainManifestMissing(manifest_path) => {
+            tracing::info!(
+                "[bong][world] configured terrain manifest {} is missing, selecting fallback flat bootstrap",
+                manifest_path.display()
+            );
+        }
+        FallbackFlatReason::TerrainManifestNotFile(manifest_path) => {
+            tracing::warn!(
+                "[bong][world] configured terrain manifest {} is not a file, selecting fallback flat bootstrap",
+                manifest_path.display()
+            );
+        }
+        FallbackFlatReason::TerrainManifestUnreadable {
+            manifest_path,
+            error,
+        } => {
+            tracing::warn!(
+                "[bong][world] failed to inspect configured terrain manifest {} for bootstrap selection, selecting fallback flat bootstrap: {error}",
+                manifest_path.display()
             );
         }
         FallbackFlatReason::WorldPathMissing(world_path) => {
@@ -265,7 +358,7 @@ fn log_fallback_flat_selection(reason: &FallbackFlatReason) {
 fn spawn_anvil_world(
     mut commands: Commands,
     server: Res<Server>,
-    dimensions: Res<DimensionTypeRegistry>,
+    dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
     anvil: AnvilBootstrapConfig,
 ) {
@@ -283,7 +376,7 @@ fn spawn_anvil_world(
 fn spawn_fallback_flat_world(
     mut commands: Commands,
     server: Res<Server>,
-    dimensions: Res<DimensionTypeRegistry>,
+    dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
 ) {
     tracing::info!("[bong][world] creating overworld test area (16x16 chunks)");
@@ -320,8 +413,9 @@ mod tests {
 
     use super::zone::{default_spawn_bounds, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use super::{
-        select_world_bootstrap, select_world_bootstrap_from_configured_path, AnvilBootstrapConfig,
-        FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME,
+        select_world_bootstrap, select_world_bootstrap_from_configured_paths,
+        terrain::RasterBootstrapConfig, AnvilBootstrapConfig, FallbackFlatBootstrap,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, TERRAIN_RASTER_PATH_ENV_VAR,
         WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::DVec3;
@@ -347,12 +441,6 @@ mod tests {
             .find_zone(DVec3::new(8.0, 66.0, 8.0))
             .expect("missing zones.json should fall back to the spawn zone");
 
-        println!(
-            "missing zones config at {} -> using fallback zone {}",
-            missing_path.display(),
-            spawn_zone.name
-        );
-
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(spawn_zone.name, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(spawn_zone.bounds, default_spawn_bounds());
@@ -363,13 +451,8 @@ mod tests {
         let world_path = unique_temp_dir("bong-world-bootstrap-without-region");
         fs::create_dir_all(&world_path).expect("test world path should be creatable");
 
-        let selection = select_world_bootstrap_from_configured_path(Some(world_path.clone()));
-
-        println!(
-            "configured world path {} without region dir -> {:?}",
-            world_path.display(),
-            selection
-        );
+        let selection =
+            select_world_bootstrap_from_configured_paths(None, Some(world_path.clone()));
 
         assert_eq!(
             selection,
@@ -383,12 +466,12 @@ mod tests {
 
     #[test]
     fn selects_fallback_without_world_path() {
-        let selection = select_world_bootstrap_from_configured_path(None);
+        let selection = select_world_bootstrap_from_configured_paths(None, None);
 
         assert_eq!(
             selection,
             WorldBootstrap::FallbackFlat(FallbackFlatBootstrap {
-                reason: FallbackFlatReason::NoWorldPathConfigured,
+                reason: FallbackFlatReason::NoWorldBootstrapConfigured,
             })
         );
     }
@@ -399,7 +482,7 @@ mod tests {
         let region_dir = world_path.join(ANVIL_REGION_DIR_NAME);
         fs::create_dir_all(&region_dir).expect("empty region dir should be creatable");
 
-        let selection = select_world_bootstrap_from_configured_path(Some(world_path));
+        let selection = select_world_bootstrap_from_configured_paths(None, Some(world_path));
 
         assert_eq!(
             selection,
@@ -417,7 +500,8 @@ mod tests {
         fs::write(region_dir.join("r.0.0.mca"), b"placeholder")
             .expect("region marker file should be creatable");
 
-        let selection = select_world_bootstrap_from_configured_path(Some(world_path.clone()));
+        let selection =
+            select_world_bootstrap_from_configured_paths(None, Some(world_path.clone()));
 
         assert_eq!(
             selection,
@@ -436,7 +520,7 @@ mod tests {
         fs::write(region_dir.join("notes.txt"), b"not an anvil region")
             .expect("invalid region marker should be creatable");
 
-        let selection = select_world_bootstrap_from_configured_path(Some(world_path));
+        let selection = select_world_bootstrap_from_configured_paths(None, Some(world_path));
 
         assert_eq!(
             selection,
@@ -454,7 +538,7 @@ mod tests {
         fs::write(region_dir.join("r.0.0.mca"), b"placeholder")
             .expect("region marker file should be creatable");
 
-        let _guard = ScopedWorldPathEnvVar::set(Some(world_path.clone()));
+        let _guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
         let selection = select_world_bootstrap();
 
         assert_eq!(
@@ -471,7 +555,7 @@ mod tests {
         let world_path = unique_temp_dir("bong-world-bootstrap-env-missing");
         fs::create_dir_all(&world_path).expect("test world path should be creatable");
 
-        let _guard = ScopedWorldPathEnvVar::set(Some(world_path.clone()));
+        let _guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
         let selection = select_world_bootstrap();
 
         assert_eq!(
@@ -484,30 +568,96 @@ mod tests {
         );
     }
 
-    struct ScopedWorldPathEnvVar {
+    #[test]
+    fn prefers_raster_manifest_when_configured() {
+        let raster_dir = unique_temp_dir("bong-world-bootstrap-raster");
+        fs::create_dir_all(&raster_dir).expect("raster dir should be creatable");
+        let manifest_path = raster_dir.join("manifest.json");
+        fs::write(&manifest_path, "{}\n").expect("manifest file should be creatable");
+
+        let selection =
+            select_world_bootstrap_from_configured_paths(Some(manifest_path.clone()), None);
+
+        assert_eq!(
+            selection,
+            WorldBootstrap::TerrainRaster(RasterBootstrapConfig {
+                manifest_path,
+                raster_dir,
+            })
+        );
+    }
+
+    #[test]
+    fn raster_path_wins_over_anvil_path() {
+        let raster_dir = unique_temp_dir("bong-world-bootstrap-raster-priority");
+        fs::create_dir_all(&raster_dir).expect("raster dir should be creatable");
+        let manifest_path = raster_dir.join("manifest.json");
+        fs::write(&manifest_path, "{}\n").expect("manifest file should be creatable");
+
+        let world_path = unique_temp_dir("bong-world-bootstrap-priority-anvil");
+        let region_dir = world_path.join(ANVIL_REGION_DIR_NAME);
+        fs::create_dir_all(&region_dir).expect("region dir should be creatable");
+        fs::write(region_dir.join("r.0.0.mca"), b"placeholder")
+            .expect("region marker file should be creatable");
+
+        let selection = select_world_bootstrap_from_configured_paths(
+            Some(manifest_path.clone()),
+            Some(world_path),
+        );
+
+        assert_eq!(
+            selection,
+            WorldBootstrap::TerrainRaster(RasterBootstrapConfig {
+                manifest_path,
+                raster_dir,
+            })
+        );
+    }
+
+    #[test]
+    fn uses_raster_via_env_selection() {
+        let raster_dir = unique_temp_dir("bong-world-bootstrap-env-raster");
+        fs::create_dir_all(&raster_dir).expect("raster dir should be creatable");
+        let manifest_path = raster_dir.join("manifest.json");
+        fs::write(&manifest_path, "{}\n").expect("manifest file should be creatable");
+
+        let _guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, Some(manifest_path.clone()));
+        let selection = select_world_bootstrap();
+
+        assert_eq!(
+            selection,
+            WorldBootstrap::TerrainRaster(RasterBootstrapConfig {
+                manifest_path,
+                raster_dir,
+            })
+        );
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
         previous: Option<std::ffi::OsString>,
     }
 
-    impl ScopedWorldPathEnvVar {
-        fn set(path: Option<PathBuf>) -> Self {
-            let previous = std::env::var_os(WORLD_PATH_ENV_VAR);
+    impl ScopedEnvVar {
+        fn set(key: &'static str, path: Option<PathBuf>) -> Self {
+            let previous = std::env::var_os(key);
 
             if let Some(path) = path {
-                std::env::set_var(WORLD_PATH_ENV_VAR, path);
+                std::env::set_var(key, path);
             } else {
-                std::env::remove_var(WORLD_PATH_ENV_VAR);
+                std::env::remove_var(key);
             }
 
-            Self { previous }
+            Self { key, previous }
         }
     }
 
-    impl Drop for ScopedWorldPathEnvVar {
+    impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                std::env::set_var(WORLD_PATH_ENV_VAR, previous);
+                std::env::set_var(self.key, previous);
             } else {
-                std::env::remove_var(WORLD_PATH_ENV_VAR);
+                std::env::remove_var(self.key);
             }
         }
     }

@@ -1,0 +1,99 @@
+{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": {
+        "min": [-750.0, -64.0, -750.0],
+        "max": [750.0, 320.0, 750.0]
+      },
+      "spirit_qi": 0.3,
+      "danger_level": 1,
+      "active_events": [],
+      "patrol_anchors": [
+        [-240.0, 70.0, -160.0],
+        [180.0, 70.0, 140.0]
+      ],
+      "blocked_tiles": []
+    },
+    {
+      "name": "qingyun_peaks",
+      "aabb": {
+        "min": [-3600.0, -64.0, -2600.0],
+        "max": [-2400.0, 320.0, -1400.0]
+      },
+      "spirit_qi": 0.5,
+      "danger_level": 2,
+      "active_events": [],
+      "patrol_anchors": [
+        [-3380.0, 128.0, -2320.0],
+        [-2740.0, 164.0, -1810.0],
+        [-2510.0, 148.0, -1510.0]
+      ],
+      "blocked_tiles": []
+    },
+    {
+      "name": "lingquan_marsh",
+      "aabb": {
+        "min": [-3000.0, -64.0, 2000.0],
+        "max": [-2000.0, 320.0, 3000.0]
+      },
+      "spirit_qi": 0.7,
+      "danger_level": 3,
+      "active_events": [],
+      "patrol_anchors": [
+        [-2860.0, 66.0, 2250.0],
+        [-2460.0, 64.0, 2480.0],
+        [-2180.0, 65.0, 2840.0]
+      ],
+      "blocked_tiles": []
+    },
+    {
+      "name": "blood_valley",
+      "aabb": {
+        "min": [2600.0, -64.0, -3250.0],
+        "max": [3400.0, 320.0, -1750.0]
+      },
+      "spirit_qi": 0.3,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [2720.0, 74.0, -3000.0],
+        [2980.0, 70.0, -2470.0],
+        [3280.0, 78.0, -1910.0]
+      ],
+      "blocked_tiles": []
+    },
+    {
+      "name": "youan_depths",
+      "aabb": {
+        "min": [1400.0, -64.0, 2400.0],
+        "max": [2600.0, 120.0, 3600.0]
+      },
+      "spirit_qi": 0.4,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [1760.0, 28.0, 2720.0],
+        [2120.0, 16.0, 3080.0],
+        [2400.0, 10.0, 3400.0]
+      ],
+      "blocked_tiles": []
+    },
+    {
+      "name": "north_wastes",
+      "aabb": {
+        "min": [-1500.0, -64.0, -8000.0],
+        "max": [1500.0, 320.0, -6000.0]
+      },
+      "spirit_qi": 0.05,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [
+        [-900.0, 72.0, -7600.0],
+        [0.0, 68.0, -7020.0],
+        [940.0, 74.0, -6360.0]
+      ],
+      "blocked_tiles": []
+    }
+  ]
+}
