@@ -3,7 +3,7 @@ pub mod chat_collector;
 pub mod command_executor;
 pub mod redis_bridge;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_bridge::{
@@ -30,12 +30,15 @@ use crate::schema::world_state::{NpcSnapshot, PlayerProfile, WorldStateV1, ZoneS
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-const REDIS_URL: &str = "redis://127.0.0.1:6379";
+const REDIS_URL_ENV_KEY: &str = "REDIS_URL";
+const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 const WORLD_STATE_PUBLISH_INTERVAL_TICKS: u64 = 200; // ~10 seconds at 20 TPS
 const REDIS_INBOUND_DRAIN_BUDGET: usize = 16;
 const DEFAULT_PLAYER_ACTIVE_HOURS: f64 = 0.0;
 const DEFAULT_PLAYER_RECENT_KILLS: u32 = 0;
 const DEFAULT_PLAYER_RECENT_DEATHS: u32 = 0;
+const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
+const NARRATION_DEDUPE_CAPACITY: usize = 512;
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -60,6 +63,50 @@ struct ZoneTransitionTracker {
 
 impl Resource for ZoneTransitionTracker {}
 
+#[derive(Default)]
+struct NarrationDedupeResource {
+    recent_payload_keys: VecDeque<(String, u64)>,
+}
+
+impl Resource for NarrationDedupeResource {}
+
+impl NarrationDedupeResource {
+    fn should_drop(&mut self, payload_key: &str, now_secs: u64) -> bool {
+        self.prune(now_secs);
+
+        if self
+            .recent_payload_keys
+            .iter()
+            .any(|(key, _)| key == payload_key)
+        {
+            return true;
+        }
+
+        self.recent_payload_keys
+            .push_back((payload_key.to_string(), now_secs));
+        while self.recent_payload_keys.len() > NARRATION_DEDUPE_CAPACITY {
+            self.recent_payload_keys.pop_front();
+        }
+
+        false
+    }
+
+    fn prune(&mut self, now_secs: u64) {
+        while let Some((_, seen_at_secs)) = self.recent_payload_keys.front() {
+            let age_secs = now_secs.saturating_sub(*seen_at_secs);
+            if age_secs > NARRATION_DEDUPE_WINDOW_SECS {
+                self.recent_payload_keys.pop_front();
+                continue;
+            }
+            break;
+        }
+
+        while self.recent_payload_keys.len() > NARRATION_DEDUPE_CAPACITY {
+            self.recent_payload_keys.pop_front();
+        }
+    }
+}
+
 pub fn register(app: &mut App) {
     // Legacy mock bridge systems
     app.add_systems(
@@ -68,7 +115,9 @@ pub fn register(app: &mut App) {
     );
 
     // Redis bridge
-    let (handle, tx_outbound, rx_inbound) = redis_bridge::spawn_redis_bridge(REDIS_URL);
+    let redis_url = redis_url_from_env();
+    tracing::info!("[bong][redis] configured redis url: {redis_url}");
+    let (handle, tx_outbound, rx_inbound) = redis_bridge::spawn_redis_bridge(redis_url.as_str());
     std::mem::drop(handle); // detach thread
 
     app.insert_resource(RedisBridgeResource {
@@ -79,6 +128,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
+    app.insert_resource(NarrationDedupeResource::default());
 
     app.add_systems(
         Update,
@@ -95,6 +145,17 @@ pub fn register(app: &mut App) {
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
         ),
     );
+}
+
+fn redis_url_from_env() -> String {
+    resolve_redis_url(std::env::var(REDIS_URL_ENV_KEY).ok())
+}
+
+fn resolve_redis_url(env_value: Option<String>) -> String {
+    env_value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REDIS_URL.to_string())
 }
 
 /// Periodically publish world state snapshot to Redis
@@ -545,6 +606,8 @@ fn event_kind_from_name(event_name: &str) -> Option<EventKind> {
     match event_name {
         crate::world::events::EVENT_THUNDER_TRIBULATION => Some(EventKind::ThunderTribulation),
         crate::world::events::EVENT_BEAST_TIDE => Some(EventKind::BeastTide),
+        crate::world::events::EVENT_REALM_COLLAPSE => Some(EventKind::RealmCollapse),
+        crate::world::events::EVENT_KARMA_BACKLASH => Some(EventKind::KarmaBacklash),
         _ => None,
     }
 }
@@ -553,6 +616,8 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
     let event_label = match event_name {
         crate::world::events::EVENT_THUNDER_TRIBULATION => "天劫",
         crate::world::events::EVENT_BEAST_TIDE => "兽潮",
+        crate::world::events::EVENT_REALM_COLLAPSE => "境界坍塌",
+        crate::world::events::EVENT_KARMA_BACKLASH => "因果反噬",
         _ => "异变",
     };
 
@@ -567,6 +632,7 @@ fn process_redis_inbound(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
+    mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
 ) {
     let mut drained_messages = 0;
 
@@ -580,18 +646,35 @@ fn process_redis_inbound(
         match msg {
             RedisInbound::AgentCommand(cmd) => {
                 let command_count = cmd.commands.len();
+                let batch_id = cmd.id.clone();
+                let source = cmd
+                    .source
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let enqueue_outcome = command_executor.enqueue_batch(cmd);
+
+                if enqueue_outcome.dedupe_drop {
+                    tracing::info!(
+                        "[bong][network] dedupe_drop batch_id={} source={} type=command_batch target=- result=dropped_duplicate_batch command_count={}",
+                        batch_id,
+                        source.as_str(),
+                        command_count
+                    );
+                    continue;
+                }
+
                 tracing::info!(
-                    "[bong][network] queued agent command batch {}: {} commands from {:?}",
-                    cmd.id,
-                    command_count,
-                    cmd.source
+                    "[bong][network] command_batch_ingress batch_id={} source={} type=command_batch target=- result=queued command_count={}",
+                    batch_id,
+                    source.as_str(),
+                    command_count
                 );
-                command_executor.enqueue_batch(cmd);
             }
             RedisInbound::AgentNarration(narr) => {
-                process_agent_narrations(
+                process_agent_narrations_with_dedupe(
                     &mut clients,
                     zone_registry.as_deref(),
+                    &mut narration_dedupe,
                     narr.narrations.as_slice(),
                 );
             }
@@ -613,6 +696,37 @@ fn process_agent_narrations(
     for narration in narrations {
         process_single_narration(clients, zone_registry, narration);
     }
+}
+
+fn process_agent_narrations_with_dedupe(
+    clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    zone_registry: Option<&ZoneRegistry>,
+    narration_dedupe: &mut NarrationDedupeResource,
+    narrations: &[crate::schema::narration::Narration],
+) {
+    for narration in narrations {
+        let dedupe_key = narration_dedupe_key(narration);
+        if narration_dedupe.should_drop(dedupe_key.as_str(), current_unix_timestamp_secs()) {
+            tracing::info!(
+                "[bong][network] dedupe_drop batch_id=- source=agent type=narration target={:?} result=dropped_duplicate_payload scope={:?}",
+                narration.target,
+                narration.scope
+            );
+            continue;
+        }
+
+        process_single_narration(clients, zone_registry, narration);
+    }
+}
+
+fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
+    format!(
+        "scope={:?}|target={}|style={:?}|text={}",
+        narration.scope,
+        narration.target.as_deref().unwrap_or_default(),
+        narration.style,
+        narration.text
+    )
 }
 
 fn process_single_narration(
@@ -818,6 +932,21 @@ mod tests {
         assert!(
             (left - right).abs() < 1e-9,
             "expected {left} to be approximately equal to {right}"
+        );
+    }
+
+    #[test]
+    fn resolve_redis_url_prefers_non_empty_env_value() {
+        let value = resolve_redis_url(Some("redis://10.0.0.8:6380".to_string()));
+        assert_eq!(value, "redis://10.0.0.8:6380");
+    }
+
+    #[test]
+    fn resolve_redis_url_falls_back_to_default_when_missing_or_blank() {
+        assert_eq!(resolve_redis_url(None), DEFAULT_REDIS_URL.to_string());
+        assert_eq!(
+            resolve_redis_url(Some("   \t\n ".to_string())),
+            DEFAULT_REDIS_URL.to_string()
         );
     }
 
@@ -1033,6 +1162,7 @@ mod tests {
                 rx_inbound,
             });
             app.insert_resource(CommandExecutorResource::default());
+            app.insert_resource(NarrationDedupeResource::default());
 
             if let Some(zone_registry) = zone_registry {
                 app.insert_resource(zone_registry);
@@ -1300,6 +1430,33 @@ mod tests {
                 "missing player target should not leak payload to Bob"
             );
             assert_eq!(bob_chat_packets, 0, "missing player target should not leak chat packets to Bob");
+        }
+
+        #[test]
+        fn duplicate_narration_payload_is_deduped_within_window() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (_alice, mut alice_helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            let narration = Narration {
+                scope: NarrationScope::Broadcast,
+                target: None,
+                text: "重复叙事只应投递一次。".to_string(),
+                style: NarrationStyle::Narration,
+            };
+
+            enqueue_single_narration(&tx_inbound, narration.clone());
+            enqueue_single_narration(&tx_inbound, narration);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            assert_eq!(
+                payloads.len(),
+                1,
+                "duplicate narration payload should be dropped by short-window dedupe"
+            );
         }
     }
 
@@ -1773,7 +1930,8 @@ mod tests {
                 let command = spawn_event_command("spawn", EVENT_THUNDER_TRIBULATION, 180);
                 world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
                     let mut events = world.resource_mut::<ActiveEventsResource>();
-                    events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                    let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                    assert!(accepted, "thunder major event should be accepted into scheduler");
                 });
             }
 

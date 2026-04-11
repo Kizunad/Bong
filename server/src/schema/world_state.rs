@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
@@ -6,6 +6,7 @@ use super::common::{GameEventType, NpcStateKind, PlayerTrend};
 pub type Vec3 = [f64; 3];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlayerPowerBreakdown {
     pub combat: f64,
     pub wealth: f64,
@@ -15,6 +16,7 @@ pub struct PlayerPowerBreakdown {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlayerProfile {
     pub uuid: String,
     pub name: String,
@@ -30,6 +32,7 @@ pub struct PlayerProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NpcSnapshot {
     pub id: String,
     pub kind: String,
@@ -39,6 +42,7 @@ pub struct NpcSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ZoneSnapshot {
     pub name: String,
     pub spirit_qi: f64,
@@ -48,6 +52,7 @@ pub struct ZoneSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GameEvent {
     #[serde(rename = "type")]
     pub event_type: GameEventType,
@@ -63,7 +68,9 @@ pub struct GameEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorldStateV1 {
+    #[serde(deserialize_with = "deserialize_v1_version")]
     pub v: u8,
     pub ts: u64,
     pub tick: u64,
@@ -73,9 +80,32 @@ pub struct WorldStateV1 {
     pub recent_events: Vec<GameEvent>,
 }
 
+fn deserialize_v1_version<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let version = u8::deserialize(deserializer)?;
+    if version == 1 {
+        Ok(version)
+    } else {
+        Err(D::Error::custom(format!(
+            "WorldStateV1.v must be 1, got {version}"
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::channels::{CH_PLAYER_CHAT, CH_WORLD_STATE};
+    use serde_json::{json, Value};
+
+    fn sample_world_state_value() -> Value {
+        serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/world-state.sample.json"
+        ))
+        .expect("world-state sample should parse into JSON value")
+    }
 
     #[test]
     fn deserialize_world_state_sample() {
@@ -92,6 +122,8 @@ mod tests {
         assert_eq!(state.npcs[0].id, "npc_001");
         assert_eq!(state.zones.len(), 2);
         assert_eq!(state.recent_events.len(), 2);
+        assert_eq!(CH_WORLD_STATE, "bong:world_state");
+        assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
     }
 
     #[test]
@@ -103,5 +135,29 @@ mod tests {
         assert_eq!(state.v, state2.v);
         assert_eq!(state.tick, state2.tick);
         assert_eq!(state.players.len(), state2.players.len());
+    }
+
+    #[test]
+    fn deserialize_world_state_sample_rejects_wrong_version() {
+        let mut value = sample_world_state_value();
+        value["v"] = json!(2);
+
+        assert!(serde_json::from_value::<WorldStateV1>(value).is_err());
+    }
+
+    #[test]
+    fn deserialize_world_state_sample_rejects_unknown_top_level_field() {
+        let mut value = sample_world_state_value();
+        value["realm_clock"] = json!(99);
+
+        assert!(serde_json::from_value::<WorldStateV1>(value).is_err());
+    }
+
+    #[test]
+    fn deserialize_world_state_sample_rejects_unknown_nested_player_field() {
+        let mut value = sample_world_state_value();
+        value["players"][0]["rogue_power"] = json!(999);
+
+        assert!(serde_json::from_value::<WorldStateV1>(value).is_err());
     }
 }

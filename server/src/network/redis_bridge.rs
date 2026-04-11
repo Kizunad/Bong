@@ -12,6 +12,8 @@ use crate::schema::world_state::WorldStateV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
 const REDIS_IO_TIMEOUT: Duration = Duration::from_millis(100);
+const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
+const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 
@@ -38,6 +40,56 @@ enum RedisIoCommand {
         key: &'static str,
         payload: String,
     },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DrainOutcome {
+    Healthy,
+    Reconnect { reason: String },
+    Stop,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BridgeLoopControl {
+    Reconnect { reason: String },
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubscriberTaskExit {
+    StreamEnded,
+    GameChannelClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReconnectSchedule {
+    attempt: u32,
+    delay: Duration,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ReconnectBackoff {
+    attempts: u32,
+}
+
+impl ReconnectBackoff {
+    fn next(&mut self) -> ReconnectSchedule {
+        self.attempts = self.attempts.saturating_add(1);
+
+        let shift = self.attempts.saturating_sub(1).min(16);
+        let delay_ms = (RECONNECT_BACKOFF_INITIAL.as_millis() as u64)
+            .saturating_mul(1u64 << shift)
+            .min(RECONNECT_BACKOFF_MAX.as_millis() as u64);
+
+        ReconnectSchedule {
+            attempt: self.attempts,
+            delay: Duration::from_millis(delay_ms),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.attempts = 0;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,8 +129,6 @@ pub fn spawn_redis_bridge(
         };
 
         rt.block_on(async move {
-            tracing::info!("[bong][redis] connecting to {url}");
-
             let client = match redis::Client::open(url.as_str()) {
                 Ok(client) => client,
                 Err(error) => {
@@ -86,111 +136,32 @@ pub fn spawn_redis_bridge(
                     return;
                 }
             };
+            let mut backoff = ReconnectBackoff::default();
+            let mut pending_command = None;
 
-            let mut pub_conn = match client.get_multiplexed_async_connection().await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    tracing::error!("[bong][redis] failed to get pub connection: {error}");
-                    return;
-                }
-            };
-
-            let mut pubsub = match client.get_async_pubsub().await {
-                Ok(pubsub) => pubsub,
-                Err(error) => {
-                    tracing::error!("[bong][redis] failed to get pubsub connection: {error}");
-                    return;
-                }
-            };
-
-            if let Err(error) = pubsub.subscribe(CH_AGENT_COMMAND).await {
-                tracing::error!(
-                    "[bong][redis] failed to subscribe to {CH_AGENT_COMMAND}: {error}"
-                );
-                return;
-            }
-
-            if let Err(error) = pubsub.subscribe(CH_AGENT_NARRATE).await {
-                tracing::error!(
-                    "[bong][redis] failed to subscribe to {CH_AGENT_NARRATE}: {error}"
-                );
-                return;
-            }
-
-            tracing::info!(
-                "[bong][redis] subscribed to {CH_AGENT_COMMAND} and {CH_AGENT_NARRATE}"
-            );
-
-            let tx_to_game_clone = tx_to_game.clone();
-            let sub_task = tokio::spawn(async move {
-                use futures_util::StreamExt;
-
-                let mut stream = pubsub.on_message();
-                while let Some(message) = stream.next().await {
-                    let channel: String = match message.get_channel() {
-                        Ok(channel) => channel,
-                        Err(error) => {
-                            tracing::warn!(
-                                "[bong][redis] failed to read inbound channel name: {error}"
-                            );
-                            continue;
-                        }
-                    };
-
-                    let payload: String = match message.get_payload() {
-                        Ok(payload) => payload,
-                        Err(error) => {
-                            tracing::warn!(
-                                "[bong][redis] failed to read payload from {channel}: {error}"
-                            );
-                            continue;
-                        }
-                    };
-
-                    match parse_inbound_message(channel.as_str(), payload.as_str()) {
-                        Ok(Some(inbound)) => {
-                            match &inbound {
-                                RedisInbound::AgentCommand(command) => tracing::info!(
-                                    "[bong][redis] received agent command: {} ({} cmds)",
-                                    command.id,
-                                    command.commands.len()
-                                ),
-                                RedisInbound::AgentNarration(narration) => tracing::info!(
-                                    "[bong][redis] received narration ({} entries)",
-                                    narration.narrations.len()
-                                ),
-                            }
-
-                            if tx_to_game_clone.send(inbound).is_err() {
-                                tracing::warn!(
-                                    "[bong][redis] inbound channel to game closed; stopping subscriber task"
-                                );
-                                break;
-                            }
-                        }
-                        Ok(None) => {
-                            tracing::debug!(
-                                "[bong][redis] ignoring message on unexpected channel {channel}"
-                            );
-                        }
-                        Err(error) => tracing::warn!(
-                            "[bong][redis] dropped invalid inbound payload on {channel}: {error}"
-                        ),
-                    }
-                }
-            });
-
-            let mut bridge_tick = tokio::time::interval(BRIDGE_LOOP_INTERVAL);
             loop {
-                bridge_tick.tick().await;
+                match connect_bridge_session(&client, url.as_str(), &tx_to_game).await {
+                    Ok((pub_conn, sub_task)) => {
+                        backoff.reset();
 
-                if !drain_outbound_messages(&rx_from_game, &mut pub_conn).await {
-                    break;
-                }
-
-                if sub_task.is_finished() {
-                    tracing::warn!("[bong][redis] subscriber task ended, stopping bridge");
-                    break;
+                        match run_bridge_session(
+                            &rx_from_game,
+                            &mut pending_command,
+                            pub_conn,
+                            sub_task,
+                        )
+                        .await
+                        {
+                            BridgeLoopControl::Reconnect { reason } => {
+                                sleep_before_reconnect(url.as_str(), &mut backoff, reason.as_str()).await;
+                            }
+                            BridgeLoopControl::Stop => break,
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("[bong][redis] {error}");
+                        sleep_before_reconnect(url.as_str(), &mut backoff, error.as_str()).await;
+                    }
                 }
             }
         });
@@ -202,8 +173,18 @@ pub fn spawn_redis_bridge(
 async fn drain_outbound_messages(
     rx_from_game: &Receiver<RedisOutbound>,
     pub_conn: &mut redis::aio::MultiplexedConnection,
-) -> bool {
+    pending_command: &mut Option<RedisIoCommand>,
+) -> DrainOutcome {
     let mut drained = 0;
+
+    if let Some(command) = pending_command.take() {
+        if let Err(error) = execute_outbound_command(pub_conn, &command).await {
+            *pending_command = Some(command);
+            return DrainOutcome::Reconnect {
+                reason: format!("outbound_retry_failed: {error}"),
+            };
+        }
+    }
 
     while drained < OUTBOUND_DRAIN_BUDGET {
         match rx_from_game.try_recv() {
@@ -212,8 +193,11 @@ async fn drain_outbound_messages(
 
                 match prepare_outbound_command(message) {
                     Ok(command) => {
-                        if let Err(error) = execute_outbound_command(pub_conn, command).await {
-                            tracing::warn!("[bong][redis] {error}");
+                        if let Err(error) = execute_outbound_command(pub_conn, &command).await {
+                            *pending_command = Some(command);
+                            return DrainOutcome::Reconnect {
+                                reason: format!("outbound_failed: {error}"),
+                            };
                         }
                     }
                     Err(error) => {
@@ -224,7 +208,7 @@ async fn drain_outbound_messages(
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
                 tracing::warn!("[bong][redis] outbound channel from game closed; stopping bridge");
-                return false;
+                return DrainOutcome::Stop;
             }
         }
     }
@@ -235,7 +219,7 @@ async fn drain_outbound_messages(
         );
     }
 
-    true
+    DrainOutcome::Healthy
 }
 
 fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, ValidationError> {
@@ -269,7 +253,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
 
 async fn execute_outbound_command(
     pub_conn: &mut redis::aio::MultiplexedConnection,
-    command: RedisIoCommand,
+    command: &RedisIoCommand,
 ) -> Result<(), String> {
     match command {
         RedisIoCommand::Publish { channel, payload } => {
@@ -277,7 +261,7 @@ async fn execute_outbound_command(
                 REDIS_IO_TIMEOUT,
                 redis::cmd("PUBLISH")
                     .arg(channel)
-                    .arg(&payload)
+                    .arg(payload)
                     .query_async::<i64>(pub_conn),
             )
             .await
@@ -300,7 +284,7 @@ async fn execute_outbound_command(
                 REDIS_IO_TIMEOUT,
                 redis::cmd("RPUSH")
                     .arg(key)
-                    .arg(&payload)
+                    .arg(payload)
                     .query_async::<i64>(pub_conn),
             )
             .await
@@ -314,6 +298,204 @@ async fn execute_outbound_command(
             }
         }
     }
+}
+
+async fn connect_bridge_session(
+    client: &redis::Client,
+    redis_url: &str,
+    tx_to_game: &Sender<RedisInbound>,
+) -> Result<
+    (
+        redis::aio::MultiplexedConnection,
+        tokio::task::JoinHandle<SubscriberTaskExit>,
+    ),
+    String,
+> {
+    tracing::info!("[bong][redis] connecting to {redis_url}");
+
+    let pub_conn = client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|error| format!("failed to get pub connection: {error}"))?;
+
+    let mut pubsub = client
+        .get_async_pubsub()
+        .await
+        .map_err(|error| format!("failed to get pubsub connection: {error}"))?;
+
+    subscribe_inbound_channels(&mut pubsub).await?;
+    tracing::info!(
+        "[bong][redis] subscribed to {CH_AGENT_COMMAND} and {CH_AGENT_NARRATE}"
+    );
+
+    let tx_to_game_clone = tx_to_game.clone();
+    let sub_task = tokio::spawn(async move { run_subscriber_task(pubsub, tx_to_game_clone).await });
+
+    Ok((pub_conn, sub_task))
+}
+
+async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(), String> {
+    pubsub
+        .subscribe(CH_AGENT_COMMAND)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_AGENT_COMMAND}: {error}"))?;
+
+    pubsub
+        .subscribe(CH_AGENT_NARRATE)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_AGENT_NARRATE}: {error}"))?;
+
+    Ok(())
+}
+
+async fn run_bridge_session(
+    rx_from_game: &Receiver<RedisOutbound>,
+    pending_command: &mut Option<RedisIoCommand>,
+    mut pub_conn: redis::aio::MultiplexedConnection,
+    sub_task: tokio::task::JoinHandle<SubscriberTaskExit>,
+) -> BridgeLoopControl {
+    let mut bridge_tick = tokio::time::interval(BRIDGE_LOOP_INTERVAL);
+    let sub_task = sub_task;
+
+    loop {
+        bridge_tick.tick().await;
+
+        match drain_outbound_messages(rx_from_game, &mut pub_conn, pending_command).await {
+            DrainOutcome::Healthy => {}
+            DrainOutcome::Reconnect { reason } => {
+                abort_subscriber_task(sub_task).await;
+                return BridgeLoopControl::Reconnect { reason };
+            }
+            DrainOutcome::Stop => {
+                abort_subscriber_task(sub_task).await;
+                return BridgeLoopControl::Stop;
+            }
+        }
+
+        if sub_task.is_finished() {
+            return handle_finished_subscriber_task(sub_task).await;
+        }
+    }
+}
+
+async fn abort_subscriber_task(sub_task: tokio::task::JoinHandle<SubscriberTaskExit>) {
+    if !sub_task.is_finished() {
+        sub_task.abort();
+    }
+
+    let _ = sub_task.await;
+}
+
+async fn handle_finished_subscriber_task(
+    sub_task: tokio::task::JoinHandle<SubscriberTaskExit>,
+) -> BridgeLoopControl {
+    map_subscriber_join_result(sub_task.await)
+}
+
+fn map_subscriber_join_result(
+    result: Result<SubscriberTaskExit, tokio::task::JoinError>,
+) -> BridgeLoopControl {
+    match result {
+        Ok(SubscriberTaskExit::StreamEnded) => {
+            tracing::warn!("[bong][redis] subscriber_ended reason=stream_ended");
+            BridgeLoopControl::Reconnect {
+                reason: "subscriber_ended:stream_ended".to_string(),
+            }
+        }
+        Ok(SubscriberTaskExit::GameChannelClosed) => {
+            tracing::warn!("[bong][redis] subscriber_ended reason=game_channel_closed");
+            BridgeLoopControl::Reconnect {
+                reason: "subscriber_ended:game_channel_closed".to_string(),
+            }
+        }
+        Err(error) if error.is_cancelled() => BridgeLoopControl::Reconnect {
+            reason: "subscriber_cancelled".to_string(),
+        },
+        Err(error) => {
+            tracing::warn!("[bong][redis] subscriber_ended reason=join_error error={error}");
+            BridgeLoopControl::Reconnect {
+                reason: format!("subscriber_join_error: {error}"),
+            }
+        }
+    }
+}
+
+async fn run_subscriber_task(
+    mut pubsub: redis::aio::PubSub,
+    tx_to_game: Sender<RedisInbound>,
+) -> SubscriberTaskExit {
+    use futures_util::StreamExt;
+
+    let mut stream = pubsub.on_message();
+    while let Some(message) = stream.next().await {
+        let channel: String = match message.get_channel() {
+            Ok(channel) => channel,
+            Err(error) => {
+                tracing::warn!("[bong][redis] failed to read inbound channel name: {error}");
+                continue;
+            }
+        };
+
+        let payload: String = match message.get_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::warn!("[bong][redis] failed to read payload from {channel}: {error}");
+                continue;
+            }
+        };
+
+        match parse_inbound_message(channel.as_str(), payload.as_str()) {
+            Ok(Some(inbound)) => {
+                match &inbound {
+                    RedisInbound::AgentCommand(command) => tracing::info!(
+                        "[bong][redis] received agent command: {} ({} cmds)",
+                        command.id,
+                        command.commands.len()
+                    ),
+                    RedisInbound::AgentNarration(narration) => tracing::info!(
+                        "[bong][redis] received narration ({} entries)",
+                        narration.narrations.len()
+                    ),
+                }
+
+                if tx_to_game.send(inbound).is_err() {
+                    tracing::warn!(
+                        "[bong][redis] inbound channel to game closed; stopping subscriber task"
+                    );
+                    return SubscriberTaskExit::GameChannelClosed;
+                }
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    "[bong][redis] ignoring message on unexpected channel {channel}"
+                );
+            }
+            Err(error) => tracing::warn!(
+                "[bong][redis] dropped invalid inbound payload on {channel}: {error}"
+            ),
+        }
+    }
+
+    SubscriberTaskExit::StreamEnded
+}
+
+async fn sleep_before_reconnect(
+    redis_url: &str,
+    backoff: &mut ReconnectBackoff,
+    reason: &str,
+) {
+    let schedule = backoff.next();
+    tracing::info!(
+        "[bong][redis] reconnect attempt={} url={} reason={reason}",
+        schedule.attempt,
+        redis_url,
+    );
+    tracing::info!(
+        "[bong][redis] backoff {:?} before reconnect attempt={}",
+        schedule.delay,
+        schedule.attempt,
+    );
+    tokio::time::sleep(schedule.delay).await;
 }
 
 fn parse_inbound_message(channel: &str, payload: &str) -> Result<Option<RedisInbound>, ValidationError> {
@@ -554,6 +736,7 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
+    use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
         serde_json::from_str(include_str!(
@@ -648,5 +831,73 @@ mod redis_bridge_tests {
                 .expect("arbiter command payload should pass"),
             Some(RedisInbound::AgentCommand(_))
         ));
+    }
+
+    #[test]
+    fn reconnect_backoff_grows_and_caps() {
+        let mut backoff = ReconnectBackoff::default();
+
+        let first = backoff.next();
+        let second = backoff.next();
+        let third = backoff.next();
+
+        assert_eq!(first.attempt, 1);
+        assert_eq!(first.delay, RECONNECT_BACKOFF_INITIAL);
+        assert_eq!(second.attempt, 2);
+        assert_eq!(second.delay, Duration::from_millis(500));
+        assert_eq!(third.attempt, 3);
+        assert_eq!(third.delay, Duration::from_secs(1));
+
+        let mut capped = third;
+        for _ in 0..8 {
+            capped = backoff.next();
+        }
+
+        assert_eq!(capped.delay, RECONNECT_BACKOFF_MAX);
+
+        backoff.reset();
+        let reset = backoff.next();
+        assert_eq!(reset.attempt, 1);
+        assert_eq!(reset.delay, RECONNECT_BACKOFF_INITIAL);
+    }
+
+    #[tokio::test]
+    async fn finished_subscriber_stream_triggers_reconnect() {
+        let sub_task = task::spawn(async { SubscriberTaskExit::StreamEnded });
+
+        assert_eq!(
+            handle_finished_subscriber_task(sub_task).await,
+            BridgeLoopControl::Reconnect {
+                reason: "subscriber_ended:stream_ended".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn finished_subscriber_game_channel_close_triggers_reconnect() {
+        let sub_task = task::spawn(async { SubscriberTaskExit::GameChannelClosed });
+
+        assert_eq!(
+            handle_finished_subscriber_task(sub_task).await,
+            BridgeLoopControl::Reconnect {
+                reason: "subscriber_ended:game_channel_closed".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_subscriber_maps_to_reconnect() {
+        let sub_task = task::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            SubscriberTaskExit::StreamEnded
+        });
+        sub_task.abort();
+
+        assert_eq!(
+            map_subscriber_join_result(sub_task.await),
+            BridgeLoopControl::Reconnect {
+                reason: "subscriber_cancelled".to_string(),
+            }
+        );
     }
 }

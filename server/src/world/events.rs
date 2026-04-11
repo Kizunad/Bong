@@ -1,6 +1,7 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
 use serde_json::Value;
+use std::collections::HashMap;
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
@@ -19,6 +20,8 @@ use crate::world::zone::Zone;
 
 pub const EVENT_THUNDER_TRIBULATION: &str = "thunder_tribulation";
 pub const EVENT_BEAST_TIDE: &str = "beast_tide";
+pub const EVENT_REALM_COLLAPSE: &str = "realm_collapse";
+pub const EVENT_KARMA_BACKLASH: &str = "karma_backlash";
 
 const DEFAULT_EVENT_DURATION_TICKS: u64 = 200;
 const MIN_EVENT_DURATION_TICKS: u64 = 1;
@@ -28,6 +31,7 @@ const DEFAULT_EVENT_INTENSITY: f64 = 0.5;
 const THUNDER_TARGET_BIAS_RADIUS: f64 = 5.0;
 const THUNDER_DEFAULT_Y_OFFSET: f64 = 1.0;
 const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
+const PLACEHOLDER_EVENT_DURATION_TICKS: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEvent {
@@ -62,7 +66,13 @@ pub struct MajorEventAlert {
 impl ActiveEvent {
     fn from_spawn_command(command: &Command) -> Option<Self> {
         let event_name = command.params.get("event")?.as_str()?;
-        if !matches!(event_name, EVENT_THUNDER_TRIBULATION | EVENT_BEAST_TIDE) {
+        if !matches!(
+            event_name,
+            EVENT_THUNDER_TRIBULATION
+                | EVENT_BEAST_TIDE
+                | EVENT_REALM_COLLAPSE
+                | EVENT_KARMA_BACKLASH
+        ) {
             return None;
         }
 
@@ -109,7 +119,7 @@ impl ActiveEventsResource {
         &mut self,
         command: &Command,
         zone_registry: Option<&mut ZoneRegistry>,
-    ) {
+    ) -> bool {
         let Some(event) = ActiveEvent::from_spawn_command(command) else {
             let event_name = command
                 .params
@@ -120,7 +130,7 @@ impl ActiveEventsResource {
             tracing::warn!(
                 "[bong][world] spawn_event `{event_name}` is not implemented in M1 scheduler"
             );
-            return;
+            return false;
         };
 
         let Some(zone_registry) = zone_registry else {
@@ -129,7 +139,7 @@ impl ActiveEventsResource {
                 event.event_name,
                 event.zone_name
             );
-            return;
+            return false;
         };
 
         let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) else {
@@ -138,7 +148,7 @@ impl ActiveEventsResource {
                 event.event_name,
                 event.zone_name
             );
-            return;
+            return false;
         };
 
         if self.contains(event.zone_name.as_str(), event.event_name.as_str()) {
@@ -147,7 +157,44 @@ impl ActiveEventsResource {
                 event.event_name,
                 event.zone_name
             );
-            return;
+            return false;
+        }
+
+        let is_placeholder = matches!(
+            event.event_name.as_str(),
+            EVENT_REALM_COLLAPSE | EVENT_KARMA_BACKLASH
+        );
+
+        if is_placeholder {
+            tracing::info!(
+                "[bong][world] placeholder schedule accepted for {} in zone `{}`",
+                event.event_name,
+                event.zone_name
+            );
+
+            let placeholder_duration = value_to_u64(command.params.get("duration_ticks"))
+                .unwrap_or(PLACEHOLDER_EVENT_DURATION_TICKS)
+                .max(MIN_EVENT_DURATION_TICKS);
+
+            self.pending_major_alerts.push(MajorEventAlert {
+                event_name: event.event_name.clone(),
+                zone_name: event.zone_name.clone(),
+                duration_ticks: placeholder_duration,
+            });
+
+            self.record_recent_event(GameEvent {
+                event_type: crate::schema::common::GameEventType::EventTriggered,
+                tick: 0,
+                player: None,
+                target: Some(event.event_name.clone()),
+                zone: Some(event.zone_name.clone()),
+                details: Some(HashMap::from([(
+                    "placeholder".to_string(),
+                    Value::Bool(true),
+                )])),
+            });
+
+            return true;
         }
 
         if !zone
@@ -172,6 +219,7 @@ impl ActiveEventsResource {
         });
 
         self.active_events.push(event);
+        true
     }
 
     pub fn drain_major_event_alerts(&mut self) -> Vec<MajorEventAlert> {
@@ -631,12 +679,14 @@ mod events_tests {
     use std::collections::HashMap;
 
     use serde_json::json;
+    use serde_json::Value;
     use valence::entity::lightning::LightningEntity;
     use valence::prelude::{bevy_ecs, App, DVec3, Entity, EntityKind, Position, Update, With};
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_THUNDER_TRIBULATION,
+        tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
+        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     };
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
@@ -1066,6 +1116,80 @@ mod events_tests {
                 .iter()
                 .any(|event| event == EVENT_THUNDER_TRIBULATION),
             "expired thunder event should be removed from zone after cleanup"
+        );
+    }
+
+    #[test]
+    fn placeholder_realm_collapse_produces_alert_and_recent_event() {
+        let (mut app, _layer) = setup_events_app();
+        let command = spawn_event_command("spawn", EVENT_REALM_COLLAPSE, 2);
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                assert!(accepted, "placeholder event should be accepted");
+            });
+        }
+
+        let world = app.world();
+        let events = world.resource::<ActiveEventsResource>();
+
+        assert!(
+            !events.contains("spawn", EVENT_REALM_COLLAPSE),
+            "placeholder event should not remain in active scheduler queue"
+        );
+
+        let recent = events.recent_events_snapshot();
+        assert!(
+            recent
+                .iter()
+                .any(|event| event.target.as_deref() == Some(EVENT_REALM_COLLAPSE)
+                    && event.zone.as_deref() == Some("spawn")
+                    && event
+                        .details
+                        .as_ref()
+                        .and_then(|details| details.get("placeholder"))
+                        .is_some_and(|flag| flag == &Value::Bool(true))),
+            "realm_collapse placeholder should append verifiable recent event"
+        );
+    }
+
+    #[test]
+    fn placeholder_karma_backlash_produces_alert_and_recent_event() {
+        let (mut app, _layer) = setup_events_app();
+        let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
+                assert!(accepted, "placeholder event should be accepted");
+            });
+        }
+
+        let world = app.world();
+        let events = world.resource::<ActiveEventsResource>();
+
+        assert!(
+            !events.contains("spawn", EVENT_KARMA_BACKLASH),
+            "placeholder event should not remain in active scheduler queue"
+        );
+
+        let recent = events.recent_events_snapshot();
+        assert!(
+            recent
+                .iter()
+                .any(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH)
+                    && event.zone.as_deref() == Some("spawn")
+                    && event
+                        .details
+                        .as_ref()
+                        .and_then(|details| details.get("placeholder"))
+                        .is_some_and(|flag| flag == &Value::Bool(true))),
+            "karma_backlash placeholder should append verifiable recent event"
         );
     }
 }
