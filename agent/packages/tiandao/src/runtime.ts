@@ -712,7 +712,10 @@ export async function runRuntime(
           }
           hasConnectedAtLeastOnce = true;
           connected = true;
-          logger.log(`[tiandao] connected to Redis at ${config.redisUrl}`);
+          // Extract host:port from Redis URL for logging (avoid logging credentials)
+const redisUrlMatch = config.redisUrl.match(/redis:\/\/[^:]+:(\d+)/);
+const redisHostPort = redisUrlMatch ? redisUrlMatch[0].replace('redis://', '') : config.redisUrl;
+logger.log(`[tiandao] connected to Redis at ${redisHostPort}`);
 
           if (!restoredOnStartup) {
             const restoredState = await restoreWorldModelOnStartup({
@@ -761,34 +764,38 @@ export async function runRuntime(
             );
             pendingStaleSkip = true;
           } else {
-            lastProcessedTick = state.tick;
-            await runTick(state, {
-              agents,
-              llmClient,
-              model: modelOverrides.default,
-              llmClientsByRole,
-              modelOverrides,
-              chatSignals: latestChatSignals,
-              worldModel,
-              publishCommands: (request) => redis.publishCommands(request),
-              publishNarrations: (request) => redis.publishNarrations(request),
-              logger,
-              tickStartedAtMs: tickStartedAt,
-              reconnectCount: pendingReconnectCount,
-              backoffCount: pendingBackoffCount,
-              staleStateSkipped: pendingStaleSkip,
-              chatSignalCount: latestChatSignals.length,
-              telemetrySink,
-              telemetryWarnLogger: logger,
-            });
-            await persistWorldModelAfterFreshTick({
-              worldModel,
-              redis,
-              logger,
-            });
-            pendingReconnectCount = 0;
-            pendingBackoffCount = 0;
-            pendingStaleSkip = false;
+            try {
+              await runTick(state, {
+                agents,
+                llmClient,
+                model: modelOverrides.default,
+                llmClientsByRole,
+                modelOverrides,
+                chatSignals: latestChatSignals,
+                worldModel,
+                publishCommands: (request) => redis.publishCommands(request),
+                publishNarrations: (request) => redis.publishNarrations(request),
+                logger,
+                tickStartedAtMs: tickStartedAt,
+                reconnectCount: pendingReconnectCount,
+                backoffCount: pendingBackoffCount,
+                staleStateSkipped: pendingStaleSkip,
+                chatSignalCount: latestChatSignals.length,
+                telemetrySink,
+                telemetryWarnLogger: logger,
+              });
+              await persistWorldModelAfterFreshTick({
+                worldModel,
+                redis,
+                logger,
+              });
+              // Only advance lastProcessedTick after successful runTick + persist
+              lastProcessedTick = state.tick;
+            } finally {
+              pendingReconnectCount = 0;
+              pendingBackoffCount = 0;
+              pendingStaleSkip = false;
+            }
           }
         }
 
