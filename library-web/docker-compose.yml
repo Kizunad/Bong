@@ -19,12 +19,17 @@ services:
       dockerfile: refresh-api/Dockerfile
     environment:
       REFRESH_TOKEN: ${REFRESH_TOKEN}
-      PROJECT_ROOT: /workspace/app
-      COMPOSE_FILE: /workspace/app/docker-compose.yml
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_OWNER: ${GITHUB_OWNER:-Kizunad}
+      GITHUB_REPO: ${GITHUB_REPO:-Bong}
+      GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
+      PROJECT_ROOT: /app/project
+      COMPOSE_FILE: /app/project/docker-compose.yml
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-mofa-library}
     volumes:
-      - ./:/workspace/app
       - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:3001:8080"
     expose:
       - "8080"
     restart: unless-stopped
