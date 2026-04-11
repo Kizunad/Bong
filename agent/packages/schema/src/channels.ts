@@ -16,4 +16,11 @@ export const CHANNELS = {
   AGENT_NARRATE: "bong:agent_narrate",
 } as const;
 
+export const REDIS_V1_CHANNELS = [
+  CHANNELS.WORLD_STATE,
+  CHANNELS.PLAYER_CHAT,
+  CHANNELS.AGENT_COMMAND,
+  CHANNELS.AGENT_NARRATE,
+] as const;
+
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

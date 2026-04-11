@@ -1,5 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
+
 import { CommandType } from "./common.js";
+import { validate, type ValidationResult } from "./validate.js";
 
 // ─── 指令子结构 ─────────────────────────────────────────
 
@@ -37,3 +39,7 @@ export const AgentCommandV1 = Type.Object(
   { additionalProperties: false },
 );
 export type AgentCommandV1 = Static<typeof AgentCommandV1>;
+
+export function validateAgentCommandV1Contract(data: unknown): ValidationResult {
+  return validate(AgentCommandV1, data);
+}

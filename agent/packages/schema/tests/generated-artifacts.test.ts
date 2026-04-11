@@ -9,6 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { validateAgentCommandV1Contract } from "../src/agent-command.js";
+import { validateNarrationV1Contract } from "../src/narration.js";
+import { validateWorldStateV1Contract } from "../src/world-state.js";
 import {
   assertGeneratedSchemasFresh,
   GENERATED_DIR,
@@ -84,5 +87,39 @@ describe("generated schema freshness gate", () => {
     } finally {
       schema.type = originalType;
     }
+  });
+
+  it("runtime Redis V1 parity helpers do not introduce generated schema drift", () => {
+    expect(
+      validateWorldStateV1Contract({
+        v: 2,
+        ts: 1712345678,
+        tick: 84000,
+        players: [],
+        npcs: [],
+        zones: [],
+        recent_events: [],
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateAgentCommandV1Contract({
+        v: 1,
+        id: "cmd_bad",
+        commands: [{ type: "spawn_event", target: "blood_valley", params: [] }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateNarrationV1Contract({
+        v: 1,
+        narrations: [{ scope: "player", text: "天雷将至。", style: "system_warning" }],
+      }).ok,
+    ).toBe(false);
+
+    expect(getGeneratedSchemaDrift(GENERATED_DIR)).toEqual({
+      missing: [],
+      changed: [],
+      unexpected: [],
+    });
+    expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
   });
 });

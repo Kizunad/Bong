@@ -1,5 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
+
 import { GameEventType, NpcState, PlayerTrend } from "./common.js";
+import { validate, type ValidationResult } from "./validate.js";
 
 // ─── 子结构 ─────────────────────────────────────────────
 
@@ -88,3 +90,7 @@ export const WorldStateV1 = Type.Object(
   { additionalProperties: false },
 );
 export type WorldStateV1 = Static<typeof WorldStateV1>;
+
+export function validateWorldStateV1Contract(data: unknown): ValidationResult {
+  return validate(WorldStateV1, data);
+}
