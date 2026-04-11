@@ -713,9 +713,10 @@ export async function runRuntime(
           hasConnectedAtLeastOnce = true;
           connected = true;
           // Extract host:port from Redis URL for logging (avoid logging credentials)
-const redisUrlMatch = config.redisUrl.match(/redis:\/\/[^:]+:(\d+)/);
-const redisHostPort = redisUrlMatch ? redisUrlMatch[0].replace('redis://', '') : config.redisUrl;
-logger.log(`[tiandao] connected to Redis at ${redisHostPort}`);
+          // Handle formats: redis://host:port, redis://:password@host:port, redis://user:password@host:port
+          const redisUrlMatch = config.redisUrl.match(/redis:\/\/(?:[^:@]+:[^@]+@)?([^:]+):(\d+)/);
+          const redisHostPort = redisUrlMatch ? `${redisUrlMatch[1]}:${redisUrlMatch[2]}` : null;
+          logger.log(`[tiandao] connected to Redis at ${redisHostPort ?? "(unknown)"}`);
 
           if (!restoredOnStartup) {
             const restoredState = await restoreWorldModelOnStartup({
