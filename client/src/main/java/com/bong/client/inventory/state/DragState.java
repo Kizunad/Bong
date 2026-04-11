@@ -1,14 +1,16 @@
 package com.bong.client.inventory.state;
 
+import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.MeridianChannel;
 
 import java.util.Objects;
 
 public final class DragState {
     public enum Phase { IDLE, DRAGGING }
 
-    public enum SourceKind { GRID, EQUIP, HOTBAR }
+    public enum SourceKind { GRID, EQUIP, HOTBAR, MERIDIAN, BODY_PART }
 
     private Phase phase = Phase.IDLE;
     private InventoryItem draggedItem;
@@ -17,6 +19,8 @@ public final class DragState {
     private int sourceCol = -1;
     private EquipSlotType sourceEquipSlot;
     private int sourceHotbarIndex = -1;
+    private MeridianChannel sourceMeridianChannel;
+    private BodyPart sourceBodyPart;
     private double mouseX;
     private double mouseY;
 
@@ -52,6 +56,35 @@ public final class DragState {
         this.sourceRow = -1;
         this.sourceCol = -1;
         this.sourceEquipSlot = null;
+        this.sourceMeridianChannel = null;
+    }
+
+    public void pickupFromMeridian(InventoryItem item, MeridianChannel channel) {
+        Objects.requireNonNull(item, "item");
+        Objects.requireNonNull(channel, "channel");
+        this.phase = Phase.DRAGGING;
+        this.draggedItem = item;
+        this.sourceKind = SourceKind.MERIDIAN;
+        this.sourceMeridianChannel = channel;
+        this.sourceBodyPart = null;
+        this.sourceRow = -1;
+        this.sourceCol = -1;
+        this.sourceEquipSlot = null;
+        this.sourceHotbarIndex = -1;
+    }
+
+    public void pickupFromBodyPart(InventoryItem item, BodyPart part) {
+        Objects.requireNonNull(item, "item");
+        Objects.requireNonNull(part, "part");
+        this.phase = Phase.DRAGGING;
+        this.draggedItem = item;
+        this.sourceKind = SourceKind.BODY_PART;
+        this.sourceBodyPart = part;
+        this.sourceMeridianChannel = null;
+        this.sourceRow = -1;
+        this.sourceCol = -1;
+        this.sourceEquipSlot = null;
+        this.sourceHotbarIndex = -1;
     }
 
     public InventoryItem drop() {
@@ -62,7 +95,7 @@ public final class DragState {
 
     public CancelResult cancel() {
         CancelResult result = new CancelResult(
-            draggedItem, sourceKind, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex
+            draggedItem, sourceKind, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex, sourceMeridianChannel, sourceBodyPart
         );
         reset();
         return result;
@@ -84,6 +117,8 @@ public final class DragState {
     public int sourceCol() { return sourceCol; }
     public EquipSlotType sourceEquipSlot() { return sourceEquipSlot; }
     public int sourceHotbarIndex() { return sourceHotbarIndex; }
+    public MeridianChannel sourceMeridianChannel() { return sourceMeridianChannel; }
+    public BodyPart sourceBodyPart() { return sourceBodyPart; }
     public double mouseX() { return mouseX; }
     public double mouseY() { return mouseY; }
 
@@ -95,6 +130,8 @@ public final class DragState {
         this.sourceCol = -1;
         this.sourceEquipSlot = null;
         this.sourceHotbarIndex = -1;
+        this.sourceMeridianChannel = null;
+        this.sourceBodyPart = null;
     }
 
     public record CancelResult(
@@ -103,7 +140,9 @@ public final class DragState {
         int sourceRow,
         int sourceCol,
         EquipSlotType sourceEquipSlot,
-        int sourceHotbarIndex
+        int sourceHotbarIndex,
+        MeridianChannel sourceMeridianChannel,
+        BodyPart sourceBodyPart
     ) {
         public boolean hasItem() { return item != null; }
     }

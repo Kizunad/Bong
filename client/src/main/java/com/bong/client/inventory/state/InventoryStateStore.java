@@ -22,9 +22,10 @@ public final class InventoryStateStore {
     }
 
     public static void replace(InventoryModel next) {
-        snapshot = next == null ? InventoryModel.empty() : next;
+        InventoryModel value = next == null ? InventoryModel.empty() : next;
+        snapshot = value;
         for (Consumer<InventoryModel> listener : listeners) {
-            listener.accept(snapshot);
+            listener.accept(value);
         }
     }
 

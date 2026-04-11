@@ -24,7 +24,7 @@ public final class MeridianStateStore {
     public static void replace(MeridianBody next) {
         snapshot = next;
         for (Consumer<MeridianBody> listener : listeners) {
-            listener.accept(snapshot);
+            listener.accept(next);
         }
     }
 

@@ -37,12 +37,16 @@ public final class MeridianBody {
 
     private final Map<MeridianChannel, ChannelState> channels;
     private final Map<DantianTier, DantianState> dantians;
+    private final Map<MeridianChannel, InventoryItem> appliedItems;
     private final List<StatusEffect> activeEffects;
     private final String realm;
 
     private MeridianBody(Builder b) {
         this.channels = Collections.unmodifiableMap(new EnumMap<>(b.channels));
         this.dantians = Collections.unmodifiableMap(new EnumMap<>(b.dantians));
+        this.appliedItems = b.appliedItems.isEmpty()
+            ? Map.of()
+            : Collections.unmodifiableMap(new EnumMap<>(b.appliedItems));
         this.activeEffects = List.copyOf(b.activeEffects);
         this.realm = b.realm;
     }
@@ -51,6 +55,8 @@ public final class MeridianBody {
     public Map<MeridianChannel, ChannelState> allChannels() { return channels; }
     public DantianState dantian(DantianTier tier) { return dantians.get(tier); }
     public Map<DantianTier, DantianState> allDantians() { return dantians; }
+    public InventoryItem appliedItem(MeridianChannel ch) { return appliedItems.get(ch); }
+    public Map<MeridianChannel, InventoryItem> allAppliedItems() { return appliedItems; }
     public List<StatusEffect> activeEffects() { return activeEffects; }
     public String realm() { return realm; }
 
@@ -83,6 +89,7 @@ public final class MeridianBody {
     public static final class Builder {
         private final EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
         private final EnumMap<DantianTier, DantianState> dantians = new EnumMap<>(DantianTier.class);
+        private final EnumMap<MeridianChannel, InventoryItem> appliedItems = new EnumMap<>(MeridianChannel.class);
         private List<StatusEffect> activeEffects = List.of();
         private String realm = "";
 
@@ -105,6 +112,16 @@ public final class MeridianBody {
 
         public Builder dantians(Map<DantianTier, DantianState> all) {
             dantians.putAll(all);
+            return this;
+        }
+
+        public Builder appliedItem(MeridianChannel channel, InventoryItem item) {
+            appliedItems.put(channel, item);
+            return this;
+        }
+
+        public Builder appliedItems(Map<MeridianChannel, InventoryItem> all) {
+            appliedItems.putAll(all);
             return this;
         }
 

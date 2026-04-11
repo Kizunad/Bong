@@ -1,13 +1,10 @@
 package com.bong.client.inventory;
 
 import com.bong.client.inventory.component.*;
-import com.bong.client.inventory.model.EquipSlotType;
-import com.bong.client.inventory.model.InventoryItem;
-import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.inventory.model.MeridianBody;
-import com.bong.client.inventory.model.MockMeridianData;
+import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
@@ -58,8 +55,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // Discard
     private FlowLayout discardStrip;
 
-    // Meridian body (cultivation tab)
-    private MeridianBodyComponent meridianBodyComponent;
+    // Body inspect (cultivation tab) — dual-layer: physical + meridian
+    private BodyInspectComponent bodyInspect;
+    private LabelComponent physicalLayerLabel;
+    private LabelComponent meridianLayerLabel;
 
     public InspectScreen(InventoryModel model) {
         super(TITLE);
@@ -127,13 +126,38 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         equipTabContent.child(statusBars);
         leftCol.child(equipTabContent);
 
-        // Tab 1: Cultivation (meridian body)
+        // Tab 1: Cultivation (body inspect — dual layer)
         cultivationTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        cultivationTabContent.gap(0);
-        meridianBodyComponent = new MeridianBodyComponent();
+        cultivationTabContent.gap(2);
+
+        // Layer toggle: [体表] [经脉]
+        FlowLayout layerBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+        layerBar.gap(6);
+        layerBar.padding(Insets.of(1, 2, 1, 2));
+        physicalLayerLabel = Components.label(Text.literal("体表"));
+        physicalLayerLabel.color(Color.ofArgb(TAB_ACTIVE_COLOR));
+        physicalLayerLabel.cursorStyle(CursorStyle.HAND);
+        physicalLayerLabel.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) { switchBodyLayer(BodyInspectComponent.Layer.PHYSICAL); return true; }
+            return false;
+        });
+        meridianLayerLabel = Components.label(Text.literal("经脉"));
+        meridianLayerLabel.color(Color.ofArgb(TAB_INACTIVE_COLOR));
+        meridianLayerLabel.cursorStyle(CursorStyle.HAND);
+        meridianLayerLabel.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) { switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN); return true; }
+            return false;
+        });
+        layerBar.child(physicalLayerLabel);
+        layerBar.child(meridianLayerLabel);
+        cultivationTabContent.child(layerBar);
+
+        bodyInspect = new BodyInspectComponent();
+        PhysicalBody physData = PhysicalBodyStore.snapshot();
+        bodyInspect.setPhysicalBody(physData != null ? physData : MockPhysicalData.create());
         MeridianBody meridianData = MeridianStateStore.snapshot();
-        meridianBodyComponent.setBody(meridianData != null ? meridianData : MockMeridianData.create());
-        cultivationTabContent.child(meridianBodyComponent);
+        bodyInspect.setMeridianBody(meridianData != null ? meridianData : MockMeridianData.create());
+        cultivationTabContent.child(bodyInspect);
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
@@ -277,6 +301,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
     }
 
+    private void switchBodyLayer(BodyInspectComponent.Layer layer) {
+        if (bodyInspect == null) return;
+        bodyInspect.setActiveLayer(layer);
+        boolean isPhys = layer == BodyInspectComponent.Layer.PHYSICAL;
+        physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
+        meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+    }
+
     private void switchContainer(int idx) {
         if (idx == activeContainer || idx < 0 || idx >= containerCount) return;
         activeContainer = idx;
@@ -371,6 +403,31 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
+            // Body inspect applied items (physical or meridian layer)
+            if (activeTab == 1 && bodyInspect != null) {
+                if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                    BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
+                    if (bp != null) {
+                        InventoryItem item = bodyInspect.physicalItemAt(bp);
+                        if (item != null) {
+                            if (shift) { bodyInspect.removePhysicalItem(bp); placeItemAnywhere(item); }
+                            else { bodyInspect.removePhysicalItem(bp); dragState.pickupFromBodyPart(item, bp); }
+                            return true;
+                        }
+                    }
+                } else {
+                    MeridianChannel ch = bodyInspect.channelAtScreen(mouseX, mouseY);
+                    if (ch != null) {
+                        InventoryItem item = bodyInspect.meridianItemAt(ch);
+                        if (item != null) {
+                            if (shift) { bodyInspect.removeMeridianItem(ch); placeItemAnywhere(item); }
+                            else { bodyInspect.removeMeridianItem(ch); dragState.pickupFromMeridian(item, ch); }
+                            return true;
+                        }
+                    }
+                }
+            }
+
             // Hotbar
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             if (hIdx >= 0 && hotbarItems[hIdx] != null) {
@@ -432,10 +489,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
-        // Equip
+        // Equip (with hand restriction from physical body)
         if (activeTab == 0) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
+                // Check if hand slot is usable
+                if (!isEquipSlotUsable(eq.slotType())) {
+                    // Can't equip — hand severed
+                    returnDragToSource();
+                    clearAllHighlights();
+                    return;
+                }
                 if (eq.item() == null) {
                     eq.setItem(dragged);
                     dragState.drop();
@@ -447,6 +511,32 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
                 clearAllHighlights();
                 return;
+            }
+        }
+
+        // Body inspect drop (physical or meridian layer) — only 1×1 items
+        if (activeTab == 1 && bodyInspect != null
+                && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
+            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
+                if (bp != null) {
+                    InventoryItem existing = bodyInspect.physicalItemAt(bp);
+                    bodyInspect.applyPhysicalItem(bp, dragged);
+                    dragState.drop();
+                    if (existing != null) placeItemAnywhere(existing);
+                    clearAllHighlights();
+                    return;
+                }
+            } else {
+                MeridianChannel ch = bodyInspect.channelAtScreen(mouseX, mouseY);
+                if (ch != null) {
+                    InventoryItem existing = bodyInspect.meridianItemAt(ch);
+                    bodyInspect.applyMeridianItem(ch, dragged);
+                    dragState.drop();
+                    if (existing != null) placeItemAnywhere(existing);
+                    clearAllHighlights();
+                    return;
+                }
             }
         }
 
@@ -498,12 +588,39 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     hotbarSlots[idx].setItem(item, true);
                 }
             }
+            case MERIDIAN -> {
+                MeridianChannel ch = r.sourceMeridianChannel();
+                if (ch != null && bodyInspect != null) bodyInspect.applyMeridianItem(ch, item);
+            }
+            case BODY_PART -> {
+                BodyPart bp = r.sourceBodyPart();
+                if (bp != null && bodyInspect != null) bodyInspect.applyPhysicalItem(bp, item);
+            }
         }
     }
 
     private void placeItemAnywhere(InventoryItem item) {
+        // 优先放当前容器
         var pos = activeGrid().findFreeSpace(item);
-        if (pos != null) activeGrid().place(item, pos.row(), pos.col());
+        if (pos != null) { activeGrid().place(item, pos.row(), pos.col()); return; }
+        // 尝试其他容器
+        for (int i = 0; i < containerCount; i++) {
+            if (i == activeContainer) continue;
+            var pos2 = containerGrids[i].findFreeSpace(item);
+            if (pos2 != null) { containerGrids[i].place(item, pos2.row(), pos2.col()); return; }
+        }
+        // 所有容器都满了 — 放快捷栏（仅 1×1）
+        if (item.gridWidth() == 1 && item.gridHeight() == 1) {
+            for (int i = 0; i < HOTBAR_SLOTS; i++) {
+                if (hotbarItems[i] == null) {
+                    hotbarItems[i] = item;
+                    hotbarSlots[i].setItem(item, true);
+                    return;
+                }
+            }
+        }
+        // 实在放不下 — 强制放进当前容器第一格（覆盖，避免数据丢失）
+        activeGrid().place(item, 0, 0);
     }
 
     // ==================== Highlights ====================
@@ -525,7 +642,24 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         if (activeTab == 0) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
-            if (eq != null) eq.setHighlightState(GridSlotComponent.HighlightState.VALID);
+            if (eq != null) {
+                boolean usable = isEquipSlotUsable(eq.slotType());
+                eq.setHighlightState(usable
+                    ? GridSlotComponent.HighlightState.VALID
+                    : GridSlotComponent.HighlightState.INVALID);
+            }
+        }
+
+        // Body inspect highlight
+        if (activeTab == 1 && bodyInspect != null) {
+            boolean valid1x1 = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
+            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
+                if (bp != null) bodyInspect.setPhysicalHighlight(bp, valid1x1);
+            } else {
+                MeridianChannel ch = bodyInspect.channelAtScreen(mouseX, mouseY);
+                if (ch != null) bodyInspect.setMeridianHighlight(ch, valid1x1);
+            }
         }
 
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
@@ -543,7 +677,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         equipPanel.clearHighlights();
         for (int i = 0; i < HOTBAR_SLOTS; i++)
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+        if (bodyInspect != null) bodyInspect.clearHighlight();
         discardStrip.surface(Surface.flat(0xFF201010));
+    }
+
+    /** 检查装备槽是否可用（断臂不能持物） */
+    private boolean isEquipSlotUsable(EquipSlotType slot) {
+        PhysicalBody pb = bodyInspect != null ? bodyInspect.physicalBody() : null;
+        if (pb == null) return true; // 无体表数据时不限制
+        return switch (slot) {
+            case MAIN_HAND, TWO_HAND -> pb.canUseHand(PhysicalBody.Side.RIGHT);
+            case OFF_HAND -> pb.canUseHand(PhysicalBody.Side.LEFT);
+            default -> true;
+        };
     }
 
     // ==================== Quick operations ====================
@@ -586,12 +732,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         drawMultiCellItems(context);
         updateTooltipFromHover(mouseX, mouseY);
 
-        // Meridian tooltip — drawn here to escape owo-lib component clipping
-        if (activeTab == 1 && meridianBodyComponent != null) {
+        // Body inspect tooltip — drawn here to escape owo-lib component clipping
+        if (activeTab == 1 && bodyInspect != null) {
             var matrices = context.getMatrices();
             matrices.push();
             matrices.translate(0, 0, 400);
-            meridianBodyComponent.drawMeridianTooltip(context, mouseX, mouseY);
+            bodyInspect.drawTooltip(context, mouseX, mouseY);
             matrices.pop();
         }
 
@@ -669,6 +815,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (hovered == null && activeTab == 0) {
             var eq = equipPanel.slotAtScreen(mx, my);
             if (eq != null) hovered = eq.item();
+        }
+        if (hovered == null && activeTab == 1 && bodyInspect != null) {
+            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                BodyPart bp = bodyInspect.bodyPartAtScreen(mx, my);
+                if (bp != null) hovered = bodyInspect.physicalItemAt(bp);
+            } else {
+                MeridianChannel ch = bodyInspect.channelAtScreen(mx, my);
+                if (ch != null) hovered = bodyInspect.meridianItemAt(ch);
+            }
         }
         if (hovered == null) {
             int idx = hotbarSlotAtScreen(mx, my);

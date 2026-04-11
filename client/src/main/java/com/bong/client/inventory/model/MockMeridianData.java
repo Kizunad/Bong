@@ -40,6 +40,13 @@ public final class MockMeridianData {
             .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.UPPER, 18.0, 24.0, false))
             .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.MIDDLE, 52.0, 80.0, false))
             .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.LOWER, 35.0, 50.0, false))
+            // 经脉上已用物品
+            .appliedItem(MeridianChannel.ARM_YANG,
+                InventoryItem.create("ningmai_powder", "凝脉散", 1, 1, 0.3, "uncommon", "外敷经脉，缓解走火入魔"))
+            .appliedItem(MeridianChannel.HEART,
+                InventoryItem.create("guyuan_pill", "固元丹", 1, 1, 0.2, "rare", "温补真元，服后可加速恢复灵力"))
+            .appliedItem(MeridianChannel.KIDNEY,
+                InventoryItem.create("spirit_grass", "灵草", 1, 1, 0.5, "common", "低阶灵草，可入药炼丹"))
             // 状态效果
             .activeEffects(List.of(
                 new MeridianBody.StatusEffect("meridian_overload", "经脉过载余波",
