@@ -42,10 +42,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Tabs (left panel)
     private int activeTab = 0;
-    private final LabelComponent[] tabLabels = new LabelComponent[3];
+    private final LabelComponent[] tabLabels = new LabelComponent[2];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
-    private FlowLayout alchemyTabContent;
 
     // Hotbar
     private final GridSlotComponent[] hotbarSlots = new GridSlotComponent[HOTBAR_SLOTS];
@@ -102,8 +101,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         tabBar.gap(6);
         tabBar.padding(Insets.of(1, 2, 1, 2));
-        String[] tabNames = {"装备", "修仙", "丹药"};
-        for (int i = 0; i < 3; i++) {
+        String[] tabNames = {"装备", "修仙"};
+        for (int i = 0; i < 2; i++) {
             final int idx = i;
             var label = Components.label(Text.literal(tabNames[i]));
             label.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
@@ -160,11 +159,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         cultivationTabContent.child(bodyInspect);
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
-
-        // Tab 2: Alchemy
-        alchemyTabContent = makeTabPlaceholder("丹药炼制 — 开发中");
-        leftCol.child(alchemyTabContent);
-        alchemyTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         middle.child(leftCol);
 
@@ -245,15 +239,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Build helpers ====================
 
-    private FlowLayout makeTabPlaceholder(String text) {
-        FlowLayout f = Containers.verticalFlow(Sizing.fill(100), Sizing.fixed(148));
-        f.surface(Surface.flat(0xFF181818));
-        f.verticalAlignment(VerticalAlignment.CENTER);
-        f.horizontalAlignment(HorizontalAlignment.CENTER);
-        f.child(Components.label(Text.literal("§7" + text)));
-        return f;
-    }
-
     private FlowLayout buildHotbarStrip() {
         int cs = GridSlotComponent.CELL_SIZE;
         FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
@@ -294,10 +279,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchTab(int idx) {
         if (idx == activeTab) return;
         activeTab = idx;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 2; i++)
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, alchemyTabContent};
-        for (int i = 0; i < 3; i++)
+        FlowLayout[] tabs = {equipTabContent, cultivationTabContent};
+        for (int i = 0; i < 2; i++)
             tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
     }
 
