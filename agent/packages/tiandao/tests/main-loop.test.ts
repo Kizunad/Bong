@@ -1,7 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_MODEL, DEFAULT_REDIS_URL, computeLoopBackoffMs, runRuntime, type RuntimeRedis } from "../src/runtime.js";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_REDIS_URL,
+  computeLoopBackoffMs,
+  runRuntime,
+  type CommandPublishRequest,
+  type NarrationPublishRequest,
+  type RuntimeRedis,
+} from "../src/runtime.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { ChatMessageV1, Command, Narration } from "@bong/schema";
+import type { ChatMessageV1 } from "@bong/schema";
+
+function createStructuredChatResult(content: string, model: string) {
+  return {
+    content,
+    durationMs: 0,
+    requestId: "loop-test-request-id",
+    model,
+  };
+}
 
 class FlakyRuntimeRedis implements RuntimeRedis {
   private connected = false;
@@ -51,14 +68,14 @@ class FlakyRuntimeRedis implements RuntimeRedis {
     ];
   }
 
-  async publishCommands(_source: "arbiter", _commands: Command[]): Promise<void> {
+  async publishCommands(_request: CommandPublishRequest): Promise<void> {
     this.publishAttempts += 1;
     if (this.publishAttempts <= this.publishFailuresBeforeSuccess) {
       throw new Error("publish command failed");
     }
   }
 
-  async publishNarrations(_narrations: Narration[]): Promise<void> {}
+  async publishNarrations(_request: NarrationPublishRequest): Promise<void> {}
 
   async disconnect(): Promise<void> {
     this.connected = false;
@@ -88,7 +105,9 @@ describe("main-loop runtime resilience", () => {
       },
       {
         createRedis: () => redis,
-        createClient: () => ({ chat: vi.fn(async () => "[]") }),
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
         agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
         sleep,
         logger,
@@ -156,7 +175,9 @@ describe("main-loop runtime resilience", () => {
       },
       {
         createRedis: () => redis,
-        createClient: () => ({ chat: vi.fn(async () => "[]") }),
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
         agents: [new FakeAgent("mutation", { commands: [command], narrations: [], reasoning: "cmd" })],
         sleep,
         logger,
@@ -169,5 +190,75 @@ describe("main-loop runtime resilience", () => {
       expect.any(Error),
     );
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("recovered after"));
+  });
+
+  it("consumes stale ticks only once and logs stale_state_skip before republish", async () => {
+    const sleep = vi.fn(async () => {});
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const repeatedState = createTestWorldState();
+    let reads = 0;
+
+    const redis: RuntimeRedis = {
+      connect: async () => {},
+      getLatestState() {
+        reads += 1;
+        if (reads < 3) {
+          return repeatedState;
+        }
+
+        return {
+          ...repeatedState,
+          tick: 124,
+          ts: repeatedState.ts + 1,
+        };
+      },
+      drainPlayerChat: async () => [],
+      publishCommands: vi.fn(async (_request: CommandPublishRequest) => {}),
+      publishNarrations: vi.fn(async (_request: NarrationPublishRequest) => {}),
+      disconnect: async () => {},
+    };
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [
+          new FakeAgent("mutation", {
+            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+            narrations: [],
+            reasoning: "tick",
+          }),
+        ],
+        sleep,
+        logger,
+        maxLoopIterations: 3,
+      },
+    );
+
+    expect(redis.publishCommands).toHaveBeenCalledTimes(2);
+    expect(redis.publishCommands).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        metadata: { sourceTick: 123, correlationId: "tiandao-tick-123" },
+      }),
+    );
+    expect(redis.publishCommands).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        metadata: { sourceTick: 124, correlationId: "tiandao-tick-124" },
+      }),
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      "[tiandao] stale_state_skip tick=123 last_processed_tick=123",
+    );
   });
 });

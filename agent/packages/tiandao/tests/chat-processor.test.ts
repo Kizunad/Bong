@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { parseChatMessages, parseChatSignalBatch, processChatBatch } from "../src/chat-processor.js";
 import type { LlmClient } from "../src/llm.js";
 
+function createStructuredChatResult(content: string, model: string) {
+  return {
+    content,
+    durationMs: 0,
+    requestId: null,
+    model,
+  };
+}
+
 describe("chat-processor", () => {
   it("parses valid chat messages and drops invalid payloads", () => {
     const warn = vi.fn();
@@ -58,24 +67,27 @@ describe("chat-processor", () => {
 
   it("falls back to unknown for missing rows or invalid fields", async () => {
     const llmClient: LlmClient = {
-      chat: vi.fn(async () =>
-        JSON.stringify([
-          {
-            player: "offline:Steve",
-            zone: "spawn",
-            raw: "灵气太少了",
-            sentiment: 1.5,
-            intent: "complaint",
-            influence_weight: 0.7,
-          },
-        ]),
+      chat: vi.fn(async (model: string) =>
+        createStructuredChatResult(
+          JSON.stringify([
+            {
+              player: "offline:Steve",
+              zone: "spawn",
+              raw: "灵气太少了",
+              sentiment: 1.5,
+              intent: "complaint",
+              influence_weight: 0.7,
+            },
+          ]),
+          model,
+        ),
       ),
     };
 
     const warn = vi.fn();
     const signals = await processChatBatch({
-      llmClient,
-      model: "mock",
+      annotateClient: llmClient,
+      annotateModel: "gpt-5.4-mini",
       logger: { warn },
       messages: [
         {
@@ -103,32 +115,35 @@ describe("chat-processor", () => {
 
   it("maps valid annotation results in original message order", async () => {
     const llmClient: LlmClient = {
-      chat: vi.fn(async () =>
-        JSON.stringify([
-          {
-            player: "offline:Alex",
-            zone: "spawn",
-            raw: "路过看看",
-            sentiment: 0.2,
-            intent: "social",
-            influence_weight: 0.1,
-          },
-          {
-            player: "offline:Steve",
-            zone: "spawn",
-            raw: "灵气太少了",
-            sentiment: -0.7,
-            intent: "complaint",
-            influence_weight: 0.8,
-            mentions_mechanic: "spirit_qi",
-          },
-        ]),
+      chat: vi.fn(async (model: string) =>
+        createStructuredChatResult(
+          JSON.stringify([
+            {
+              player: "offline:Alex",
+              zone: "spawn",
+              raw: "路过看看",
+              sentiment: 0.2,
+              intent: "social",
+              influence_weight: 0.1,
+            },
+            {
+              player: "offline:Steve",
+              zone: "spawn",
+              raw: "灵气太少了",
+              sentiment: -0.7,
+              intent: "complaint",
+              influence_weight: 0.8,
+              mentions_mechanic: "spirit_qi",
+            },
+          ]),
+          model,
+        ),
       ),
     };
 
     const signals = await processChatBatch({
-      llmClient,
-      model: "mock",
+      annotateClient: llmClient,
+      annotateModel: "gpt-5.4-mini",
       logger: { warn: vi.fn() },
       messages: [
         {
@@ -158,5 +173,42 @@ describe("chat-processor", () => {
       player: "offline:Alex",
       intent: "social",
     });
+  });
+
+  it("uses the explicit annotate model and client route", async () => {
+    const annotateClient: LlmClient = {
+      chat: vi.fn(async (model: string) =>
+        createStructuredChatResult(
+          JSON.stringify([
+            {
+              player: "offline:Steve",
+              zone: "spawn",
+              raw: "灵气太少了",
+              sentiment: -0.5,
+              intent: "complaint",
+              influence_weight: 0.6,
+            },
+          ]),
+          model,
+        ),
+      ),
+    };
+
+    await processChatBatch({
+      annotateClient,
+      annotateModel: "gpt-5.4-mini",
+      logger: { warn: vi.fn() },
+      messages: [
+        {
+          v: 1,
+          ts: 1711111111,
+          player: "offline:Steve",
+          raw: "灵气太少了",
+          zone: "spawn",
+        },
+      ],
+    });
+
+    expect(annotateClient.chat).toHaveBeenCalledWith("gpt-5.4-mini", expect.any(Array));
   });
 });

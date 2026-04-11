@@ -25,12 +25,14 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(calamityPrompt).toContain("当前因果/触发缘由");
     expect(calamityPrompt).toContain("对下一轮或下一步的暗示");
     expect(calamityPrompt).toContain("只输出**单个合法 JSON 对象**");
+    expect(calamityPrompt).toContain("工具是可选的");
 
     expect(mutationPrompt).toContain("半文言半白话");
     expect(mutationPrompt).toContain("约 100-200 个中文字符");
     expect(mutationPrompt).toContain("本轮变化的当前成因");
     expect(mutationPrompt).toContain("对下一轮或后续演化的预兆");
     expect(mutationPrompt).toContain("只输出**单个合法 JSON 对象**");
+    expect(mutationPrompt).toContain("工具是可选的");
   });
 
   it("writes era decree narration constraints explicitly into era prompt", () => {
@@ -42,6 +44,8 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(eraPrompt).toContain("当下时代转折的成因/大势");
     expect(eraPrompt).toContain("对下一轮或后势的预兆");
     expect(eraPrompt).toContain("只输出**单个合法 JSON 对象**");
+    expect(eraPrompt).toContain("默认不使用工具");
+    expect(eraPrompt).toContain("默认无工具");
   });
 
   it("still parses valid strict JSON decisions after prompt changes", () => {
