@@ -14,6 +14,7 @@ SUCCESS_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-success.txt"
 MANIFEST_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-manifest.txt"
 
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
+echo "[debug] REDIS_URL from env: $REDIS_URL"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
@@ -780,6 +781,7 @@ NODE
   PATH="$NODE_BIN:$PATH" TASK13_REDIS_HOST="127.0.0.1" TASK13_REDIS_PORT="6379" node "$RUN_DIR/inline-redis.mjs" >"$REDIS_LOG" 2>&1 &
   REDIS_PID="$!"
   REDIS_PROVIDER="inline-resp-fallback"
+  echo "[debug] Started inline RESP Redis, PID=$REDIS_PID"
 }
 
 start_docker_redis() {
@@ -795,22 +797,28 @@ start_docker_redis() {
 ensure_redis() {
   if probe_redis; then
     REDIS_PROVIDER="existing:${REDIS_URL}"
+    echo "[debug] probe_redis succeeded with existing Redis"
     return 0
   fi
+  echo "[debug] probe_redis failed, trying fallback providers"
 
   if [ "$REDIS_URL" != "$DEFAULT_REDIS_URL" ]; then
     finalize_failure "redis" "Redis at $REDIS_URL is unavailable and auto-provision only supports $DEFAULT_REDIS_URL"
   fi
 
   REDIS_SERVER_BIN="$(command -v redis-server || command -v valkey-server || true)"
+  echo "[debug] REDIS_SERVER_BIN: $REDIS_SERVER_BIN"
   if [ -n "$REDIS_SERVER_BIN" ]; then
+    echo "[debug] Starting local Redis binary"
     start_local_redis_binary
   elif command -v docker >/dev/null 2>&1; then
+    echo "[debug] Docker available, trying docker Redis"
     if ! start_docker_redis; then
       echo "[redis] docker provider unavailable, falling back to inline RESP provider"
       start_inline_resp_redis
     fi
   else
+    echo "[debug] No binary or docker, using inline RESP fallback"
     echo "[redis] no binary or docker provider available, falling back to inline RESP provider"
     start_inline_resp_redis
   fi
