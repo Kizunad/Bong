@@ -9,6 +9,7 @@
     "start": "tsx src/main.ts",
     "start:mock": "tsx src/main.ts --mock",
     "dev": "tsx watch src/main.ts",
+    "eval-narrations": "tsx src/narration-eval.ts",
     "check": "tsc -p tsconfig.test.json --noEmit",
     "test": "tsc -p tsconfig.test.json --noEmit && vitest run"
   },
