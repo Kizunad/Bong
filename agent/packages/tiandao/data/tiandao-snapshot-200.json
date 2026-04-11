@@ -1,0 +1,207 @@
+{
+  "currentEra": {
+    "name": "末法纪",
+    "sinceTick": 188,
+    "globalEffect": "灵机渐枯"
+  },
+  "zoneHistory": {
+    "blood_valley": [
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.45,
+        "danger_level": 2,
+        "active_events": [
+          "tribulation"
+        ],
+        "player_count": 3
+      }
+    ],
+    "starter_zone": [
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      }
+    ],
+    "spawn": [
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 0,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 0,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 0,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 0,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.9,
+        "danger_level": 0,
+        "active_events": [],
+        "player_count": 0
+      }
+    ]
+  },
+  "lastDecisions": {
+    "mutation": {
+      "commands": [
+        {
+          "type": "modify_zone",
+          "target": "spawn",
+          "params": {
+            "spirit_qi_delta": -0.05,
+            "danger_level_delta": 1
+          }
+        }
+      ],
+      "narrations": [],
+      "reasoning": "task-13 deterministic mutation"
+    },
+    "calamity": {
+      "commands": [
+        {
+          "type": "spawn_event",
+          "target": "spawn",
+          "params": {
+            "event": "thunder_tribulation",
+            "intensity": 0.7,
+            "duration_ticks": 120
+          }
+        }
+      ],
+      "narrations": [
+        {
+          "scope": "broadcast",
+          "text": "天穹微黯，雷意先行。此刻杀伐之气渐盛，劫云已在高处缓缓凝聚；若仍执意争胜，下一轮雷火将循因果而落，先至者未必能安然退去。",
+          "style": "system_warning"
+        }
+      ],
+      "reasoning": "task-13 deterministic calamity"
+    },
+    "era": {
+      "commands": [],
+      "narrations": [],
+      "reasoning": "no reasoning provided"
+    }
+  },
+  "lastTick": 200
+}
