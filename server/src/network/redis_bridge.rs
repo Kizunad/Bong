@@ -251,6 +251,29 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
     }
 }
 
+fn redact_redis_url_for_log(redis_url: &str) -> String {
+    let Some(scheme_index) = redis_url.find("://") else {
+        return "[redacted redis endpoint]".to_string();
+    };
+
+    let authority_and_path = &redis_url[(scheme_index + 3)..];
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let endpoint = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority)
+        .trim();
+
+    if endpoint.is_empty() {
+        "[redacted redis endpoint]".to_string()
+    } else {
+        endpoint.to_string()
+    }
+}
+
 async fn execute_outbound_command(
     pub_conn: &mut redis::aio::MultiplexedConnection,
     command: &RedisIoCommand,
@@ -311,7 +334,10 @@ async fn connect_bridge_session(
     ),
     String,
 > {
-    tracing::info!("[bong][redis] connecting to {redis_url}");
+    tracing::info!(
+        "[bong][redis] connecting to {}",
+        redact_redis_url_for_log(redis_url)
+    );
 
     let pub_conn = client
         .get_multiplexed_async_connection()
@@ -486,9 +512,9 @@ async fn sleep_before_reconnect(
 ) {
     let schedule = backoff.next();
     tracing::info!(
-        "[bong][redis] reconnect attempt={} url={} reason={reason}",
+        "[bong][redis] reconnect attempt={} endpoint={} reason={reason}",
         schedule.attempt,
-        redis_url,
+        redact_redis_url_for_log(redis_url),
     );
     tracing::info!(
         "[bong][redis] backoff {:?} before reconnect attempt={}",
@@ -859,6 +885,22 @@ mod redis_bridge_tests {
         let reset = backoff.next();
         assert_eq!(reset.attempt, 1);
         assert_eq!(reset.delay, RECONNECT_BACKOFF_INITIAL);
+    }
+
+    #[test]
+    fn redact_redis_url_for_log_strips_credentials_in_bridge_logs() {
+        assert_eq!(
+            redact_redis_url_for_log("redis://:password@cache.internal:6380/4"),
+            "cache.internal:6380"
+        );
+        assert_eq!(
+            redact_redis_url_for_log("rediss://user:password@[::1]:6390/0?tls=true"),
+            "[::1]:6390"
+        );
+        assert_eq!(
+            redact_redis_url_for_log("not-a-redis-url"),
+            "[redacted redis endpoint]"
+        );
     }
 
     #[tokio::test]

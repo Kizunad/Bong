@@ -116,7 +116,10 @@ pub fn register(app: &mut App) {
 
     // Redis bridge
     let redis_url = redis_url_from_env();
-    tracing::info!("[bong][redis] configured redis url: {redis_url}");
+    tracing::info!(
+        "[bong][redis] configured redis endpoint: {}",
+        redact_redis_url_for_log(redis_url.as_str())
+    );
     let (handle, tx_outbound, rx_inbound) = redis_bridge::spawn_redis_bridge(redis_url.as_str());
     std::mem::drop(handle); // detach thread
 
@@ -156,6 +159,29 @@ fn resolve_redis_url(env_value: Option<String>) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_REDIS_URL.to_string())
+}
+
+fn redact_redis_url_for_log(redis_url: &str) -> String {
+    let Some(scheme_index) = redis_url.find("://") else {
+        return "[redacted redis endpoint]".to_string();
+    };
+
+    let authority_and_path = &redis_url[(scheme_index + 3)..];
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let endpoint = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority)
+        .trim();
+
+    if endpoint.is_empty() {
+        "[redacted redis endpoint]".to_string()
+    } else {
+        endpoint.to_string()
+    }
 }
 
 /// Periodically publish world state snapshot to Redis
@@ -947,6 +973,26 @@ mod tests {
         assert_eq!(
             resolve_redis_url(Some("   \t\n ".to_string())),
             DEFAULT_REDIS_URL.to_string()
+        );
+    }
+
+    #[test]
+    fn redact_redis_url_for_log_strips_credentials_and_paths() {
+        assert_eq!(
+            redact_redis_url_for_log("redis://:password@cache.internal:6380/4"),
+            "cache.internal:6380"
+        );
+        assert_eq!(
+            redact_redis_url_for_log("rediss://user:password@[::1]:6390/0?tls=true"),
+            "[::1]:6390"
+        );
+    }
+
+    #[test]
+    fn redact_redis_url_for_log_falls_back_for_invalid_values() {
+        assert_eq!(
+            redact_redis_url_for_log("not-a-redis-url"),
+            "[redacted redis endpoint]"
         );
     }
 
