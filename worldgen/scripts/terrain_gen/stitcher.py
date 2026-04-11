@@ -7,6 +7,7 @@ import numpy as np
 
 from .blueprint import BlueprintZone, TerrainProfileCatalog, WorldBlueprint
 from .fields import (
+    LAYER_REGISTRY,
     GeneratedFieldSet,
     SurfacePalette,
     TerrainGenerationPlan,
@@ -277,16 +278,13 @@ def _blend_tile_layers(
         if extra_layer in base_tile.layers:
             base_arr = np.array(base_tile.layers[extra_layer], dtype=np.float64)
             overlay_arr = np.array(overlay_tile.layers[extra_layer], dtype=np.float64)
-            if extra_layer == "rift_axis_sdf":
-                # SDF: lower value = closer to rift axis = more carving.
-                # Use minimum so overlay rift values override the safe default (99).
-                base_tile.layers[extra_layer] = np.round(
-                    np.minimum(base_arr, overlay_arr), 3
-                ).tolist()
-            else:
-                base_tile.layers[extra_layer] = np.round(
-                    np.maximum(base_arr, overlay_arr * weight), 3
-                ).tolist()
+            spec = LAYER_REGISTRY.get(extra_layer)
+            blend = spec.blend_mode if spec else "maximum"
+            if blend == "minimum":
+                blended = np.minimum(base_arr, overlay_arr)
+            else:  # "maximum" (default for extra layers)
+                blended = np.maximum(base_arr, overlay_arr * weight)
+            base_tile.layers[extra_layer] = np.round(blended, 3).tolist()
 
     if zone.name not in base_tile.contributing_zones:
         base_tile.contributing_zones.append(zone.name)

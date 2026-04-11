@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..fields import BakePlan, GeneratedFieldSet, TerrainGenerationPlan
+from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
 
 BIOME_PALETTE = (
     "minecraft:plains",
@@ -18,26 +18,9 @@ BIOME_PALETTE = (
     "minecraft:desert",
 )
 
-FLOAT_LAYERS = {
-    "height",
-    "water_level",
-    "feature_mask",
-    "boundary_weight",
-    "rift_axis_sdf",
-    "rim_edge_mask",
-    "fracture_mask",
-    "cave_mask",
-    "ceiling_height",
-    "entrance_mask",
-    "neg_pressure",
-    "ruin_density",
-}
-
-UINT8_LAYERS = {
-    "surface_id",
-    "subsurface_id",
-    "biome_id",
-}
+# Derived from the central LAYER_REGISTRY — no need to maintain separate lists.
+FLOAT_LAYERS = {name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "float32"}
+UINT8_LAYERS = {name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "uint8"}
 
 
 def _layer_file_name(layer_name: str) -> str:

@@ -18,6 +18,49 @@ DEFAULT_FIELD_LAYERS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Layer registry — single source of truth for defaults, blend modes, and
+# export types.  Every layer used anywhere in the pipeline must appear here.
+#
+#   safe_default: value for columns with no zone data.  Must match the Rust
+#                 wilderness.rs / column.rs "no effect" semantics.
+#   blend_mode:   how the stitcher combines base (wilderness) with zone overlay.
+#                 "maximum"  — higher value = stronger effect (masks, weights)
+#                 "minimum"  — lower value = stronger effect (SDF distances)
+#                 "lerp"     — linear interpolation by boundary weight
+#                 "swap"     — discrete swap at dithered threshold
+#                 "special"  — handled by dedicated stitcher code (height, water…)
+#   export_type:  "float32" or "uint8" for raster binary serialization.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class LayerSpec:
+    safe_default: float
+    blend_mode: str   # maximum | minimum | lerp | swap | special
+    export_type: str  # float32 | uint8
+
+
+LAYER_REGISTRY: dict[str, LayerSpec] = {
+    # --- core layers (blended by dedicated stitcher code) ---
+    "height":           LayerSpec(safe_default=0.0,  blend_mode="special",  export_type="float32"),
+    "surface_id":       LayerSpec(safe_default=0.0,  blend_mode="swap",     export_type="uint8"),
+    "subsurface_id":    LayerSpec(safe_default=0.0,  blend_mode="swap",     export_type="uint8"),
+    "water_level":      LayerSpec(safe_default=-1.0, blend_mode="special",  export_type="float32"),
+    "biome_id":         LayerSpec(safe_default=0.0,  blend_mode="swap",     export_type="uint8"),
+    "feature_mask":     LayerSpec(safe_default=0.0,  blend_mode="special",  export_type="float32"),
+    "boundary_weight":  LayerSpec(safe_default=0.0,  blend_mode="special",  export_type="float32"),
+    # --- zone-specific layers (blended by extra-layer loop) ---
+    "rift_axis_sdf":    LayerSpec(safe_default=99.0, blend_mode="minimum",  export_type="float32"),
+    "rim_edge_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "fracture_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "cave_mask":        LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "ceiling_height":   LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "entrance_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+}
+
+
 @dataclass(frozen=True)
 class Bounds2D:
     min_x: int
@@ -183,7 +226,10 @@ class TileFieldBuffer:
         cls, tile: WorldTile, tile_size: int, layer_names: Iterable[str]
     ) -> "TileFieldBuffer":
         area = tile_size * tile_size
-        layers = {layer_name: [0.0] * area for layer_name in layer_names}
+        layers = {
+            name: [LAYER_REGISTRY[name].safe_default if name in LAYER_REGISTRY else 0.0] * area
+            for name in layer_names
+        }
         return cls(tile=tile, tile_size=tile_size, layers=layers)
 
     def index(self, local_x: int, local_z: int) -> int:

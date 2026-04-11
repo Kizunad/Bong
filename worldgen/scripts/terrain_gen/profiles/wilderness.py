@@ -149,24 +149,8 @@ def fill_wilderness_tile(
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
     buffer.layers["boundary_weight"] = [0.0] * (tile_size * tile_size)
 
-    # Safe defaults for zone-specific layers — must match Rust wilderness.rs defaults.
-    # rift_axis_sdf=99 means "far from any rift" (column.rs carves when < 0.9).
-    area = tile_size * tile_size
-    if "rift_axis_sdf" in buffer.layers:
-        buffer.layers["rift_axis_sdf"] = [99.0] * area
-    if "rim_edge_mask" in buffer.layers:
-        buffer.layers["rim_edge_mask"] = [0.0] * area
-    if "cave_mask" in buffer.layers:
-        buffer.layers["cave_mask"] = [0.0] * area
-    if "ceiling_height" in buffer.layers:
-        buffer.layers["ceiling_height"] = [0.0] * area
-    if "entrance_mask" in buffer.layers:
-        buffer.layers["entrance_mask"] = [0.0] * area
-    if "fracture_mask" in buffer.layers:
-        buffer.layers["fracture_mask"] = [0.0] * area
-    if "neg_pressure" in buffer.layers:
-        buffer.layers["neg_pressure"] = [0.0] * area
-    if "ruin_density" in buffer.layers:
-        buffer.layers["ruin_density"] = [0.0] * area
+    # Zone-specific layers (rift_axis_sdf, cave_mask, etc.) are already
+    # initialized to their safe defaults by TileFieldBuffer.create() via
+    # LAYER_REGISTRY — no per-layer patching needed here.
 
     return buffer
