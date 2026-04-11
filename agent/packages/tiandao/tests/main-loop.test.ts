@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DEFAULT_MODEL,
   DEFAULT_REDIS_URL,
@@ -29,6 +32,7 @@ class FlakyRuntimeRedis implements RuntimeRedis {
   private connectAttempts = 0;
   private drainAttempts = 0;
   private publishAttempts = 0;
+  public readonly publishedCommandTicks: number[] = [];
 
   constructor(args: {
     connectFailuresBeforeSuccess?: number;
@@ -68,8 +72,9 @@ class FlakyRuntimeRedis implements RuntimeRedis {
     ];
   }
 
-  async publishCommands(_request: CommandPublishRequest): Promise<void> {
+  async publishCommands(request: CommandPublishRequest): Promise<void> {
     this.publishAttempts += 1;
+    this.publishedCommandTicks.push(request.metadata.sourceTick);
     if (this.publishAttempts <= this.publishFailuresBeforeSuccess) {
       throw new Error("publish command failed");
     }
@@ -83,6 +88,20 @@ class FlakyRuntimeRedis implements RuntimeRedis {
 }
 
 describe("main-loop runtime resilience", () => {
+  async function withIsolatedCwd<T>(run: () => Promise<T>): Promise<T> {
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-main-loop-"));
+    const previousCwd = process.cwd();
+
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+      return await run();
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
   it("retries with bounded exponential backoff", () => {
     expect(computeLoopBackoffMs(1)).toBe(1000);
     expect(computeLoopBackoffMs(2)).toBe(2000);
@@ -95,25 +114,27 @@ describe("main-loop runtime resilience", () => {
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
     const redis = new FlakyRuntimeRedis({ connectFailuresBeforeSuccess: 2 });
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
-        sleep,
-        logger,
-        maxLoopIterations: 4,
-      },
-    );
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep,
+          logger,
+          maxLoopIterations: 4,
+        },
+      );
+    });
 
     expect(logger.warn).toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("connected to Redis"));
@@ -125,27 +146,29 @@ describe("main-loop runtime resilience", () => {
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
     const redis = new FlakyRuntimeRedis();
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async () => {
-            throw new Error("llm 500");
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async () => {
+              throw new Error("llm 500");
+            }),
           }),
-        }),
-        agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
-        sleep,
-        logger,
-        maxLoopIterations: 2,
-      },
-    );
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep,
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    });
 
     expect(logger.warn).toHaveBeenCalledWith(
       "[tiandao] chat signal processing failed, keeping previous snapshot:",
@@ -165,29 +188,35 @@ describe("main-loop runtime resilience", () => {
       params: { spirit_qi_delta: 0.01 },
     };
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [new FakeAgent("mutation", { commands: [command], narrations: [], reasoning: "cmd" })],
-        sleep,
-        logger,
-        maxLoopIterations: 3,
-      },
-    );
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [new FakeAgent("mutation", { commands: [command], narrations: [], reasoning: "cmd" })],
+          sleep,
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    });
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("transient loop failure #1"),
       expect.any(Error),
+    );
+    expect(redis.publishedCommandTicks).toEqual([123, 123]);
+    expect(logger.log).not.toHaveBeenCalledWith(
+      "[tiandao] stale_state_skip tick=123 last_processed_tick=123",
     );
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("recovered after"));
   });
@@ -218,31 +247,33 @@ describe("main-loop runtime resilience", () => {
       disconnect: async () => {},
     };
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [
-          new FakeAgent("mutation", {
-            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
-            narrations: [],
-            reasoning: "tick",
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
           }),
-        ],
-        sleep,
-        logger,
-        maxLoopIterations: 3,
-      },
-    );
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "tick",
+            }),
+          ],
+          sleep,
+          logger,
+          maxLoopIterations: 3,
+        },
+      );
+    });
 
     expect(redis.publishCommands).toHaveBeenCalledTimes(2);
     expect(redis.publishCommands).toHaveBeenNthCalledWith(

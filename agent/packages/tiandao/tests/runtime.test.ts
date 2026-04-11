@@ -66,6 +66,24 @@ class SequenceRuntimeRedis implements RuntimeRedis {
   }
 }
 
+class FailingPublishRuntimeRedis extends SequenceRuntimeRedis {
+  public publishAttempts = 0;
+
+  constructor(
+    states: Array<ReturnType<typeof createTestWorldState> | null>,
+    private readonly failOnAttempt = 1,
+  ) {
+    super(states);
+  }
+
+  override readonly publishCommands = vi.fn(async (_request: CommandPublishRequest) => {
+    this.publishAttempts += 1;
+    if (this.publishAttempts === this.failOnAttempt) {
+      throw new Error("publish command failed");
+    }
+  });
+}
+
 describe("resolveRuntimeConfig", () => {
   it("uses mock mode and defaults when env is missing", () => {
     const config = resolveRuntimeConfig(["node", "src/main.ts", "--mock"], {});
@@ -623,6 +641,20 @@ describe("runTick", () => {
 });
 
 describe("runRuntime", () => {
+  async function withIsolatedCwd<T>(run: () => Promise<T>): Promise<T> {
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-test-"));
+    const previousCwd = process.cwd();
+
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+      return await run();
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
   it("completes in mock mode without Redis and without env", async () => {
     const state = createTestWorldState();
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -703,32 +735,34 @@ describe("runRuntime", () => {
     const worldModel = new WorldModel();
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [
-          new FakeAgent("mutation", {
-            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.02 } }],
-            narrations: [],
-            reasoning: "cmd",
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
           }),
-        ],
-        sleep: vi.fn(async () => {}),
-        logger,
-        worldModel,
-        maxLoopIterations: 3,
-      },
-    );
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.02 } }],
+              narrations: [],
+              reasoning: "cmd",
+            }),
+          ],
+          sleep: vi.fn(async () => {}),
+          logger,
+          worldModel,
+          maxLoopIterations: 3,
+        },
+      );
+    });
 
     expect(redis.publishCommands).toHaveBeenCalledTimes(2);
     expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
@@ -761,32 +795,34 @@ describe("runRuntime", () => {
       flush: vi.fn(async () => {}),
     };
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [
-          new FakeAgent("mutation", {
-            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
-            narrations: [],
-            reasoning: "ok",
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
           }),
-        ],
-        sleep: vi.fn(async () => {}),
-        logger,
-        telemetrySink,
-        maxLoopIterations: 2,
-      },
-    );
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "ok",
+            }),
+          ],
+          sleep: vi.fn(async () => {}),
+          logger,
+          telemetrySink,
+          maxLoopIterations: 2,
+        },
+      );
+    });
 
     expect(redis.publishCommands).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledWith("[tiandao] telemetry recordTick failed:", expect.any(Error));
@@ -876,31 +912,33 @@ describe("runRuntime", () => {
       async flush() {},
     };
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) =>
-            createStructuredChatResult(
-              JSON.stringify({ commands: [], narrations: [], reasoning: "ok" }),
-              model,
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) =>
+              createStructuredChatResult(
+                JSON.stringify({ commands: [], narrations: [], reasoning: "ok" }),
+                model,
+              ),
             ),
-          ),
-        }),
-        agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
-        sleep: vi.fn(async () => {}),
-        logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
-        maxLoopIterations: 3,
-        telemetrySink: captured,
-      },
-    );
+          }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          maxLoopIterations: 3,
+          telemetrySink: captured,
+        },
+      );
+    });
 
     const tick124 = captured.ticks.find((entry) => entry.tick === 124);
     expect(tick124?.errorBreakdown.backoff).toBe(1);
@@ -976,29 +1014,31 @@ describe("runRuntime", () => {
       return client;
     });
 
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        modelOverrides: {
-          default: DEFAULT_MODEL,
-          annotate: DEFAULT_MODEL,
-          calamity: DEFAULT_MODEL,
-          mutation: DEFAULT_MODEL,
-          era: "gpt-5.4",
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          modelOverrides: {
+            default: DEFAULT_MODEL,
+            annotate: DEFAULT_MODEL,
+            calamity: DEFAULT_MODEL,
+            mutation: DEFAULT_MODEL,
+            era: "gpt-5.4",
+          },
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
         },
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient,
-        sleep: vi.fn(async () => {}),
-        logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
-        maxLoopIterations: 1,
-      },
-    );
+        {
+          createRedis: () => redis,
+          createClient,
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          maxLoopIterations: 1,
+        },
+      );
+    });
 
     expect(createClient).toHaveBeenCalledTimes(5);
     expect(new Set(createdClients).size).toBe(5);
@@ -1091,18 +1131,90 @@ describe("runRuntime", () => {
     expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(200);
   });
 
-  it("does not re-persist world model state on stale tick skip", async () => {
-    const staleState = createTestWorldState();
-    staleState.tick = 300;
-    const freshState = createTestWorldState();
-    freshState.tick = 301;
-    const redis = new SequenceRuntimeRedis([staleState, staleState, freshState]);
+  it("initializes stale guard from disk snapshot restore before processing fresh redis ticks", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-snapshot-restore-"));
+    const previousCwd = process.cwd();
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+      await writeFile(
+        join(tempDir, "data", "tiandao-snapshot-188.json"),
+        `${JSON.stringify({
+          currentEra: {
+            name: "末法纪",
+            sinceTick: 188,
+            globalEffect: "灵机渐枯",
+          },
+          zoneHistory: {},
+          lastDecisions: {},
+          lastTick: 188,
+        }, null, 2)}\n`,
+        "utf8",
+      );
+
+      const staleState = createTestWorldState();
+      staleState.tick = 188;
+      const freshState = createTestWorldState();
+      freshState.tick = 200;
+      const redis = new SequenceRuntimeRedis([staleState, freshState]);
+      redis.loadWorldModelState.mockResolvedValue(null);
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "snapshot-restore",
+            }),
+          ],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+
+      expect(logger.log).toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
+      expect(logger.log).toHaveBeenCalledWith(
+        "[tiandao] stale_state_skip tick=188 last_processed_tick=188",
+      );
+      expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+      expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ sourceTick: 200, correlationId: "tiandao-tick-200" }),
+        }),
+      );
+      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
+      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(200);
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts redis credentials from runtime connect logs", async () => {
+    const state = createTestWorldState();
+    const redis = new SequenceRuntimeRedis([state]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     await runRuntime(
       {
         mockMode: false,
         model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
+        redisUrl: "redis://:super-secret@redis.internal:6380/4",
         baseUrl: "https://llm.example.test/v1",
         apiKey: "k_test",
       },
@@ -1111,18 +1223,118 @@ describe("runRuntime", () => {
         createClient: () => ({
           chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
         }),
-        agents: [
-          new FakeAgent("mutation", {
-            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
-            narrations: [],
-            reasoning: "persist",
-          }),
-        ],
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "ok" })],
         sleep: vi.fn(async () => {}),
-        logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
-        maxLoopIterations: 3,
+        logger,
+        maxLoopIterations: 1,
       },
     );
+
+    const logLines = logger.log.mock.calls
+      .map((call) => call[0])
+      .filter((value): value is string => typeof value === "string");
+
+    expect(logLines).toContain("[tiandao] connected to Redis at redis.internal:6380");
+    expect(logLines.join("\n")).not.toContain("super-secret");
+    expect(logLines.join("\n")).not.toContain("redis://:super-secret@redis.internal:6380/4");
+  });
+
+  it("restores world model history exactly before retrying a failed tick", async () => {
+    await withIsolatedCwd(async () => {
+      const seedState = createTestWorldState();
+      seedState.tick = 123;
+      seedState.zones[0] = {
+        ...seedState.zones[0],
+        spirit_qi: 0.41,
+      };
+
+      const failedTickState = createTestWorldState();
+      failedTickState.tick = 124;
+      failedTickState.zones[0] = {
+        ...failedTickState.zones[0],
+        spirit_qi: 0.77,
+      };
+
+      const nextFreshState = createTestWorldState();
+      nextFreshState.tick = 125;
+      nextFreshState.zones[0] = {
+        ...nextFreshState.zones[0],
+        spirit_qi: 0.55,
+      };
+
+      const redis = new FailingPublishRuntimeRedis(
+        [seedState, failedTickState, failedTickState, nextFreshState],
+        2,
+      );
+      const worldModel = new WorldModel();
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "retry-after-rollback",
+            }),
+          ],
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          worldModel,
+          maxLoopIterations: 4,
+        },
+      );
+
+      const starterHistory = worldModel.getZoneHistory("starter_zone");
+      expect(starterHistory.map((entry) => entry.spirit_qi)).toEqual([0.41, 0.77, 0.55]);
+      expect(worldModel.lastTick).toBe(125);
+    });
+  });
+
+  it("does not re-persist world model state on stale tick skip", async () => {
+    const staleState = createTestWorldState();
+    staleState.tick = 300;
+    const freshState = createTestWorldState();
+    freshState.tick = 301;
+    const redis = new SequenceRuntimeRedis([staleState, staleState, freshState]);
+
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "persist",
+            }),
+          ],
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          maxLoopIterations: 3,
+        },
+      );
+    });
 
     expect(redis.saveWorldModelState).toHaveBeenCalledTimes(2);
     expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(300);
