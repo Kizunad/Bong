@@ -4,6 +4,13 @@ pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
 
+// 修炼 (plan-cultivation-v1 §6.1)
+pub const CH_INSIGHT_REQUEST: &str = "bong:insight_request";
+pub const CH_INSIGHT_OFFER: &str = "bong:insight_offer";
+pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
+pub const CH_FORGE_EVENT: &str = "bong:forge_event";
+pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
+
 #[cfg(test)]
 mod tests {
     use super::*;

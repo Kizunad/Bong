@@ -198,14 +198,14 @@ pub(super) fn decorate_chunk(
         }
     }
 
-    let bone_min_x = (bounds.min_x - BONE_PILE_PROFILE.max_extent)
-        .div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_max_x = (bounds.max_x + BONE_PILE_PROFILE.max_extent)
-        .div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_min_z = (bounds.min_z - BONE_PILE_PROFILE.max_extent)
-        .div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_max_z = (bounds.max_z + BONE_PILE_PROFILE.max_extent)
-        .div_euclid(BONE_PILE_PROFILE.seed_spacing);
+    let bone_min_x =
+        (bounds.min_x - BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
+    let bone_max_x =
+        (bounds.max_x + BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
+    let bone_min_z =
+        (bounds.min_z - BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
+    let bone_max_z =
+        (bounds.max_z + BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
 
     for cell_z in bone_min_z..=bone_max_z {
         for cell_x in bone_min_x..=bone_max_x {
@@ -471,8 +471,7 @@ fn instantiate_ruin_pillar(
     }
 
     let surface_y = column::surface_y_for_sample(&sample, min_y, world_height);
-    if !(RUIN_PILLAR_PROFILE.min_surface_y..=RUIN_PILLAR_PROFILE.max_surface_y)
-        .contains(&surface_y)
+    if !(RUIN_PILLAR_PROFILE.min_surface_y..=RUIN_PILLAR_PROFILE.max_surface_y).contains(&surface_y)
     {
         return None;
     }
@@ -701,9 +700,7 @@ fn instantiate_spirit_ore_vein(
     }
 
     let surface_y = column::surface_y_for_sample(&sample, min_y, world_height);
-    if !(SPIRIT_ORE_PROFILE.min_surface_y..=SPIRIT_ORE_PROFILE.max_surface_y)
-        .contains(&surface_y)
-    {
+    if !(SPIRIT_ORE_PROFILE.min_surface_y..=SPIRIT_ORE_PROFILE.max_surface_y).contains(&surface_y) {
         return None;
     }
     if sample.feature_mask < SPIRIT_ORE_PROFILE.min_feature_mask {
@@ -802,8 +799,7 @@ fn instantiate_rift_bridge_remnant(
     }
 
     let surface_y = column::surface_y_for_sample(&sample, min_y, world_height);
-    if !(RIFT_BRIDGE_PROFILE.min_surface_y..=RIFT_BRIDGE_PROFILE.max_surface_y)
-        .contains(&surface_y)
+    if !(RIFT_BRIDGE_PROFILE.min_surface_y..=RIFT_BRIDGE_PROFILE.max_surface_y).contains(&surface_y)
     {
         return None;
     }
@@ -1277,15 +1273,13 @@ fn place_bone_pile_in_chunk(
     for index in 0..instance.skull_count {
         let angle =
             sample_u01(instance.seed.rotate_left(index as u32 + 31)) * std::f64::consts::TAU;
-        let distance =
-            (sample_u01(instance.seed.rotate_left(index as u32 + 37)) * instance.pile_radius as f64)
-                .round() as i32;
+        let distance = (sample_u01(instance.seed.rotate_left(index as u32 + 37))
+            * instance.pile_radius as f64)
+            .round() as i32;
         let sx = instance.origin_x + (angle.cos() * distance as f64).round() as i32;
         let sz = instance.origin_z + (angle.sin() * distance as f64).round() as i32;
-        let dist_from_center =
-            (sx - instance.origin_x).abs() + (sz - instance.origin_z).abs();
-        let skull_y =
-            instance.base_y + (instance.pile_height - dist_from_center).max(0) + 1;
+        let dist_from_center = (sx - instance.origin_x).abs() + (sz - instance.origin_z).abs();
+        let skull_y = instance.base_y + (instance.pile_height - dist_from_center).max(0) + 1;
         let rotation = (instance.seed.rotate_left(index as u32 + 41) % 16) as u16;
         upsert_block(
             &mut placements,
@@ -1376,8 +1370,7 @@ fn instantiate_spawn_portal(
     if sample.water_level >= 0.0 && surface_y <= sample.water_level.round() as i32 {
         return None;
     }
-    if surface_slope(seed_x, seed_z, min_y, world_height, terrain)
-        > SPAWN_PORTAL_PROFILE.max_slope
+    if surface_slope(seed_x, seed_z, min_y, world_height, terrain) > SPAWN_PORTAL_PROFILE.max_slope
     {
         return None;
     }
@@ -1443,9 +1436,7 @@ fn place_spawn_portal_in_chunk(
                 6,
             );
 
-            if ring >= 2
-                && sample_u01(hash_coords(dx, dz, instance.seed.rotate_left(3))) < 0.12
-            {
+            if ring >= 2 && sample_u01(hash_coords(dx, dz, instance.seed.rotate_left(3))) < 0.12 {
                 upsert_block(
                     &mut placements,
                     chunk_bounds,
@@ -1481,12 +1472,7 @@ fn place_spawn_portal_in_chunk(
         7,
     );
 
-    let pillar_offsets = [
-        (-r, -r),
-        (r, -r),
-        (-r, r),
-        (r, r),
-    ];
+    let pillar_offsets = [(-r, -r), (r, -r), (-r, r), (r, r)];
     for (index, (px, pz)) in pillar_offsets.into_iter().enumerate() {
         for dy in 0..instance.pillar_height {
             let block = if dy == 0 {

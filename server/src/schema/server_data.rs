@@ -23,6 +23,7 @@ pub enum ServerDataType {
     EventAlert,
     PlayerState,
     UiOpen,
+    CultivationDetail,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +67,22 @@ pub enum ServerDataPayloadV1 {
         #[serde(skip_serializing_if = "Option::is_none")]
         ui: Option<String>,
         xml: String,
+    },
+    /// 经脉详细快照。20 条经脉以 SoA(parallel arrays) 布局，顺序与 `MeridianId` 判别式一致
+    /// (Lung=0..Liver=11, Ren=12..YangWei=19)。保持 ≤ MAX_PAYLOAD_BYTES 预算。
+    CultivationDetail {
+        /// 境界字面量（Awaken/Induce/Condense/Solidify/Spirit/Void，与 `Realm` 判别式对齐）。
+        realm: String,
+        opened: Vec<bool>,
+        flow_rate: Vec<f64>,
+        flow_capacity: Vec<f64>,
+        integrity: Vec<f64>,
+        /// 每条经脉未打通时的累积进度 0..=1（已打通恒为 1.0）。
+        open_progress: Vec<f64>,
+        /// 每条经脉当前裂痕条目数（0..=255，饱和）。UI 用于渲染裂痕图标密度。
+        cracks_count: Vec<u8>,
+        /// 整个实体的污染总量（所有 `Contamination.entries.amount` 求和）。
+        contamination_total: f64,
     },
 }
 
@@ -123,6 +140,7 @@ impl ServerDataPayloadV1 {
             Self::EventAlert { .. } => ServerDataType::EventAlert,
             Self::PlayerState { .. } => ServerDataType::PlayerState,
             Self::UiOpen { .. } => ServerDataType::UiOpen,
+            Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
         }
     }
 }
@@ -130,6 +148,37 @@ impl ServerDataPayloadV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cultivation_detail_roundtrip_and_size_budget() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
+            realm: "Induce".to_string(),
+            opened: vec![true; 20],
+            flow_rate: vec![1.5; 20],
+            flow_capacity: vec![10.25; 20],
+            integrity: vec![0.87; 20],
+            open_progress: vec![1.0; 20],
+            cracks_count: vec![0; 20],
+            contamination_total: 0.0,
+        });
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("cultivation_detail must fit MAX_PAYLOAD_BYTES");
+        assert!(
+            bytes.len() <= super::super::common::MAX_PAYLOAD_BYTES,
+            "over budget: {} bytes",
+            bytes.len()
+        );
+        let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
+        match back.payload {
+            ServerDataPayloadV1::CultivationDetail { opened, flow_rate, .. } => {
+                assert_eq!(opened.len(), 20);
+                assert_eq!(flow_rate.len(), 20);
+                assert_eq!(flow_rate[0], 1.5);
+            }
+            other => panic!("expected CultivationDetail, got {other:?}"),
+        }
+    }
 
     #[test]
     fn deserialize_server_data_samples() {

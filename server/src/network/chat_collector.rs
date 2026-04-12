@@ -447,9 +447,7 @@ mod chat_collector_tests {
                 assert_eq!(chat.player, "offline:Alice");
                 assert_eq!(chat.raw, "这里灵气真足");
             }
-            RedisOutbound::WorldState(_) => {
-                panic!("expected player chat outbound, got world state")
-            }
+            other => panic!("expected player chat outbound, got {other:?}"),
         }
     }
 
@@ -483,9 +481,7 @@ mod chat_collector_tests {
             RedisOutbound::PlayerChat(chat) => {
                 assert_eq!(chat.zone, DEFAULT_SPAWN_ZONE_NAME);
             }
-            RedisOutbound::WorldState(_) => {
-                panic!("expected player chat outbound, got world state")
-            }
+            other => panic!("expected player chat outbound, got {other:?}"),
         }
     }
 

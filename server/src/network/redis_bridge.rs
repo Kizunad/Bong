@@ -4,9 +4,15 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
-use crate::schema::channels::{CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_PLAYER_CHAT, CH_WORLD_STATE};
+use crate::schema::channels::{
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_CULTIVATION_DEATH,
+    CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
+};
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
+use crate::schema::cultivation::{
+    BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
+};
 use crate::schema::narration::NarrationV1;
 use crate::schema::world_state::WorldStateV1;
 
@@ -21,6 +27,7 @@ const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 pub enum RedisInbound {
     AgentCommand(AgentCommandV1),
     AgentNarration(NarrationV1),
+    InsightOffer(InsightOfferV1),
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +35,10 @@ pub enum RedisOutbound {
     WorldState(WorldStateV1),
     #[allow(dead_code)]
     PlayerChat(ChatMessageV1),
+    BreakthroughEvent(BreakthroughEventV1),
+    ForgeEvent(ForgeEventV1),
+    CultivationDeath(CultivationDeathV1),
+    InsightRequest(InsightRequestV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -153,7 +164,8 @@ pub fn spawn_redis_bridge(
                         .await
                         {
                             BridgeLoopControl::Reconnect { reason } => {
-                                sleep_before_reconnect(url.as_str(), &mut backoff, reason.as_str()).await;
+                                sleep_before_reconnect(url.as_str(), &mut backoff, reason.as_str())
+                                    .await;
                             }
                             BridgeLoopControl::Stop => break,
                         }
@@ -245,6 +257,42 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
 
             Ok(RedisIoCommand::ListPush {
                 key: CH_PLAYER_CHAT,
+                payload,
+            })
+        }
+        RedisOutbound::BreakthroughEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize BreakthroughEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BREAKTHROUGH_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::ForgeEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ForgeEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FORGE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::CultivationDeath(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CultivationDeathV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_CULTIVATION_DEATH,
+                payload,
+            })
+        }
+        RedisOutbound::InsightRequest(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize InsightRequestV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_INSIGHT_REQUEST,
                 payload,
             })
         }
@@ -356,7 +404,7 @@ async fn connect_bridge_session(
 
     subscribe_inbound_channels(&mut pubsub).await?;
     tracing::info!(
-        "[bong][redis] subscribed to {CH_AGENT_COMMAND} and {CH_AGENT_NARRATE}"
+        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_INSIGHT_OFFER}"
     );
 
     let tx_to_game_clone = tx_to_game.clone();
@@ -375,6 +423,11 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .subscribe(CH_AGENT_NARRATE)
         .await
         .map_err(|error| format!("failed to subscribe to {CH_AGENT_NARRATE}: {error}"))?;
+
+    pubsub
+        .subscribe(CH_INSIGHT_OFFER)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_INSIGHT_OFFER}: {error}"))?;
 
     Ok(())
 }
@@ -487,6 +540,11 @@ async fn run_subscriber_task(
                         "[bong][redis] received narration ({} entries)",
                         narration.narrations.len()
                     ),
+                    RedisInbound::InsightOffer(offer) => tracing::info!(
+                        "[bong][redis] received insight offer: trigger={} ({} choices)",
+                        offer.trigger_id,
+                        offer.choices.len()
+                    ),
                 }
 
                 if tx_to_game.send(inbound).is_err() {
@@ -497,9 +555,7 @@ async fn run_subscriber_task(
                 }
             }
             Ok(None) => {
-                tracing::debug!(
-                    "[bong][redis] ignoring message on unexpected channel {channel}"
-                );
+                tracing::debug!("[bong][redis] ignoring message on unexpected channel {channel}");
             }
             Err(error) => tracing::warn!(
                 "[bong][redis] dropped invalid inbound payload on {channel}: {error}"
@@ -510,11 +566,7 @@ async fn run_subscriber_task(
     SubscriberTaskExit::StreamEnded
 }
 
-async fn sleep_before_reconnect(
-    redis_url: &str,
-    backoff: &mut ReconnectBackoff,
-    reason: &str,
-) {
+async fn sleep_before_reconnect(redis_url: &str, backoff: &mut ReconnectBackoff, reason: &str) {
     let schedule = backoff.next();
     tracing::info!(
         "[bong][redis] reconnect attempt={} endpoint={} reason={reason}",
@@ -550,6 +602,12 @@ fn parse_inbound_message(
                 ValidationError::new(format!("failed to deserialize NarrationV1: {error}"))
             })?;
             Ok(Some(RedisInbound::AgentNarration(narration)))
+        }
+        CH_INSIGHT_OFFER => {
+            let offer = serde_json::from_value::<InsightOfferV1>(value).map_err(|error| {
+                ValidationError::new(format!("failed to deserialize InsightOfferV1: {error}"))
+            })?;
+            Ok(Some(RedisInbound::InsightOffer(offer)))
         }
         _ => Ok(None),
     }
@@ -828,6 +886,50 @@ mod redis_bridge_tests {
                 assert_eq!(payload["player"], "offline:Steve");
             }
             other => panic!("expected RPUSH command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_cultivation_events_on_correct_channels() {
+        let bt = prepare_outbound_command(RedisOutbound::BreakthroughEvent(BreakthroughEventV1 {
+            kind: "Succeeded".into(),
+            from_realm: "Awaken".into(),
+            to_realm: Some("Induce".into()),
+            success_rate: Some(0.9),
+            severity: None,
+        }))
+        .expect("breakthrough payload should serialize");
+        match bt {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_BREAKTHROUGH_EVENT);
+                let v: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(v["kind"], "Succeeded");
+                assert_eq!(v["to_realm"], "Induce");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let forge = prepare_outbound_command(RedisOutbound::ForgeEvent(ForgeEventV1 {
+            meridian: "Lung".into(),
+            axis: "Rate".into(),
+            from_tier: 2,
+            to_tier: 3,
+            success: true,
+        }))
+        .expect("forge payload should serialize");
+        match forge {
+            RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_FORGE_EVENT),
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let death = prepare_outbound_command(RedisOutbound::CultivationDeath(CultivationDeathV1 {
+            cause: "BreakthroughBackfire".into(),
+            context: serde_json::json!({"from":"Spirit"}),
+        }))
+        .expect("death payload should serialize");
+        match death {
+            RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+            other => panic!("expected publish, got {other:?}"),
         }
     }
 

@@ -1143,15 +1143,15 @@ mod events_tests {
 
         let recent = events.recent_events_snapshot();
         assert!(
-            recent
-                .iter()
-                .any(|event| event.target.as_deref() == Some(EVENT_REALM_COLLAPSE)
+            recent.iter().any(
+                |event| event.target.as_deref() == Some(EVENT_REALM_COLLAPSE)
                     && event.zone.as_deref() == Some("spawn")
                     && event
                         .details
                         .as_ref()
                         .and_then(|details| details.get("placeholder"))
-                        .is_some_and(|flag| flag == &Value::Bool(true))),
+                        .is_some_and(|flag| flag == &Value::Bool(true))
+            ),
             "realm_collapse placeholder should append verifiable recent event"
         );
     }
@@ -1180,15 +1180,15 @@ mod events_tests {
 
         let recent = events.recent_events_snapshot();
         assert!(
-            recent
-                .iter()
-                .any(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH)
+            recent.iter().any(
+                |event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH)
                     && event.zone.as_deref() == Some("spawn")
                     && event
                         .details
                         .as_ref()
                         .and_then(|details| details.get("placeholder"))
-                        .is_some_and(|flag| flag == &Value::Bool(true))),
+                        .is_some_and(|flag| flag == &Value::Bool(true))
+            ),
             "karma_backlash placeholder should append verifiable recent event"
         );
     }

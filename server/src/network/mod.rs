@@ -1,6 +1,9 @@
 pub mod agent_bridge;
 pub mod chat_collector;
 pub mod command_executor;
+pub mod client_request_handler;
+pub mod cultivation_bridge;
+pub mod cultivation_detail_emit;
 pub mod redis_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -16,15 +19,18 @@ use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Entity, EntityKind, IntoSystemConfigs, Or, Position, Query,
-    Res, Resource, Update, Username, With,
+    ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventWriter,
+    IntoSystemConfigs, Or, Position, Query, Res, Resource, Update, Username, With,
 };
 
+use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
+use crate::cultivation::life_record::LifeRecord;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::common::{EventKind, NpcStateKind, PlayerTrend};
+use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot};
 use crate::world::events::ActiveEventsResource;
@@ -146,8 +152,15 @@ pub fn register(app: &mut App) {
                 .after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
+            cultivation_bridge::publish_breakthrough_events,
+            cultivation_bridge::publish_forge_events,
+            cultivation_bridge::publish_cultivation_death_events,
+            cultivation_bridge::publish_insight_requests,
+            client_request_handler::handle_client_request_payloads,
+            cultivation_detail_emit::emit_cultivation_detail_payloads,
         ),
     );
+    app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
 }
 
 fn redis_url_from_env() -> String {
@@ -197,6 +210,10 @@ fn publish_world_state_to_redis(
     chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
     melee_actions: Query<(&Actor, &ActionState), With<MeleeAttackAction>>,
     dash_actions: Query<(&Actor, &ActionState), With<DashAction>>,
+    cultivation_q: Query<
+        (Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord),
+        With<Client>,
+    >,
 ) {
     timer.ticks += 1;
     if !timer
@@ -206,12 +223,10 @@ fn publish_world_state_to_redis(
         return;
     }
 
-    let npc_action_states = collect_npc_action_states(
-        &flee_actions,
-        &chase_actions,
-        &melee_actions,
-        &dash_actions,
-    );
+    let npc_action_states =
+        collect_npc_action_states(&flee_actions, &chase_actions, &melee_actions, &dash_actions);
+
+    let cultivation_by_entity = collect_cultivation_snapshots(&cultivation_q);
 
     let state = build_world_state_snapshot(
         current_unix_timestamp_secs(),
@@ -221,11 +236,28 @@ fn publish_world_state_to_redis(
         active_events.as_deref(),
         &npcs,
         &npc_action_states,
+        &cultivation_by_entity,
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
 }
 
+fn collect_cultivation_snapshots(
+    q: &Query<(Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord), With<Client>>,
+) -> HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)> {
+    const RECENT_BIO_N: usize = 12;
+    q.iter()
+        .map(|(entity, c, m, q, life)| {
+            let snap = CultivationSnapshotV1::from_components(c, m, q);
+            let life_snap = LifeRecordSnapshotV1 {
+                recent_biography_summary: life.recent_summary_text(RECENT_BIO_N),
+            };
+            (entity, (snap, life_snap))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_world_state_snapshot(
     ts: u64,
     tick: u64,
@@ -234,10 +266,11 @@ fn build_world_state_snapshot(
     active_events: Option<&ActiveEventsResource>,
     npcs: &Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
+    cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) =
-        collect_player_snapshots(clients, &zone_registry);
+        collect_player_snapshots(clients, &zone_registry, cultivation_by_entity);
 
     WorldStateV1 {
         v: 1,
@@ -313,6 +346,8 @@ where
                 pos: vec3_to_array(position),
                 recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
                 recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+                cultivation: None,
+                life_record: None,
             }
         })
         .collect::<Vec<_>>();
@@ -353,6 +388,7 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
 fn collect_player_snapshots(
     clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
     zone_registry: &ZoneRegistry,
+    cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
 ) -> (
     Vec<PlayerProfile>,
     HashMap<Entity, String>,
@@ -388,6 +424,12 @@ fn collect_player_snapshots(
             player_ids_by_entity.insert(entity, canonical_id.clone());
             *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
 
+            let (cultivation, life_record) = cultivation_by_entity
+                .get(&entity)
+                .cloned()
+                .map(|(c, l)| (Some(c), Some(l)))
+                .unwrap_or((None, None));
+
             PlayerProfile {
                 uuid: canonical_id,
                 name,
@@ -400,6 +442,8 @@ fn collect_player_snapshots(
                 pos: vec3_to_array(position.get()),
                 recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
                 recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+                cultivation,
+                life_record,
             }
         })
         .collect::<Vec<_>>();
@@ -414,7 +458,6 @@ fn collect_npc_snapshots(
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
 ) -> Vec<NpcSnapshot> {
-
     let mut npc_snapshots = npcs
         .iter()
         .map(|(entity, position, blackboard, kind)| NpcSnapshot {
@@ -689,12 +732,15 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
 }
 
 /// Process inbound messages from Redis (agent commands + narrations)
+#[allow(clippy::too_many_arguments)]
 fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
+    mut commands: Commands,
+    mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
 ) {
     let mut drained_messages = 0;
 
@@ -709,10 +755,7 @@ fn process_redis_inbound(
             RedisInbound::AgentCommand(cmd) => {
                 let command_count = cmd.commands.len();
                 let batch_id = cmd.id.clone();
-                let source = cmd
-                    .source
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
+                let source = cmd.source.clone().unwrap_or_else(|| "unknown".to_string());
                 let enqueue_outcome = command_executor.enqueue_batch(cmd);
 
                 if enqueue_outcome.dedupe_drop {
@@ -739,6 +782,41 @@ fn process_redis_inbound(
                     &mut narration_dedupe,
                     narr.narrations.as_slice(),
                 );
+            }
+            RedisInbound::InsightOffer(offer) => {
+                tracing::info!(
+                    "[bong][network] insight_offer_received character_id={} trigger_id={} choices={}",
+                    offer.character_id,
+                    offer.trigger_id,
+                    offer.choices.len()
+                );
+                let Some((entity, _, _, _)) = clients
+                    .iter_mut()
+                    .find(|(_, _, name, _)| name.0 == offer.character_id)
+                else {
+                    tracing::warn!(
+                        "[bong][network] insight offer character_id={:?} not connected; dropping",
+                        offer.character_id
+                    );
+                    continue;
+                };
+                let Some(choices) = crate::cultivation::insight_flow::ingest_agent_insight_offer(
+                    &offer.trigger_id,
+                    &offer.choices,
+                ) else {
+                    continue;
+                };
+                commands.entity(entity).insert(
+                    crate::cultivation::insight_flow::PendingInsightOffer {
+                        trigger_id: offer.trigger_id.clone(),
+                        choices: choices.clone(),
+                    },
+                );
+                insight_offers.send(crate::cultivation::insight::InsightOffer {
+                    entity,
+                    trigger_id: offer.trigger_id.clone(),
+                    choices,
+                });
             }
         }
     }
@@ -1093,9 +1171,7 @@ mod tests {
                 .expect("world state publish should enqueue a Redis outbound message")
             {
                 RedisOutbound::WorldState(state) => state,
-                RedisOutbound::PlayerChat(_) => {
-                    panic!("expected a world-state publish, got a chat payload instead")
-                }
+                other => panic!("expected a world-state publish, got {other:?}"),
             }
         }
 
@@ -1261,6 +1337,7 @@ mod tests {
                 app.insert_resource(zone_registry);
             }
 
+            app.add_event::<crate::cultivation::insight::InsightOffer>();
             app.add_systems(Update, process_redis_inbound);
 
             (app, tx_inbound)
@@ -2093,7 +2170,10 @@ mod tests {
                 world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
                     let mut events = world.resource_mut::<ActiveEventsResource>();
                     let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
-                    assert!(accepted, "thunder major event should be accepted into scheduler");
+                    assert!(
+                        accepted,
+                        "thunder major event should be accepted into scheduler"
+                    );
                 });
             }
 
@@ -2241,9 +2321,7 @@ mod tests {
                 .expect("world state publish should enqueue a Redis outbound message")
             {
                 RedisOutbound::WorldState(state) => state,
-                RedisOutbound::PlayerChat(_) => {
-                    panic!("expected world-state publish, got player chat payload")
-                }
+                other => panic!("expected world-state publish, got {other:?}"),
             }
         }
 

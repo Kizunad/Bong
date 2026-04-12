@@ -2,6 +2,7 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
+use super::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 
 pub type Vec3 = [f64; 3];
 
@@ -29,6 +30,10 @@ pub struct PlayerProfile {
     pub pos: Vec3,
     pub recent_kills: u32,
     pub recent_deaths: u32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cultivation: Option<CultivationSnapshotV1>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub life_record: Option<LifeRecordSnapshotV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -38,6 +38,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::EventAlert => "event_alert",
         ServerDataType::PlayerState => "player_state",
         ServerDataType::UiOpen => "ui_open",
+        ServerDataType::CultivationDetail => "cultivation_detail",
     }
 }
 

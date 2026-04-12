@@ -140,12 +140,7 @@ mod tests {
             .cloned()
             .expect("commands should be an array");
 
-        value["commands"] = Value::Array([
-            commands.clone(),
-            commands.clone(),
-            commands,
-        ]
-        .concat());
+        value["commands"] = Value::Array([commands.clone(), commands.clone(), commands].concat());
 
         assert!(serde_json::from_value::<AgentCommandV1>(value).is_err());
     }
