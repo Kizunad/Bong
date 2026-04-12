@@ -126,6 +126,15 @@ struct ScaParams {
 - **TerraForged** (Minecraft mod): 分形噪声 + 模板混合
 - MC 原版大型树（丛林巨木/黑橡木）是硬编码模板式，50+ 格就不够用了
 
+### 当前实现状态（2026-04）
+
+- 已落地 `server/src/world/terrain/mega_tree.rs` 运行时巨树生成 MVP，并在 `decoration.rs` 接入
+- 当前采用文档中的 **方案 B：种子 + 按需生成**，按 chunk 周边候选种子确定性生成整棵树，再只裁剪写入当前 chunk
+- 当前树体实现为 **SCA 风格主干/一级分支骨架 + 体素圆柱化 + 叶团/根系补充**，暂未加入独立 L-System 细枝阶段
+- 已接入 4 类树型：出生点灵木、青云峰古松、荒原枯树、灵泉水杉；触发条件基于 `biome_id + feature_mask + boundary_weight + 坡度/水位`
+- 当前已做一层轻量级 skeleton cache，避免同一棵巨树在邻近 chunk 生成时重复完整推演骨架；尚未做完整落块缓存和 raster 序列化
+- 当前已按树型区分主要木叶材质：古松使用 `spruce_log / spruce_leaves`，水杉使用 `mangrove_leaves`，枯树保持无叶；后续仍可继续细分 SpiritWood 的专属材质
+
 ---
 
 ## Phase 8: 洞穴内部装饰
@@ -146,6 +155,17 @@ struct ScaParams {
 
 在 `decoration.rs` 中新增 `decorate_cave_column()`，在 `carve_floor..carve_ceiling` 范围内放置装饰。
 
+### 当前实现状态（2026-04）
+
+- 已在 `server/src/world/terrain/decoration.rs` 落地 `decorate_cave_column()`，运行时按列解析 cave carve 区间并放置装饰
+- 当前已接入 4 类洞穴装饰：
+  - 天花板钟乳石 `pointed_dripstone`
+  - 天花板发光地衣 `glow_lichen`
+  - 地面苔藓地毯 `moss_carpet`
+  - 地面石笋 `pointed_dripstone`
+- 触发条件基于 `cave_mask` 和确定性哈希，且要求上下方有实体支撑，避免悬空装饰
+- 当前尚未实现“洞穴内水体上方 dripleaf”分支；后续可在 Phase 9 水体装饰一起补到统一水生装饰逻辑里
+
 ---
 
 ## Phase 9: 水体装饰
@@ -158,6 +178,17 @@ struct ScaParams {
 - 灵泉深水区：kelp（海带），从底部向上生长 3-8 格
 - 所有水面：lily_pad 已有，增加覆盖率
 - 血谷低洼处：如有水面，放置 magma_block 产生气泡柱效果
+
+### 当前实现状态（2026-04）
+
+- 已在 `server/src/world/terrain/decoration.rs` 新增独立的 `decorate_water_column()`，将水体列装饰从陆地植被流程中拆出
+- 灵泉沼泽 `biome_id=2` 已接入：
+  - 浅水 `seagrass`
+  - 深水 `kelp` / `kelp_plant`
+  - 更高覆盖率的 `lily_pad`
+- 血谷裂谷 `biome_id=3` 已接入：在低洼水体底部按 `rift_axis_sdf + hash` 放置 `magma_block`
+- 这一步顺手修正了旧逻辑里 `lily_pad` 会被“地表上方必须为空气”的早期 `continue` 短路、导致水体列实际难以触发的问题
+- 当前尚未单独实现洞穴水面 `dripleaf`，后续若需要可作为 cave/water 交界装饰再补一层专门规则
 
 ---
 
@@ -183,6 +214,17 @@ bedrock                ← Y = min_y
 - `world_y <= -32`: DEEPSLATE
 - `world_y == bedrock_y`: BEDROCK
 
+### 当前实现状态（2026-04）
+
+- 已在 `server/src/world/terrain/column.rs` 落地绝对高度驱动的子表面分层，替代之前按列只选一个 `deep_block` 的粗粒度逻辑
+- 当前规则为：
+  - `world_y > 8`：`STONE`
+  - `-32 < world_y <= 8`：`STONE / DEEPSLATE` 确定性混合过渡
+  - `world_y <= -32`：`DEEPSLATE`
+  - `world_y == bedrock_y`：`BEDROCK`
+- 过渡带使用列级确定性 hash 做稳定混合，不依赖运行时随机数，因此同一位置重复生成结果一致
+- 已补最小单元测试，覆盖 `BEDROCK / STONE / DEEPSLATE` 关键边界以及过渡带稳定性
+
 ---
 
 ## Phase 11: 区域过渡平滑
@@ -199,6 +241,17 @@ smooth = t * t * (3.0 - 2.0 * t)  # smoothstep
 ```
 
 同时在 Rust `column.rs` 中，当 `boundary_weight` 在 0.1-0.9 范围时，对 `filler_depth` 做渐变。
+
+### 当前实现状态（2026-04）
+
+- 已在 `worldgen/scripts/terrain_gen/stitcher.py` 将 `boundary_weight` 的内外边界过渡统一抽到 `smoothstep`（Hermite）计算
+- `soft / semi_hard` 先前已部分使用平滑权重，这一步补齐了 `hard` 分支，使三种 boundary mode 的插值曲线统一走 Hermite 平滑
+- 已在 `server/src/world/terrain/column.rs` 接入 `boundary_weight` 驱动的 `filler_depth` 渐变：
+  - `boundary_weight < 0.1` 一侧更薄，偏 wilderness
+  - `boundary_weight > 0.9` 一侧保持 zone 内较厚填充
+  - `0.1..0.9` 之间按 `smoothstep` 渐变
+- 已补 `smoothstep` 的 Rust 单元测试，验证端点和中点行为
+- 验证结果：`server` 侧 `cargo test` 通过；`worldgen` 侧当前无 pytest 用例可跑，但 `python3 -m pytest` 启动正常、未发现导入级报错
 
 ---
 
@@ -219,6 +272,43 @@ smooth = t * t * (3.0 - 2.0 * t)  # smoothstep
 
 新建 `server/src/world/terrain/structures.rs`，类似 decoration 但处理多方块结构体。用 schematic 模板 + 随机旋转/变体。
 
+### 当前实现状态（2026-04）
+
+- 已新建 `server/src/world/terrain/structures.rs`，并在 chunk 生成流程中接入独立结构物装饰阶段
+- 当前已落地 4 个 runtime 结构：`废墟石柱`、`残破祭坛`、`灵石矿脉`、`古桥残骸`
+- 触发条件贴合现有荒原场：
+  - `biome_id == 6`（waste_plateau）
+  - `ruin_density / neg_pressure` 达到对应阈值
+  - 坡度较缓、无积水、边界权重不过高
+- `废墟石柱` 不是单根直柱，而是由以下部分组成：
+  - 2x2 / 3x3 基座
+  - 主柱残损立面
+  - 顶部破损冠块与少量飞檐阶梯
+  - 周边散落碎石 / 断壁 / 半砖
+- `残破祭坛` 当前实现为：
+  - 低阶平台 + 中央台座
+  - 破损角柱
+  - 中央禁制核心（`obsidian / crying_obsidian`）
+  - 少量蜡烛、黑石残块、外圈碎片
+- `灵石矿脉` 当前实现为：
+  - 山体外露矿核 / 矿壳
+  - `calcite / amethyst / budding_amethyst / emerald ore` 混合灵矿外观
+  - 多根灵晶尖塔与散落矿石
+  - 触发于 `broken_peaks` 高 `feature_mask` 区域
+- `古桥残骸` 当前实现为：
+  - 裂谷两端桥头残基
+  - 断裂桥面
+  - 少量栏杆/锁链残留
+  - basalt/blackstone 与木板混合的残桥材质
+  - 触发于 `rift_valley` 的 `rift_axis_sdf` 近边缘带
+- 两类结构当前分别使用不同材质族：
+  - 石柱：`stone_bricks / mossy_stone_bricks / cracked_stone_bricks / cobblestone / mossy_cobblestone`
+  - 祭坛：`polished_blackstone_bricks / cracked_polished_blackstone_bricks / chiseled_polished_blackstone / obsidian / crying_obsidian`
+- 另外两类结构当前材质族：
+  - 灵矿：`calcite / amethyst_block / budding_amethyst / emerald_ore / deepslate_emerald_ore`
+  - 桥残骸：`basalt / polished_basalt / blackstone / spruce_planks / dark_oak_planks / chain / iron_bars`
+- 当前仍属于 runtime 硬编码模板生成，尚未接入通用 schematic 资产系统；后续若继续做祭坛/古桥/矿脉，再抽象成更通用的结构框架
+
 ---
 
 ## Phase 13: 生物群系细化
@@ -235,6 +325,23 @@ smooth = t * t * (3.0 - 2.0 * t)  # smoothstep
 | 4 (spawn) | meadow / flower_forest | feature_mask 高低 |
 
 需要同时改 Python biome_id 分配和 Rust biome 映射。
+
+### 当前实现状态（2026-04）
+
+- 已扩展 raster `biome_palette`，不再只停留在原来的 7 个粗粒度 biome
+- 当前已实际细化 4 类主 biome：
+  - wilderness：`plains / forest / river`
+  - peaks：`stony_peaks / frozen_peaks`
+  - marsh：`swamp / mangrove_swamp`
+  - spawn：`meadow / flower_forest`
+- 当前细分规则：
+  - wilderness：按 `feature_mask / drainage`
+  - peaks：按 `height > 300`
+  - marsh：按浅水/低岛带
+  - spawn：按 `feature_mask`
+- `rift_valley / cave_network / waste_plateau` 当前仍保留原粒度 biome，未继续拆分
+- Rust 侧新增 biome family 兼容层，现有植被、巨树、结构物逻辑不再依赖单一 `biome_id == N`，而是按 biome 家族判断，因此细化后仍能保持既有玩法语义稳定
+- 验证结果：`server` 侧 `cargo test` 通过；`worldgen` 侧当前无 pytest 用例，`python3 -m pytest` 启动正常
 
 ---
 

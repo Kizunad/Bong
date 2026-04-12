@@ -16,11 +16,20 @@ BIOME_PALETTE = (
     "minecraft:meadow",
     "minecraft:dripstone_caves",
     "minecraft:desert",
+    "minecraft:forest",
+    "minecraft:river",
+    "minecraft:frozen_peaks",
+    "minecraft:mangrove_swamp",
+    "minecraft:flower_forest",
 )
 
 # Derived from the central LAYER_REGISTRY — no need to maintain separate lists.
-FLOAT_LAYERS = {name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "float32"}
-UINT8_LAYERS = {name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "uint8"}
+FLOAT_LAYERS = {
+    name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "float32"
+}
+UINT8_LAYERS = {
+    name for name, spec in LAYER_REGISTRY.items() if spec.export_type == "uint8"
+}
 
 
 def _layer_file_name(layer_name: str) -> str:

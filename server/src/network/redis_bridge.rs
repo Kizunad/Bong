@@ -313,11 +313,16 @@ async fn execute_outbound_command(
             .await
             {
                 Ok(Ok(list_len)) => {
-                    tracing::debug!("[bong][redis] pushed payload onto {key}; list length {list_len}");
+                    tracing::debug!(
+                        "[bong][redis] pushed payload onto {key}; list length {list_len}"
+                    );
                     Ok(())
                 }
                 Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
-                Err(_) => Err(format!("timed out RPUSH {key} after {:?}", REDIS_IO_TIMEOUT)),
+                Err(_) => Err(format!(
+                    "timed out RPUSH {key} after {:?}",
+                    REDIS_IO_TIMEOUT
+                )),
             }
         }
     }
@@ -524,7 +529,10 @@ async fn sleep_before_reconnect(
     tokio::time::sleep(schedule.delay).await;
 }
 
-fn parse_inbound_message(channel: &str, payload: &str) -> Result<Option<RedisInbound>, ValidationError> {
+fn parse_inbound_message(
+    channel: &str,
+    payload: &str,
+) -> Result<Option<RedisInbound>, ValidationError> {
     let value: Value = serde_json::from_str(payload)
         .map_err(|error| ValidationError::new(format!("invalid JSON payload: {error}")))?;
 
@@ -623,7 +631,9 @@ fn validate_command_value(value: &Value, index: usize) -> Result<(), ValidationE
 
     let params = expect_field(object, "params", context.as_str())?;
     if !params.is_object() {
-        return Err(ValidationError::new(format!("{context}.params must be an object")));
+        return Err(ValidationError::new(format!(
+            "{context}.params must be an object"
+        )));
     }
 
     Ok(())
@@ -645,7 +655,11 @@ fn validate_narration_value(value: &Value) -> Result<(), ValidationError> {
 fn validate_narration_entry(value: &Value, index: usize) -> Result<(), ValidationError> {
     let context = format!("NarrationV1.narrations[{index}]");
     let object = expect_object(value, context.as_str())?;
-    validate_known_keys(object, &["scope", "target", "text", "style"], context.as_str())?;
+    validate_known_keys(
+        object,
+        &["scope", "target", "text", "style"],
+        context.as_str(),
+    )?;
 
     let scope = expect_string_field(object, "scope", context.as_str())?;
     if !matches!(scope, "broadcast" | "zone" | "player") {
@@ -677,7 +691,10 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
     }
 
     let style = expect_string_field(object, "style", context.as_str())?;
-    if !matches!(style, "system_warning" | "perception" | "narration" | "era_decree") {
+    if !matches!(
+        style,
+        "system_warning" | "perception" | "narration" | "era_decree"
+    ) {
         return Err(ValidationError::new(format!(
             "{context}.style has unsupported value `{style}`"
         )));
@@ -837,9 +854,8 @@ mod redis_bridge_tests {
         assert!(parse_inbound_message(CH_AGENT_COMMAND, invalid_agent_command).is_err());
         assert!(parse_inbound_message(CH_AGENT_NARRATE, &invalid_narration).is_err());
 
-        let valid_agent_command = include_str!(
-            "../../../agent/packages/schema/samples/agent-command.sample.json"
-        );
+        let valid_agent_command =
+            include_str!("../../../agent/packages/schema/samples/agent-command.sample.json");
         assert!(matches!(
             parse_inbound_message(CH_AGENT_COMMAND, valid_agent_command)
                 .expect("valid command payload should pass"),

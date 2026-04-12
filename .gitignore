@@ -43,6 +43,8 @@ world/
 !server/src/world/**
 !docs/library/world/
 !docs/library/world/index.md
+data/players/
+litematics/
 
 # Node.js (Agent)
 node_modules/
@@ -59,3 +61,6 @@ __pycache__/
 
 #drafts
 local_images/
+
+# Local worldgen/Fabric runtime artifacts
+worldgen/worldgen-mofa/server/

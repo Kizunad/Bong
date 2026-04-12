@@ -44,7 +44,6 @@ def fill_waste_plateau_tile(
     gravel_id = palette.ensure("gravel")
     soul_sand_id = palette.ensure("soul_sand")
     bone_block_id = palette.ensure("bone_block")
-    bush_id = palette.ensure("dead_bush")
     plateau_biome_id = 6
 
     center_x, center_z = zone.center_xz
@@ -91,7 +90,7 @@ def fill_waste_plateau_tile(
     )
 
     surface_id = np.full_like(height, stone_id, dtype=np.int32)
-    surface_id = np.where(neg_pressure > 0.46, bush_id, surface_id)
+    surface_id = np.where(neg_pressure > 0.46, soul_sand_id, surface_id)
     surface_id = np.where(
         (fracture < -0.35) & (surface_id == stone_id),
         gravel_id,

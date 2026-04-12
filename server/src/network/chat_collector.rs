@@ -9,10 +9,17 @@ use valence::prelude::{
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use crate::npc::scenario::{PendingScenario, ScenarioType};
 use crate::player::gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction};
 use crate::schema::chat_message::ChatMessageV1;
 use crate::world::terrain::TerrainProvider;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+// TODO(dev-only): chat_collector 当前包含 dev 调试命令（/tp, /gm 等）和
+// 宽松的类型签名，clippy 警告已用 allow 抑制。生产环境需要：
+// 1. 拆分 dev 命令到独立模块并用 #[cfg(debug_assertions)] 门控
+// 2. 重构 classify_player_message 参数为结构体以消除 too_many_arguments
+// 3. 为 ParamSet 引入 type alias 以消除 type_complexity
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 const MAX_CHAT_MESSAGES_PER_PLAYER_PER_TICK: usize = 3;
@@ -24,6 +31,7 @@ pub struct ChatCollectorRateLimit {
 
 impl Resource for ChatCollectorRateLimit {}
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
@@ -35,6 +43,7 @@ pub fn collect_player_chat(
     mut events: EventReader<ChatMessageEvent>,
     mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
     mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
+    mut pending_scenario: Option<valence::prelude::ResMut<PendingScenario>>,
 ) {
     rate_limit.per_player_count.clear();
 
@@ -66,6 +75,7 @@ pub fn collect_player_chat(
             &zone_registry,
             terrain.as_deref(),
             &mut rate_limit,
+            pending_scenario.as_deref_mut(),
         ) else {
             continue;
         };
@@ -97,6 +107,7 @@ enum CollectedPlayerMessage {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_player_message(
     player_entity: Entity,
     message: &str,
@@ -106,6 +117,7 @@ fn classify_player_message(
     zone_registry: &ZoneRegistry,
     terrain: Option<&TerrainProvider>,
     rate_limit: &mut ChatCollectorRateLimit,
+    pending_scenario: Option<&mut PendingScenario>,
 ) -> Option<CollectedPlayerMessage> {
     let too_long = is_oversize_message(message);
     let over_budget = exceeds_rate_budget(player_entity, rate_limit);
@@ -114,11 +126,17 @@ fn classify_player_message(
         return None;
     }
 
-    let Some((username, position)) = player_info else {
-        return None;
-    };
+    let (username, position) = player_info?;
 
-    if try_handle_dev_command(player_entity, message, clients, zone_registry, terrain) {
+    if try_handle_dev_command(
+        player_entity,
+        message,
+        position,
+        clients,
+        zone_registry,
+        terrain,
+        pending_scenario,
+    ) {
         return None;
     }
 
@@ -177,9 +195,11 @@ fn parse_gameplay_action(message: &str) -> Option<GameplayAction> {
 fn try_handle_dev_command(
     player_entity: Entity,
     message: &str,
+    player_pos: DVec3,
     clients: &mut Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
     zone_registry: &ZoneRegistry,
     terrain: Option<&TerrainProvider>,
+    pending_scenario: Option<&mut PendingScenario>,
 ) -> bool {
     let trimmed = message.trim();
     if !trimmed.starts_with('!') {
@@ -243,6 +263,36 @@ fn try_handle_dev_command(
             }
             true
         }
+        "!tptree" => {
+            let Some(tree_name) = tokens.next() else {
+                client.send_chat_message("Usage: !tptree <spirit|dead>");
+                return true;
+            };
+            let zone_name = match tree_name {
+                "spirit" => "spawn",
+                "dead" => "north_wastes",
+                _ => {
+                    client.send_chat_message("Unknown tree. Use: spirit, dead");
+                    return true;
+                }
+            };
+            let Some(zone) = zone_registry.find_zone_by_name(zone_name) else {
+                client.send_chat_message("Zone not found.");
+                return true;
+            };
+            let center = zone.center();
+            let target_y = if let Some(terrain) = terrain {
+                let sample = terrain.sample(center.x.floor() as i32, center.z.floor() as i32);
+                sample.height.round() as f64 + 40.0
+            } else {
+                center.y + 60.0
+            };
+            position.set([center.x, target_y, center.z]);
+            client.send_chat_message(format!(
+                "Teleported above {tree_name} tree zone (`{zone_name}`)."
+            ));
+            true
+        }
         "!tpzone" => {
             let Some(zone_name) = tokens.next() else {
                 client.send_chat_message(
@@ -269,6 +319,27 @@ fn try_handle_dev_command(
                 .collect::<Vec<_>>()
                 .join(", ");
             client.send_chat_message(format!("Zones: {names}"));
+            true
+        }
+        "!npc_scenario" | "!scenario" => {
+            let Some(scenario_name) = tokens.next() else {
+                client.send_chat_message(
+                    "Usage: !npc_scenario <chase|flee|fight|kite|swarm|duel|clear>",
+                );
+                return true;
+            };
+            let Some(scenario_type) = ScenarioType::from_str(scenario_name) else {
+                client.send_chat_message(
+                    "Unknown scenario. Options: chase, flee, fight, kite, swarm, duel, clear",
+                );
+                return true;
+            };
+            if let Some(ps) = pending_scenario {
+                ps.request = Some((scenario_type, player_pos));
+                client.send_chat_message(format!("Scenario `{scenario_name}` queued."));
+            } else {
+                client.send_chat_message("Scenario system not available.");
+            }
             true
         }
         _ => false,

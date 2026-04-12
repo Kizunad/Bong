@@ -80,7 +80,7 @@ def sample_wilderness_point(world_x: int, world_z: int) -> dict[str, float | int
         "surface_name": surface_name,
         "subsurface_name": "stone",
         "water_level": -1.0,
-        "biome_id": 0,
+        "biome_id": 8 if drainage < 0.09 else (7 if feature_mask > 0.2 else 0),
         "feature_mask": round(feature_mask, 3),
         "boundary_weight": 0.0,
     }
@@ -141,11 +141,15 @@ def fill_wilderness_tile(
     surface_id = np.where(roughness < 0.07, coarse_dirt_id, surface_id)
     surface_id = np.where((drainage < 0.06) | (scar > 0.84), gravel_id, surface_id)
 
+    biome_id = np.full_like(height, 0, dtype=np.int32)
+    biome_id = np.where(feature_mask > 0.2, 7, biome_id)
+    biome_id = np.where(drainage < 0.09, 8, biome_id)
+
     buffer.layers["height"] = np.round(height, 3).ravel().tolist()
     buffer.layers["surface_id"] = surface_id.ravel().tolist()
     buffer.layers["subsurface_id"] = [stone_id] * (tile_size * tile_size)
     buffer.layers["water_level"] = [-1.0] * (tile_size * tile_size)
-    buffer.layers["biome_id"] = [0] * (tile_size * tile_size)
+    buffer.layers["biome_id"] = biome_id.ravel().tolist()
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
     buffer.layers["boundary_weight"] = [0.0] * (tile_size * tile_size)
 

@@ -7,20 +7,20 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_bridge::{
-    payload_type_label, route_recipient_indices, serialize_server_data_payload,
-    AgentCommand, GameEvent, NetworkBridgeResource, PayloadBuildError, RecipientMetadata,
-    RecipientSelector, SERVER_DATA_CHANNEL,
+    payload_type_label, route_recipient_indices, serialize_server_data_payload, AgentCommand,
+    GameEvent, NetworkBridgeResource, PayloadBuildError, RecipientMetadata, RecipientSelector,
+    SERVER_DATA_CHANNEL,
 };
 use big_brain::prelude::{ActionState, Actor};
 use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Entity, EntityKind, IntoSystemConfigs, Or, Position,
-    Query, Res, Resource, Update, Username, With,
+    ident, Added, App, Changed, Client, Entity, EntityKind, IntoSystemConfigs, Or, Position, Query,
+    Res, Resource, Update, Username, With,
 };
 
-use crate::npc::brain::{canonical_npc_id, FleeAction};
+use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -185,6 +185,7 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 }
 
 /// Periodically publish world state snapshot to Redis
+#[allow(clippy::too_many_arguments)]
 fn publish_world_state_to_redis(
     redis: Res<RedisBridgeResource>,
     mut timer: valence::prelude::ResMut<WorldStateTimer>,
@@ -193,11 +194,24 @@ fn publish_world_state_to_redis(
     active_events: Option<Res<ActiveEventsResource>>,
     npcs: Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
     flee_actions: Query<(&Actor, &ActionState), With<FleeAction>>,
+    chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
+    melee_actions: Query<(&Actor, &ActionState), With<MeleeAttackAction>>,
+    dash_actions: Query<(&Actor, &ActionState), With<DashAction>>,
 ) {
     timer.ticks += 1;
-    if !timer.ticks.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
+    if !timer
+        .ticks
+        .is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS)
+    {
         return;
     }
+
+    let npc_action_states = collect_npc_action_states(
+        &flee_actions,
+        &chase_actions,
+        &melee_actions,
+        &dash_actions,
+    );
 
     let state = build_world_state_snapshot(
         current_unix_timestamp_secs(),
@@ -206,7 +220,7 @@ fn publish_world_state_to_redis(
         zone_registry.as_deref(),
         active_events.as_deref(),
         &npcs,
-        &flee_actions,
+        &npc_action_states,
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
@@ -219,7 +233,7 @@ fn build_world_state_snapshot(
     zone_registry: Option<&ZoneRegistry>,
     active_events: Option<&ActiveEventsResource>,
     npcs: &Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
-    flee_actions: &Query<(&Actor, &ActionState), With<FleeAction>>,
+    npc_action_states: &HashMap<Entity, NpcStateKind>,
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) =
@@ -230,7 +244,7 @@ fn build_world_state_snapshot(
         ts,
         tick,
         players,
-        npcs: collect_npc_snapshots(npcs, flee_actions, &player_ids_by_entity),
+        npcs: collect_npc_snapshots(npcs, npc_action_states, &player_ids_by_entity),
         zones: collect_zone_snapshots(&zone_registry, &player_counts_by_zone),
         recent_events: active_events
             .map(ActiveEventsResource::recent_events_snapshot)
@@ -322,7 +336,11 @@ fn emit_gameplay_narrations(
         return;
     }
 
-    process_agent_narrations(&mut clients, zone_registry.as_deref(), narrations.as_slice());
+    process_agent_narrations(
+        &mut clients,
+        zone_registry.as_deref(),
+        narrations.as_slice(),
+    );
 }
 
 fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry {
@@ -335,7 +353,11 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
 fn collect_player_snapshots(
     clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
     zone_registry: &ZoneRegistry,
-) -> (Vec<PlayerProfile>, HashMap<Entity, String>, HashMap<String, u32>) {
+) -> (
+    Vec<PlayerProfile>,
+    HashMap<Entity, String>,
+    HashMap<String, u32>,
+) {
     let mut player_ids_by_entity = HashMap::new();
     let mut player_counts_by_zone = HashMap::new();
 
@@ -389,10 +411,9 @@ fn collect_player_snapshots(
 
 fn collect_npc_snapshots(
     npcs: &Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
-    flee_actions: &Query<(&Actor, &ActionState), With<FleeAction>>,
+    npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
 ) -> Vec<NpcSnapshot> {
-    let fleeing_npcs = collect_fleeing_npcs(flee_actions);
 
     let mut npc_snapshots = npcs
         .iter()
@@ -400,7 +421,10 @@ fn collect_npc_snapshots(
             id: canonical_npc_id(entity),
             kind: format!("{kind:?}"),
             pos: vec3_to_array(position.get()),
-            state: infer_npc_state(entity, &fleeing_npcs),
+            state: npc_action_states
+                .get(&entity)
+                .cloned()
+                .unwrap_or(NpcStateKind::Idle),
             blackboard: build_npc_blackboard(blackboard, player_ids_by_entity),
         })
         .collect::<Vec<_>>();
@@ -434,27 +458,37 @@ fn collect_zone_snapshots(
     zones
 }
 
-fn collect_fleeing_npcs(
+fn collect_npc_action_states(
     flee_actions: &Query<(&Actor, &ActionState), With<FleeAction>>,
-) -> HashSet<Entity> {
-    flee_actions
-        .iter()
-        .filter_map(|(actor, action_state)| match action_state {
-            ActionState::Requested | ActionState::Executing => Some(actor.0),
-            ActionState::Init
-            | ActionState::Cancelled
-            | ActionState::Success
-            | ActionState::Failure => None,
-        })
-        .collect()
-}
+    chase_actions: &Query<(&Actor, &ActionState), With<ChaseAction>>,
+    melee_actions: &Query<(&Actor, &ActionState), With<MeleeAttackAction>>,
+    dash_actions: &Query<(&Actor, &ActionState), With<DashAction>>,
+) -> HashMap<Entity, NpcStateKind> {
+    let mut states = HashMap::new();
 
-fn infer_npc_state(entity: Entity, fleeing_npcs: &HashSet<Entity>) -> NpcStateKind {
-    if fleeing_npcs.contains(&entity) {
-        NpcStateKind::Fleeing
-    } else {
-        NpcStateKind::Idle
+    // Lower priority first, higher priority overwrites.
+    for (Actor(entity), action_state) in chase_actions.iter() {
+        if matches!(action_state, ActionState::Executing) {
+            states.insert(*entity, NpcStateKind::Patrolling);
+        }
     }
+    for (Actor(entity), action_state) in flee_actions.iter() {
+        if matches!(action_state, ActionState::Executing) {
+            states.insert(*entity, NpcStateKind::Fleeing);
+        }
+    }
+    for (Actor(entity), action_state) in dash_actions.iter() {
+        if matches!(action_state, ActionState::Executing) {
+            states.insert(*entity, NpcStateKind::Attacking);
+        }
+    }
+    for (Actor(entity), action_state) in melee_actions.iter() {
+        if matches!(action_state, ActionState::Executing) {
+            states.insert(*entity, NpcStateKind::Attacking);
+        }
+    }
+
+    states
 }
 
 fn build_npc_blackboard(
@@ -475,7 +509,10 @@ fn build_npc_blackboard(
     snapshot
 }
 
-fn zone_name_for_position(zone_registry: &ZoneRegistry, position: valence::prelude::DVec3) -> String {
+fn zone_name_for_position(
+    zone_registry: &ZoneRegistry,
+    position: valence::prelude::DVec3,
+) -> String {
     zone_registry
         .find_zone(position)
         .map(|zone| zone.name.clone())
@@ -511,7 +548,8 @@ fn emit_player_state_payloads(
 
     for (entity, mut client, username, position, player_state) in &mut clients {
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let payload = player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+        let payload =
+            player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(payload) => payload,
@@ -647,9 +685,7 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
         _ => "异变",
     };
 
-    format!(
-        "{event_label}已在区域 {zone_name} 触发，预计持续 {duration_ticks} tick。"
-    )
+    format!("{event_label}已在区域 {zone_name} 触发，预计持续 {duration_ticks} tick。")
 }
 
 /// Process inbound messages from Redis (agent commands + narrations)
@@ -1084,7 +1120,10 @@ mod tests {
             assert_eq!(alice.pos, [8.0, 66.0, 8.0]);
             assert_eq!(bob.pos, [12.5, 66.0, 9.25]);
             assert!(
-                state.players.iter().all(|player| !player.name.starts_with("Player")),
+                state
+                    .players
+                    .iter()
+                    .all(|player| !player.name.starts_with("Player")),
                 "placeholder Player{{i}} names should not be emitted once real usernames exist"
             );
         }
@@ -1143,13 +1182,19 @@ mod tests {
             assert_eq!(player.zone, DEFAULT_SPAWN_ZONE_NAME);
             assert_eq!(npc.id, canonical_npc_id(npc_entity));
             assert_eq!(npc.id, expected_npc_id);
-            assert!(npc.id.contains('v'), "NPC canonical ids must include entity generation");
+            assert!(
+                npc.id.contains('v'),
+                "NPC canonical ids must include entity generation"
+            );
             assert_eq!(
                 npc.blackboard.get("nearest_player"),
                 Some(&serde_json::Value::String("offline:Azure".to_string()))
             );
             assert!(
-                state.players.iter().all(|player| !player.uuid.contains("player_")),
+                state
+                    .players
+                    .iter()
+                    .all(|player| !player.uuid.contains("player_")),
                 "canonical player ids must be offline:{{username}}, not offline:player_{{i}}"
             );
         }
@@ -1159,14 +1204,16 @@ mod tests {
             let (mut app, rx_outbound) = setup_publish_app(true);
             let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
 
-            app.world_mut().entity_mut(player_entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.2,
-                experience: 1_200,
-                inventory_score: 0.4,
-            });
+            app.world_mut()
+                .entity_mut(player_entity)
+                .insert(PlayerState {
+                    realm: "qi_refining_3".to_string(),
+                    spirit_qi: 78.0,
+                    spirit_qi_max: 100.0,
+                    karma: 0.2,
+                    experience: 1_200,
+                    inventory_score: 0.4,
+                });
 
             let state = publish_once(&mut app, &rx_outbound);
             let player = state
@@ -1190,13 +1237,13 @@ mod tests {
 
     mod narration_tests {
         use super::*;
-    use crate::schema::common::{NarrationScope, NarrationStyle};
-    use crate::schema::narration::{Narration, NarrationV1};
-    use crate::world::zone::Zone;
-    use crossbeam_channel::Sender;
-    use valence::prelude::DVec3;
-    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
-    use valence::testing::MockClientHelper;
+        use crate::schema::common::{NarrationScope, NarrationStyle};
+        use crate::schema::narration::{Narration, NarrationV1};
+        use crate::world::zone::Zone;
+        use crossbeam_channel::Sender;
+        use valence::prelude::DVec3;
+        use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
+        use valence::testing::MockClientHelper;
 
         fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
             let (tx_outbound, _rx_outbound) = unbounded();
@@ -1263,7 +1310,7 @@ mod tests {
                     continue;
                 }
 
-                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0.0)
+                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
                     .expect("typed custom payload should decode as ServerDataV1 JSON");
 
                 if matches!(payload.payload, ServerDataPayloadV1::Narration { .. }) {
@@ -1284,7 +1331,11 @@ mod tests {
         }
 
         fn assert_single_narration_payload(payloads: &[ServerDataV1], expected_text: &str) {
-            assert_eq!(payloads.len(), 1, "expected exactly one typed narration payload");
+            assert_eq!(
+                payloads.len(),
+                1,
+                "expected exactly one typed narration payload"
+            );
 
             match &payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => {
@@ -1380,9 +1431,15 @@ mod tests {
                 alice_payloads.is_empty(),
                 "spawn zone player should not receive blood_valley scoped narration"
             );
-            assert_eq!(alice_chat_packets, 0, "zone-scoped narration should not mirror chat packets");
+            assert_eq!(
+                alice_chat_packets, 0,
+                "zone-scoped narration should not mirror chat packets"
+            );
             assert_single_narration_payload(bob_payloads.as_slice(), "血谷雷云聚集。");
-            assert_eq!(bob_chat_packets, 0, "zone-scoped narration should not mirror chat packets");
+            assert_eq!(
+                bob_chat_packets, 0,
+                "zone-scoped narration should not mirror chat packets"
+            );
         }
 
         #[test]
@@ -1412,9 +1469,18 @@ mod tests {
             let alex_chat_packets = collect_game_message_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_plain.as_slice(), "第一段单人叙事。");
-            assert!(alex_plain.is_empty(), "non-targeted player must not receive payload");
-            assert_eq!(steve_chat_packets, 0, "player-scoped narration should not mirror chat packets");
-            assert_eq!(alex_chat_packets, 0, "non-targeted player must not receive chat packets");
+            assert!(
+                alex_plain.is_empty(),
+                "non-targeted player must not receive payload"
+            );
+            assert_eq!(
+                steve_chat_packets, 0,
+                "player-scoped narration should not mirror chat packets"
+            );
+            assert_eq!(
+                alex_chat_packets, 0,
+                "non-targeted player must not receive chat packets"
+            );
 
             enqueue_single_narration(
                 &tx_inbound,
@@ -1435,9 +1501,18 @@ mod tests {
             let alex_alias_chat_packets = collect_game_message_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_alias.as_slice(), "第二段单人叙事。");
-            assert!(alex_alias.is_empty(), "non-targeted player must not receive payload");
-            assert_eq!(steve_alias_chat_packets, 0, "player-scoped narration should not mirror chat packets");
-            assert_eq!(alex_alias_chat_packets, 0, "non-targeted player must not receive chat packets");
+            assert!(
+                alex_alias.is_empty(),
+                "non-targeted player must not receive payload"
+            );
+            assert_eq!(
+                steve_alias_chat_packets, 0,
+                "player-scoped narration should not mirror chat packets"
+            );
+            assert_eq!(
+                alex_alias_chat_packets, 0,
+                "non-targeted player must not receive chat packets"
+            );
         }
 
         #[test]
@@ -1470,12 +1545,18 @@ mod tests {
                 alice_payloads.is_empty(),
                 "missing player target should not leak payload to Alice"
             );
-            assert_eq!(alice_chat_packets, 0, "missing player target should not leak chat packets to Alice");
+            assert_eq!(
+                alice_chat_packets, 0,
+                "missing player target should not leak chat packets to Alice"
+            );
             assert!(
                 bob_payloads.is_empty(),
                 "missing player target should not leak payload to Bob"
             );
-            assert_eq!(bob_chat_packets, 0, "missing player target should not leak chat packets to Bob");
+            assert_eq!(
+                bob_chat_packets, 0,
+                "missing player target should not leak chat packets to Bob"
+            );
         }
 
         #[test]
@@ -1553,7 +1634,7 @@ mod tests {
                     continue;
                 }
 
-                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0.0)
+                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
                     .expect("typed payload should decode as ServerDataV1");
 
                 if matches!(payload.payload, ServerDataPayloadV1::ZoneInfo { .. }) {
@@ -1593,13 +1674,18 @@ mod tests {
             };
 
             let mut app = setup_zone_transition_app(zone_registry);
-            let (entity, mut helper) = spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
 
             app.update();
             flush_all_client_packets(&mut app);
 
             let first_payloads = collect_zone_info_payloads(&mut helper);
-            assert_eq!(first_payloads.len(), 1, "first zone snapshot should be sent on initial track");
+            assert_eq!(
+                first_payloads.len(),
+                1,
+                "first zone snapshot should be sent on initial track"
+            );
 
             match &first_payloads[0].payload {
                 ServerDataPayloadV1::ZoneInfo {
@@ -1628,7 +1714,11 @@ mod tests {
             flush_all_client_packets(&mut app);
 
             let second_payloads = collect_zone_info_payloads(&mut helper);
-            assert_eq!(second_payloads.len(), 1, "transition should emit exactly one zone_info payload");
+            assert_eq!(
+                second_payloads.len(),
+                1,
+                "transition should emit exactly one zone_info payload"
+            );
 
             match &second_payloads[0].payload {
                 ServerDataPayloadV1::ZoneInfo {
@@ -1665,7 +1755,10 @@ mod tests {
         fn emit_player_state_payloads_periodically_without_change(
             zone_registry: Option<Res<ZoneRegistry>>,
             mut tick_counter: valence::prelude::Local<u64>,
-            mut clients: Query<(Entity, &mut Client, &Username, &Position, &PlayerState), With<Client>>,
+            mut clients: Query<
+                (Entity, &mut Client, &Username, &Position, &PlayerState),
+                With<Client>,
+            >,
         ) {
             *tick_counter += 1;
             if !tick_counter.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
@@ -1676,7 +1769,8 @@ mod tests {
 
             for (entity, mut client, username, position, player_state) in &mut clients {
                 let zone_name = zone_name_for_position(&zone_registry, position.get());
-                let payload = player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+                let payload = player_state
+                    .server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {
                     Ok(payload) => payload,
@@ -1736,7 +1830,7 @@ mod tests {
                     continue;
                 }
 
-                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0.0)
+                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
                     .expect("typed payload should decode as ServerDataV1");
 
                 if matches!(payload.payload, ServerDataPayloadV1::PlayerState { .. }) {
@@ -1766,7 +1860,11 @@ mod tests {
             flush_all_client_packets(&mut app);
 
             let first_payloads = collect_player_state_payloads(&mut helper);
-            assert_eq!(first_payloads.len(), 1, "join/attach should emit one player_state payload");
+            assert_eq!(
+                first_payloads.len(),
+                1,
+                "join/attach should emit one player_state payload"
+            );
 
             match &first_payloads[0].payload {
                 ServerDataPayloadV1::PlayerState {
@@ -1796,7 +1894,11 @@ mod tests {
             flush_all_client_packets(&mut app);
 
             let second_payloads = collect_player_state_payloads(&mut helper);
-            assert_eq!(second_payloads.len(), 1, "PlayerState change should emit exactly one payload");
+            assert_eq!(
+                second_payloads.len(),
+                1,
+                "PlayerState change should emit exactly one payload"
+            );
 
             match &second_payloads[0].payload {
                 ServerDataPayloadV1::PlayerState { spirit_qi, .. } => {
@@ -1814,14 +1916,16 @@ mod tests {
             let (_bob_entity, mut bob_helper) =
                 spawn_test_client_with_helper(&mut app, "Bob", [20.0, 66.0, 20.0]);
 
-            app.world_mut().entity_mut(azure_entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.2,
-                experience: 1_200,
-                inventory_score: 0.4,
-            });
+            app.world_mut()
+                .entity_mut(azure_entity)
+                .insert(PlayerState {
+                    realm: "qi_refining_3".to_string(),
+                    spirit_qi: 78.0,
+                    spirit_qi_max: 100.0,
+                    karma: 0.2,
+                    experience: 1_200,
+                    inventory_score: 0.4,
+                });
             app.world_mut().entity_mut(_bob_entity).insert(PlayerState {
                 realm: "mortal".to_string(),
                 spirit_qi: 0.0,
@@ -1865,9 +1969,13 @@ mod tests {
         fn player_state_periodic_emission_happens_without_component_change() {
             let mut app = App::new();
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, emit_player_state_payloads_periodically_without_change);
+            app.add_systems(
+                Update,
+                emit_player_state_payloads_periodically_without_change,
+            );
 
-            let (entity, mut helper) = spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
             app.world_mut().entity_mut(entity).insert(PlayerState {
                 realm: "qi_refining_3".to_string(),
                 spirit_qi: 78.0,
@@ -1903,10 +2011,17 @@ mod tests {
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
-        fn spawn_event_command(target: &str, event: &str, duration_ticks: u64) -> crate::schema::agent_command::Command {
+        fn spawn_event_command(
+            target: &str,
+            event: &str,
+            duration_ticks: u64,
+        ) -> crate::schema::agent_command::Command {
             let mut params = HashMap::new();
             params.insert("event".to_string(), serde_json::json!(event));
-            params.insert("duration_ticks".to_string(), serde_json::json!(duration_ticks));
+            params.insert(
+                "duration_ticks".to_string(),
+                serde_json::json!(duration_ticks),
+            );
 
             crate::schema::agent_command::Command {
                 command_type: crate::schema::common::CommandType::SpawnEvent,
@@ -1955,7 +2070,7 @@ mod tests {
                     continue;
                 }
 
-                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0.0)
+                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
                     .expect("typed payload should decode as ServerDataV1");
 
                 if matches!(payload.payload, ServerDataPayloadV1::EventAlert { .. }) {
@@ -1969,7 +2084,8 @@ mod tests {
         #[test]
         fn emits_event_alert_on_major_event() {
             let mut app = setup_event_alert_app();
-            let (_entity, mut helper) = spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
 
             {
                 let world = app.world_mut();
@@ -1985,7 +2101,11 @@ mod tests {
             flush_all_client_packets(&mut app);
 
             let payloads = collect_event_alert_payloads(&mut helper);
-            assert_eq!(payloads.len(), 1, "major event enqueue should emit one event_alert payload");
+            assert_eq!(
+                payloads.len(),
+                1,
+                "major event enqueue should emit one event_alert payload"
+            );
 
             match &payloads[0].payload {
                 ServerDataPayloadV1::EventAlert {
@@ -2015,7 +2135,7 @@ mod tests {
     mod gameplay_tests {
         use super::*;
         use crate::player::gameplay::{
-            CombatAction, GatherAction, GameplayAction, GameplayActionQueue, GameplayTick,
+            CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
         };
         use crate::world::events::ActiveEventsResource;
@@ -2044,9 +2164,12 @@ mod tests {
                 Update,
                 (
                     crate::player::gameplay::apply_queued_gameplay_actions,
-                    emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
-                    emit_player_state_payloads.after(crate::player::gameplay::apply_queued_gameplay_actions),
-                    publish_world_state_to_redis.after(crate::player::gameplay::apply_queued_gameplay_actions),
+                    emit_gameplay_narrations
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                    emit_player_state_payloads
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                    publish_world_state_to_redis
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
                 ),
             );
 
@@ -2088,7 +2211,7 @@ mod tests {
                 }
 
                 payloads.push(
-                    serde_json::from_slice(packet.data.0.0)
+                    serde_json::from_slice(packet.data.0 .0)
                         .expect("typed payload should decode as ServerDataV1"),
                 );
             }
@@ -2099,7 +2222,9 @@ mod tests {
         fn extract_player_state_payloads(payloads: &[ServerDataV1]) -> Vec<&ServerDataV1> {
             payloads
                 .iter()
-                .filter(|payload| matches!(payload.payload, ServerDataPayloadV1::PlayerState { .. }))
+                .filter(|payload| {
+                    matches!(payload.payload, ServerDataPayloadV1::PlayerState { .. })
+                })
                 .collect()
         }
 
@@ -2155,8 +2280,16 @@ mod tests {
             let payloads = collect_server_data_payloads(&mut helper);
             let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
             let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(player_state_payloads.len(), 1, "combat should emit one player_state payload");
-            assert_eq!(narration_payloads.len(), 1, "combat should emit one narration payload");
+            assert_eq!(
+                player_state_payloads.len(),
+                1,
+                "combat should emit one player_state payload"
+            );
+            assert_eq!(
+                narration_payloads.len(),
+                1,
+                "combat should emit one narration payload"
+            );
 
             match &player_state_payloads[0].payload {
                 ServerDataPayloadV1::PlayerState {
@@ -2175,7 +2308,10 @@ mod tests {
             match &narration_payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => {
                     assert_eq!(narrations.len(), 1);
-                    assert_eq!(narrations[0].style, crate::schema::common::NarrationStyle::Perception);
+                    assert_eq!(
+                        narrations[0].style,
+                        crate::schema::common::NarrationStyle::Perception
+                    );
                     assert!(narrations[0].text.contains("rogue_boar"));
                 }
                 other => panic!("expected narration payload, got {other:?}"),
@@ -2183,12 +2319,21 @@ mod tests {
 
             let world_state = dequeue_world_state(&rx_outbound);
             assert_eq!(world_state.recent_events.len(), 1);
-            assert_eq!(world_state.recent_events[0].event_type, crate::schema::common::GameEventType::PlayerKillNpc);
-            assert_eq!(world_state.recent_events[0].target.as_deref(), Some("rogue_boar"));
+            assert_eq!(
+                world_state.recent_events[0].event_type,
+                crate::schema::common::GameEventType::PlayerKillNpc
+            );
+            assert_eq!(
+                world_state.recent_events[0].target.as_deref(),
+                Some("rogue_boar")
+            );
 
             {
                 let world = app.world_mut();
-                let player_state = world.entity(entity).get::<PlayerState>().expect("player state should remain attached after combat");
+                let player_state = world
+                    .entity(entity)
+                    .get::<PlayerState>()
+                    .expect("player state should remain attached after combat");
                 assert_eq!(player_state.spirit_qi, 44.0);
                 assert_eq!(player_state.experience, 320);
                 assert_approx_eq(player_state.inventory_score, 0.15);
@@ -2213,13 +2358,21 @@ mod tests {
                 "dead target rejection should not emit a new player_state payload"
             );
             let invalid_narrations = extract_narration_payloads(invalid_payloads.as_slice());
-            assert_eq!(invalid_narrations.len(), 1, "dead target rejection should narrate safe rejection");
+            assert_eq!(
+                invalid_narrations.len(),
+                1,
+                "dead target rejection should narrate safe rejection"
+            );
 
             let recent_events = app
                 .world()
                 .resource::<ActiveEventsResource>()
                 .recent_events_snapshot();
-            assert_eq!(recent_events.len(), 1, "dead target rejection must not append a gameplay event");
+            assert_eq!(
+                recent_events.len(),
+                1,
+                "dead target rejection must not append a gameplay event"
+            );
         }
 
         #[test]
@@ -2254,8 +2407,16 @@ mod tests {
             let payloads = collect_server_data_payloads(&mut helper);
             let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
             let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(player_state_payloads.len(), 1, "gathering should emit one player_state payload");
-            assert_eq!(narration_payloads.len(), 1, "gathering should emit one narration payload");
+            assert_eq!(
+                player_state_payloads.len(),
+                1,
+                "gathering should emit one player_state payload"
+            );
+            assert_eq!(
+                narration_payloads.len(),
+                1,
+                "gathering should emit one narration payload"
+            );
 
             match &player_state_payloads[0].payload {
                 ServerDataPayloadV1::PlayerState {
@@ -2273,12 +2434,21 @@ mod tests {
 
             let world_state = dequeue_world_state(&rx_outbound);
             assert_eq!(world_state.recent_events.len(), 1);
-            assert_eq!(world_state.recent_events[0].event_type, crate::schema::common::GameEventType::ZoneQiChange);
-            assert_eq!(world_state.recent_events[0].target.as_deref(), Some("spirit_herb"));
+            assert_eq!(
+                world_state.recent_events[0].event_type,
+                crate::schema::common::GameEventType::ZoneQiChange
+            );
+            assert_eq!(
+                world_state.recent_events[0].target.as_deref(),
+                Some("spirit_herb")
+            );
 
             {
                 let world = app.world_mut();
-                let player_state = world.entity(entity).get::<PlayerState>().expect("player state should remain attached after gathering");
+                let player_state = world
+                    .entity(entity)
+                    .get::<PlayerState>()
+                    .expect("player state should remain attached after gathering");
                 assert_eq!(player_state.spirit_qi, 34.0);
                 assert_eq!(player_state.experience, 100);
                 assert_approx_eq(player_state.inventory_score, 0.12);
@@ -2313,8 +2483,16 @@ mod tests {
             let payloads = collect_server_data_payloads(&mut helper);
             let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
             let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(player_state_payloads.len(), 1, "breakthrough should emit one player_state payload");
-            assert_eq!(narration_payloads.len(), 1, "breakthrough should emit one narration payload");
+            assert_eq!(
+                player_state_payloads.len(),
+                1,
+                "breakthrough should emit one player_state payload"
+            );
+            assert_eq!(
+                narration_payloads.len(),
+                1,
+                "breakthrough should emit one narration payload"
+            );
 
             match &player_state_payloads[0].payload {
                 ServerDataPayloadV1::PlayerState {
@@ -2332,7 +2510,10 @@ mod tests {
 
             match &narration_payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(narrations[0].style, crate::schema::common::NarrationStyle::SystemWarning);
+                    assert_eq!(
+                        narrations[0].style,
+                        crate::schema::common::NarrationStyle::SystemWarning
+                    );
                     assert!(narrations[0].text.contains("炼气一层"));
                 }
                 other => panic!("expected narration payload, got {other:?}"),
@@ -2340,12 +2521,21 @@ mod tests {
 
             let world_state = dequeue_world_state(&rx_outbound);
             assert_eq!(world_state.recent_events.len(), 1);
-            assert_eq!(world_state.recent_events[0].event_type, crate::schema::common::GameEventType::EventTriggered);
-            assert_eq!(world_state.recent_events[0].target.as_deref(), Some("qi_refining_1"));
+            assert_eq!(
+                world_state.recent_events[0].event_type,
+                crate::schema::common::GameEventType::EventTriggered
+            );
+            assert_eq!(
+                world_state.recent_events[0].target.as_deref(),
+                Some("qi_refining_1")
+            );
 
             {
                 let world = app.world_mut();
-                let player_state = world.entity(entity).get::<PlayerState>().expect("player state should remain attached after breakthrough");
+                let player_state = world
+                    .entity(entity)
+                    .get::<PlayerState>()
+                    .expect("player state should remain attached after breakthrough");
                 assert_eq!(player_state.realm, "qi_refining_1");
                 assert_eq!(player_state.spirit_qi, 120.0);
                 assert_eq!(player_state.spirit_qi_max, 120.0);
@@ -2377,7 +2567,11 @@ mod tests {
                 .world()
                 .resource::<ActiveEventsResource>()
                 .recent_events_snapshot();
-            assert_eq!(recent_events.len(), 1, "failed breakthrough should not append a new recent event");
+            assert_eq!(
+                recent_events.len(),
+                1,
+                "failed breakthrough should not append a new recent event"
+            );
         }
 
         #[test]
@@ -2422,12 +2616,19 @@ mod tests {
             );
 
             let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(narration_payloads.len(), 1, "invalid karma rejection should still emit warning narration");
+            assert_eq!(
+                narration_payloads.len(),
+                1,
+                "invalid karma rejection should still emit warning narration"
+            );
 
             match &narration_payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => {
                     assert_eq!(narrations.len(), 1);
-                    assert_eq!(narrations[0].style, crate::schema::common::NarrationStyle::SystemWarning);
+                    assert_eq!(
+                        narrations[0].style,
+                        crate::schema::common::NarrationStyle::SystemWarning
+                    );
                     assert!(
                         narrations[0].text.contains("心境") || narrations[0].text.contains("因果"),
                         "karma rejection text should mention karma/心境 semantics"

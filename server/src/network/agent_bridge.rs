@@ -2,9 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::{thread, time::Duration};
 use valence::prelude::Resource;
 
-use crate::schema::server_data::{
-    ServerDataBuildError, ServerDataType, ServerDataV1,
-};
+use crate::schema::server_data::{ServerDataBuildError, ServerDataType, ServerDataV1};
 
 pub const SERVER_DATA_CHANNEL: &str = "bong:server_data";
 
@@ -121,7 +119,9 @@ pub fn route_recipient_indices(
             recipients
                 .iter()
                 .enumerate()
-                .filter_map(|(index, recipient)| matches_zone(zone_name, recipient).then_some(index))
+                .filter_map(|(index, recipient)| {
+                    matches_zone(zone_name, recipient).then_some(index)
+                })
                 .collect()
         }
     }
@@ -177,7 +177,7 @@ fn strip_offline_alias_prefix(value: &str) -> &str {
 #[cfg(test)]
 mod server_data_tests {
     use super::*;
-    use crate::schema::common::{EventKind, MAX_PAYLOAD_BYTES, NarrationScope, NarrationStyle};
+    use crate::schema::common::{EventKind, NarrationScope, NarrationStyle, MAX_PAYLOAD_BYTES};
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
         ServerDataPayloadV1, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION, WELCOME_MESSAGE,
@@ -374,8 +374,11 @@ mod server_data_tests {
 
         let alex_plain =
             route_recipient_indices(&RecipientSelector::player("Alex"), &recipients, None);
-        let alex_alias =
-            route_recipient_indices(&RecipientSelector::player("offline:Alex"), &recipients, None);
+        let alex_alias = route_recipient_indices(
+            &RecipientSelector::player("offline:Alex"),
+            &recipients,
+            None,
+        );
         assert_eq!(alex_plain, vec![1]);
         assert_eq!(alex_alias, vec![1]);
 

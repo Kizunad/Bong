@@ -46,6 +46,7 @@ def fill_broken_peaks_tile(
     gravel_id = palette.ensure("gravel")
     coarse_dirt_id = palette.ensure("coarse_dirt")
     peaks_biome_id = 1
+    frozen_peaks_biome_id = 9
 
     center_x, center_z = zone.center_xz
     half_w = max(zone.size_xz[0] * 0.5, 1.0)
@@ -137,11 +138,13 @@ def fill_broken_peaks_tile(
     feature_mask = np.minimum(1.0, massif * 0.6 + ruggedness * 0.28)
 
     area = tile_size * tile_size
+    biome_id = np.where(height > 300.0, frozen_peaks_biome_id, peaks_biome_id)
+
     buffer.layers["height"] = np.round(height, 3).ravel().tolist()
     buffer.layers["surface_id"] = surface_id.ravel().tolist()
     buffer.layers["subsurface_id"] = [stone_id] * area
     buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [peaks_biome_id] * area
+    buffer.layers["biome_id"] = biome_id.ravel().tolist()
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
     buffer.layers["boundary_weight"] = [0.0] * area
 

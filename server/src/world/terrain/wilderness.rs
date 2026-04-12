@@ -2,7 +2,13 @@ use valence::prelude::{BiomeId, BlockState};
 
 use super::raster::ColumnSample;
 
-pub fn sample(world_x: i32, world_z: i32, plains_biome: BiomeId) -> ColumnSample {
+pub fn sample(
+    world_x: i32,
+    world_z: i32,
+    plains_biome: BiomeId,
+    forest_biome: BiomeId,
+    river_biome: BiomeId,
+) -> ColumnSample {
     let x = world_x as f64;
     let z = world_z as f64;
 
@@ -28,6 +34,18 @@ pub fn sample(world_x: i32, world_z: i32, plains_biome: BiomeId) -> ColumnSample
 
     let roughness = ridge.abs() * 0.13 + (scar - 0.5).abs() * 0.08;
     let feature_mask = (0.09 + continental.abs() * 0.08 + roughness * 0.58).min(1.0);
+    let biome_id = if drainage < 0.09 {
+        8
+    } else if feature_mask > 0.2 {
+        7
+    } else {
+        0
+    };
+    let biome = match biome_id {
+        7 => forest_biome,
+        8 => river_biome,
+        _ => plains_biome,
+    };
 
     let surface_block = if height < 76.0 && drainage > 0.18 && scar < 0.72 {
         BlockState::GRASS_BLOCK
@@ -43,8 +61,8 @@ pub fn sample(world_x: i32, world_z: i32, plains_biome: BiomeId) -> ColumnSample
         height: height as f32,
         surface_block,
         subsurface_block: BlockState::STONE,
-        biome_id: 0,
-        biome: plains_biome,
+        biome_id,
+        biome,
         water_level: -1.0,
         feature_mask: feature_mask as f32,
         boundary_weight: 0.0,

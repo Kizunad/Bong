@@ -44,6 +44,7 @@ def fill_spawn_plain_tile(
     gravel_id = palette.ensure("gravel")
     stone_id = palette.ensure("stone")
     spawn_biome_id = 4
+    flower_forest_biome_id = 11
 
     center_x, center_z = zone.center_xz
     half_w = max(zone.size_xz[0] * 0.5, 1.0)
@@ -88,12 +89,14 @@ def fill_spawn_plain_tile(
         1.0, 0.05 + (1.0 - inner_meadow) * 0.14 + np.abs(rolling) * 0.04
     )
 
+    biome_id = np.where(feature_mask > 0.12, flower_forest_biome_id, spawn_biome_id)
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel().tolist()
     buffer.layers["surface_id"] = surface_id.ravel().tolist()
     buffer.layers["subsurface_id"] = [stone_id] * area
     buffer.layers["water_level"] = np.round(water_level, 3).ravel().tolist()
-    buffer.layers["biome_id"] = [spawn_biome_id] * area
+    buffer.layers["biome_id"] = biome_id.ravel().tolist()
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
     buffer.layers["boundary_weight"] = [0.0] * area
 

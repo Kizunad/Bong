@@ -45,6 +45,32 @@ pub struct ColumnSample {
     pub ruin_density: f32,
 }
 
+impl ColumnSample {
+    pub fn is_wilderness_biome(&self) -> bool {
+        matches!(self.biome_id, 0 | 7 | 8)
+    }
+
+    pub fn is_peaks_biome(&self) -> bool {
+        matches!(self.biome_id, 1 | 9)
+    }
+
+    pub fn is_marsh_biome(&self) -> bool {
+        matches!(self.biome_id, 2 | 10)
+    }
+
+    pub fn is_rift_biome(&self) -> bool {
+        self.biome_id == 3
+    }
+
+    pub fn is_spawn_biome(&self) -> bool {
+        matches!(self.biome_id, 4 | 11)
+    }
+
+    pub fn is_wastes_biome(&self) -> bool {
+        self.biome_id == 6
+    }
+}
+
 #[derive(Debug)]
 pub struct TerrainProvider {
     tiles: HashMap<(i32, i32), TileFields>,
@@ -54,6 +80,8 @@ pub struct TerrainProvider {
     surface_palette: Vec<BlockState>,
     pub biome_palette: Vec<BiomeId>,
     default_wilderness_biome: BiomeId,
+    forest_wilderness_biome: BiomeId,
+    river_wilderness_biome: BiomeId,
 }
 
 impl Resource for TerrainProvider {}
@@ -137,6 +165,14 @@ impl TerrainProvider {
         let default_wilderness_biome = *biome_palette
             .first()
             .ok_or_else(|| "biome palette cannot be empty".to_string())?;
+        let forest_wilderness_biome = biome_palette
+            .get(7)
+            .copied()
+            .unwrap_or(default_wilderness_biome);
+        let river_wilderness_biome = biome_palette
+            .get(8)
+            .copied()
+            .unwrap_or(default_wilderness_biome);
 
         let mut tiles = HashMap::with_capacity(manifest.tiles.len());
         for tile in manifest.tiles {
@@ -157,6 +193,8 @@ impl TerrainProvider {
             surface_palette,
             biome_palette,
             default_wilderness_biome,
+            forest_wilderness_biome,
+            river_wilderness_biome,
         })
     }
 
@@ -169,7 +207,13 @@ impl TerrainProvider {
         let tile_z = world_z.div_euclid(self.tile_size);
 
         let Some(tile) = self.tiles.get(&(tile_x, tile_z)) else {
-            return wilderness::sample(world_x, world_z, self.default_wilderness_biome);
+            return wilderness::sample(
+                world_x,
+                world_z,
+                self.default_wilderness_biome,
+                self.forest_wilderness_biome,
+                self.river_wilderness_biome,
+            );
         };
 
         let local_x = world_x.rem_euclid(self.tile_size) as usize;

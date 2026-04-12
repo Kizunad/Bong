@@ -145,6 +145,10 @@ def _compute_boundary_weight_array(
     wx: np.ndarray,
     wz: np.ndarray,
 ) -> np.ndarray:
+    def smoothstep01(value: np.ndarray) -> np.ndarray:
+        clamped = np.clip(value, 0.0, 1.0)
+        return clamped * clamped * (3.0 - 2.0 * clamped)
+
     width = max(float(zone.worldgen.boundary.width), 1.0)
     ratio = _shape_membership_ratio_array(zone, wx, wz)
     blend_ratio = width / max(min(zone.size_xz) * 0.5, 1.0)
@@ -153,9 +157,9 @@ def _compute_boundary_weight_array(
 
     # Interior: ratio <= 1.0
     interior_t = np.clip((1.0 - ratio) / max(blend_ratio, 0.001), 0.0, 1.0)
-    smooth_t = interior_t * interior_t * (3.0 - 2.0 * interior_t)
+    smooth_t = smoothstep01(interior_t)
     if mode == "hard":
-        interior_weight = np.clip(0.55 + interior_t * 0.45, 0.0, 1.0)
+        interior_weight = 0.55 + smooth_t * 0.45
     elif mode == "semi_hard":
         interior_weight = 0.35 + smooth_t * 0.65
     else:
@@ -163,9 +167,9 @@ def _compute_boundary_weight_array(
 
     # Exterior: ratio > 1.0 and <= outer_limit
     outer_t = np.clip((outer_limit - ratio) / max(blend_ratio, 0.001), 0.0, 1.0)
-    smooth_outer = outer_t * outer_t * (3.0 - 2.0 * outer_t)
+    smooth_outer = smoothstep01(outer_t)
     if mode == "hard":
-        exterior_weight = np.clip(outer_t * 0.6, 0.0, 1.0)
+        exterior_weight = smooth_outer * 0.6
     elif mode == "semi_hard":
         exterior_weight = smooth_outer * 0.45
     else:

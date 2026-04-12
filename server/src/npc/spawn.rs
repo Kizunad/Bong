@@ -7,6 +7,8 @@ use valence::prelude::{
 };
 
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
+use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
+use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
@@ -20,6 +22,10 @@ pub struct NpcMarker;
 pub struct NpcBlackboard {
     pub nearest_player: Option<Entity>,
     pub player_distance: f32,
+    /// Cached world position of the current target (player or duel opponent).
+    pub target_position: Option<DVec3>,
+    /// GameTick of the last melee attack (for cooldown tracking).
+    pub last_melee_tick: u32,
 }
 
 impl Default for NpcBlackboard {
@@ -27,9 +33,16 @@ impl Default for NpcBlackboard {
         Self {
             nearest_player: None,
             player_distance: f32::INFINITY,
+            target_position: None,
+            last_melee_tick: 0,
         }
     }
 }
+
+/// Override target for NPC-vs-NPC scenarios (e.g. duel).
+/// When present, the NPC targets this entity instead of the nearest player.
+#[derive(Clone, Copy, Debug, Component)]
+pub struct DuelTarget(pub Entity);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering startup spawn systems");
@@ -74,6 +87,10 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             GlobalTransform::default(),
             NpcMarker,
             NpcBlackboard::default(),
+            Navigator::new(),
+            MovementController::new(),
+            MovementCapabilities::default(),
+            MovementCooldowns::default(),
             NpcPatrol::new(
                 DEFAULT_SPAWN_ZONE_NAME,
                 DVec3::new(

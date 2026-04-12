@@ -43,8 +43,8 @@ def fill_spring_marsh_tile(
     moss_id = palette.ensure("moss_block")
     rooted_dirt_id = palette.ensure("rooted_dirt")
     stone_id = palette.ensure("stone")
-    dirt_id = palette.ensure("dirt")
     marsh_biome_id = 2
+    mangrove_biome_id = 10
 
     center_x, center_z = zone.center_xz
     half_w = max(zone.size_xz[0] * 0.5, 1.0)
@@ -73,7 +73,6 @@ def fill_spring_marsh_tile(
 
     island_noise = large_islands * 0.55 + medium_islands * 0.3 + small_islands * 0.15
     pool_depth = np.maximum(0.0, pools - 0.1) * 2.5
-    in_basin = basin > 0.16
 
     # Water level must be well BELOW surrounding wilderness terrain (min ~54 at boundary).
     # Keeping a 10-block margin ensures stitching never pushes terrain below water.
@@ -97,30 +96,28 @@ def fill_spring_marsh_tile(
     height = height_rim + (height_basin - height_rim) * basin_blend
 
     # Water only in basin interior where terrain dips below surface
-    waterline = np.where((basin_blend > 0.25) & (height < water_surface), water_surface, -1.0)
+    waterline = np.where(
+        (basin_blend > 0.25) & (height < water_surface), water_surface, -1.0
+    )
 
     # Surface selection — relative to waterline
     submerged = (waterline >= 0) & (height < waterline)
     shoreline = (waterline >= 0) & (height >= waterline) & (height < waterline + 1.5)
-    island_low = (waterline >= 0) & (height >= waterline + 1.5) & (height < waterline + 4.0)
+    island_low = (
+        (waterline >= 0) & (height >= waterline + 1.5) & (height < waterline + 4.0)
+    )
     island_high = (waterline >= 0) & (height >= waterline + 4.0)
 
     surface_id = np.full_like(height, grass_id, dtype=np.int32)
     # Deep water bottom
     surface_id = np.where(submerged & (height < waterline - 2.0), clay_id, surface_id)
     # Shallow water bottom
-    surface_id = np.where(
-        submerged & (height >= waterline - 2.0), mud_id, surface_id
-    )
+    surface_id = np.where(submerged & (height >= waterline - 2.0), mud_id, surface_id)
     # Shoreline band
     surface_id = np.where(shoreline, mud_id, surface_id)
     # Low island: moss or rooted dirt
-    surface_id = np.where(
-        island_low & (channels > 0.0), moss_id, surface_id
-    )
-    surface_id = np.where(
-        island_low & (channels <= 0.0), rooted_dirt_id, surface_id
-    )
+    surface_id = np.where(island_low & (channels > 0.0), moss_id, surface_id)
+    surface_id = np.where(island_low & (channels <= 0.0), rooted_dirt_id, surface_id)
     # High island: grass
     surface_id = np.where(island_high, grass_id, surface_id)
     # Basin interior channels that are dry
@@ -136,11 +133,14 @@ def fill_spring_marsh_tile(
     )
 
     area = tile_size * tile_size
+    shallow_water = (waterline >= 0) & (height >= waterline - 1.2)
+    biome_id = np.where(shallow_water | island_low, mangrove_biome_id, marsh_biome_id)
+
     buffer.layers["height"] = np.round(height, 3).ravel().tolist()
     buffer.layers["surface_id"] = surface_id.ravel().tolist()
     buffer.layers["subsurface_id"] = [stone_id] * area
     buffer.layers["water_level"] = np.round(waterline, 3).ravel().tolist()
-    buffer.layers["biome_id"] = [marsh_biome_id] * area
+    buffer.layers["biome_id"] = biome_id.ravel().tolist()
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
     buffer.layers["boundary_weight"] = [0.0] * area
 

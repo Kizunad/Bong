@@ -7,6 +7,10 @@ pub fn register(app: &mut App) {
     app.add_systems(PostUpdate, sync_position_to_transform);
 }
 
+/// One-way sync: Position → Transform.
+///
+/// Facing (Look / HeadYaw) is now managed by the Navigator system,
+/// which sets them directly when advancing along a path.
 fn sync_position_to_transform(mut npc_query: Query<(&Position, &mut Transform), With<NpcMarker>>) {
     for (position, mut transform) in &mut npc_query {
         let pos = position.get();

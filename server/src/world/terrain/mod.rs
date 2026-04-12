@@ -1,21 +1,58 @@
 mod biome;
 mod column;
 mod decoration;
+mod mega_tree;
 mod noise;
 mod raster;
+mod spatial;
+mod structures;
 mod wilderness;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 
 use valence::prelude::{
-    ident, App, BiomeRegistry, ChunkLayer, ChunkPos, Client, Commands, DimensionTypeRegistry,
-    Query, Res, ResMut, Resource, Server, UnloadedChunk, Update, View, With,
+    ident, App, BiomeRegistry, BlockState, ChunkLayer, ChunkPos, Client, Commands,
+    DimensionTypeRegistry, Query, Res, ResMut, Resource, Server, UnloadedChunk, Update, View, With,
 };
 
 pub use raster::{raster_dir_from_manifest_path, TerrainProvider};
 
 const WORLD_HEIGHT: u32 = 512;
+pub const MIN_Y: i32 = -64;
+
+/// Surface information for a single world column, used by NPC navigation.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub struct SurfaceInfo {
+    /// The Y coordinate of the top solid block.
+    pub y: i32,
+    /// Whether an NPC can stand on this column (no deep water or lava).
+    pub passable: bool,
+}
+
+/// Trait for querying terrain surface height and walkability.
+///
+/// Implemented by [`TerrainProvider`] for production use.  Tests can supply
+/// lightweight mocks (flat plane, slope, cliff, etc.) without touching raster
+/// files.
+pub trait SurfaceProvider {
+    fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo;
+}
+
+impl SurfaceProvider for TerrainProvider {
+    fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo {
+        let sample = self.sample(world_x, world_z);
+        let y = column::surface_y_for_sample(&sample, MIN_Y, WORLD_HEIGHT as i32);
+        let water_top = if sample.water_level < 0.0 {
+            MIN_Y - 1
+        } else {
+            sample.water_level.round() as i32
+        };
+        let passable = water_top <= y && sample.surface_block != BlockState::LAVA;
+        SurfaceInfo { y, passable }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RasterBootstrapConfig {
@@ -143,6 +180,7 @@ fn ensure_chunk_generated(
     }
 
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
+    structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);
     generated.insert(pos);

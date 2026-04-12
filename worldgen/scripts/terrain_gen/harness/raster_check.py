@@ -1,0 +1,116 @@
+"""Post-generation raster sanity checks.
+
+Catches known data integrity issues before they reach the Rust server:
+- rift_axis_sdf defaulting to 0 (causes false rift carving everywhere)
+- water level above surrounding terrain (floating water)
+- height values outside sane world range
+- missing layers in tiles
+"""
+
+from __future__ import annotations
+
+import json
+import struct
+from pathlib import Path
+
+
+
+def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
+    """Validate raster output. Returns (ok, message)."""
+    raster_path = Path(raster_dir)
+    manifest_path = raster_path / "manifest.json"
+
+    if not manifest_path.exists():
+        return False, f"manifest.json not found at {manifest_path}"
+
+    manifest = json.loads(manifest_path.read_text())
+    tiles = manifest["tiles"]
+    tile_size = manifest["tile_size"]
+    area = tile_size * tile_size
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for tile_info in tiles:
+        tile_dir = raster_path / tile_info["dir"]
+        tile_id = tile_info["dir"]
+        zones = tile_info.get("zones", [])
+
+        # Check all expected layers exist
+        for layer_name in tile_info.get("layers", []):
+            layer_file = tile_dir / f"{layer_name}.bin"
+            if not layer_file.exists():
+                errors.append(f"{tile_id}: missing {layer_name}.bin")
+                continue
+
+            # Spot-check known-dangerous defaults
+            if layer_name == "rift_axis_sdf" and not any(
+                z in zones for z in ("blood_valley",)
+            ):
+                data = _read_float_layer(layer_file, area)
+                if data is not None:
+                    min_val = min(data)
+                    if min_val < 0.9:
+                        errors.append(
+                            f"{tile_id}: rift_axis_sdf min={min_val:.2f} in non-rift tile "
+                            f"(zones={zones}) — will cause false rift carving"
+                        )
+
+        # Check height range
+        height_file = tile_dir / "height.bin"
+        if height_file.exists():
+            h_data = _read_float_layer(height_file, area)
+            if h_data is not None:
+                h_min, h_max = min(h_data), max(h_data)
+                if h_min < -64:
+                    warnings.append(f"{tile_id}: height min={h_min:.1f} below bedrock")
+                if h_max > 500:
+                    warnings.append(
+                        f"{tile_id}: height max={h_max:.1f} near world ceiling"
+                    )
+
+        # Check water vs terrain consistency
+        water_file = tile_dir / "water_level.bin"
+        if water_file.exists() and height_file.exists():
+            w_data = _read_float_layer(water_file, area)
+            h_data = _read_float_layer(height_file, area)
+            if w_data is not None and h_data is not None:
+                max_depth = 0.0
+                water_cols = 0
+                for w, h in zip(w_data, h_data):
+                    if w >= 0:
+                        water_cols += 1
+                        depth = w - h
+                        if depth > max_depth:
+                            max_depth = depth
+                if max_depth > 15.0 and water_cols > area * 0.1:
+                    warnings.append(
+                        f"{tile_id}: max water depth={max_depth:.1f} blocks "
+                        f"({water_cols} water cols) — may look like floating water"
+                    )
+
+    # Build report
+    lines: list[str] = []
+    if errors:
+        lines.append(f"ERRORS ({len(errors)}):")
+        for e in errors:
+            lines.append(f"  ✗ {e}")
+    if warnings:
+        lines.append(f"WARNINGS ({len(warnings)}):")
+        for w in warnings:
+            lines.append(f"  ⚠ {w}")
+
+    if not errors and not warnings:
+        lines.append(f"All {len(tiles)} tiles passed validation.")
+
+    return len(errors) == 0, "\n".join(lines)
+
+
+def _read_float_layer(path: Path, expected_count: int) -> list[float] | None:
+    """Read a binary float32 layer file."""
+    try:
+        raw = path.read_bytes()
+        if len(raw) != expected_count * 4:
+            return None
+        return list(struct.unpack(f"<{expected_count}f", raw))
+    except OSError:
+        return None

@@ -563,7 +563,7 @@ def process_world(world_path: str, blueprint: dict | None = None):
             except Exception as e:
                 print(f"    跳过 chunk {chunk_key}: {e}")
 
-    print(f"\n后处理完成:")
+    print("\n后处理完成:")
     print(f"  处理 chunk 数: {total_chunks}")
     print(f"  跳过 chunk 数: {total_skipped_chunks}")
     print(f"  放置装饰总数: {total_placed}")
