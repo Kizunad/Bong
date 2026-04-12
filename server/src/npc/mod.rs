@@ -9,7 +9,9 @@ pub mod sync;
 use valence::prelude::App;
 
 pub fn register(app: &mut App) {
-    tracing::info!("[bong][npc] registering spawn/patrol/sync/brain/movement/navigator/scenario systems");
+    tracing::info!(
+        "[bong][npc] registering spawn/patrol/sync/brain/movement/navigator/scenario systems"
+    );
     spawn::register(app);
     patrol::register(app);
     sync::register(app);

@@ -112,7 +112,12 @@ impl NpcBehaviorConfig {
     }
 }
 
-type NpcGoalQueryItem<'a> = (&'a Position, &'a NpcBlackboard, &'a NpcPatrol, &'a mut Navigator);
+type NpcGoalQueryItem<'a> = (
+    &'a Position,
+    &'a NpcBlackboard,
+    &'a NpcPatrol,
+    &'a mut Navigator,
+);
 type NpcGoalQueryFilter = (With<NpcMarker>, With<EntityKind>, Without<ClientMarker>);
 
 impl ScorerBuilder for PlayerProximityScorer {
@@ -226,10 +231,7 @@ pub fn register(app: &mut App) {
 }
 
 pub fn update_npc_blackboard(
-    mut npc_query: Query<
-        (&Position, &mut NpcBlackboard, Option<&DuelTarget>),
-        With<NpcMarker>,
-    >,
+    mut npc_query: Query<(&Position, &mut NpcBlackboard, Option<&DuelTarget>), With<NpcMarker>>,
     player_query: Query<(Entity, &Position), With<ClientMarker>>,
     all_positions: Query<&Position>,
 ) {
@@ -677,11 +679,11 @@ fn dash_action_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy_transform::components::Transform;
     use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
     use crate::npc::navigator::Navigator;
     use crate::npc::patrol::NpcPatrol;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+    use bevy_transform::components::Transform;
     use big_brain::prelude::{FirstToScore, Thinker};
     use valence::prelude::{App, Position};
 

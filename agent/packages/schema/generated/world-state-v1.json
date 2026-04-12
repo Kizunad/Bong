@@ -140,6 +140,181 @@
           "recent_deaths": {
             "minimum": 0,
             "type": "integer"
+          },
+          "cultivation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "realm",
+              "qi_current",
+              "qi_max",
+              "qi_max_frozen",
+              "meridians_opened",
+              "meridians_total",
+              "qi_color_main",
+              "composure"
+            ],
+            "properties": {
+              "realm": {
+                "description": "6 境界",
+                "anyOf": [
+                  {
+                    "const": "Awaken",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Induce",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Condense",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solidify",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Spirit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Void",
+                    "type": "string"
+                  }
+                ]
+              },
+              "qi_current": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "qi_max": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "qi_max_frozen": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "meridians_opened": {
+                "minimum": 0,
+                "maximum": 20,
+                "type": "integer"
+              },
+              "meridians_total": {
+                "minimum": 20,
+                "maximum": 20,
+                "type": "integer"
+              },
+              "qi_color_main": {
+                "description": "十种真元染色",
+                "anyOf": [
+                  {
+                    "const": "Sharp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Mellow",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Intricate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Gentle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Insidious",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Violent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Turbid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "qi_color_secondary": {
+                "description": "十种真元染色",
+                "anyOf": [
+                  {
+                    "const": "Sharp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Mellow",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Intricate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Gentle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Insidious",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Violent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Turbid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "composure": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              }
+            }
+          },
+          "life_record": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "recent_biography_summary"
+            ],
+            "properties": {
+              "recent_biography_summary": {
+                "maxLength": 4096,
+                "type": "string"
+              }
+            }
           }
         }
       }

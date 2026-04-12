@@ -1463,55 +1463,57 @@ describe("runRuntime", () => {
   });
 
   it("fails soft when redis persisted fields are malformed and still continues with fresh tick", async () => {
-    const state = createTestWorldState();
-    state.tick = 410;
-    const redis = new SequenceRuntimeRedis([state]);
-    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    await withIsolatedCwd(async () => {
+      const state = createTestWorldState();
+      state.tick = 410;
+      const redis = new SequenceRuntimeRedis([state]);
+      const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
-    redis.loadWorldModelState.mockResolvedValue({
-      currentEra: {
-        name: "broken",
-        sinceTick: "bad" as unknown as number,
-        globalEffect: "oops",
-      },
-      zoneHistory: {
-        blood_valley: "bad-history" as unknown as never,
-      },
-      lastDecisions: {
-        mutation: {
-          commands: "bad" as unknown as never[],
-          narrations: [],
-          reasoning: "recoverable",
+      redis.loadWorldModelState.mockResolvedValue({
+        currentEra: {
+          name: "broken",
+          sinceTick: "bad" as unknown as number,
+          globalEffect: "oops",
         },
-      },
-      playerFirstSeenTick: "bad" as unknown as Record<string, number>,
-      lastTick: "bad" as unknown as number,
-      lastStateTs: "bad" as unknown as number,
+        zoneHistory: {
+          blood_valley: "bad-history" as unknown as never,
+        },
+        lastDecisions: {
+          mutation: {
+            commands: "bad" as unknown as never[],
+            narrations: [],
+            reasoning: "recoverable",
+          },
+        },
+        playerFirstSeenTick: "bad" as unknown as Record<string, number>,
+        lastTick: "bad" as unknown as number,
+        lastStateTs: "bad" as unknown as number,
+      });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 1,
+        },
+      );
+
+      expect(redis.publishCommands).toHaveBeenCalledTimes(0);
+      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
+      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(410);
     });
-
-    await runRuntime(
-      {
-        mockMode: false,
-        model: DEFAULT_MODEL,
-        redisUrl: DEFAULT_REDIS_URL,
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-      },
-      {
-        createRedis: () => redis,
-        createClient: () => ({
-          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-        }),
-        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "ok" })],
-        sleep: vi.fn(async () => {}),
-        logger,
-        maxLoopIterations: 1,
-      },
-    );
-
-    expect(redis.publishCommands).toHaveBeenCalledTimes(0);
-    expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
-    expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(410);
   });
 
   it("rotates local snapshot files and keeps latest five under data", async () => {

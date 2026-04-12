@@ -1,4 +1,6 @@
-use valence::prelude::{bevy_ecs, App, Component, DVec3, Entity, Position, Query, Res, ResMut, Resource, Update, With};
+use valence::prelude::{
+    bevy_ecs, App, Component, DVec3, Entity, Position, Query, Res, ResMut, Resource, Update, With,
+};
 
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::NpcMarker;
@@ -211,10 +213,7 @@ mod patrol_tests {
             .world()
             .get::<Navigator>(npc)
             .expect("Navigator should exist");
-        assert!(
-            !nav.is_idle(),
-            "patrol should have set a navigator goal"
-        );
+        assert!(!nav.is_idle(), "patrol should have set a navigator goal");
     }
 
     #[test]
@@ -236,10 +235,7 @@ mod patrol_tests {
 
         // Pre-set a navigator goal (simulating chase/flee).
         {
-            let mut nav = app
-                .world_mut()
-                .get_mut::<Navigator>(npc)
-                .unwrap();
+            let mut nav = app.world_mut().get_mut::<Navigator>(npc).unwrap();
             nav.set_goal(DVec3::new(999.0, 67.0, 999.0), 2.0);
         }
 

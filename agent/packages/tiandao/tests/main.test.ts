@@ -92,7 +92,7 @@ describe("main mock execution", () => {
     const summary = await runMockTickForTest({
       llmClient: llm,
       sink,
-      now: () => 1_000_000,
+      now: () => 50_000_000,
       model: "mock-model",
     });
 
@@ -123,7 +123,7 @@ describe("main mock execution", () => {
     const first = await runMockTickForTest({
       llmClient: llm,
       worldModel,
-      now: () => 1_000_000,
+      now: () => 50_000_000,
       model: "mock-model",
       sink: null,
     });
@@ -143,7 +143,7 @@ describe("main mock execution", () => {
     const second = await runMockTickForTest({
       llmClient: llm,
       worldModel,
-      now: () => 1_030_000,
+      now: () => 50_030_000,
       model: "mock-model",
       sink: null,
     });

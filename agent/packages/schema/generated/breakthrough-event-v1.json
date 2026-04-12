@@ -1,0 +1,94 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "kind",
+    "from_realm"
+  ],
+  "properties": {
+    "kind": {
+      "anyOf": [
+        {
+          "const": "Started",
+          "type": "string"
+        },
+        {
+          "const": "Succeeded",
+          "type": "string"
+        },
+        {
+          "const": "Failed",
+          "type": "string"
+        }
+      ]
+    },
+    "from_realm": {
+      "description": "6 境界",
+      "anyOf": [
+        {
+          "const": "Awaken",
+          "type": "string"
+        },
+        {
+          "const": "Induce",
+          "type": "string"
+        },
+        {
+          "const": "Condense",
+          "type": "string"
+        },
+        {
+          "const": "Solidify",
+          "type": "string"
+        },
+        {
+          "const": "Spirit",
+          "type": "string"
+        },
+        {
+          "const": "Void",
+          "type": "string"
+        }
+      ]
+    },
+    "to_realm": {
+      "description": "6 境界",
+      "anyOf": [
+        {
+          "const": "Awaken",
+          "type": "string"
+        },
+        {
+          "const": "Induce",
+          "type": "string"
+        },
+        {
+          "const": "Condense",
+          "type": "string"
+        },
+        {
+          "const": "Solidify",
+          "type": "string"
+        },
+        {
+          "const": "Spirit",
+          "type": "string"
+        },
+        {
+          "const": "Void",
+          "type": "string"
+        }
+      ]
+    },
+    "success_rate": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "severity": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    }
+  }
+}

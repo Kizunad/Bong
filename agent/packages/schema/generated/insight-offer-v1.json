@@ -1,0 +1,88 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "offer_id",
+    "trigger_id",
+    "choices"
+  ],
+  "properties": {
+    "offer_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "trigger_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "choices": {
+      "minItems": 1,
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "category",
+          "effect_kind",
+          "magnitude",
+          "flavor_text"
+        ],
+        "properties": {
+          "category": {
+            "description": "A–G 七类白名单",
+            "anyOf": [
+              {
+                "const": "Meridian",
+                "type": "string"
+              },
+              {
+                "const": "Qi",
+                "type": "string"
+              },
+              {
+                "const": "Composure",
+                "type": "string"
+              },
+              {
+                "const": "Coloring",
+                "type": "string"
+              },
+              {
+                "const": "Breakthrough",
+                "type": "string"
+              },
+              {
+                "const": "Style",
+                "type": "string"
+              },
+              {
+                "const": "Perception",
+                "type": "string"
+              }
+            ]
+          },
+          "effect_kind": {
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "apply_choice 支持的 InsightEffect variant 名，例如 `MeridianIntegrityBoost`",
+            "type": "string"
+          },
+          "magnitude": {
+            "type": "number"
+          },
+          "flavor_text": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "narrator_voice": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

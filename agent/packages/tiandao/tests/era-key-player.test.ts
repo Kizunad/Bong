@@ -63,7 +63,7 @@ describe("era + key-player focused coverage", () => {
     await runMockTickForTest({
       llmClient: llm,
       worldModel,
-      now: () => 1_000_000,
+      now: () => 50_000_000,
       model: "mock-model",
       sink: null,
     });

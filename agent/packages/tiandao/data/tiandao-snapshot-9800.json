@@ -1,0 +1,535 @@
+{
+  "currentEra": {
+    "name": "末法纪",
+    "sinceTick": 188,
+    "globalEffect": "灵机渐枯"
+  },
+  "zoneHistory": {
+    "blood_valley": [
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "blood_valley",
+        "spirit_qi": 0.3,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      }
+    ],
+    "starter_zone": [
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      }
+    ],
+    "spawn": [
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "spawn",
+        "spirit_qi": 0.3,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 0
+      }
+    ],
+    "lingquan_marsh": [
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "lingquan_marsh",
+        "spirit_qi": 0.7,
+        "danger_level": 3,
+        "active_events": [],
+        "player_count": 0
+      }
+    ],
+    "north_wastes": [
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "north_wastes",
+        "spirit_qi": 0.05,
+        "danger_level": 5,
+        "active_events": [],
+        "player_count": 0
+      }
+    ],
+    "qingyun_peaks": [
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "qingyun_peaks",
+        "spirit_qi": 0.5,
+        "danger_level": 2,
+        "active_events": [],
+        "player_count": 0
+      }
+    ],
+    "youan_depths": [
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      },
+      {
+        "name": "youan_depths",
+        "spirit_qi": 0.4,
+        "danger_level": 4,
+        "active_events": [],
+        "player_count": 0
+      }
+    ]
+  },
+  "lastDecisions": {
+    "mutation": {
+      "commands": [],
+      "narrations": [],
+      "reasoning": "当下四野无人，天衡亦平，且上轮雷劫已落于 spawn；此刻不宜再动地脉，免令灵气与危势无端起伏，且听风云自转，静候后续有人入世再作微调。"
+    },
+    "calamity": {
+      "commands": [],
+      "narrations": [],
+      "reasoning": "当前唯一在场者 Kizun3Desu 综合实力 0.04，属新手护持之列，不可降劫。全局亦无强者聚集，Gini 平衡，无需以灾起势；且其所在 spawn 仅一阶险，暂宜静观其变。"
+    },
+    "era": {
+      "commands": [],
+      "narrations": [],
+      "reasoning": "当下诸域无人在线，灵气整体仅微降，格局尚稳；虽末法之势仍在，却未至需再立新纪之时。宜静观其变，待后势积成再定夺。"
+    }
+  },
+  "playerFirstSeenTick": {
+    "offline:Kizun3Desu": 1200
+  },
+  "lastTick": 9800,
+  "lastStateTs": 1775961850
+}

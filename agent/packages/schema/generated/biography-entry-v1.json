@@ -1,0 +1,832 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "BreakthroughStarted"
+      ],
+      "properties": {
+        "BreakthroughStarted": {
+          "type": "object",
+          "required": [
+            "realm_target",
+            "tick"
+          ],
+          "properties": {
+            "realm_target": {
+              "description": "6 境界",
+              "anyOf": [
+                {
+                  "const": "Awaken",
+                  "type": "string"
+                },
+                {
+                  "const": "Induce",
+                  "type": "string"
+                },
+                {
+                  "const": "Condense",
+                  "type": "string"
+                },
+                {
+                  "const": "Solidify",
+                  "type": "string"
+                },
+                {
+                  "const": "Spirit",
+                  "type": "string"
+                },
+                {
+                  "const": "Void",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "BreakthroughSucceeded"
+      ],
+      "properties": {
+        "BreakthroughSucceeded": {
+          "type": "object",
+          "required": [
+            "realm",
+            "tick"
+          ],
+          "properties": {
+            "realm": {
+              "description": "6 境界",
+              "anyOf": [
+                {
+                  "const": "Awaken",
+                  "type": "string"
+                },
+                {
+                  "const": "Induce",
+                  "type": "string"
+                },
+                {
+                  "const": "Condense",
+                  "type": "string"
+                },
+                {
+                  "const": "Solidify",
+                  "type": "string"
+                },
+                {
+                  "const": "Spirit",
+                  "type": "string"
+                },
+                {
+                  "const": "Void",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "BreakthroughFailed"
+      ],
+      "properties": {
+        "BreakthroughFailed": {
+          "type": "object",
+          "required": [
+            "realm_target",
+            "severity",
+            "tick"
+          ],
+          "properties": {
+            "realm_target": {
+              "description": "6 境界",
+              "anyOf": [
+                {
+                  "const": "Awaken",
+                  "type": "string"
+                },
+                {
+                  "const": "Induce",
+                  "type": "string"
+                },
+                {
+                  "const": "Condense",
+                  "type": "string"
+                },
+                {
+                  "const": "Solidify",
+                  "type": "string"
+                },
+                {
+                  "const": "Spirit",
+                  "type": "string"
+                },
+                {
+                  "const": "Void",
+                  "type": "string"
+                }
+              ]
+            },
+            "severity": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "MeridianOpened"
+      ],
+      "properties": {
+        "MeridianOpened": {
+          "type": "object",
+          "required": [
+            "id",
+            "tick"
+          ],
+          "properties": {
+            "id": {
+              "description": "20 条经脉（12 正经 + 8 奇经）",
+              "anyOf": [
+                {
+                  "const": "Lung",
+                  "type": "string"
+                },
+                {
+                  "const": "LargeIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Stomach",
+                  "type": "string"
+                },
+                {
+                  "const": "Spleen",
+                  "type": "string"
+                },
+                {
+                  "const": "Heart",
+                  "type": "string"
+                },
+                {
+                  "const": "SmallIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Bladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Kidney",
+                  "type": "string"
+                },
+                {
+                  "const": "Pericardium",
+                  "type": "string"
+                },
+                {
+                  "const": "TripleEnergizer",
+                  "type": "string"
+                },
+                {
+                  "const": "Gallbladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Liver",
+                  "type": "string"
+                },
+                {
+                  "const": "Ren",
+                  "type": "string"
+                },
+                {
+                  "const": "Du",
+                  "type": "string"
+                },
+                {
+                  "const": "Chong",
+                  "type": "string"
+                },
+                {
+                  "const": "Dai",
+                  "type": "string"
+                },
+                {
+                  "const": "YinQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YangQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YinWei",
+                  "type": "string"
+                },
+                {
+                  "const": "YangWei",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "MeridianClosed"
+      ],
+      "properties": {
+        "MeridianClosed": {
+          "type": "object",
+          "required": [
+            "id",
+            "tick",
+            "reason"
+          ],
+          "properties": {
+            "id": {
+              "description": "20 条经脉（12 正经 + 8 奇经）",
+              "anyOf": [
+                {
+                  "const": "Lung",
+                  "type": "string"
+                },
+                {
+                  "const": "LargeIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Stomach",
+                  "type": "string"
+                },
+                {
+                  "const": "Spleen",
+                  "type": "string"
+                },
+                {
+                  "const": "Heart",
+                  "type": "string"
+                },
+                {
+                  "const": "SmallIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Bladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Kidney",
+                  "type": "string"
+                },
+                {
+                  "const": "Pericardium",
+                  "type": "string"
+                },
+                {
+                  "const": "TripleEnergizer",
+                  "type": "string"
+                },
+                {
+                  "const": "Gallbladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Liver",
+                  "type": "string"
+                },
+                {
+                  "const": "Ren",
+                  "type": "string"
+                },
+                {
+                  "const": "Du",
+                  "type": "string"
+                },
+                {
+                  "const": "Chong",
+                  "type": "string"
+                },
+                {
+                  "const": "Dai",
+                  "type": "string"
+                },
+                {
+                  "const": "YinQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YangQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YinWei",
+                  "type": "string"
+                },
+                {
+                  "const": "YangWei",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ForgedRate"
+      ],
+      "properties": {
+        "ForgedRate": {
+          "type": "object",
+          "required": [
+            "id",
+            "tier",
+            "tick"
+          ],
+          "properties": {
+            "id": {
+              "description": "20 条经脉（12 正经 + 8 奇经）",
+              "anyOf": [
+                {
+                  "const": "Lung",
+                  "type": "string"
+                },
+                {
+                  "const": "LargeIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Stomach",
+                  "type": "string"
+                },
+                {
+                  "const": "Spleen",
+                  "type": "string"
+                },
+                {
+                  "const": "Heart",
+                  "type": "string"
+                },
+                {
+                  "const": "SmallIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Bladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Kidney",
+                  "type": "string"
+                },
+                {
+                  "const": "Pericardium",
+                  "type": "string"
+                },
+                {
+                  "const": "TripleEnergizer",
+                  "type": "string"
+                },
+                {
+                  "const": "Gallbladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Liver",
+                  "type": "string"
+                },
+                {
+                  "const": "Ren",
+                  "type": "string"
+                },
+                {
+                  "const": "Du",
+                  "type": "string"
+                },
+                {
+                  "const": "Chong",
+                  "type": "string"
+                },
+                {
+                  "const": "Dai",
+                  "type": "string"
+                },
+                {
+                  "const": "YinQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YangQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YinWei",
+                  "type": "string"
+                },
+                {
+                  "const": "YangWei",
+                  "type": "string"
+                }
+              ]
+            },
+            "tier": {
+              "minimum": 0,
+              "maximum": 16,
+              "type": "integer"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ForgedCapacity"
+      ],
+      "properties": {
+        "ForgedCapacity": {
+          "type": "object",
+          "required": [
+            "id",
+            "tier",
+            "tick"
+          ],
+          "properties": {
+            "id": {
+              "description": "20 条经脉（12 正经 + 8 奇经）",
+              "anyOf": [
+                {
+                  "const": "Lung",
+                  "type": "string"
+                },
+                {
+                  "const": "LargeIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Stomach",
+                  "type": "string"
+                },
+                {
+                  "const": "Spleen",
+                  "type": "string"
+                },
+                {
+                  "const": "Heart",
+                  "type": "string"
+                },
+                {
+                  "const": "SmallIntestine",
+                  "type": "string"
+                },
+                {
+                  "const": "Bladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Kidney",
+                  "type": "string"
+                },
+                {
+                  "const": "Pericardium",
+                  "type": "string"
+                },
+                {
+                  "const": "TripleEnergizer",
+                  "type": "string"
+                },
+                {
+                  "const": "Gallbladder",
+                  "type": "string"
+                },
+                {
+                  "const": "Liver",
+                  "type": "string"
+                },
+                {
+                  "const": "Ren",
+                  "type": "string"
+                },
+                {
+                  "const": "Du",
+                  "type": "string"
+                },
+                {
+                  "const": "Chong",
+                  "type": "string"
+                },
+                {
+                  "const": "Dai",
+                  "type": "string"
+                },
+                {
+                  "const": "YinQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YangQiao",
+                  "type": "string"
+                },
+                {
+                  "const": "YinWei",
+                  "type": "string"
+                },
+                {
+                  "const": "YangWei",
+                  "type": "string"
+                }
+              ]
+            },
+            "tier": {
+              "minimum": 0,
+              "maximum": 16,
+              "type": "integer"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ColorShift"
+      ],
+      "properties": {
+        "ColorShift": {
+          "type": "object",
+          "required": [
+            "main",
+            "tick"
+          ],
+          "properties": {
+            "main": {
+              "description": "十种真元染色",
+              "anyOf": [
+                {
+                  "const": "Sharp",
+                  "type": "string"
+                },
+                {
+                  "const": "Heavy",
+                  "type": "string"
+                },
+                {
+                  "const": "Mellow",
+                  "type": "string"
+                },
+                {
+                  "const": "Solid",
+                  "type": "string"
+                },
+                {
+                  "const": "Light",
+                  "type": "string"
+                },
+                {
+                  "const": "Intricate",
+                  "type": "string"
+                },
+                {
+                  "const": "Gentle",
+                  "type": "string"
+                },
+                {
+                  "const": "Insidious",
+                  "type": "string"
+                },
+                {
+                  "const": "Violent",
+                  "type": "string"
+                },
+                {
+                  "const": "Turbid",
+                  "type": "string"
+                }
+              ]
+            },
+            "secondary": {
+              "description": "十种真元染色",
+              "anyOf": [
+                {
+                  "const": "Sharp",
+                  "type": "string"
+                },
+                {
+                  "const": "Heavy",
+                  "type": "string"
+                },
+                {
+                  "const": "Mellow",
+                  "type": "string"
+                },
+                {
+                  "const": "Solid",
+                  "type": "string"
+                },
+                {
+                  "const": "Light",
+                  "type": "string"
+                },
+                {
+                  "const": "Intricate",
+                  "type": "string"
+                },
+                {
+                  "const": "Gentle",
+                  "type": "string"
+                },
+                {
+                  "const": "Insidious",
+                  "type": "string"
+                },
+                {
+                  "const": "Violent",
+                  "type": "string"
+                },
+                {
+                  "const": "Turbid",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "InsightTaken"
+      ],
+      "properties": {
+        "InsightTaken": {
+          "type": "object",
+          "required": [
+            "trigger",
+            "choice",
+            "tick"
+          ],
+          "properties": {
+            "trigger": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "choice": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "Rebirth"
+      ],
+      "properties": {
+        "Rebirth": {
+          "type": "object",
+          "required": [
+            "prior_realm",
+            "new_realm",
+            "tick"
+          ],
+          "properties": {
+            "prior_realm": {
+              "description": "6 境界",
+              "anyOf": [
+                {
+                  "const": "Awaken",
+                  "type": "string"
+                },
+                {
+                  "const": "Induce",
+                  "type": "string"
+                },
+                {
+                  "const": "Condense",
+                  "type": "string"
+                },
+                {
+                  "const": "Solidify",
+                  "type": "string"
+                },
+                {
+                  "const": "Spirit",
+                  "type": "string"
+                },
+                {
+                  "const": "Void",
+                  "type": "string"
+                }
+              ]
+            },
+            "new_realm": {
+              "description": "6 境界",
+              "anyOf": [
+                {
+                  "const": "Awaken",
+                  "type": "string"
+                },
+                {
+                  "const": "Induce",
+                  "type": "string"
+                },
+                {
+                  "const": "Condense",
+                  "type": "string"
+                },
+                {
+                  "const": "Solidify",
+                  "type": "string"
+                },
+                {
+                  "const": "Spirit",
+                  "type": "string"
+                },
+                {
+                  "const": "Void",
+                  "type": "string"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

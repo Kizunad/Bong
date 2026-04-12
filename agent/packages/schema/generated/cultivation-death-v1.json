@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "cause",
+    "context"
+  ],
+  "properties": {
+    "cause": {
+      "anyOf": [
+        {
+          "const": "BreakthroughBackfire",
+          "type": "string"
+        },
+        {
+          "const": "TribulationFailure",
+          "type": "string"
+        },
+        {
+          "const": "MeridianCollapse",
+          "type": "string"
+        },
+        {
+          "const": "NegativeZoneDrain",
+          "type": "string"
+        },
+        {
+          "const": "ContaminationOverflow",
+          "type": "string"
+        }
+      ]
+    },
+    "context": {}
+  }
+}

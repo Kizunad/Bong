@@ -39,8 +39,8 @@ use bevy_transform::components::Transform;
 use pathfinding::prelude::astar;
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
-    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Position, Query,
-    Res, Update, With,
+    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Position, Query, Res,
+    Update, With,
 };
 
 use crate::npc::movement::MovementController;
@@ -102,12 +102,12 @@ const GROUND_SCAN_UP: i32 = 4;
 #[allow(dead_code)]
 pub enum PathType {
     Walkable,
-    Open,      // air above ground — free to traverse
-    Blocked,   // solid block at feet/head level
+    Open,    // air above ground — free to traverse
+    Blocked, // solid block at feet/head level
     Water,
     Lava,
     DangerFire,
-    Fence,     // fence/wall — blocks movement
+    Fence, // fence/wall — blocks movement
 }
 
 impl PathType {
@@ -263,8 +263,7 @@ pub fn navigator_tick_system(
 ) {
     let layer = layers.get_single().ok();
 
-    for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl) in &mut npcs
-    {
+    for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl) in &mut npcs {
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
         // this tick. Navigator must not interfere.
         let movement_ctrl = movement_ctrl.cloned().unwrap_or_default();
@@ -493,14 +492,25 @@ fn block_successors(
         // Impassable if either penalty is negative.
         if feet_penalty < 0.0 || head_penalty < 0.0 {
             // Allow stepping onto the start node (NPC may be standing there).
-            let neighbor = PathNode { x: nx, y: feet_y, z: nz };
+            let neighbor = PathNode {
+                x: nx,
+                y: feet_y,
+                z: nz,
+            };
             if neighbor != start_node {
                 continue;
             }
         }
 
         let cost = 1 + dy as u32 + (feet_penalty.max(0.0) + head_penalty.max(0.0)) as u32;
-        result.push((PathNode { x: nx, y: feet_y, z: nz }, cost));
+        result.push((
+            PathNode {
+                x: nx,
+                y: feet_y,
+                z: nz,
+            },
+            cost,
+        ));
     }
 
     result
@@ -728,8 +738,7 @@ fn step_toward_with_collision(
         let wz = tentative.z.floor() as i32;
 
         // Resolve real ground Y at the target XZ (sees trees, decorations).
-        let ground_y = resolve_ground_y_from_chunk(wx, wz, ref_y, layer)
-            .unwrap_or(ref_y - 1);
+        let ground_y = resolve_ground_y_from_chunk(wx, wz, ref_y, layer).unwrap_or(ref_y - 1);
         let feet_y = ground_y + 1;
 
         // Cliff check — don't jump too high or fall too far per step.

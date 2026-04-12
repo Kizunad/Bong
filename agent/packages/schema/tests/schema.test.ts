@@ -389,12 +389,22 @@ describe("shared constants are sane", () => {
       PLAYER_CHAT: "bong:player_chat",
       AGENT_COMMAND: "bong:agent_command",
       AGENT_NARRATE: "bong:agent_narrate",
+      INSIGHT_REQUEST: "bong:insight_request",
+      INSIGHT_OFFER: "bong:insight_offer",
+      BREAKTHROUGH_EVENT: "bong:breakthrough_event",
+      FORGE_EVENT: "bong:forge_event",
+      CULTIVATION_DEATH: "bong:cultivation_death",
     });
     expect(REDIS_V1_CHANNELS).toEqual([
       "bong:world_state",
       "bong:player_chat",
       "bong:agent_command",
       "bong:agent_narrate",
+      "bong:insight_request",
+      "bong:insight_offer",
+      "bong:breakthrough_event",
+      "bong:forge_event",
+      "bong:cultivation_death",
     ]);
   });
 

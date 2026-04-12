@@ -14,6 +14,21 @@ export const CHANNELS = {
 
   /** Agent → Server: 叙事文本，转发给客户端 (Pub/Sub) */
   AGENT_NARRATE: "bong:agent_narrate",
+
+  /** Server → Agent: 顿悟请求（plan-cultivation §5.5） (Pub/Sub) */
+  INSIGHT_REQUEST: "bong:insight_request",
+
+  /** Agent → Server: 顿悟候选（plan-cultivation §5.5） (Pub/Sub) */
+  INSIGHT_OFFER: "bong:insight_offer",
+
+  /** Server → Agent: 突破事件（plan-cultivation §6.1） (Pub/Sub) */
+  BREAKTHROUGH_EVENT: "bong:breakthrough_event",
+
+  /** Server → Agent: 锻造事件（plan-cultivation §6.1） (Pub/Sub) */
+  FORGE_EVENT: "bong:forge_event",
+
+  /** Server → Agent: 修炼侧致死触发（plan-cultivation §4） (Pub/Sub) */
+  CULTIVATION_DEATH: "bong:cultivation_death",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -21,6 +36,11 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.PLAYER_CHAT,
   CHANNELS.AGENT_COMMAND,
   CHANNELS.AGENT_NARRATE,
+  CHANNELS.INSIGHT_REQUEST,
+  CHANNELS.INSIGHT_OFFER,
+  CHANNELS.BREAKTHROUGH_EVENT,
+  CHANNELS.FORGE_EVENT,
+  CHANNELS.CULTIVATION_DEATH,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

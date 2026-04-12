@@ -314,9 +314,12 @@ fn activate_knockback(controller: &mut MovementController, direction: DVec3, gro
 
 fn apply_pending_knockback_system(
     mut commands: Commands,
-    mut controllable: Query<
-        (Entity, &Position, &PendingKnockback, &mut MovementController),
-    >,
+    mut controllable: Query<(
+        Entity,
+        &Position,
+        &PendingKnockback,
+        &mut MovementController,
+    )>,
     stale: Query<Entity, (With<PendingKnockback>, Without<MovementController>)>,
 ) {
     // Apply knockback to entities that have a MovementController (NPCs).
@@ -424,8 +427,7 @@ fn movement_ability_tick_system(
                 transform.translation.y = tentative.y as f32;
                 transform.translation.z = tentative.z as f32;
 
-                let yaw =
-                    (dash.direction.z.atan2(dash.direction.x).to_degrees() - 90.0) as f32;
+                let yaw = (dash.direction.z.atan2(dash.direction.x).to_degrees() - 90.0) as f32;
                 look.yaw = yaw;
                 look.pitch = 0.0;
                 head_yaw.0 = yaw;
