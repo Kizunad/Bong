@@ -1,59 +1,91 @@
 package com.bong.client.inventory.model;
 
+import java.util.EnumMap;
 import java.util.List;
 
 /**
  * 模拟经脉状态 — 一个使用爆脉流后受伤的炼气三层修士。
+ * 覆盖 12 正经 + 8 奇经，呈现各种损伤/污染/恢复状态。
  */
 public final class MockMeridianData {
     private MockMeridianData() {}
 
     public static MeridianBody create() {
         double baseCap = 30.0; // 炼气期基础流量
+        double oddCap = baseCap * 1.4; // 奇经容量更大
 
-        return MeridianBody.builder()
-            .realm("炼气三层")
-            // 正常的脉
-            .channel(ChannelState.healthy(MeridianChannel.REN_MAI, baseCap))
-            .channel(ChannelState.healthy(MeridianChannel.DU_MAI, baseCap))
-            .channel(ChannelState.healthy(MeridianChannel.SPIRIT, baseCap * 0.8))
-            .channel(ChannelState.healthy(MeridianChannel.LEG_YIN, baseCap))
-            .channel(ChannelState.healthy(MeridianChannel.LEG_YANG, baseCap))
-            .channel(ChannelState.healthy(MeridianChannel.LUNG, baseCap * 0.9))
-            .channel(ChannelState.healthy(MeridianChannel.SPLEEN, baseCap * 0.7))
-            // 爆脉流后遗症：右臂撕裂
-            .channel(new ChannelState(MeridianChannel.ARM_YANG, baseCap, 12.0,
-                ChannelState.DamageLevel.TORN, 0.0, 0.15, false))
-            // 左臂有污染（被人打过）
-            .channel(new ChannelState(MeridianChannel.ARM_YIN, baseCap, 22.0,
-                ChannelState.DamageLevel.MICRO_TEAR, 0.25, 0.0, false))
-            // 心脉微裂 — 差点走火入魔
-            .channel(new ChannelState(MeridianChannel.HEART, baseCap * 1.2, 28.0,
-                ChannelState.DamageLevel.MICRO_TEAR, 0.08, 0.3, false))
-            // 肾脉正在恢复
-            .channel(new ChannelState(MeridianChannel.KIDNEY, baseCap * 0.9, 20.0,
-                ChannelState.DamageLevel.MICRO_TEAR, 0.0, 0.65, false))
-            // 肝脉正常但流量偏低
-            .channel(new ChannelState(MeridianChannel.LIVER, baseCap * 0.8, 15.0,
-                ChannelState.DamageLevel.INTACT, 0.0, 0.0, false))
-            // 丹田
-            .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.UPPER, 18.0, 24.0, false))
-            .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.MIDDLE, 52.0, 80.0, false))
-            .dantian(new MeridianBody.DantianState(MeridianBody.DantianTier.LOWER, 35.0, 50.0, false))
-            // 经脉上已用物品
-            .appliedItem(MeridianChannel.ARM_YANG,
-                InventoryItem.create("ningmai_powder", "凝脉散", 1, 1, 0.3, "uncommon", "外敷经脉，缓解走火入魔"))
-            .appliedItem(MeridianChannel.HEART,
-                InventoryItem.create("guyuan_pill", "固元丹", 1, 1, 0.2, "rare", "温补真元，服后可加速恢复灵力"))
-            .appliedItem(MeridianChannel.KIDNEY,
-                InventoryItem.create("spirit_grass", "灵草", 1, 1, 0.5, "common", "低阶灵草，可入药炼丹"))
-            // 状态效果
-            .activeEffects(List.of(
-                new MeridianBody.StatusEffect("meridian_overload", "经脉过载余波",
-                    "爆脉流后遗症，右臂经脉持续微痛", 0xFFCC6644, 0.4),
-                new MeridianBody.StatusEffect("contamination_slow", "外源侵蚀",
-                    "左臂残余外源真元未清除", 0xFF9944CC, 0.25)
-            ))
-            .build();
+        MeridianBody.Builder b = MeridianBody.builder().realm("炼气三层");
+
+        // ===== 12 正经 =====
+        // 手三阴 — 左臂主辅助，整体偏弱
+        b.channel(ChannelState.healthy(MeridianChannel.LU, baseCap * 0.9));
+        // 心经微裂 — 差点走火入魔
+        b.channel(new ChannelState(MeridianChannel.HT, baseCap * 1.2, 28.0,
+            ChannelState.DamageLevel.MICRO_TEAR, 0.08, 0.30, false));
+        b.channel(ChannelState.healthy(MeridianChannel.PC, baseCap));
+
+        // 手三阳 — 右臂爆脉流后遗症
+        b.channel(new ChannelState(MeridianChannel.LI, baseCap, 22.0,
+            ChannelState.DamageLevel.MICRO_TEAR, 0.25, 0.0, false));
+        // 小肠经撕裂
+        b.channel(new ChannelState(MeridianChannel.SI, baseCap, 12.0,
+            ChannelState.DamageLevel.TORN, 0.0, 0.15, false));
+        b.channel(new ChannelState(MeridianChannel.TE, baseCap * 0.95, 18.0,
+            ChannelState.DamageLevel.MICRO_TEAR, 0.10, 0.20, false));
+
+        // 足三阴 — 左腿正常
+        b.channel(ChannelState.healthy(MeridianChannel.SP, baseCap * 0.85));
+        // 肾经恢复中
+        b.channel(new ChannelState(MeridianChannel.KI, baseCap * 0.9, 20.0,
+            ChannelState.DamageLevel.MICRO_TEAR, 0.0, 0.65, false));
+        b.channel(new ChannelState(MeridianChannel.LR, baseCap * 0.8, 15.0,
+            ChannelState.DamageLevel.INTACT, 0.0, 0.0, false));
+
+        // 足三阳 — 右腿正常
+        b.channel(ChannelState.healthy(MeridianChannel.ST, baseCap));
+        b.channel(ChannelState.healthy(MeridianChannel.BL, baseCap));
+        b.channel(ChannelState.healthy(MeridianChannel.GB, baseCap * 0.95));
+
+        // ===== 8 奇经 =====
+        b.channel(ChannelState.healthy(MeridianChannel.REN, oddCap));
+        b.channel(ChannelState.healthy(MeridianChannel.DU, oddCap));
+        // 冲脉储满 — 真元缓存饱和
+        b.channel(new ChannelState(MeridianChannel.CHONG, oddCap * 1.2, oddCap * 1.15,
+            ChannelState.DamageLevel.INTACT, 0.0, 0.0, false));
+        // 带脉受损 — 腰部瘀伤
+        b.channel(new ChannelState(MeridianChannel.DAI, oddCap * 0.7, 14.0,
+            ChannelState.DamageLevel.MICRO_TEAR, 0.05, 0.10, false));
+        b.channel(ChannelState.healthy(MeridianChannel.YIN_WEI, oddCap * 0.8));
+        b.channel(ChannelState.healthy(MeridianChannel.YANG_WEI, oddCap * 0.8));
+        // 阴跷未通
+        b.channel(new ChannelState(MeridianChannel.YIN_QIAO, oddCap * 0.6, 0.0,
+            ChannelState.DamageLevel.INTACT, 0.0, 0.0, true));
+        b.channel(ChannelState.healthy(MeridianChannel.YANG_QIAO, oddCap * 0.6));
+
+        // ===== 经脉上已用物品 =====
+        b.appliedItem(MeridianChannel.SI,
+            InventoryItem.create("ningmai_powder", "凝脉散", 1, 1, 0.3, "uncommon", "外敷经脉，缓解走火入魔"));
+        b.appliedItem(MeridianChannel.HT,
+            InventoryItem.create("guyuan_pill", "固元丹", 1, 1, 0.2, "rare", "温补真元，服后可加速恢复灵力"));
+        b.appliedItem(MeridianChannel.KI,
+            InventoryItem.create("spirit_grass", "灵草", 1, 1, 0.5, "common", "低阶灵草，可入药炼丹"));
+
+        // ===== 裂痕 / 污染总量（用于裂痕可视化 + 头部污染标签 QA）=====
+        var cracks = new EnumMap<MeridianChannel, Integer>(MeridianChannel.class);
+        cracks.put(MeridianChannel.HT, 2);
+        cracks.put(MeridianChannel.SI, 4);
+        cracks.put(MeridianChannel.DAI, 1);
+        b.cracksCount(cracks);
+        b.contaminationTotal(8.4);
+
+        // ===== 状态效果 =====
+        b.activeEffects(List.of(
+            new MeridianBody.StatusEffect("meridian_overload", "经脉过载余波",
+                "爆脉流后遗症，右臂经脉持续微痛", 0xFFCC6644, 0.4),
+            new MeridianBody.StatusEffect("contamination_slow", "外源侵蚀",
+                "右臂残余外源真元未清除", 0xFF9944CC, 0.25)
+        ));
+
+        return b.build();
     }
 }

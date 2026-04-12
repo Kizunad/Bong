@@ -16,6 +16,8 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.function.Consumer;
+
 
 public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("检视");
@@ -58,10 +60,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private BodyInspectComponent bodyInspect;
     private LabelComponent physicalLayerLabel;
     private LabelComponent meridianLayerLabel;
+    private FlowLayout meridianFilterBar;
+    private io.wispforest.owo.ui.container.ScrollContainer<?> cultivationActionScroll;
+    /** Screen 存活期间持有的 MeridianStateStore 订阅，close 时移除避免泄漏。 */
+    private Consumer<MeridianBody> meridianBodyListener;
+    private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     public InspectScreen(InventoryModel model) {
         super(TITLE);
         this.model = model == null ? InventoryModel.empty() : model;
+    }
+
+    @Override
+    public void removed() {
+        // Screen 被关闭时解绑全局 store 订阅，防止后续快照到达仍回调已销毁组件。
+        if (meridianBodyListener != null) {
+            MeridianStateStore.removeListener(meridianBodyListener);
+            meridianBodyListener = null;
+        }
+        super.removed();
     }
 
     @Override
@@ -94,7 +111,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         middle.gap(4);
 
         // -- Left column --
-        FlowLayout leftCol = Containers.verticalFlow(Sizing.fixed(148), Sizing.content());
+        // 宽 172 = 经脉层 body (168) + 4 内边距。装备层内容固定更小，在此列内左对齐。
+        FlowLayout leftCol = Containers.verticalFlow(Sizing.fixed(172), Sizing.content());
         leftCol.gap(2);
 
         // Tab bar
@@ -128,6 +146,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // Tab 1: Cultivation (body inspect — dual layer)
         cultivationTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         cultivationTabContent.gap(2);
+        cultivationTabContent.horizontalAlignment(HorizontalAlignment.CENTER);
 
         // Layer toggle: [体表] [经脉]
         FlowLayout layerBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
@@ -151,16 +170,124 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         layerBar.child(meridianLayerLabel);
         cultivationTabContent.child(layerBar);
 
+        // Meridian filter bar: [全部] [手经] [足经] [奇经] — 仅经脉层显示
+        meridianFilterBar = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        meridianFilterBar.gap(6);
+        meridianFilterBar.padding(Insets.of(1, 2, 1, 2));
+        BodyInspectComponent.MeridianFilter[] filters = BodyInspectComponent.MeridianFilter.values();
+        for (int i = 0; i < filters.length; i++) {
+            final int idx = i;
+            var lbl = Components.label(Text.literal(filters[i].label()));
+            lbl.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
+            lbl.cursorStyle(CursorStyle.HAND);
+            lbl.mouseDown().subscribe((mx, my, btn) -> {
+                if (btn == 0) { switchMeridianFilter(filters[idx]); return true; }
+                return false;
+            });
+            filterLabels[i] = lbl;
+            meridianFilterBar.child(lbl);
+        }
+        cultivationTabContent.child(meridianFilterBar);
+        meridianFilterBar.positioning(Positioning.absolute(-9999, -9999));
+
+        // Body 必须在 action bar 之前创建，action bar 需要引用 selectedChannel
         bodyInspect = new BodyInspectComponent();
         PhysicalBody physData = PhysicalBodyStore.snapshot();
         bodyInspect.setPhysicalBody(physData != null ? physData : MockPhysicalData.create());
         MeridianBody meridianData = MeridianStateStore.snapshot();
         bodyInspect.setMeridianBody(meridianData != null ? meridianData : MockMeridianData.create());
+
+        // Cultivation action bar: [设为目标] [突破] [淬炼·流速] [淬炼·容量]
+        // 「突破」常开；其余三项需选中某条经脉 — 灰态表示禁用。
+        FlowLayout actionBar = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        actionBar.gap(4);
+        actionBar.padding(Insets.of(2, 2, 2, 2));
+        actionBar.verticalAlignment(VerticalAlignment.CENTER);
+        Object[] setTargetBtn = buildActionButton("设为目标", () -> {
+            var sel = bodyInspect.selectedChannel();
+            if (sel != null) {
+                com.bong.client.network.ClientRequestSender.sendSetMeridianTarget(
+                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel));
+            }
+        });
+        Object[] breakthroughBtn = buildActionButton("突破",
+            com.bong.client.network.ClientRequestSender::sendBreakthroughRequest);
+        Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
+            var sel = bodyInspect.selectedChannel();
+            if (sel != null) {
+                com.bong.client.network.ClientRequestSender.sendForgeRequest(
+                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
+                    com.bong.client.network.ClientRequestProtocol.ForgeAxis.Rate);
+            }
+        });
+        Object[] forgeCapBtn = buildActionButton("淬炼·容量", () -> {
+            var sel = bodyInspect.selectedChannel();
+            if (sel != null) {
+                com.bong.client.network.ClientRequestSender.sendForgeRequest(
+                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
+                    com.bong.client.network.ClientRequestProtocol.ForgeAxis.Capacity);
+            }
+        });
+        var setTargetLabel = (LabelComponent) setTargetBtn[1];
+        var forgeRateLabel = (LabelComponent) forgeRateBtn[1];
+        var forgeCapLabel = (LabelComponent) forgeCapBtn[1];
+        actionBar.child((io.wispforest.owo.ui.core.Component) setTargetBtn[0]);
+        actionBar.child((io.wispforest.owo.ui.core.Component) breakthroughBtn[0]);
+        actionBar.child((io.wispforest.owo.ui.core.Component) forgeRateBtn[0]);
+        actionBar.child((io.wispforest.owo.ui.core.Component) forgeCapBtn[0]);
+        // 横向可滚动容器：塞不下时可拖滚动条或滚轮横向浏览
+        var actionScroll = Containers.horizontalScroll(Sizing.fill(100), Sizing.content(), actionBar);
+        actionScroll.scrollbarThiccness(3);
+        cultivationActionScroll = actionScroll;
+        cultivationTabContent.child(actionScroll);
+
+        // 状态条：境界 · 污染总量（数据来源 cultivation_detail S2C）
+        LabelComponent bodyStatusLabel = Components.label(Text.literal(""));
+        bodyStatusLabel.color(Color.ofArgb(0xFFAAAAAA));
+        cultivationTabContent.child(bodyStatusLabel);
+        Runnable refreshBodyStatus = () -> {
+            MeridianBody b = bodyInspect.meridianBody();
+            if (b == null) { bodyStatusLabel.text(Text.literal("")); return; }
+            StringBuilder sb = new StringBuilder();
+            if (b.realm() != null && !b.realm().isEmpty()) {
+                sb.append("§7境界 §f").append(b.realm());
+            }
+            if (b.contaminationTotal() > 0.0) {
+                if (sb.length() > 0) sb.append("  §8·  ");
+                sb.append(String.format("§d污染 §f%.1f", b.contaminationTotal()));
+            }
+            bodyStatusLabel.text(Text.literal(sb.toString()));
+        };
+        refreshBodyStatus.run();
+        // 网络新快照到达时推到 UI（BodyInspect 内部不会自动感知 MeridianStateStore.replace）。
+        // 存成字段以便 removed() 回调里解绑 —— 否则每开一次 InspectScreen 都累积一个悬挂监听。
+        meridianBodyListener = body -> {
+            if (body != null) bodyInspect.setMeridianBody(body);
+            refreshBodyStatus.run();
+        };
+        MeridianStateStore.addListener(meridianBodyListener);
+        bodyInspect.addSelectionListener(ch -> refreshBodyStatus.run());
+
+        // 根据当前选择应用灰态，并订阅变化
+        Runnable refreshActionColors = () -> {
+            boolean hasSel = bodyInspect.selectedChannel() != null;
+            int c = hasSel ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR;
+            setTargetLabel.color(Color.ofArgb(c));
+            forgeRateLabel.color(Color.ofArgb(c));
+            forgeCapLabel.color(Color.ofArgb(c));
+        };
+        refreshActionColors.run();
+        bodyInspect.addSelectionListener(ch -> refreshActionColors.run());
+
         cultivationTabContent.child(bodyInspect);
+
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         middle.child(leftCol);
+
+        // 经脉详情直接绘制在 body 画布内部（见 BodyInspectComponent.drawMeridianDetailInline）
+        // 不再作为独立组件，以免增加列宽/列高
 
         // -- Right column --
         FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
@@ -239,6 +366,39 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Build helpers ====================
 
+    /** 返回 [wrapperFlow, innerLabel]；wrapper 用于添加到 actionBar，label 用于后续 .color() 调整。 */
+    private Object[] buildActionButton(String text, Runnable onClick) {
+        var lbl = Components.label(Text.literal(text));
+        lbl.color(Color.ofArgb(TAB_ACTIVE_COLOR));
+        lbl.cursorStyle(CursorStyle.HAND);
+        lbl.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) { onClick.run(); return true; }
+            return false;
+        });
+        FlowLayout wrap = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        wrap.padding(Insets.of(3, 3, 6, 6));
+        wrap.surface(Surface.flat(0xFF2A2A2A).and(Surface.outline(0xFF555555)));
+        wrap.cursorStyle(CursorStyle.HAND);
+        wrap.child(lbl);
+        wrap.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) { onClick.run(); return true; }
+            return false;
+        });
+        return new Object[] { wrap, lbl };
+    }
+
+    private io.wispforest.owo.ui.component.LabelComponent buildActionLabel(String text, Runnable onClick) {
+        // 兼容旧调用点：直接返回纯文字 label（未使用）
+        var lbl = Components.label(Text.literal(text));
+        lbl.color(Color.ofArgb(TAB_ACTIVE_COLOR));
+        lbl.cursorStyle(CursorStyle.HAND);
+        lbl.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) { onClick.run(); return true; }
+            return false;
+        });
+        return lbl;
+    }
+
     private FlowLayout buildHotbarStrip() {
         int cs = GridSlotComponent.CELL_SIZE;
         FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
@@ -292,6 +452,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         boolean isPhys = layer == BodyInspectComponent.Layer.PHYSICAL;
         physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
         meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+        if (meridianFilterBar != null) {
+            meridianFilterBar.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
+        }
+        if (cultivationActionScroll != null) {
+            cultivationActionScroll.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
+        }
+    }
+
+    private void switchMeridianFilter(BodyInspectComponent.MeridianFilter filter) {
+        if (bodyInspect == null) return;
+        bodyInspect.setMeridianFilter(filter);
+        BodyInspectComponent.MeridianFilter[] all = BodyInspectComponent.MeridianFilter.values();
+        for (int i = 0; i < all.length; i++) {
+            filterLabels[i].color(Color.ofArgb(all[i] == filter ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
+        }
     }
 
     private void switchContainer(int idx) {
@@ -409,6 +584,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                             else { bodyInspect.removeMeridianItem(ch); dragState.pickupFromMeridian(item, ch); }
                             return true;
                         }
+                        // 无物品 — 纯点击即"选中此脉"，锁定详情面板
+                        bodyInspect.clickSelectMeridian(mouseX, mouseY);
+                        return true;
                     }
                 }
             }

@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ServerDataRouterTest {
     @Test
-    void defaultRouterRegistersExactlySevenTypes() {
+    void defaultRouterRegistersExactlyEightTypes() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
         assertEquals(Set.of(
@@ -23,7 +23,8 @@ public class ServerDataRouterTest {
             "zone_info",
             "event_alert",
             "player_state",
-            "ui_open"
+            "ui_open",
+            "cultivation_detail"
         ), router.registeredTypes());
     }
 

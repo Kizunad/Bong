@@ -7,58 +7,47 @@ import java.util.Map;
 
 /**
  * 人体经脉系统完整快照。
- * 包含 12 条经脉状态 + 3 个丹田 + 活跃状态效果。
+ * 包含 12 正经 + 8 奇经 + 活跃状态效果。真元池（qi_current/qi_max）由 PlayerStateHandler 独立下发，
+ * 不在此结构中；世界观中真元是唯一底蕴，无三丹田分池概念。
  * 通过 {@link Builder} 构建，不可变。
  */
 public final class MeridianBody {
-
-    /** 丹田等级 */
-    public enum DantianTier {
-        UPPER("上丹田", "神识之海"),
-        MIDDLE("中丹田", "气海"),
-        LOWER("下丹田", "精元之源");
-
-        private final String name;
-        private final String desc;
-
-        DantianTier(String name, String desc) { this.name = name; this.desc = desc; }
-
-        public String displayName() { return name; }
-        public String description() { return desc; }
-    }
-
-    /** 丹田状态 */
-    public record DantianState(DantianTier tier, double current, double max, boolean sealed) {
-        public double ratio() { return max > 0 ? Math.min(1, current / max) : 0; }
-    }
 
     /** 状态效果 */
     public record StatusEffect(String id, String name, String description, int color, double severity) {}
 
     private final Map<MeridianChannel, ChannelState> channels;
-    private final Map<DantianTier, DantianState> dantians;
     private final Map<MeridianChannel, InventoryItem> appliedItems;
+    private final Map<MeridianChannel, Integer> cracksCount;
     private final List<StatusEffect> activeEffects;
     private final String realm;
+    private final double contaminationTotal;
 
     private MeridianBody(Builder b) {
         this.channels = Collections.unmodifiableMap(new EnumMap<>(b.channels));
-        this.dantians = Collections.unmodifiableMap(new EnumMap<>(b.dantians));
         this.appliedItems = b.appliedItems.isEmpty()
             ? Map.of()
             : Collections.unmodifiableMap(new EnumMap<>(b.appliedItems));
+        this.cracksCount = b.cracksCount.isEmpty()
+            ? Map.of()
+            : Collections.unmodifiableMap(new EnumMap<>(b.cracksCount));
         this.activeEffects = List.copyOf(b.activeEffects);
         this.realm = b.realm;
+        this.contaminationTotal = Math.max(0.0, b.contaminationTotal);
     }
 
     public ChannelState channel(MeridianChannel ch) { return channels.get(ch); }
     public Map<MeridianChannel, ChannelState> allChannels() { return channels; }
-    public DantianState dantian(DantianTier tier) { return dantians.get(tier); }
-    public Map<DantianTier, DantianState> allDantians() { return dantians; }
     public InventoryItem appliedItem(MeridianChannel ch) { return appliedItems.get(ch); }
     public Map<MeridianChannel, InventoryItem> allAppliedItems() { return appliedItems; }
     public List<StatusEffect> activeEffects() { return activeEffects; }
     public String realm() { return realm; }
+    public double contaminationTotal() { return contaminationTotal; }
+    /** 某条经脉当前裂痕条目数；未记录则返回 0。 */
+    public int cracksFor(MeridianChannel ch) {
+        Integer n = cracksCount.get(ch);
+        return n == null ? 0 : n;
+    }
 
     /** 全身平均有效流量比 */
     public double overallFlowHealth() {
@@ -79,7 +68,7 @@ public final class MeridianBody {
 
     /** 心脉损伤是否达到走火入魔阈值 */
     public boolean isQiDeviation() {
-        ChannelState heart = channels.get(MeridianChannel.HEART);
+        ChannelState heart = channels.get(MeridianChannel.HT);
         return heart != null && (heart.damage() == ChannelState.DamageLevel.TORN
             || heart.damage() == ChannelState.DamageLevel.SEVERED);
     }
@@ -88,10 +77,11 @@ public final class MeridianBody {
 
     public static final class Builder {
         private final EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
-        private final EnumMap<DantianTier, DantianState> dantians = new EnumMap<>(DantianTier.class);
         private final EnumMap<MeridianChannel, InventoryItem> appliedItems = new EnumMap<>(MeridianChannel.class);
+        private final EnumMap<MeridianChannel, Integer> cracksCount = new EnumMap<>(MeridianChannel.class);
         private List<StatusEffect> activeEffects = List.of();
         private String realm = "";
+        private double contaminationTotal = 0.0;
 
         private Builder() {}
 
@@ -102,16 +92,6 @@ public final class MeridianBody {
 
         public Builder channels(Map<MeridianChannel, ChannelState> all) {
             channels.putAll(all);
-            return this;
-        }
-
-        public Builder dantian(DantianState state) {
-            dantians.put(state.tier(), state);
-            return this;
-        }
-
-        public Builder dantians(Map<DantianTier, DantianState> all) {
-            dantians.putAll(all);
             return this;
         }
 
@@ -132,6 +112,21 @@ public final class MeridianBody {
 
         public Builder realm(String realm) {
             this.realm = realm;
+            return this;
+        }
+
+        public Builder cracksCount(Map<MeridianChannel, Integer> all) {
+            cracksCount.clear();
+            for (var e : all.entrySet()) {
+                if (e.getValue() != null && e.getValue() > 0) {
+                    cracksCount.put(e.getKey(), e.getValue());
+                }
+            }
+            return this;
+        }
+
+        public Builder contaminationTotal(double total) {
+            this.contaminationTotal = total;
             return this;
         }
 

@@ -1,5 +1,8 @@
 package com.bong.client;
 
+import com.bong.client.insight.ClientRequestInsightDispatcher;
+import com.bong.client.insight.InsightOfferScreenBootstrap;
+import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import net.fabricmc.api.ClientModInitializer;
@@ -18,6 +21,8 @@ public class BongClient implements ClientModInitializer {
         HudRenderCallback.EVENT.register(BongHud::render);
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
+        InsightOfferScreenBootstrap.register();
+        InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, and keybinding scheduler are active.");
     }
