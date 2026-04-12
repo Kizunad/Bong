@@ -119,6 +119,11 @@ export interface RuntimeDeps {
   telemetrySink?: TelemetrySink;
 }
 
+interface WorldStateCursor {
+  tick: number;
+  ts: number | null;
+}
+
 export interface TickDeps {
   agents: TickAgent[];
   llmClient: LlmClient;
@@ -704,7 +709,7 @@ export async function runRuntime(
   let failureStreak = 0;
   let latestChatSignals: ChatSignal[] = [];
   let loopIterations = 0;
-  let lastProcessedTick: number | null = null;
+  let lastProcessedStateCursor: WorldStateCursor | null = null;
   const maxLoopIterations = deps.maxLoopIterations ?? Number.POSITIVE_INFINITY;
   let hasConnectedAtLeastOnce = false;
   let restoredOnStartup = false;
@@ -744,8 +749,11 @@ export async function runRuntime(
               worldModel,
               logger,
             });
-            if (restoredState.lastTick !== null) {
-              lastProcessedTick = restoredState.lastTick;
+            if (restoredState.lastTick !== null && restoredState.lastStateTs !== null) {
+              lastProcessedStateCursor = {
+                tick: restoredState.lastTick,
+                ts: restoredState.lastStateTs,
+              };
             }
             restoredOnStartup = true;
           }
@@ -779,9 +787,9 @@ export async function runRuntime(
 
         const state = redis.getLatestState();
         if (state) {
-          if (lastProcessedTick !== null && state.tick <= lastProcessedTick) {
+          if (isStaleWorldState(state, lastProcessedStateCursor)) {
             logger.log(
-              `[tiandao] stale_state_skip tick=${state.tick} last_processed_tick=${lastProcessedTick}`,
+              `[tiandao] stale_state_skip tick=${state.tick} last_processed_tick=${lastProcessedStateCursor?.tick ?? "(none)"}`,
             );
             pendingStaleSkip = true;
           } else {
@@ -814,7 +822,10 @@ export async function runRuntime(
                 });
               },
             });
-            lastProcessedTick = state.tick;
+            lastProcessedStateCursor = {
+              tick: state.tick,
+              ts: state.ts,
+            };
             pendingReconnectCount = 0;
             pendingBackoffCount = 0;
             pendingStaleSkip = false;
@@ -865,7 +876,7 @@ async function restoreWorldModelOnStartup(args: {
   redis: RuntimeRedis;
   worldModel: WorldModel;
   logger: Pick<typeof console, "log" | "warn">;
-}): Promise<{ source: "redis" | "snapshot" | null; lastTick: number | null }> {
+}): Promise<{ source: "redis" | "snapshot" | null; lastTick: number | null; lastStateTs: number | null }> {
   const { redis, worldModel, logger } = args;
 
   const redisSnapshot = await redis.loadWorldModelState?.(logger);
@@ -874,23 +885,23 @@ async function restoreWorldModelOnStartup(args: {
     const normalized = worldModel.toJSON();
     if (hasDurableState(normalized)) {
       logger.log(formatRestoreAnchor(normalized));
-      return { source: "redis", lastTick: normalized.lastTick };
+      return { source: "redis", lastTick: normalized.lastTick, lastStateTs: normalized.lastStateTs };
     }
   }
 
   const fileSnapshot = await loadLatestSnapshotFromDisk(logger);
   if (!fileSnapshot) {
-    return { source: null, lastTick: null };
+    return { source: null, lastTick: null, lastStateTs: null };
   }
 
   worldModel.restoreFromJSON(fileSnapshot);
   const normalized = worldModel.toJSON();
   if (hasDurableState(normalized)) {
     logger.log(formatRestoreAnchor(normalized));
-    return { source: "snapshot", lastTick: normalized.lastTick };
+    return { source: "snapshot", lastTick: normalized.lastTick, lastStateTs: normalized.lastStateTs };
   }
 
-  return { source: null, lastTick: null };
+  return { source: null, lastTick: null, lastStateTs: null };
 }
 
 function hasDurableState(snapshot: WorldModelSnapshot): boolean {
@@ -906,6 +917,24 @@ function formatRestoreAnchor(snapshot: WorldModelSnapshot): string {
   const tick = snapshot.lastTick ?? 0;
   const eraName = snapshot.currentEra?.name ?? "(none)";
   return `${RESTORE_LOG_ANCHOR} ${tick}, era: ${eraName}`;
+}
+
+function isStaleWorldState(state: WorldStateV1, cursor: WorldStateCursor | null): boolean {
+  if (!cursor) {
+    return false;
+  }
+
+  if (cursor.ts !== null) {
+    if (state.ts < cursor.ts) {
+      return true;
+    }
+
+    if (state.ts > cursor.ts) {
+      return false;
+    }
+  }
+
+  return state.tick <= cursor.tick;
 }
 
 async function persistWorldModelAfterFreshTick(args: {

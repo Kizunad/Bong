@@ -1100,7 +1100,11 @@ describe("runRuntime", () => {
           reasoning: "restore",
         },
       },
+      playerFirstSeenTick: {
+        "offline:test-player": 188,
+      },
       lastTick: 188,
+      lastStateTs: staleState.ts,
     });
 
     await runRuntime(
@@ -1129,9 +1133,10 @@ describe("runRuntime", () => {
     expect(logger.log).toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
     expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
     expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(200);
+    expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastStateTs).toBe(freshState.ts);
   });
 
-  it("initializes stale guard from disk snapshot restore before processing fresh redis ticks", async () => {
+  it("treats legacy disk snapshots without lastStateTs as restart-safe and processes next tick", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-snapshot-restore-"));
     const previousCwd = process.cwd();
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -1188,21 +1193,89 @@ describe("runRuntime", () => {
       );
 
       expect(logger.log).toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
-      expect(logger.log).toHaveBeenCalledWith(
+      expect(logger.log).not.toHaveBeenCalledWith(
         "[tiandao] stale_state_skip tick=188 last_processed_tick=188",
       );
-      expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+      expect(redis.publishCommands).toHaveBeenCalledTimes(2);
       expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ sourceTick: 188, correlationId: "tiandao-tick-188" }),
+        }),
+      );
+      expect(redis.publishCommands.mock.calls[1]?.[0]).toEqual(
         expect.objectContaining({
           metadata: expect.objectContaining({ sourceTick: 200, correlationId: "tiandao-tick-200" }),
         }),
       );
-      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
-      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(200);
+      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(2);
+      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(188);
+      expect(redis.saveWorldModelState.mock.calls[1]?.[0]?.lastTick).toBe(200);
+      expect(redis.saveWorldModelState.mock.calls[1]?.[0]?.lastStateTs).toBe(freshState.ts);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("skips duplicate restored world state when snapshot cursor includes lastStateTs", async () => {
+    const staleState = createTestWorldState();
+    staleState.tick = 188;
+    const freshState = createTestWorldState();
+    freshState.tick = 200;
+    freshState.ts = staleState.ts + 12;
+    const redis = new SequenceRuntimeRedis([staleState, freshState]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    redis.loadWorldModelState.mockResolvedValue({
+      currentEra: {
+        name: "末法纪",
+        sinceTick: 188,
+        globalEffect: "灵机渐枯",
+      },
+      zoneHistory: {},
+      lastDecisions: {},
+      playerFirstSeenTick: {
+        "offline:test-player": 188,
+      },
+      lastTick: 188,
+      lastStateTs: staleState.ts,
+    });
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [
+          new FakeAgent("mutation", {
+            commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+            narrations: [],
+            reasoning: "snapshot-cursor",
+          }),
+        ],
+        sleep: vi.fn(async () => {}),
+        logger,
+        maxLoopIterations: 2,
+      },
+    );
+
+    expect(logger.log).toHaveBeenCalledWith(
+      "[tiandao] stale_state_skip tick=188 last_processed_tick=188",
+    );
+    expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+    expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ sourceTick: 200, correlationId: "tiandao-tick-200" }),
+      }),
+    );
   });
 
   it("redacts redis credentials from runtime connect logs", async () => {
@@ -1411,7 +1484,9 @@ describe("runRuntime", () => {
           reasoning: "recoverable",
         },
       },
+      playerFirstSeenTick: "bad" as unknown as Record<string, number>,
       lastTick: "bad" as unknown as number,
+      lastStateTs: "bad" as unknown as number,
     });
 
     await runRuntime(

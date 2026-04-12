@@ -312,7 +312,9 @@ describe("redis-ipc", () => {
         player_count: 1,
       }] }),
       [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({ mutation: { commands: [], narrations: [], reasoning: "ok" } }),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: "{bad-json",
       [WORLD_MODEL_STATE_FIELDS.lastTick]: "not-a-number",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "also-bad",
     });
 
     const createClient = vi
@@ -400,6 +402,12 @@ describe("redis-ipc", () => {
     expect(warn).toHaveBeenCalledWith(
       `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastTick} in ${WORLD_MODEL_STATE_KEY}`,
     );
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick} in ${WORLD_MODEL_STATE_KEY}`,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastStateTs} in ${WORLD_MODEL_STATE_KEY}`,
+    );
   });
 
   it("saves world model state hash in a single hset call", async () => {
@@ -442,7 +450,11 @@ describe("redis-ipc", () => {
           reasoning: "ok",
         },
       },
+      playerFirstSeenTick: {
+        "offline:Elder": 88,
+      },
       lastTick: 100,
+      lastStateTs: 1710000100,
     });
 
     const stored = pub.getHash(WORLD_MODEL_STATE_KEY);
@@ -470,7 +482,11 @@ describe("redis-ipc", () => {
           reasoning: "ok",
         },
       }),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({
+        "offline:Elder": 88,
+      }),
       [WORLD_MODEL_STATE_FIELDS.lastTick]: "100",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1710000100",
     });
   });
 });

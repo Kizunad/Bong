@@ -65,7 +65,9 @@ export interface WorldModelSnapshot {
   currentEra: CurrentEra | null;
   zoneHistory: Record<string, ZoneSnapshot[]>;
   lastDecisions: Record<string, AgentDecision>;
+  playerFirstSeenTick: Record<string, number>;
   lastTick: number | null;
+  lastStateTs: number | null;
 }
 
 interface MutableKeyPlayerSummary {
@@ -76,10 +78,12 @@ interface MutableKeyPlayerSummary {
 export class WorldModel {
   private latestStateValue: WorldStateV1 | null = null;
   private currentEraValue: CurrentEra | null = null;
+  private lastStateTsValue: number | null = null;
   readonly zoneHistory = new Map<string, ZoneSnapshot[]>();
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
   private newPlayersThisTick = new Set<string>();
+  private suppressNewPlayersThisTickOnNextUpdate = false;
 
   static fromState(state: WorldStateV1): WorldModel {
     const model = new WorldModel();
@@ -109,6 +113,10 @@ export class WorldModel {
     return this.latestStateValue?.tick ?? null;
   }
 
+  get lastStateTs(): number | null {
+    return this.lastStateTsValue;
+  }
+
   toJSON(): WorldModelSnapshot {
     const zoneHistory: Record<string, ZoneSnapshot[]> = {};
     for (const [zoneName, history] of this.zoneHistory.entries()) {
@@ -124,14 +132,19 @@ export class WorldModel {
       currentEra: cloneCurrentEra(this.currentEraValue),
       zoneHistory,
       lastDecisions,
+      playerFirstSeenTick: Object.fromEntries(this.playerFirstSeenTick.entries()),
       lastTick: this.lastTick,
+      lastStateTs: this.lastStateTs,
     };
   }
 
   updateState(state: WorldStateV1): void {
     const clonedState = cloneWorldState(state);
     const hadPreviousState = this.latestStateValue !== null;
+    const suppressNewPlayersThisTick = this.suppressNewPlayersThisTickOnNextUpdate;
+    this.suppressNewPlayersThisTickOnNextUpdate = false;
     this.latestStateValue = clonedState;
+    this.lastStateTsValue = clonedState.ts;
     this.newPlayersThisTick = new Set<string>();
 
     for (const zone of clonedState.zones) {
@@ -146,7 +159,7 @@ export class WorldModel {
     for (const player of clonedState.players) {
       if (!this.playerFirstSeenTick.has(player.uuid)) {
         this.playerFirstSeenTick.set(player.uuid, clonedState.tick);
-        if (hadPreviousState) {
+        if (hadPreviousState && !suppressNewPlayersThisTick) {
           this.newPlayersThisTick.add(player.uuid);
         }
       }
@@ -329,7 +342,17 @@ export class WorldModel {
       this.lastDecisions.set(agentName, decision);
     }
 
+    this.playerFirstSeenTick.clear();
+    const playerFirstSeenTick = sanitizePlayerFirstSeenTick(snapshot.playerFirstSeenTick);
+    for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
+      this.playerFirstSeenTick.set(playerId, firstSeenTick);
+    }
+
     const normalizedLastTick = sanitizeLastTick(snapshot.lastTick);
+    const normalizedLastStateTs = sanitizeLastStateTs(snapshot.lastStateTs);
+    this.lastStateTsValue = normalizedLastStateTs;
+    this.suppressNewPlayersThisTickOnNextUpdate =
+      normalizedLastTick !== null && !isRecord(snapshot.playerFirstSeenTick);
     if (normalizedLastTick === null) {
       this.latestStateValue = null;
       this.newPlayersThisTick = new Set<string>();
@@ -338,7 +361,7 @@ export class WorldModel {
 
     this.latestStateValue = {
       v: 1,
-      ts: 0,
+      ts: normalizedLastStateTs ?? 0,
       tick: normalizedLastTick,
       players: [],
       npcs: [],
@@ -754,6 +777,31 @@ function sanitizeLastTick(lastTick: unknown): number | null {
   }
 
   return normalizedLastTick;
+}
+
+function sanitizeLastStateTs(lastStateTs: unknown): number | null {
+  const normalizedLastStateTs = sanitizeFiniteNumber(lastStateTs);
+  if (normalizedLastStateTs === null) {
+    return null;
+  }
+
+  return normalizedLastStateTs;
+}
+
+function sanitizePlayerFirstSeenTick(playerFirstSeenTick: unknown): Record<string, number> {
+  if (!isRecord(playerFirstSeenTick)) {
+    return {};
+  }
+
+  const normalized: Record<string, number> = {};
+  for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
+    const normalizedFirstSeenTick = sanitizeFiniteNumber(firstSeenTick);
+    if (normalizedFirstSeenTick !== null) {
+      normalized[playerId] = normalizedFirstSeenTick;
+    }
+  }
+
+  return normalized;
 }
 
 function sanitizeFiniteNumber(value: unknown): number | null {

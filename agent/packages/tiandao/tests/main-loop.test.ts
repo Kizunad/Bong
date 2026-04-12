@@ -292,4 +292,75 @@ describe("main-loop runtime resilience", () => {
       "[tiandao] stale_state_skip tick=123 last_processed_tick=123",
     );
   });
+
+  it("processes rebooted server state when tick resets but timestamp moves forward", async () => {
+    const sleep = vi.fn(async () => {});
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const rebootedState = {
+      ...createTestWorldState(),
+      tick: 1,
+      ts: 1_712_345_999,
+    };
+
+    const redis: RuntimeRedis = {
+      connect: async () => {},
+      getLatestState: () => rebootedState,
+      drainPlayerChat: async () => [],
+      publishCommands: vi.fn(async (_request: CommandPublishRequest) => {}),
+      publishNarrations: vi.fn(async (_request: NarrationPublishRequest) => {}),
+      loadWorldModelState: async () => ({
+        currentEra: {
+          name: "末法纪",
+          sinceTick: 188,
+          globalEffect: "灵机渐枯",
+        },
+        zoneHistory: {},
+        lastDecisions: {},
+        playerFirstSeenTick: {
+          "offline:test-player": 188,
+        },
+        lastTick: 188,
+        lastStateTs: rebootedState.ts - 10,
+      }),
+      disconnect: async () => {},
+    };
+
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          agents: [
+            new FakeAgent("mutation", {
+              commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.01 } }],
+              narrations: [],
+              reasoning: "rebooted-server",
+            }),
+          ],
+          sleep,
+          logger,
+          maxLoopIterations: 1,
+        },
+      );
+    });
+
+    expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+    expect(redis.publishCommands).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { sourceTick: 1, correlationId: "tiandao-tick-1" },
+      }),
+    );
+    expect(logger.log).not.toHaveBeenCalledWith(
+      "[tiandao] stale_state_skip tick=1 last_processed_tick=188",
+    );
+  });
 });

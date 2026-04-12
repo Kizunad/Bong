@@ -20,7 +20,9 @@ export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   currentEra: "current_era",
   zoneHistory: "zone_history",
   lastDecisions: "last_decisions",
+  playerFirstSeenTick: "player_first_seen_tick",
   lastTick: "last_tick",
+  lastStateTs: "last_state_ts",
 });
 
 const DRAIN_SCRIPT = `
@@ -189,6 +191,15 @@ export class RedisIpc {
       snapshot.lastDecisions = lastDecisions as WorldModelSnapshot["lastDecisions"];
     }
 
+    const playerFirstSeenTick = parseJsonField(
+      hash[WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick],
+      "player_first_seen_tick",
+      logger,
+    );
+    if (playerFirstSeenTick !== null) {
+      snapshot.playerFirstSeenTick = playerFirstSeenTick as WorldModelSnapshot["playerFirstSeenTick"];
+    }
+
     const lastTick = parseTickField(
       hash[WORLD_MODEL_STATE_FIELDS.lastTick],
       WORLD_MODEL_STATE_FIELDS.lastTick,
@@ -196,6 +207,15 @@ export class RedisIpc {
     );
     if (lastTick !== null) {
       snapshot.lastTick = lastTick;
+    }
+
+    const lastStateTs = parseTickField(
+      hash[WORLD_MODEL_STATE_FIELDS.lastStateTs],
+      WORLD_MODEL_STATE_FIELDS.lastStateTs,
+      logger,
+    );
+    if (lastStateTs !== null) {
+      snapshot.lastStateTs = lastStateTs;
     }
 
     return snapshot;
@@ -210,7 +230,9 @@ export class RedisIpc {
       [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify(snapshot.currentEra),
       [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify(snapshot.zoneHistory),
       [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify(snapshot.lastDecisions),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify(snapshot.playerFirstSeenTick),
       [WORLD_MODEL_STATE_FIELDS.lastTick]: String(snapshot.lastTick ?? ""),
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: String(snapshot.lastStateTs ?? ""),
     };
 
     await this.pub.hset(WORLD_MODEL_STATE_KEY, values);
@@ -299,7 +321,7 @@ function parseTickField(
 
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    logger.warn(`[redis-ipc] failed to parse last_tick from ${WORLD_MODEL_STATE_KEY}:`, value);
+    logger.warn(`[redis-ipc] failed to parse ${fieldName} from ${WORLD_MODEL_STATE_KEY}:`, value);
     return null;
   }
 
