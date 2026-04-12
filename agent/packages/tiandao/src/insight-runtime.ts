@@ -113,6 +113,7 @@ function parseAgentOutput(
     const patched: InsightOfferV1 = {
       offer_id: loose.offer_id ?? generateOfferId(request),
       trigger_id: loose.trigger_id ?? request.trigger_id,
+      character_id: loose.character_id ?? request.character_id,
       choices: Array.isArray(loose.choices) ? loose.choices : [],
     };
     const revalidated = validateInsightOfferV1Contract(patched);
@@ -139,6 +140,7 @@ function emptyOffer(request: InsightRequestV1): InsightOfferV1 {
   return {
     offer_id: generateOfferId(request),
     trigger_id: request.trigger_id,
+    character_id: request.character_id,
     // minItems:1，所以放一条无效占位的话 server 端 arbiter 仍会拒收；
     // 直接构造带 1 条保底"拒绝"风味的选项，让用户体感一致。
     choices: [
@@ -276,6 +278,7 @@ export class InsightRuntime {
       ...filtered,
       offer_id: filtered.offer_id || generateOfferId(request),
       trigger_id: request.trigger_id,
+      character_id: request.character_id,
     };
   }
 }

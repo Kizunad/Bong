@@ -27,6 +27,7 @@ export const InsightOfferV1 = Type.Object(
   {
     offer_id: Type.String({ minLength: 1, maxLength: 128 }),
     trigger_id: Type.String({ minLength: 1, maxLength: 128 }),
+    character_id: Type.String({ minLength: 1 }),
     choices: Type.Array(InsightChoiceV1, { minItems: 1, maxItems: 4 }),
   },
   { additionalProperties: false },

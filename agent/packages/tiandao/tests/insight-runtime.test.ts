@@ -63,6 +63,7 @@ describe("applyInsightArbiter", () => {
     const filtered = applyInsightArbiter(req, {
       offer_id: "o1",
       trigger_id: req.trigger_id,
+      character_id: req.character_id,
       choices: [
         { category: "Meridian", effect_kind: "MeridianIntegrityBoost", magnitude: 0.1, flavor_text: "ok" },
         { category: "Style", effect_kind: "StyleUnlock", magnitude: 1, flavor_text: "bad" },
@@ -77,6 +78,7 @@ describe("applyInsightArbiter", () => {
     const filtered = applyInsightArbiter(req, {
       offer_id: "o1",
       trigger_id: req.trigger_id,
+      character_id: req.character_id,
       choices: [
         { category: "Qi", effect_kind: "QiMaxBoost", magnitude: 999, flavor_text: "over cap" },
         { category: "Qi", effect_kind: "QiMaxBoost", magnitude: 8, flavor_text: "ok" },
@@ -97,6 +99,7 @@ describe("applyInsightArbiter", () => {
     const filtered = applyInsightArbiter(req, {
       offer_id: "o1",
       trigger_id: req.trigger_id,
+      character_id: req.character_id,
       choices: many,
     });
     expect(filtered.choices.length).toBe(4);
