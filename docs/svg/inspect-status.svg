@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" font-family="'Noto Sans CJK SC', sans-serif">
+  <rect width="1600" height="1000" fill="#0a0a12"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">InspectScreen · 状态面板（StatusEffects Tab）</text>
+  <text x="30" y="64" font-size="13" fill="#888">plan-combat-v1.md §7.8 · 落位：渲染层 B · InspectScreen 新增 tab</text>
+
+  <!-- 顶部 meta -->
+  <g transform="translate(30,82)">
+    <rect width="1540" height="32" fill="#15151a" stroke="#444"/>
+    <text x="16" y="20" font-size="11" fill="#cccccc">新增 Store：<tspan fill="#ffcc40">StatusEffectStateStore</tspan> · 消费 <tspan fill="#80ff80">bong:combat/status_sync</tspan> · 布局：FlowLayout + ScrollContainer + GroupHeader Component</text>
+  </g>
+
+  <!-- Tab 栏（与 inspect-wounds 一致） -->
+  <g transform="translate(30,124)">
+    <rect width="130" height="34" fill="#40301a" stroke="#a08060" stroke-width="1"/>
+    <text x="65" y="22" font-size="12" fill="#aaaa" text-anchor="middle">装备</text>
+    <rect x="132" width="130" height="34" fill="#1a2a1a" stroke="#40a040" stroke-width="1"/>
+    <text x="197" y="22" font-size="12" fill="#aaaa" text-anchor="middle">修仙</text>
+    <rect x="264" width="130" height="34" fill="#2a1a1a" stroke="#a04040" stroke-width="1"/>
+    <text x="329" y="22" font-size="12" fill="#aaaa" text-anchor="middle">伤口</text>
+    <rect x="396" width="130" height="34" fill="#4a3a1a" stroke="#ffcc40" stroke-width="2"/>
+    <text x="461" y="22" font-size="12" fill="#ffcc80" text-anchor="middle" font-weight="bold">⚡ 状态 · 当前</text>
+  </g>
+
+  <!-- 统计头部 -->
+  <g transform="translate(220,124)">
+    <rect width="1350" height="50" fill="#1a1a2a" stroke="#444" rx="4"/>
+    <text x="20" y="22" font-size="13" fill="#ffffff">活跃效果 8 项 · DoT 3 · 控制 1 · 减益 2 · 增益 2</text>
+    <text x="20" y="40" font-size="10" fill="#888">DispelTag 可移除：3（Soft 2 · Hard 1）· InspectScreen 内按 Q 切分组展开 / 按 R 切排序</text>
+  </g>
+
+  <!-- 主区域：按 kind 分组 -->
+  <g transform="translate(220,186)">
+    <!-- DoT 组 -->
+    <g>
+      <rect width="1350" height="30" fill="#3a1010" stroke="#ff4040"/>
+      <text x="12" y="20" font-size="14" fill="#ff8080" font-weight="bold">▾ 持续伤害 DoT（3）</text>
+    </g>
+    <g transform="translate(0,34)">
+      <rect width="1350" height="56" fill="#1f0a0a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#601818" stroke="#ff4040" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">🩸</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#ffa0a0" font-weight="bold">流血 Bleeding × 3 叠</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">2.4 HP/s · 剩余 18.3s · 来源：野狼（左胸刺穿）</text>
+      <!-- magnitude / duration 条 -->
+      <rect x="600" y="12" width="300" height="8" fill="#2a0808"/>
+      <rect x="600" y="12" width="180" height="8" fill="#ff4040"/>
+      <text x="600" y="36" font-size="9" fill="#888">magnitude 1.8</text>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="240" height="8" fill="#888"/>
+      <text x="900" y="36" font-size="9" fill="#888">duration 18.3/24 s</text>
+      <!-- DispelTag 标记 -->
+      <g transform="translate(1220,8)">
+        <rect width="60" height="24" fill="#0a2030" stroke="#40a0ff"/>
+        <text x="30" y="16" font-size="10" fill="#80c0ff" text-anchor="middle">Soft 可驱散</text>
+      </g>
+      <!-- 来源染色指示 -->
+      <rect x="1290" y="8" width="50" height="40" fill="#a04040" stroke="#ff6060"/>
+      <text x="1315" y="34" font-size="9" fill="#ffaaaa" text-anchor="middle">来源色</text>
+    </g>
+    <g transform="translate(0,92)">
+      <rect width="1350" height="56" fill="#1f1408"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#604020" stroke="#ff8040" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">🔥</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#ffcc80" font-weight="bold">燃烧 Burning × 1</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">1.2 HP/s · 剩余 6.0s · 来源：火焰弹（玩家 B）</text>
+      <rect x="600" y="12" width="300" height="8" fill="#1a0a00"/>
+      <rect x="600" y="12" width="120" height="8" fill="#ff8040"/>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="75" height="8" fill="#888"/>
+      <g transform="translate(1220,8)">
+        <rect width="60" height="24" fill="#2a0808" stroke="#ff4040"/>
+        <text x="30" y="16" font-size="10" fill="#ffaaaa" text-anchor="middle">Hard 驱散</text>
+      </g>
+      <rect x="1290" y="8" width="50" height="40" fill="#ff8040" stroke="#ffaa60"/>
+    </g>
+    <g transform="translate(0,150)">
+      <rect width="1350" height="56" fill="#0a1f0a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#206040" stroke="#40ff80" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">☠</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#a0ffa0" font-weight="bold">中毒 Poisoned × 2 叠</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">0.8 HP/s · 剩余 42.0s · 来源：毒蛊流（玩家 C）</text>
+      <rect x="600" y="12" width="300" height="8" fill="#001a08"/>
+      <rect x="600" y="12" width="100" height="8" fill="#40ff80"/>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="210" height="8" fill="#888"/>
+      <g transform="translate(1220,8)">
+        <rect width="60" height="24" fill="#0a200a" stroke="#40ff40"/>
+        <text x="30" y="16" font-size="10" fill="#aaffaa" text-anchor="middle">Soft</text>
+      </g>
+      <rect x="1290" y="8" width="50" height="40" fill="#408040" stroke="#60a060"/>
+    </g>
+
+    <!-- 控制组 -->
+    <g transform="translate(0,220)">
+      <rect width="1350" height="30" fill="#101030" stroke="#4040ff"/>
+      <text x="12" y="20" font-size="14" fill="#8080ff" font-weight="bold">▾ 控制（1）</text>
+    </g>
+    <g transform="translate(0,254)">
+      <rect width="1350" height="56" fill="#0a0a1f"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#202060" stroke="#4040ff" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">💤</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#a0a0ff" font-weight="bold">眩晕 Stunned</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">无法行动 · 剩余 0.8s · 来源：震爆（爆脉流）</text>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="24" height="8" fill="#888"/>
+      <g transform="translate(1220,8)">
+        <rect width="60" height="24" fill="#1a1a1a" stroke="#666"/>
+        <text x="30" y="16" font-size="10" fill="#aaaa" text-anchor="middle">不可驱散</text>
+      </g>
+      <rect x="1290" y="8" width="50" height="40" fill="#ffcc00" stroke="#ffee60"/>
+    </g>
+
+    <!-- 减益组 -->
+    <g transform="translate(0,324)">
+      <rect width="1350" height="30" fill="#301030" stroke="#a040a0"/>
+      <text x="12" y="20" font-size="14" fill="#d080d0" font-weight="bold">▾ 减益（2）</text>
+    </g>
+    <g transform="translate(0,358)">
+      <rect width="1350" height="56" fill="#1a0a1a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#401060" stroke="#a040ff" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">⚡</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#d0a0ff" font-weight="bold">易伤 DamageAmp +30%</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">受击伤害 ×1.30 · 剩余 10s · 来源：阵法（玩家 D）</text>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="150" height="8" fill="#888"/>
+    </g>
+    <g transform="translate(0,416)">
+      <rect width="1350" height="56" fill="#1a1a1a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#404040" stroke="#888" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">🐢</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#cccccc" font-weight="bold">减速 Slowed -40%</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">移动速度 ×0.60 · 剩余 4.5s · 来源：藤蔓（环境）</text>
+      <rect x="900" y="12" width="300" height="8" fill="#080808"/>
+      <rect x="900" y="12" width="45" height="8" fill="#888"/>
+    </g>
+
+    <!-- 增益组 -->
+    <g transform="translate(0,486)">
+      <rect width="1350" height="30" fill="#103010" stroke="#40a040"/>
+      <text x="12" y="20" font-size="14" fill="#80d080" font-weight="bold">▾ 增益（2）</text>
+    </g>
+    <g transform="translate(0,520)">
+      <rect width="1350" height="56" fill="#0a1f0a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#106040" stroke="#40ffa0" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">🛡</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#a0ffc0" font-weight="bold">真元护盾 QiShield 80 pt</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">吸收下次伤害 · 剩余 12.0s · 来源：自施</text>
+    </g>
+    <g transform="translate(0,578)">
+      <rect width="1350" height="56" fill="#1f1f0a"/>
+      <g transform="translate(8,8)">
+        <rect width="40" height="40" fill="#a08020" stroke="#ffcc40" stroke-width="2" rx="3"/>
+        <text x="20" y="26" font-size="20" text-anchor="middle">✨</text>
+      </g>
+      <text x="60" y="22" font-size="13" fill="#ffee80" font-weight="bold">疗愈加速 HealAccel ×2.0</text>
+      <text x="60" y="42" font-size="10" fill="#aaaa">HP/伤口恢复速率 ×2.0 · 剩余 30s · 来源：导真元</text>
+    </g>
+  </g>
+
+  <!-- 右下：tooltip 演示 -->
+  <g transform="translate(920,780)">
+    <rect width="640" height="160" fill="#000000" opacity="0.9" stroke="#40a0ff" stroke-width="1" rx="4"/>
+    <text x="20" y="26" font-size="13" fill="#80c0ff" font-weight="bold">[ tooltip 示例 · 悬停某项时弹出 ]</text>
+    <text x="20" y="52" font-size="11" fill="#cccccc">EffectKind: Bleeding</text>
+    <text x="20" y="70" font-size="11" fill="#cccccc">EffectId.source_tag: per_source(野狼#a3f2)</text>
+    <text x="20" y="88" font-size="11" fill="#cccccc">StackPolicy: Refresh · 本体 ×3（重复叠层取 max magnitude）</text>
+    <text x="20" y="106" font-size="11" fill="#cccccc">AttrMod: 无（纯 DoT，不聚合 DerivedAttrs）</text>
+    <text x="20" y="124" font-size="11" fill="#cccccc">DispelTags: Soft · Curable by: 止血包扎 / 涡流吸收</text>
+    <text x="20" y="146" font-size="10" fill="#888">来源染色 #A04040 对应顶部 HUD 图标描边，便于"被谁打的一目了然"</text>
+  </g>
+
+  <text x="30" y="980" font-size="11" fill="#666">数据契约：CHANNEL_STATUS_EFFECT (→ agent) + CustomPayload bong:combat/status_sync (→ client) → StatusEffectStateStore.replace() → 本 tab 自动刷新</text>
+</svg>

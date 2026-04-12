@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" font-family="'Noto Sans CJK SC', 'PingFang SC', sans-serif">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a3a4a"/>
+      <stop offset="100%" stop-color="#4a5a6a"/>
+    </linearGradient>
+    <linearGradient id="hp" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a02020"/>
+      <stop offset="100%" stop-color="#d04040"/>
+    </linearGradient>
+    <linearGradient id="qi" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#20a0a0"/>
+      <stop offset="100%" stop-color="#40d0d0"/>
+    </linearGradient>
+    <linearGradient id="stamina" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a0a020"/>
+      <stop offset="100%" stop-color="#d0d040"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <rect x="0" y="720" width="1920" height="360" fill="#3a4a3a" opacity="0.6"/>
+  <text x="960" y="100" font-size="28" fill="#ffffff" text-anchor="middle" opacity="0.4">[ 模拟 MC 游戏画面 · UI 草图 · 沉浸式极简 HUD ]</text>
+
+  <!-- 顶部右：小地图/时间/坐标（MC 原版，保留） -->
+  <g transform="translate(1700,40)">
+    <rect width="180" height="120" fill="#000000" opacity="0.4" rx="4"/>
+    <text x="90" y="28" font-size="12" fill="#cccccc" text-anchor="middle">[MC 原版 小地图/F3]</text>
+    <text x="90" y="52" font-size="11" fill="#aaaaaa" text-anchor="middle">坐标 X -234 Z 1890</text>
+    <text x="90" y="72" font-size="11" fill="#aaaaaa" text-anchor="middle">区域：血谷</text>
+    <text x="90" y="92" font-size="11" fill="#aaaaaa" text-anchor="middle">灵气 0.28</text>
+  </g>
+
+  <!-- 左下角：迷你人体伤口图 + 真元/体力竖条（百分比） -->
+  <g transform="translate(50,820)">
+    <!-- 半透明背景框 -->
+    <rect x="-10" y="-10" width="200" height="170" fill="#000000" opacity="0.32" rx="6"/>
+
+    <!-- 迷你人体（80w × 150h 简化剪影，红色叠加 = 伤口） -->
+    <g transform="translate(0,0)">
+      <!-- 剪影基色（灰白） -->
+      <!-- 头 -->
+      <circle cx="40" cy="14" r="12" fill="#aaaaaa" stroke="#444" stroke-width="1"/>
+      <!-- 躯干 -->
+      <rect x="26" y="28" width="28" height="48" fill="#aaaaaa" stroke="#444" stroke-width="1" rx="3"/>
+      <!-- 左臂 -->
+      <rect x="12" y="30" width="12" height="42" fill="#aaaaaa" stroke="#444" stroke-width="1" rx="3"/>
+      <!-- 右臂 -->
+      <rect x="56" y="30" width="12" height="42" fill="#aaaaaa" stroke="#444" stroke-width="1" rx="3"/>
+      <!-- 左腿 -->
+      <rect x="26" y="78" width="12" height="56" fill="#aaaaaa" stroke="#444" stroke-width="1" rx="3"/>
+      <!-- 右腿 -->
+      <rect x="42" y="78" width="12" height="56" fill="#aaaaaa" stroke="#444" stroke-width="1" rx="3"/>
+
+      <!-- 伤口叠加（红色 blob）-->
+      <!-- 左胸撕裂伤 -->
+      <circle cx="34" cy="42" r="5" fill="#ff4040" opacity="0.85"/>
+      <!-- 右臂擦伤 -->
+      <circle cx="62" cy="48" r="3" fill="#ffcc40" opacity="0.85"/>
+      <!-- 左腿骨折（深红 + 描边强调） -->
+      <circle cx="32" cy="110" r="4" fill="#a01818" stroke="#ff6060" stroke-width="1" opacity="0.95"/>
+      <!-- 头部轻微淤青 -->
+      <circle cx="44" cy="10" r="2" fill="#c08040" opacity="0.7"/>
+
+      <!-- 标签 -->
+      <text x="40" y="150" font-size="9" fill="#aaaaaa" text-anchor="middle">伤口（按 I 详情）</text>
+    </g>
+
+    <!-- 真元竖条（青色，百分比 78%） -->
+    <g transform="translate(92,0)">
+      <text x="14" y="-2" font-size="9" fill="#40d0d0" text-anchor="middle">真元</text>
+      <rect x="4" y="4" width="20" height="130" fill="#001020" stroke="#40d0d0" stroke-width="1.5" rx="2"/>
+      <!-- 78% 从底部上升 -->
+      <rect x="4" y="33" width="20" height="101" fill="url(#qi)"/>
+      <text x="14" y="150" font-size="10" fill="#40d0d0" text-anchor="middle" font-weight="bold">78%</text>
+    </g>
+
+    <!-- 体力竖条（黄色，百分比 42%） -->
+    <g transform="translate(128,0)">
+      <text x="14" y="-2" font-size="9" fill="#d0d040" text-anchor="middle">体力</text>
+      <rect x="4" y="4" width="20" height="130" fill="#201500" stroke="#d0d040" stroke-width="1.5" rx="2"/>
+      <!-- 42% 从底部上升 -->
+      <rect x="4" y="79" width="20" height="55" fill="url(#stamina)"/>
+      <text x="14" y="150" font-size="10" fill="#d0d040" text-anchor="middle" font-weight="bold">42%</text>
+    </g>
+  </g>
+
+  <!-- 上层：快捷使用栏 9 格（I 键 UI 内配置，有施放时间） -->
+  <g transform="translate(640,900)">
+    <text x="0" y="-8" font-size="11" fill="#80ffcc">快捷使用栏（9 格）· InspectScreen 内配置 · F1-F9 触发 · 有 cast time</text>
+    <g>
+      <rect width="60" height="60" fill="#1a2a1a" stroke="#80ff80" stroke-width="2" rx="2"/>
+      <text x="30" y="34" font-size="22" text-anchor="middle">🩹</text>
+      <text x="30" y="52" font-size="9" fill="#80ff80" text-anchor="middle">F1 绷带 2.5s</text>
+    </g>
+    <g transform="translate(66,0)">
+      <rect width="60" height="60" fill="#3a1a1a" stroke="#ff6060" stroke-width="2" rx="2"/>
+      <text x="30" y="34" font-size="22" text-anchor="middle">🧪</text>
+      <text x="30" y="52" font-size="9" fill="#ff8080" text-anchor="middle">F2 回血丹 1.2s</text>
+    </g>
+    <g transform="translate(132,0)">
+      <rect width="60" height="60" fill="#1a1a3a" stroke="#6080ff" stroke-width="2" rx="2"/>
+      <text x="30" y="34" font-size="22" text-anchor="middle">💧</text>
+      <text x="30" y="52" font-size="9" fill="#80a0ff" text-anchor="middle">F3 回真元 0.8s</text>
+    </g>
+    <g transform="translate(198,0)">
+      <rect width="60" height="60" fill="#2a2a0a" stroke="#ffcc40" stroke-width="2" rx="2"/>
+      <text x="30" y="34" font-size="22" text-anchor="middle">🌿</text>
+      <text x="30" y="52" font-size="9" fill="#ffcc80" text-anchor="middle">F4 解毒 1.5s</text>
+      <rect x="0" y="62" width="60" height="5" fill="#1a1000"/>
+      <rect x="0" y="62" width="38" height="5" fill="#ffcc40"/>
+    </g>
+    <g transform="translate(264,0)">
+      <rect width="60" height="60" fill="#2a1a2a" stroke="#c080c0" stroke-width="2" rx="2"/>
+      <text x="30" y="34" font-size="22" text-anchor="middle">✨</text>
+      <text x="30" y="52" font-size="9" fill="#d0a0d0" text-anchor="middle">F5 导真元 3s</text>
+    </g>
+    <g transform="translate(330,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" stroke-dasharray="3 2" rx="2"/>
+      <text x="30" y="34" font-size="18" fill="#666" text-anchor="middle">+</text>
+      <text x="30" y="52" font-size="9" fill="#666" text-anchor="middle">F6 未配置</text>
+    </g>
+    <g transform="translate(396,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" stroke-dasharray="3 2" rx="2"/>
+      <text x="30" y="34" font-size="18" fill="#666" text-anchor="middle">+</text>
+      <text x="30" y="52" font-size="9" fill="#666" text-anchor="middle">F7 未配置</text>
+    </g>
+    <g transform="translate(462,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" stroke-dasharray="3 2" rx="2"/>
+      <text x="30" y="34" font-size="18" fill="#666" text-anchor="middle">+</text>
+      <text x="30" y="52" font-size="9" fill="#666" text-anchor="middle">F8 未配置</text>
+    </g>
+    <g transform="translate(528,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" stroke-dasharray="3 2" rx="2"/>
+      <text x="30" y="34" font-size="18" fill="#666" text-anchor="middle">+</text>
+      <text x="30" y="52" font-size="9" fill="#666" text-anchor="middle">F9 未配置</text>
+    </g>
+  </g>
+
+  <!-- 下层：战斗快捷栏（武器/法术/爆脉/暗器，1-9 即时） -->
+  <g transform="translate(640,980)">
+    <text x="0" y="-8" font-size="11" fill="#cccccc">战斗快捷栏 · 武器/法术 · 1-9 即时切换（MC 原生 hotbar）</text>
+    <g>
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#ffffff" stroke-width="2" rx="2"/>
+      <text x="30" y="38" font-size="26" text-anchor="middle">⚔</text>
+      <text x="30" y="56" font-size="9" fill="#ffffff" text-anchor="middle">1 长刀</text>
+    </g>
+    <g transform="translate(66,0)">
+      <rect width="60" height="60" fill="#3a2a1a" stroke="#a08060" stroke-width="2" rx="2"/>
+      <text x="30" y="38" font-size="26" text-anchor="middle">🏹</text>
+      <text x="30" y="56" font-size="9" fill="#ffffff" text-anchor="middle">2 弓</text>
+    </g>
+    <g transform="translate(132,0)">
+      <rect width="60" height="60" fill="#2a1a3a" stroke="#c040ff" stroke-width="3" rx="2"/>
+      <text x="30" y="38" font-size="22" text-anchor="middle">📿</text>
+      <text x="30" y="56" font-size="9" fill="#c080ff" text-anchor="middle">3 法宝*</text>
+      <text x="55" y="10" font-size="10" fill="#ffff00" text-anchor="end">★</text>
+    </g>
+    <g transform="translate(198,0)">
+      <rect width="60" height="60" fill="#ffcc66" stroke="#ffffff" stroke-width="3" rx="2"/>
+      <text x="30" y="38" font-size="22" text-anchor="middle">💥</text>
+      <text x="30" y="56" font-size="9" fill="#000000" text-anchor="middle">4 爆脉</text>
+    </g>
+    <g transform="translate(264,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" rx="2"/>
+      <text x="30" y="38" font-size="22" text-anchor="middle">🎯</text>
+      <text x="30" y="56" font-size="9" fill="#aaaaaa" text-anchor="middle">5 暗器</text>
+    </g>
+    <g transform="translate(330,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#666" stroke-width="1" rx="2"/>
+      <text x="30" y="38" font-size="22" text-anchor="middle">◇</text>
+      <text x="30" y="56" font-size="9" fill="#aaaaaa" text-anchor="middle">6 阵旗</text>
+    </g>
+    <g transform="translate(396,0)">
+      <rect width="60" height="60" fill="#2a3a1a" stroke="#666" stroke-width="1" rx="2"/>
+      <text x="30" y="38" font-size="22" text-anchor="middle">🧪</text>
+      <text x="30" y="56" font-size="9" fill="#aaaaaa" text-anchor="middle">7 丹</text>
+    </g>
+    <g transform="translate(462,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#333" stroke-width="1" rx="2"/>
+      <text x="30" y="56" font-size="9" fill="#666" text-anchor="middle">8</text>
+    </g>
+    <g transform="translate(528,0)">
+      <rect width="60" height="60" fill="#2a2a2a" stroke="#333" stroke-width="1" rx="2"/>
+      <text x="30" y="56" font-size="9" fill="#666" text-anchor="middle">9</text>
+    </g>
+  </g>
+
+  <!-- 右下：qi_invest 滑块 — 只在按住 R 蓄力时显示 -->
+  <g transform="translate(1400,800)" opacity="0.95">
+    <rect width="420" height="180" fill="#000000" opacity="0.55" stroke="#c040ff" stroke-width="1" stroke-dasharray="6 4" rx="6"/>
+    <text x="10" y="22" font-size="13" fill="#ff80ff">§3.5 法术体积调控 · 条件显示</text>
+    <text x="10" y="42" font-size="10" fill="#ffcc80">⚡ 仅在「持有法术武器 AND 按住 R」时渲染，松开即隐藏</text>
+    <text x="10" y="68" font-size="11" fill="#cccccc">radius  1.2m</text>
+    <line x1="10" y1="80" x2="400" y2="80" stroke="#666" stroke-width="2"/>
+    <rect x="110" y="74" width="12" height="14" fill="#ff80ff"/>
+    <text x="10" y="104" font-size="11" fill="#cccccc">velocity_cap  42 m/s</text>
+    <line x1="10" y1="116" x2="400" y2="116" stroke="#666" stroke-width="2"/>
+    <rect x="280" y="110" width="12" height="14" fill="#ff80ff"/>
+    <text x="10" y="140" font-size="11" fill="#cccccc">qi_invest  140 点  [击杀概率 34%]</text>
+    <rect x="10" y="148" width="400" height="10" fill="#1a1a1a" stroke="#444"/>
+    <rect x="10" y="148" width="200" height="10" fill="url(#qi)"/>
+    <text x="10" y="172" font-size="10" fill="#888">按 R 取消 · 按 左键 释放</text>
+  </g>
+
+  <!-- 右侧：通用事件流（非战斗专用） -->
+  <g transform="translate(1700,200)">
+    <rect width="200" height="420" fill="#000000" opacity="0.35" rx="4"/>
+    <text x="10" y="20" font-size="12" fill="#cccccc">事件流（通用 · 节流后）</text>
+    <text x="10" y="40" font-size="9" fill="#888">战斗 / 修炼 / 天象 / 社交 / 系统共享一个流</text>
+    <text x="10" y="62" font-size="10" fill="#ff6060">⚔ 你对 野狼 造成 18 伤害</text>
+    <text x="10" y="80" font-size="10" fill="#80ff80">✨ 修为 +2（斩妖得悟）</text>
+    <text x="10" y="98" font-size="10" fill="#ffff80">🌩 远方雷云聚集（天劫预兆）</text>
+    <text x="10" y="116" font-size="10" fill="#a0c0ff">💬 玩家B：一起打吗</text>
+    <text x="10" y="134" font-size="10" fill="#ff4040">🩸 你受到 5 撕裂伤（左胸）</text>
+    <text x="10" y="152" font-size="10" fill="#80ff80">💠 灵田 3 号 · 百草丹成熟</text>
+    <text x="10" y="170" font-size="10" fill="#ff8040">⚰ 野狼 失血过多 死亡</text>
+    <text x="10" y="188" font-size="10" fill="#aaaaaa">...</text>
+    <text x="10" y="410" font-size="9" fill="#666">数据源：UnifiedEventStore（合流 CombatEvents + Cultivation + World + Chat + System）</text>
+  </g>
+
+  <!-- 已移除说明（给 reader 看"为什么这里空着"） -->
+  <g transform="translate(40,180)" opacity="0.35">
+    <text x="0" y="0" font-size="11" fill="#ffcc40">— 沉浸式极简原则，以下元素已从常驻 HUD 移除 —</text>
+    <text x="0" y="22" font-size="10" fill="#aaaaaa">✗ 中上 8 槽状态效果面板 → 完全移除；详情见 I 键 InspectScreen · 状态 tab</text>
+    <text x="0" y="40" font-size="10" fill="#aaaaaa">✗ 左下防御状态面板 → 完全移除；姿态切换通过 F 键反馈音效/屏幕边缘短促闪烁提示</text>
+    <text x="0" y="58" font-size="10" fill="#aaaaaa">✗ 顶部左 DerivedAttrs 大图标 → 改为按需：飞行/虚化/渡劫锁定发生时才在画面边缘短显</text>
+    <text x="0" y="76" font-size="10" fill="#aaaaaa">△ 法术体积面板 → 仅持有法术 AND 按住 R 时渲染（见右下虚线框）</text>
+    <text x="0" y="94" font-size="10" fill="#aaaaaa">△ 截脉弹反环 → 仅在 server 推 DefenseWindow 的 200ms 内显示（屏幕中心环）</text>
+    <text x="0" y="112" font-size="10" fill="#aaaaaa">△ 伪皮层数 / 涡流冷却 → 仅在当前姿态 AND 已解锁时显示一个小角标</text>
+  </g>
+
+  <!-- 标题 -->
+  <text x="20" y="30" font-size="16" fill="#ffffff" font-weight="bold">战斗主 HUD（草图）· 沉浸式极简</text>
+  <text x="20" y="48" font-size="11" fill="#ffcc80">落位：渲染层 A（HUD）· HudRenderCallback 钩入 · 非 Screen</text>
+  <text x="20" y="66" font-size="11" fill="#80ffcc">常驻：两层快捷栏（底部中）+ 左下角迷你人体（红点=伤口）+ 真元/体力竖条（百分比）+ 通用事件流（右侧）</text>
+  <text x="20" y="84" font-size="11" fill="#ff8080">条件显示：法术体积（按 R）/ 截脉弹反环（DefenseWindow）/ DerivedAttrs（状态发生时）</text>
+  <text x="20" y="1040" font-size="11" fill="#aaaaaa">数据源：CombatStateStore + QuickUseSlotStore + CastStateStore + PlayerStateStore + UnifiedEventStore</text>
+  <text x="20" y="1060" font-size="11" fill="#666666">Bong plan-combat-v1 · §12 · 仅线框，具体像素尺寸/字体由 plan-client.md 定</text>
+</svg>

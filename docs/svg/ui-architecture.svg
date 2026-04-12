@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" font-family="'Noto Sans CJK SC', sans-serif">
+  <rect width="1920" height="1200" fill="#0a0a14"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">UI 架构总览 · client 侧现有基础设施与战斗 plan 的关系</text>
+  <text x="30" y="64" font-size="13" fill="#888">基于实际代码（client/src/main/java/com/bong/client/）· 战斗 plan 的草图应挂在下图标注的位置</text>
+
+  <!-- ============ 左：Server 侧 ============ -->
+  <g transform="translate(40,100)">
+    <rect width="420" height="1080" fill="#1a1a2a" stroke="#4060c0" stroke-width="2" rx="6"/>
+    <text x="210" y="36" font-size="20" fill="#80a0ff" text-anchor="middle" font-weight="bold">Server（Bevy）</text>
+
+    <g transform="translate(20,70)">
+      <rect width="380" height="100" fill="#0a0a2a" stroke="#40a0ff"/>
+      <text x="15" y="24" font-size="13" fill="#80c0ff" font-weight="bold">CustomPayload（出站）</text>
+      <text x="15" y="46" font-size="11" fill="#cccccc">bong:combat/status_sync</text>
+      <text x="15" y="64" font-size="11" fill="#cccccc">bong:combat/wounds_sync</text>
+      <text x="15" y="82" font-size="11" fill="#cccccc">bong:combat/anticheat_notice …</text>
+    </g>
+
+    <g transform="translate(20,185)">
+      <rect width="380" height="100" fill="#0a2a0a" stroke="#40a040"/>
+      <text x="15" y="24" font-size="13" fill="#80ff80" font-weight="bold">Redis Channels</text>
+      <text x="15" y="46" font-size="11" fill="#cccccc">CHANNEL_STATUS_EFFECT</text>
+      <text x="15" y="64" font-size="11" fill="#cccccc">CHANNEL_COMBAT_REALTIME</text>
+      <text x="15" y="82" font-size="11" fill="#cccccc">CHANNEL_TRIBULATION …</text>
+    </g>
+
+    <g transform="translate(20,300)">
+      <rect width="380" height="140" fill="#2a1a0a" stroke="#ffcc40"/>
+      <text x="15" y="24" font-size="13" fill="#ffee80" font-weight="bold">UiOpenState 下发</text>
+      <text x="15" y="46" font-size="11" fill="#ffcccc">mode = TEMPLATE</text>
+      <text x="30" y="64" font-size="10" fill="#cccccc">→ 预注册模板（CultivationScreen 之类）</text>
+      <text x="15" y="86" font-size="11" fill="#ffcccc">mode = RAW_XML</text>
+      <text x="30" y="104" font-size="10" fill="#cccccc">→ 服务端下发 XML 字符串</text>
+      <text x="30" y="122" font-size="10" fill="#aaaa">（过滤 DOCTYPE / ENTITY）</text>
+    </g>
+
+    <g transform="translate(20,460)">
+      <rect width="380" height="80" fill="#1a0a2a" stroke="#a040ff"/>
+      <text x="15" y="24" font-size="13" fill="#d080ff" font-weight="bold">ServerDataEnvelope</text>
+      <text x="15" y="46" font-size="11" fill="#cccccc">MAX_PAYLOAD_BYTES 限制</text>
+      <text x="15" y="64" font-size="11" fill="#cccccc">所有自定义包走此封装</text>
+    </g>
+  </g>
+
+  <!-- 箭头 -->
+  <g fill="none" stroke="#80a0ff" stroke-width="2">
+    <line x1="470" y1="170" x2="540" y2="170" marker-end="url(#arr)"/>
+    <line x1="470" y1="285" x2="540" y2="285" marker-end="url(#arr)"/>
+    <line x1="470" y1="420" x2="540" y2="420" marker-end="url(#arr)"/>
+    <line x1="470" y1="510" x2="540" y2="510" marker-end="url(#arr)"/>
+  </g>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#80a0ff"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#80ff80"/>
+    </marker>
+    <marker id="arrp" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d080ff"/>
+    </marker>
+  </defs>
+
+  <!-- ============ 中：Client 分层 ============ -->
+  <g transform="translate(540,100)">
+    <rect width="860" height="1080" fill="#14141f" stroke="#ffffff" stroke-width="1" rx="6"/>
+    <text x="430" y="36" font-size="20" fill="#ffffff" text-anchor="middle" font-weight="bold">Client（Fabric + owo-lib）</text>
+
+    <!-- packet handler -->
+    <g transform="translate(20,70)">
+      <rect width="820" height="80" fill="#0a1a2a" stroke="#40a0ff"/>
+      <text x="15" y="24" font-size="13" fill="#80c0ff" font-weight="bold">① Packet Handler</text>
+      <text x="15" y="46" font-size="11" fill="#cccccc">network/ServerDataEnvelope → 分发到各 StateStore.replace()</text>
+      <text x="15" y="64" font-size="11" fill="#aaaa">（UiOpenState 特殊：直接 setScreen 而非 store）</text>
+    </g>
+
+    <!-- store 层 -->
+    <g transform="translate(20,170)">
+      <rect width="820" height="180" fill="#0a1a0a" stroke="#40a040"/>
+      <text x="15" y="24" font-size="13" fill="#80ff80" font-weight="bold">② StateStore 层（volatile 快照 + CopyOnWriteArrayList&lt;Consumer&gt;）</text>
+      <text x="15" y="48" font-size="11" fill="#cccccc">现有：</text>
+      <g transform="translate(15,58)">
+        <text x="0" y="14" font-size="10" fill="#aaffaa">· state/PlayerStateStore（境界/真元/karma）</text>
+        <text x="0" y="28" font-size="10" fill="#aaffaa">· state/NarrationState（天道 narration）</text>
+        <text x="0" y="42" font-size="10" fill="#aaffaa">· state/VisualEffectState</text>
+        <text x="0" y="56" font-size="10" fill="#aaffaa">· state/ZoneState</text>
+        <text x="0" y="70" font-size="10" fill="#aaffaa">· state/UiOpenState（路由）</text>
+        <text x="320" y="14" font-size="10" fill="#aaffaa">· inventory/state/InventoryStateStore</text>
+        <text x="320" y="28" font-size="10" fill="#aaffaa">· inventory/state/MeridianStateStore</text>
+        <text x="320" y="42" font-size="10" fill="#aaffaa">· inventory/state/PhysicalBodyStore</text>
+        <text x="320" y="56" font-size="10" fill="#aaffaa">· inventory/state/DragState</text>
+      </g>
+      <text x="15" y="148" font-size="11" fill="#ffcc40" font-weight="bold">战斗 plan 新增：</text>
+      <g transform="translate(15,154)">
+        <text x="0" y="12" font-size="10" fill="#ffdd80">+ StatusEffectStateStore（active_effects 列表，§7）</text>
+        <text x="0" y="24" font-size="10" fill="#ffdd80">+ CombatStateStore（in_combat + derived_attrs + stamina + qi throughput）</text>
+      </g>
+    </g>
+
+    <!-- 渲染层（三类） -->
+    <g transform="translate(20,370)">
+      <rect width="820" height="340" fill="#1a0a1a" stroke="#a040a0"/>
+      <text x="15" y="24" font-size="13" fill="#d080ff" font-weight="bold">③ 渲染层（三类）</text>
+
+      <!-- HUD 层 -->
+      <g transform="translate(15,40)">
+        <rect width="260" height="280" fill="#2a1a2a" stroke="#ff80ff"/>
+        <text x="130" y="22" font-size="12" fill="#ffccff" text-anchor="middle" font-weight="bold">A · HUD 渲染层（常驻屏幕）</text>
+        <text x="10" y="44" font-size="10" fill="#cccccc">HudRenderCallback 钩入</text>
+        <text x="10" y="60" font-size="10" fill="#cccccc">游戏世界上叠加</text>
+        <text x="10" y="84" font-size="10" fill="#ffccff">现有：</text>
+        <text x="16" y="100" font-size="9" fill="#aaaa">· 原版血/饱食/经验条</text>
+        <text x="16" y="114" font-size="9" fill="#aaaa">· narration 气泡（若有）</text>
+        <text x="10" y="136" font-size="10" fill="#ffee80">战斗 plan 新增：</text>
+        <text x="16" y="152" font-size="9" fill="#ffdd80">+ 真元条 + throughput 峰值</text>
+        <text x="16" y="166" font-size="9" fill="#ffdd80">+ Stamina 条（替换饱食）</text>
+        <text x="16" y="180" font-size="9" fill="#ffdd80">+ 状态效果 8 槽</text>
+        <text x="16" y="194" font-size="9" fill="#ffdd80">+ DerivedAttrs 特殊图标</text>
+        <text x="16" y="208" font-size="9" fill="#ffdd80">+ 防御姿态 HUD</text>
+        <text x="16" y="222" font-size="9" fill="#ffdd80">+ 截脉弹反指示器</text>
+        <text x="16" y="236" font-size="9" fill="#ffdd80">+ 天劫顶栏红字广播</text>
+        <text x="16" y="250" font-size="9" fill="#ffdd80">+ 战斗事件滚动流</text>
+        <text x="10" y="270" font-size="9" fill="#888">→ 见 hud-combat.svg</text>
+      </g>
+
+      <!-- Screen 层 -->
+      <g transform="translate(285,40)">
+        <rect width="260" height="280" fill="#1a2a2a" stroke="#40ccc0"/>
+        <text x="130" y="22" font-size="12" fill="#80eee0" text-anchor="middle" font-weight="bold">B · Screen 层（modal）</text>
+        <text x="10" y="44" font-size="10" fill="#cccccc">BaseOwoScreen&lt;FlowLayout&gt;</text>
+        <text x="10" y="60" font-size="10" fill="#cccccc">按键或服务端触发</text>
+        <text x="10" y="84" font-size="10" fill="#80eee0">现有：</text>
+        <text x="16" y="100" font-size="9" fill="#aaaa">· InspectScreen（I 键）</text>
+        <text x="22" y="114" font-size="9" fill="#888">→ 装备 / 修仙 tab</text>
+        <text x="22" y="128" font-size="9" fill="#888">→ BodyInspectComponent</text>
+        <text x="22" y="142" font-size="9" fill="#888">→ ItemTooltipPanel 等</text>
+        <text x="16" y="158" font-size="9" fill="#aaaa">· CultivationScreen（K 键）</text>
+        <text x="22" y="172" font-size="9" fill="#888">→ 过渡实现（字符条废）</text>
+        <text x="10" y="190" font-size="10" fill="#ffee80">战斗 plan 扩展/新增：</text>
+        <text x="16" y="204" font-size="9" fill="#ffdd80">+ InspectScreen 加 tab：伤口 / 状态</text>
+        <text x="16" y="218" font-size="9" fill="#ffdd80">+ DeathScreen（§8）</text>
+        <text x="16" y="232" font-size="9" fill="#ffdd80">+ TerminateScreen（§8）</text>
+        <text x="16" y="246" font-size="9" fill="#ffdd80">+ ForgeWeaponScreen（§5.2）</text>
+        <text x="16" y="260" font-size="9" fill="#ffdd80">+ TreasureDetailScreen（§6.10）</text>
+        <text x="10" y="275" font-size="9" fill="#888">→ 见 inspect-*.svg / death-*.svg</text>
+      </g>
+
+      <!-- Dynamic XML 层 -->
+      <g transform="translate(555,40)">
+        <rect width="250" height="280" fill="#2a2a1a" stroke="#ffcc40"/>
+        <text x="125" y="22" font-size="12" fill="#ffee80" text-anchor="middle" font-weight="bold">C · Dynamic XML（server 下发）</text>
+        <text x="10" y="44" font-size="10" fill="#cccccc">UIModel.load(xmlStream)</text>
+        <text x="10" y="60" font-size="10" fill="#cccccc">DynamicXmlScreen 承载</text>
+        <text x="10" y="84" font-size="10" fill="#ffee80">适用场景：</text>
+        <text x="16" y="100" font-size="9" fill="#aaaa">· 天道临时生成的提示</text>
+        <text x="16" y="114" font-size="9" fill="#aaaa">· 环境互动弹窗（石碑、遗物）</text>
+        <text x="16" y="128" font-size="9" fill="#aaaa">· 玩家间交易面板</text>
+        <text x="10" y="152" font-size="10" fill="#ffee80">战斗 plan 建议用：</text>
+        <text x="16" y="168" font-size="9" fill="#ffdd80">+ 阵法布置 UI（临时参数多）</text>
+        <text x="16" y="182" font-size="9" fill="#ffdd80">+ 渡劫观战选择弹窗</text>
+        <text x="16" y="196" font-size="9" fill="#ffdd80">+ 终焉之言显示（agent 生成内容）</text>
+        <text x="10" y="220" font-size="10" fill="#ff8060">约束：</text>
+        <text x="16" y="234" font-size="9" fill="#ffaa80">· 无 DOCTYPE/ENTITY</text>
+        <text x="16" y="248" font-size="9" fill="#ffaa80">· 受 MAX_PAYLOAD_BYTES</text>
+        <text x="16" y="262" font-size="9" fill="#ffaa80">· 仅能用 owo-lib 认识的 tag</text>
+        <text x="10" y="275" font-size="9" fill="#888">（暂不画 svg · 按需即兴）</text>
+      </g>
+    </g>
+
+    <!-- 按键总览 -->
+    <g transform="translate(20,730)">
+      <rect width="820" height="140" fill="#0a0a1a" stroke="#6060a0"/>
+      <text x="15" y="24" font-size="13" fill="#a0a0d0" font-weight="bold">④ 按键绑定（KeyBindingHelper）</text>
+      <g transform="translate(15,36)" font-size="11">
+        <text x="0" y="14" fill="#ffee80">K</text>
+        <text x="30" y="14" fill="#cccccc">CultivationScreen（过渡，后续并入 InspectScreen 修仙 tab）</text>
+        <text x="0" y="32" fill="#ffee80">I</text>
+        <text x="30" y="32" fill="#cccccc">InspectScreen（装备/修仙/伤口/状态 tab 切换）</text>
+        <text x="0" y="50" fill="#ff8080" font-weight="bold">F1/F2/F3</text>
+        <text x="80" y="50" fill="#cccccc">防御姿态切换（战斗 plan 新增 · DefenseStanceIntent）</text>
+        <text x="0" y="68" fill="#ff8080" font-weight="bold">R（按住）</text>
+        <text x="80" y="68" fill="#cccccc">法术体积调控（战斗 plan 新增）</text>
+        <text x="0" y="86" fill="#ff8080" font-weight="bold">Shift+Q / T</text>
+        <text x="100" y="86" fill="#cccccc">甩暗器 / 打开功法面板（战斗 plan 新增）</text>
+      </g>
+    </g>
+
+    <!-- 底部：ViewModel -->
+    <g transform="translate(20,890)">
+      <rect width="820" height="160" fill="#1a1a0a" stroke="#c0c040"/>
+      <text x="15" y="24" font-size="13" fill="#eeee60" font-weight="bold">⑤ ViewModel（record + builder）</text>
+      <text x="15" y="46" font-size="11" fill="#cccccc">现有 PlayerStateViewModel 已有 realm/qi/karma/composite_power/breakdown/zone 信息</text>
+      <text x="15" y="66" font-size="11" fill="#ffcc40">战斗 plan 新增 ViewModel：</text>
+      <g transform="translate(15,76)" font-size="10">
+        <text x="0" y="14" fill="#eeee80">+ CombatStateViewModel（in_combat · in_combat_until · stamina · derived_attrs · throughput）</text>
+        <text x="0" y="30" fill="#eeee80">+ StatusEffectViewModel（active_effects · groupBy(kind)）</text>
+        <text x="0" y="46" fill="#eeee80">+ WoundsViewModel（Wound[]，接入现有 PhysicalBody/BodyPart 模型）</text>
+        <text x="0" y="62" fill="#eeee80">+ TreasureViewModel（treasure_id · bond · qi_pool · abilities · prev_owners）</text>
+        <text x="0" y="78" fill="#eeee80">+ TribulationViewModel（stage · wave · countdown · proximity · hostility）</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============ 右：草图对应关系 ============ -->
+  <g transform="translate(1430,100)">
+    <rect width="450" height="1080" fill="#1f0a1a" stroke="#c04080" stroke-width="2" rx="6"/>
+    <text x="225" y="36" font-size="20" fill="#ff80c0" text-anchor="middle" font-weight="bold">草图落位</text>
+
+    <g transform="translate(20,70)" font-size="11">
+      <text x="0" y="14" fill="#ffcccc" font-weight="bold">hud-combat.svg</text>
+      <text x="0" y="30" fill="#cccccc">→ 渲染层 A（HUD）</text>
+      <text x="0" y="46" fill="#aaaa">   消费 CombatStateStore + StatusEffectStore</text>
+
+      <text x="0" y="80" fill="#ffcccc" font-weight="bold">inspect-wounds.svg</text>
+      <text x="0" y="96" fill="#cccccc">→ 渲染层 B · InspectScreen 新增 tab</text>
+      <text x="0" y="112" fill="#aaaa">   复用 BodyInspectComponent（16 部位）</text>
+      <text x="0" y="128" fill="#aaaa">   挂 PhysicalBodyStore.replace(Wounds[])</text>
+
+      <text x="0" y="160" fill="#ffcccc" font-weight="bold">inspect-status.svg</text>
+      <text x="0" y="176" fill="#cccccc">→ 渲染层 B · InspectScreen 新增 tab</text>
+      <text x="0" y="192" fill="#aaaa">   新 StatusEffectStateStore</text>
+      <text x="0" y="208" fill="#aaaa">   owo-lib ScrollContainer + FlowLayout</text>
+
+      <text x="0" y="240" fill="#ffcccc" font-weight="bold">attack-panels.svg</text>
+      <text x="0" y="256" fill="#cccccc">→ 混合：</text>
+      <text x="0" y="272" fill="#aaaa">   · 法术体积滑块：HUD 层叠加（A）</text>
+      <text x="0" y="288" fill="#aaaa">   · 暗器制作：ForgeWeaponScreen（B）</text>
+      <text x="0" y="304" fill="#aaaa">   · 阵法布置：Dynamic XML（C）</text>
+      <text x="0" y="320" fill="#aaaa">   · 按键表：仅文档（非运行时 UI）</text>
+
+      <text x="0" y="352" fill="#ffcccc" font-weight="bold">defense-ui.svg</text>
+      <text x="0" y="368" fill="#cccccc">→ 渲染层 A（HUD）</text>
+      <text x="0" y="384" fill="#aaaa">   常驻姿态 + 弹反圆环 + 克制提示</text>
+
+      <text x="0" y="416" fill="#ffcccc" font-weight="bold">death-screens.svg</text>
+      <text x="0" y="432" fill="#cccccc">→ 渲染层 B · 独立 Screen</text>
+      <text x="0" y="448" fill="#aaaa">   服务端 UiOpenState.template</text>
+      <text x="0" y="464" fill="#aaaa">   （终焉之言内容 C 动态加载）</text>
+
+      <text x="0" y="496" fill="#ffcccc" font-weight="bold">tribulation-ui.svg</text>
+      <text x="0" y="512" fill="#cccccc">→ 混合：</text>
+      <text x="0" y="528" fill="#aaaa">   · 顶栏广播：HUD 层（A）</text>
+      <text x="0" y="544" fill="#aaaa">   · 观战选择：Dynamic XML（C）</text>
+      <text x="0" y="560" fill="#aaaa">   · 渡劫者 HUD：HUD 层（A）</text>
+
+      <text x="0" y="592" fill="#ffcccc" font-weight="bold">weapon-treasure.svg</text>
+      <text x="0" y="608" fill="#cccccc">→ 混合：</text>
+      <text x="0" y="624" fill="#aaaa">   · 普通武器 tooltip：扩展 ItemTooltipPanel</text>
+      <text x="0" y="640" fill="#aaaa">   · 法宝展开：TreasureDetailScreen（B）</text>
+      <text x="0" y="656" fill="#aaaa">   · 铸造/修复：ForgeWeaponScreen（B）</text>
+    </g>
+
+    <g transform="translate(20,760)">
+      <rect width="410" height="280" fill="#0a0a0a" stroke="#666" stroke-dasharray="4 2"/>
+      <text x="10" y="22" font-size="13" fill="#ffffff" font-weight="bold">⚠ 总结</text>
+      <text x="10" y="50" font-size="11" fill="#cccccc">所有草图 = 线框意图</text>
+      <text x="10" y="70" font-size="11" fill="#cccccc">落地 = 挂靠现有基础设施（Store / Screen / Component）</text>
+      <text x="10" y="100" font-size="11" fill="#ffcc40">要做的事 ≠ 重写 UI 框架</text>
+      <text x="10" y="120" font-size="11" fill="#ffcc40">要做的事 = 加 ViewModel + 加 Screen/HUD</text>
+      <text x="10" y="140" font-size="11" fill="#ffcc40">                  + 扩展 InspectScreen tab</text>
+      <text x="10" y="170" font-size="11" fill="#80ff80">不走字符条（已决策）→ 所有条形用 owo-lib 图形 Component</text>
+      <text x="10" y="200" font-size="11" fill="#80c0ff">不改现有 16 部位模型 → BodyInspectComponent 直接扩展</text>
+      <text x="10" y="230" font-size="11" fill="#ff80c0">服务端能下发的就下发（Dynamic XML）→ 减少硬编码模板</text>
+      <text x="10" y="260" font-size="11" fill="#888">需固化的 UI（inspect / HUD）→ 硬编码 BaseOwoScreen</text>
+    </g>
+  </g>
+</svg>

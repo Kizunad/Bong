@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" font-family="'Noto Sans CJK SC', sans-serif">
+  <rect width="1600" height="1000" fill="#0a0a12"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">防御 UI（草图）· 渲染层 A（HUD）</text>
+  <text x="30" y="64" font-size="13" fill="#888">§4 三种防御反应 · 所有指示器通过 HudRenderCallback 叠加 · 无独立 Screen（非模态）</text>
+  <text x="30" y="84" font-size="11" fill="#ffcc40">数据源：CombatStateStore + DefenseStanceStore（新增）· 键位：F1/F2/F3 切换防御姿态 · Jiemai 200ms 环通过 MatrixStack.scale() 锚到玩家屏幕位</text>
+  <text x="30" y="102" font-size="11" fill="#ff6060" font-weight="bold">⚠ 条件渲染：本草图画的是"全解锁三流派同屏"的穷举示意。运行时 HudRenderCallback 必须先查 unlocked_styles，未解锁的流派（截脉/替尸/涡流）直接隐藏——不灰掉、不占位。未激活姿态的对应指示器也不渲染。</text>
+
+  <!-- ======= A：截脉弹反指示器（中心圆环） ======= -->
+  <g transform="translate(40,120)">
+    <rect width="500" height="500" fill="#14141f" stroke="#ff4040" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#ff8080" font-weight="bold">A · 截脉（JieMai）200ms 弹反</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">敌袭到来前 200ms 窗口 · 精准按 F1 极限弹反</text>
+
+    <!-- 指示圆环 -->
+    <g transform="translate(250,280)">
+      <circle r="130" fill="none" stroke="#333" stroke-width="6"/>
+      <circle r="130" fill="none" stroke="#ff4040" stroke-width="8" stroke-dasharray="100 716" stroke-dashoffset="-50" transform="rotate(-90)"/>
+      <circle r="110" fill="#20070a" stroke="#ff4040" stroke-width="1"/>
+      <text x="0" y="-20" font-size="18" fill="#ff8080" text-anchor="middle">敌袭来袭</text>
+      <text x="0" y="10" font-size="36" fill="#ff4040" text-anchor="middle" font-weight="bold">0.18s</text>
+      <text x="0" y="40" font-size="12" fill="#ffaa40" text-anchor="middle">极限窗口开启</text>
+
+      <!-- 箭头指示方向 -->
+      <g transform="translate(0,-160)">
+        <polygon points="0,0 -12,16 12,16" fill="#ff4040"/>
+        <text x="0" y="-6" font-size="11" fill="#ff8080" text-anchor="middle">敌</text>
+      </g>
+    </g>
+
+    <!-- 状态说明 -->
+    <g transform="translate(30,440)">
+      <text x="0" y="0" font-size="12" fill="#ffcc80">✓ 完美弹反（0ms 误差）→ 反弹 100% qi 伤害</text>
+      <text x="0" y="20" font-size="12" fill="#80c0ff">○ 普通截脉（0-200ms 窗口内）→ 反弹 50%</text>
+      <text x="0" y="40" font-size="12" fill="#ff6060">✗ 错过 → 全额受伤 + 0.5s 僵直</text>
+    </g>
+  </g>
+
+  <!-- ======= B：替尸/蜕壳伪皮层数 ======= -->
+  <g transform="translate(560,120)">
+    <rect width="500" height="500" fill="#14141f" stroke="#40a040" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#80ff80" font-weight="bold">B · 替尸（TiShi）伪皮层</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">F2 切换姿态 · 每次受致命击抵挡 1 次 · 消耗一层</text>
+
+    <!-- 三层伪皮示意 -->
+    <g transform="translate(250,280)">
+      <!-- 最外层（当前完好） -->
+      <circle r="110" fill="none" stroke="#40a040" stroke-width="4"/>
+      <circle r="110" fill="none" stroke="#80ff80" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+      <!-- 第二层 -->
+      <circle r="80" fill="none" stroke="#40a040" stroke-width="3" opacity="0.7"/>
+      <!-- 第三层（已损） -->
+      <circle r="50" fill="none" stroke="#606060" stroke-width="2" stroke-dasharray="6 4"/>
+      <!-- 核心 -->
+      <circle r="20" fill="#8a5020" stroke="#ffa060" stroke-width="2"/>
+      <text x="0" y="4" font-size="10" fill="#ffcc80" text-anchor="middle">本体</text>
+
+      <!-- 层数数字 -->
+      <text x="0" y="-170" font-size="14" fill="#80ff80" text-anchor="middle">当前伪皮</text>
+      <text x="0" y="-140" font-size="36" fill="#80ff80" text-anchor="middle" font-weight="bold">2 / 3</text>
+    </g>
+
+    <g transform="translate(30,440)">
+      <text x="0" y="0" font-size="12" fill="#cccccc">Δ 每层伪皮成本：40 qi + 5s 冷静 · 最多 3 层</text>
+      <text x="0" y="20" font-size="12" fill="#ffaa40">⚠ 被 Hard dispel（如天雷）可直接剥离全部层数</text>
+      <text x="0" y="40" font-size="12" fill="#80c0ff">↻ 脱战后每 60s 自动补回 1 层（§3.7）</text>
+    </g>
+  </g>
+
+  <!-- ======= C：涡流吸收 ======= -->
+  <g transform="translate(1080,120)">
+    <rect width="490" height="500" fill="#14141f" stroke="#40a0ff" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#80c0ff" font-weight="bold">C · 绝灵涡流（JueLing）</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">F3 激活 · 吸收所有 DoT + 减益 · 冷却 8s</text>
+
+    <!-- 涡流动画示意 -->
+    <g transform="translate(245,280)">
+      <circle r="120" fill="none" stroke="#40a0ff" stroke-width="2" stroke-dasharray="20 8" opacity="0.5"/>
+      <circle r="100" fill="none" stroke="#40a0ff" stroke-width="2" stroke-dasharray="15 6" opacity="0.7"/>
+      <circle r="80" fill="none" stroke="#40a0ff" stroke-width="3" stroke-dasharray="10 4"/>
+      <circle r="30" fill="#001a3a" stroke="#80c0ff" stroke-width="2"/>
+      <text x="0" y="4" font-size="10" fill="#a0ddff" text-anchor="middle">↻</text>
+
+      <!-- 吸收的效果（向内移动） -->
+      <g transform="translate(-90,-20)" opacity="0.8">
+        <rect width="20" height="20" fill="#601818" stroke="#ff4040"/>
+        <text x="10" y="14" font-size="12" text-anchor="middle">🩸</text>
+      </g>
+      <g transform="translate(75,50)" opacity="0.6">
+        <rect width="20" height="20" fill="#604020" stroke="#ff8040"/>
+        <text x="10" y="14" font-size="12" text-anchor="middle">🔥</text>
+      </g>
+      <g transform="translate(-50,80)" opacity="0.5">
+        <rect width="20" height="20" fill="#206040" stroke="#40ff80"/>
+        <text x="10" y="14" font-size="12" text-anchor="middle">☠</text>
+      </g>
+
+      <text x="0" y="-140" font-size="14" fill="#80c0ff" text-anchor="middle">涡流激活</text>
+    </g>
+
+    <!-- 冷却条 -->
+    <g transform="translate(30,440)">
+      <text x="0" y="0" font-size="12" fill="#cccccc">冷却（无激活时显示）</text>
+      <rect x="0" y="10" width="430" height="14" fill="#001a2a" stroke="#40a0ff"/>
+      <rect x="0" y="10" width="280" height="14" fill="#40a0ff"/>
+      <text x="440" y="22" font-size="10" fill="#80c0ff" text-anchor="end">5.1s / 8.0s</text>
+      <text x="0" y="44" font-size="11" fill="#ffaa40">⚠ 激活中无法攻击 · 仅吸收，时长 2s</text>
+    </g>
+  </g>
+
+  <!-- ======= D：当前姿态 HUD（小栏，常驻屏幕左下） ======= -->
+  <g transform="translate(40,660)">
+    <rect width="1530" height="160" fill="#14141f" stroke="#444" rx="6"/>
+    <text x="20" y="30" font-size="16" fill="#ffffff" font-weight="bold">D · 常驻姿态 HUD（左下角一直显示）</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">战斗中显示，脱战 5s 后淡出；切换姿态时短暂高亮</text>
+
+    <g transform="translate(40,80)">
+      <!-- 当前姿态标识 -->
+      <rect width="280" height="60" fill="#2a0808" stroke="#ff4040" stroke-width="3" rx="6"/>
+      <text x="20" y="24" font-size="12" fill="#ff8080">当前姿态</text>
+      <text x="20" y="48" font-size="18" fill="#ff4040" font-weight="bold">⚡ 截脉</text>
+      <text x="270" y="48" font-size="11" fill="#ff8080" text-anchor="end">F1 · 反弹 0.5</text>
+    </g>
+
+    <g transform="translate(340,80)">
+      <!-- 伪皮数 -->
+      <rect width="240" height="60" fill="#0a2a0a" stroke="#40a040" rx="6"/>
+      <text x="20" y="24" font-size="12" fill="#80ff80">伪皮层</text>
+      <text x="20" y="48" font-size="18" fill="#40ff40" font-weight="bold">🛡 2/3</text>
+      <g transform="translate(120,32)">
+        <rect width="24" height="20" fill="#40a040" rx="2"/>
+        <rect x="28" width="24" height="20" fill="#40a040" rx="2"/>
+        <rect x="56" width="24" height="20" fill="#1a1a1a" stroke="#444" stroke-dasharray="2 2" rx="2"/>
+      </g>
+    </g>
+
+    <g transform="translate(600,80)">
+      <!-- 涡流冷却 -->
+      <rect width="240" height="60" fill="#0a1a2a" stroke="#40a0ff" rx="6"/>
+      <text x="20" y="24" font-size="12" fill="#80c0ff">涡流冷却</text>
+      <text x="20" y="48" font-size="18" fill="#80c0ff" font-weight="bold">↻ 5.1s</text>
+      <rect x="120" y="40" width="110" height="8" fill="#001020" stroke="#40a0ff"/>
+      <rect x="120" y="40" width="70" height="8" fill="#40a0ff"/>
+    </g>
+
+    <g transform="translate(860,80)">
+      <!-- 格挡成功统计（本战） -->
+      <rect width="280" height="60" fill="#1a1a2a" stroke="#666" rx="6"/>
+      <text x="20" y="24" font-size="12" fill="#cccccc">本次战斗成功防御</text>
+      <text x="20" y="48" font-size="16" fill="#ffffff" font-weight="bold">弹反 3 · 替尸 1 · 涡流 0</text>
+    </g>
+
+    <g transform="translate(1160,80)">
+      <!-- 克制提示 -->
+      <rect width="350" height="60" fill="#2a2a10" stroke="#ffcc40" rx="6"/>
+      <text x="20" y="24" font-size="12" fill="#ffee80">对手流派检测（启发式）</text>
+      <text x="20" y="48" font-size="14" fill="#ffcc40" font-weight="bold">爆脉流 → 推荐截脉（F1）</text>
+    </g>
+  </g>
+
+  <!-- ======= E：克制矩阵提示 ======= -->
+  <g transform="translate(40,840)">
+    <rect width="1530" height="130" fill="#0a0a1f" stroke="#444" rx="6"/>
+    <text x="20" y="26" font-size="14" fill="#ffffff" font-weight="bold">E · 流派克制矩阵速查（按 Tab 打开）</text>
+
+    <g transform="translate(40,46)" font-size="11">
+      <!-- 矩阵表头 -->
+      <text x="120" y="0" fill="#ffcc80">对手 爆脉</text>
+      <text x="220" y="0" fill="#ffcc80">对手 暗器</text>
+      <text x="320" y="0" fill="#ffcc80">对手 阵法</text>
+      <text x="420" y="0" fill="#ffcc80">对手 毒蛊</text>
+      <!-- 行 -->
+      <text x="0" y="24" fill="#ff8080">截脉（JieMai）</text>
+      <text x="160" y="24" fill="#40ff40">✓ 优</text>
+      <text x="260" y="24" fill="#ff8040">○ 中</text>
+      <text x="360" y="24" fill="#ff4040">✗ 劣</text>
+      <text x="460" y="24" fill="#ff8040">○ 中</text>
+
+      <text x="0" y="44" fill="#80ff80">替尸（TiShi）</text>
+      <text x="160" y="44" fill="#ff4040">✗ 劣</text>
+      <text x="260" y="44" fill="#40ff40">✓ 优</text>
+      <text x="360" y="44" fill="#40ff40">✓ 优</text>
+      <text x="460" y="44" fill="#ff8040">○ 中</text>
+
+      <text x="0" y="64" fill="#80c0ff">涡流（JueLing）</text>
+      <text x="160" y="64" fill="#ff8040">○ 中</text>
+      <text x="260" y="64" fill="#ff4040">✗ 劣</text>
+      <text x="360" y="64" fill="#ff8040">○ 中</text>
+      <text x="460" y="64" fill="#40ff40">✓ 优</text>
+
+      <text x="600" y="24" fill="#888">优 = 反弹/吸收率 &gt; 70%</text>
+      <text x="600" y="44" fill="#888">中 = 中等效果（部分衰减）</text>
+      <text x="600" y="64" fill="#888">劣 = 无法有效防御（应换姿态）</text>
+    </g>
+  </g>
+
+  <text x="30" y="990" font-size="11" fill="#666">数据契约：defense_stance_sync CustomPayload + StatusEffectEvent 共同驱动此 HUD</text>
+</svg>

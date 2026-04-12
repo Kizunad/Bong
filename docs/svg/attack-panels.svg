@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" font-family="'Noto Sans CJK SC', sans-serif">
+  <rect width="1920" height="1200" fill="#0a0a12"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">攻击交互 UI（草图）· 混合层</text>
+  <text x="30" y="64" font-size="13" fill="#888">A（HUD）· B（Screen）· C（Dynamic XML）三层分别承载</text>
+  <text x="30" y="84" font-size="11" fill="#ffcc40">§3.5 法术体积滑块 = HUD | §5.2 暗器制作 = ForgeWeaponScreen（硬编码）| §5.3 阵法布置 = server 下发 Dynamic XML</text>
+
+  <!-- ============ A：法术体积滑块 (§3.5) ============ -->
+  <g transform="translate(40,100)">
+    <rect width="600" height="500" fill="#14141f" stroke="#c040ff" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#d080ff" font-weight="bold">A · 法术体积调控 §3.5</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">选中法术（如火焰弹）后按住 R + 滚轮调整</text>
+
+    <!-- 3D 预览区域（简化） -->
+    <g transform="translate(40,80)">
+      <rect width="220" height="220" fill="#000000" stroke="#444" rx="4"/>
+      <text x="110" y="20" font-size="11" fill="#888" text-anchor="middle">预览（玩家视角）</text>
+      <!-- 施法者 -->
+      <g transform="translate(50,170)">
+        <circle r="10" fill="#40a0ff"/>
+        <line x1="0" y1="-10" x2="140" y2="-50" stroke="#ff80ff" stroke-width="1" stroke-dasharray="4 2"/>
+      </g>
+      <!-- 法术体积球 -->
+      <g transform="translate(170,110)">
+        <circle r="50" fill="#c040ff" opacity="0.3" stroke="#ff80ff" stroke-width="2"/>
+        <circle r="8" fill="#ff80ff"/>
+      </g>
+      <text x="110" y="210" font-size="10" fill="#aaaa" text-anchor="middle">radius 1.2m · velocity_cap 42 m/s</text>
+    </g>
+
+    <!-- 滑块组 -->
+    <g transform="translate(280,80)">
+      <!-- radius 滑块 -->
+      <text x="0" y="12" font-size="12" fill="#cccccc">radius（体积半径）</text>
+      <text x="280" y="12" font-size="12" fill="#ff80ff" text-anchor="end">1.2 m</text>
+      <line x1="0" y1="30" x2="280" y2="30" stroke="#666" stroke-width="4"/>
+      <line x1="0" y1="30" x2="100" y2="30" stroke="#c040ff" stroke-width="4"/>
+      <rect x="96" y="22" width="10" height="16" fill="#ff80ff"/>
+      <text x="0" y="52" font-size="9" fill="#888">0.2m（窄）</text>
+      <text x="280" y="52" font-size="9" fill="#888" text-anchor="end">3.0m（范围攻击）</text>
+
+      <!-- velocity_cap 滑块 -->
+      <g transform="translate(0,80)">
+        <text x="0" y="12" font-size="12" fill="#cccccc">velocity_cap（投射最大速度）</text>
+        <text x="280" y="12" font-size="12" fill="#ff80ff" text-anchor="end">42 m/s</text>
+        <line x1="0" y1="30" x2="280" y2="30" stroke="#666" stroke-width="4"/>
+        <line x1="0" y1="30" x2="200" y2="30" stroke="#c040ff" stroke-width="4"/>
+        <rect x="196" y="22" width="10" height="16" fill="#ff80ff"/>
+        <text x="0" y="52" font-size="9" fill="#888">10 m/s</text>
+        <text x="280" y="52" font-size="9" fill="#888" text-anchor="end">80 m/s</text>
+      </g>
+
+      <!-- qi_invest 滑块（因果显示） -->
+      <g transform="translate(0,160)">
+        <text x="0" y="12" font-size="12" fill="#cccccc">qi_invest（真元投入）</text>
+        <text x="280" y="12" font-size="12" fill="#ff80ff" text-anchor="end">140 / 280</text>
+        <rect x="0" y="22" width="280" height="14" fill="#001020" stroke="#40d0d0"/>
+        <rect x="0" y="22" width="140" height="14" fill="#40d0d0"/>
+        <text x="0" y="58" font-size="10" fill="#ffaa40">预计伤害 38-52 · 击杀概率 34%</text>
+        <text x="0" y="74" font-size="10" fill="#80ff80">命中率 78%（受 radius/距离影响）</text>
+      </g>
+    </g>
+
+    <!-- 按键提示 -->
+    <g transform="translate(20,420)">
+      <text x="0" y="0" font-size="11" fill="#888">按键：R 进入/退出调控 · 滚轮 radius · Shift+滚轮 velocity · Ctrl+滚轮 qi_invest · 左键释放</text>
+      <text x="0" y="20" font-size="11" fill="#ffaa40">⚠ radius ↑ → qi_invest 成本 ↑² · 惯性锚定：释放后不可二次调节</text>
+      <text x="0" y="40" font-size="11" fill="#ff6060">⚠ 超出 derived_attrs.spell_volume_cap 时滑块红框警告</text>
+    </g>
+  </g>
+
+  <!-- ============ B：暗器制作面板 (§5.2) ============ -->
+  <g transform="translate(680,100)">
+    <rect width="600" height="500" fill="#14141f" stroke="#a08060" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#ffcc80" font-weight="bold">B · 暗器制作（ForgeWeaponCarrier）</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">右键铁砧/工作台 + 物品 → 注真元 → 计时 → 成品</text>
+
+    <!-- Step 1: 选物 -->
+    <g transform="translate(20,80)">
+      <text x="0" y="0" font-size="13" fill="#ffffff" font-weight="bold">步骤 1 · 选择载体物品</text>
+      <g transform="translate(0,10)">
+        <rect width="80" height="80" fill="#2a2a2a" stroke="#ffcc40" stroke-width="3" rx="3"/>
+        <text x="40" y="50" font-size="32" text-anchor="middle">🗡</text>
+        <text x="40" y="75" font-size="9" fill="#ffcc80" text-anchor="middle">匕首</text>
+      </g>
+      <g transform="translate(90,10)">
+        <rect width="80" height="80" fill="#2a2a2a" stroke="#666" rx="3"/>
+        <text x="40" y="50" font-size="28" text-anchor="middle">➤</text>
+        <text x="40" y="75" font-size="9" fill="#aaaa" text-anchor="middle">飞镖</text>
+      </g>
+      <g transform="translate(180,10)">
+        <rect width="80" height="80" fill="#2a2a2a" stroke="#666" rx="3"/>
+        <text x="40" y="50" font-size="28" text-anchor="middle">🎯</text>
+        <text x="40" y="75" font-size="9" fill="#aaaa" text-anchor="middle">钢针</text>
+      </g>
+      <g transform="translate(270,10)">
+        <rect width="80" height="80" fill="#2a2a2a" stroke="#666" rx="3"/>
+        <text x="40" y="50" font-size="28" text-anchor="middle">⚙</text>
+        <text x="40" y="75" font-size="9" fill="#aaaa" text-anchor="middle">自定义</text>
+      </g>
+    </g>
+
+    <!-- Step 2: 注真元 -->
+    <g transform="translate(20,200)">
+      <text x="0" y="0" font-size="13" fill="#ffffff" font-weight="bold">步骤 2 · 注入真元</text>
+      <text x="0" y="24" font-size="11" fill="#cccccc">qi_stored</text>
+      <rect x="0" y="32" width="460" height="16" fill="#001020" stroke="#40d0d0"/>
+      <rect x="0" y="32" width="180" height="16" fill="#40d0d0"/>
+      <text x="470" y="45" font-size="11" fill="#80ddff">90 / 220</text>
+      <!-- 真元色选择 -->
+      <text x="0" y="70" font-size="11" fill="#cccccc">真元色 qi_color（战斗后留色）</text>
+      <g transform="translate(0,78)">
+        <circle cx="12" cy="12" r="12" fill="#40a0ff" stroke="#ffffff" stroke-width="2"/>
+      </g>
+      <g transform="translate(32,78)"><circle cx="12" cy="12" r="12" fill="#ff4040"/></g>
+      <g transform="translate(64,78)"><circle cx="12" cy="12" r="12" fill="#40ff80"/></g>
+      <g transform="translate(96,78)"><circle cx="12" cy="12" r="12" fill="#ffcc40"/></g>
+      <g transform="translate(128,78)"><circle cx="12" cy="12" r="12" fill="#c040ff"/></g>
+      <text x="0" y="120" font-size="10" fill="#888">真元色越纯，本体识别越强（详见 worldview §三）</text>
+    </g>
+
+    <!-- Step 3: 计时 -->
+    <g transform="translate(20,340)">
+      <text x="0" y="0" font-size="13" fill="#ffffff" font-weight="bold">步骤 3 · 铸造计时</text>
+      <rect x="0" y="12" width="560" height="20" fill="#1a1a1a" stroke="#666"/>
+      <rect x="0" y="12" width="380" height="20" fill="#ffcc40"/>
+      <text x="280" y="26" font-size="11" fill="#000000" text-anchor="middle">进度 68% · 剩余 4.2s</text>
+      <text x="0" y="56" font-size="10" fill="#ff8060">⚠ 战斗中铸造 → 成功率 -40%，且延长 2×</text>
+      <text x="0" y="74" font-size="10" fill="#80ff80">成功后生成 WeaponCarrier 组件 · 可挂在腰间（6 格）</text>
+      <text x="0" y="92" font-size="10" fill="#aaaa">qi_decay 0.04%/s（腰间），见 §5.2 WeaponCarrierDecayTick</text>
+    </g>
+  </g>
+
+  <!-- ============ C：阵法布置 (§5.3) ============ -->
+  <g transform="translate(1320,100)">
+    <rect width="560" height="500" fill="#14141f" stroke="#40a0ff" stroke-width="2" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#80c0ff" font-weight="bold">C · 阵法布置（QiTrap Placer）</text>
+    <text x="20" y="52" font-size="11" fill="#aaaa">手持阵旗右键空地 → 选触发类型 → 注真元</text>
+
+    <!-- 地图预览 -->
+    <g transform="translate(20,80)">
+      <rect width="220" height="220" fill="#0a1a0a" stroke="#40a040"/>
+      <text x="110" y="20" font-size="11" fill="#aaaa" text-anchor="middle">阵旗定位（点击放置）</text>
+      <g transform="translate(110,110)">
+        <circle r="60" fill="#40a0ff" opacity="0.15" stroke="#40a0ff" stroke-dasharray="4 2"/>
+        <rect x="-8" y="-30" width="16" height="36" fill="#ffcc40"/>
+        <text x="0" y="60" font-size="9" fill="#80c0ff" text-anchor="middle">触发半径 3m</text>
+      </g>
+      <!-- 目标方块示意 -->
+      <g transform="translate(40,180)"><rect width="12" height="12" fill="#8a6030"/></g>
+      <g transform="translate(54,180)"><rect width="12" height="12" fill="#8a6030"/></g>
+      <g transform="translate(150,200)"><rect width="12" height="12" fill="#8a6030"/></g>
+    </g>
+
+    <!-- 触发类型选择 -->
+    <g transform="translate(260,80)">
+      <text x="0" y="14" font-size="12" fill="#ffffff" font-weight="bold">触发类型</text>
+      <g transform="translate(0,24)">
+        <rect width="280" height="36" fill="#1a2a3a" stroke="#40a0ff" stroke-width="2"/>
+        <text x="10" y="22" font-size="11" fill="#80c0ff">⚡ 踩踏触发（TriggerOnStep）</text>
+      </g>
+      <g transform="translate(0,66)">
+        <rect width="280" height="36" fill="#1a1a2a" stroke="#666"/>
+        <text x="10" y="22" font-size="11" fill="#aaaa">👁 进入范围触发（Proximity）</text>
+      </g>
+      <g transform="translate(0,108)">
+        <rect width="280" height="36" fill="#1a1a2a" stroke="#666"/>
+        <text x="10" y="22" font-size="11" fill="#aaaa">🩸 受击时反弹（OnHit）</text>
+      </g>
+      <g transform="translate(0,150)">
+        <rect width="280" height="36" fill="#1a1a2a" stroke="#666"/>
+        <text x="10" y="22" font-size="11" fill="#aaaa">⏱ 定时引爆（Timer）</text>
+      </g>
+    </g>
+
+    <!-- 注真元 -->
+    <g transform="translate(20,320)">
+      <text x="0" y="14" font-size="12" fill="#ffffff" font-weight="bold">注入真元（决定威力与持续时间）</text>
+      <rect x="0" y="24" width="520" height="14" fill="#001020" stroke="#40d0d0"/>
+      <rect x="0" y="24" width="290" height="14" fill="#40d0d0"/>
+      <text x="530" y="36" font-size="10" fill="#80ddff">120</text>
+      <text x="0" y="60" font-size="10" fill="#aaaa">预计持续 120s · 触发后威力 42 · qi_decay 0.06%/s</text>
+      <text x="0" y="80" font-size="10" fill="#ff8060">⚠ 阵法部署位置会被服务端记录，可被他人探察/破坏</text>
+    </g>
+
+    <!-- 按钮 -->
+    <g transform="translate(20,440)">
+      <rect width="200" height="40" fill="#204060" stroke="#80c0ff" stroke-width="2" rx="4"/>
+      <text x="100" y="26" font-size="14" fill="#a0d0ff" text-anchor="middle" font-weight="bold">☑ 布置</text>
+      <rect x="220" y="0" width="120" height="40" fill="#2a2a2a" stroke="#888" stroke-width="1" rx="4"/>
+      <text x="280" y="26" font-size="13" fill="#aaaa" text-anchor="middle">取消</text>
+    </g>
+  </g>
+
+  <!-- ============ D：战斗中快速互动（底部） ============ -->
+  <g transform="translate(40,640)">
+    <rect width="1840" height="480" fill="#14141f" stroke="#444" rx="6"/>
+    <text x="20" y="30" font-size="18" fill="#ffffff" font-weight="bold">D · 战斗中互动速查 · 按键组合</text>
+
+    <g transform="translate(40,80)">
+      <!-- 攻击键表 -->
+      <text x="0" y="0" font-size="13" fill="#ffcc80" font-weight="bold">攻击</text>
+      <g transform="translate(0,12)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">LMB</text>
+      </g>
+      <text x="56" y="34" font-size="11" fill="#cccccc">普攻 · 触发 MeleeAttackIntent</text>
+      <g transform="translate(0,56)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">RMB</text>
+      </g>
+      <text x="56" y="78" font-size="11" fill="#cccccc">释放法术 · SpellCastIntent（需选中法术槽）</text>
+      <g transform="translate(0,100)">
+        <rect width="60" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="30" y="24" font-size="11" fill="#ffffff" text-anchor="middle">Shift+Q</text>
+      </g>
+      <text x="72" y="122" font-size="11" fill="#cccccc">甩暗器 · ThrowCarrierIntent（从腰间 slot 取）</text>
+      <g transform="translate(0,144)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">G</text>
+      </g>
+      <text x="56" y="166" font-size="11" fill="#cccccc">丢武器/法宝（掉落于地）</text>
+    </g>
+
+    <g transform="translate(460,80)">
+      <text x="0" y="0" font-size="13" fill="#ff8080" font-weight="bold">防御（姿态切换）</text>
+      <g transform="translate(0,12)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">F1</text>
+      </g>
+      <text x="56" y="34" font-size="11" fill="#cccccc">截脉（JieMai）· 反弹 qi 伤害 · 200ms 极限弹反</text>
+      <g transform="translate(0,56)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">F2</text>
+      </g>
+      <text x="56" y="78" font-size="11" fill="#cccccc">替尸（TiShi）· 牺牲伪皮层抵挡 1 次</text>
+      <g transform="translate(0,100)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">F3</text>
+      </g>
+      <text x="56" y="122" font-size="11" fill="#cccccc">涡流（JueLing）· 吸收 DoT 冷却 8s</text>
+      <g transform="translate(0,144)">
+        <rect width="60" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="30" y="24" font-size="11" fill="#ffffff" text-anchor="middle">Ctrl+F</text>
+      </g>
+      <text x="72" y="166" font-size="11" fill="#cccccc">清除所有防御姿态（Idle）</text>
+    </g>
+
+    <g transform="translate(920,80)">
+      <text x="0" y="0" font-size="13" fill="#80ffc0" font-weight="bold">功法（Technique 挂载）</text>
+      <g transform="translate(0,12)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">1-4</text>
+      </g>
+      <text x="56" y="34" font-size="11" fill="#cccccc">切换已挂载 technique（最多 4 个）</text>
+      <g transform="translate(0,56)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">T</text>
+      </g>
+      <text x="56" y="78" font-size="11" fill="#cccccc">打开技法面板（详见 §5.5 client UI）</text>
+      <g transform="translate(0,100)">
+        <rect width="60" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="30" y="24" font-size="11" fill="#ffffff" text-anchor="middle">Shift+T</text>
+      </g>
+      <text x="72" y="122" font-size="11" fill="#cccccc">一键切换完整姿态组（存档位）</text>
+    </g>
+
+    <g transform="translate(1380,80)">
+      <text x="0" y="0" font-size="13" fill="#ffaa40" font-weight="bold">移动/脱战</text>
+      <g transform="translate(0,12)">
+        <rect width="60" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="30" y="24" font-size="11" fill="#ffffff" text-anchor="middle">Ctrl</text>
+      </g>
+      <text x="72" y="34" font-size="11" fill="#cccccc">Walk（1.4 m/s · 低 stamina 消耗）</text>
+      <g transform="translate(0,56)">
+        <rect width="44" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="22" y="24" font-size="12" fill="#ffffff" text-anchor="middle">W</text>
+      </g>
+      <text x="56" y="78" font-size="11" fill="#cccccc">Jog（3.0 m/s · 默认）</text>
+      <g transform="translate(0,100)">
+        <rect width="60" height="36" fill="#2a2a2a" stroke="#ffffff"/>
+        <text x="30" y="24" font-size="11" fill="#ffffff" text-anchor="middle">Shift+W</text>
+      </g>
+      <text x="72" y="122" font-size="11" fill="#cccccc">Sprint（5.5 m/s · ~10s 耗尽 stamina）</text>
+      <g transform="translate(0,144)">
+        <rect width="300" height="36" fill="#101020" stroke="#ffaa40" stroke-dasharray="3 2"/>
+        <text x="150" y="24" font-size="11" fill="#ffaa40" text-anchor="middle">脱战（§3.7）由服务端自动判定，无按键</text>
+      </g>
+    </g>
+
+    <text x="30" y="440" font-size="11" fill="#666">所有按键经 CustomPayload 入站包（§1.5.4）上报 server 解析，client 只负责发送 Intent</text>
+  </g>
+
+  <text x="30" y="1180" font-size="11" fill="#666">注：草图仅表达功能/布局意图，不约束视觉风格 - 实际像素、字体、间距由 plan-client.md 定</text>
+</svg>

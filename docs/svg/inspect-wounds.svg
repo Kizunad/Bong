@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" font-family="'Noto Sans CJK SC', sans-serif">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1a1f"/>
+      <stop offset="100%" stop-color="#0a0a0f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#bg2)"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">InspectScreen · 伤口层（扩展现有 BodyInspectComponent）</text>
+  <text x="30" y="64" font-size="13" fill="#888">plan-combat-v1.md §3.4 · §5.6.8 · 落位：渲染层 B（Screen）</text>
+
+  <!-- 顶部 meta 带 -->
+  <g transform="translate(30,82)">
+    <rect width="1540" height="40" fill="#15151a" stroke="#444"/>
+    <text x="16" y="24" font-size="12" fill="#cccccc">接入：<tspan fill="#80ff80">PhysicalBodyStore</tspan>（已存在）· 扩展 <tspan fill="#ffee80">BodyPartState</tspan> 加 wound_level / bleeding_rate / source_id / age</text>
+    <text x="1530" y="24" font-size="12" fill="#ff80c0" text-anchor="end">按 I 打开 · 已有按键，不新增</text>
+  </g>
+
+  <!-- Tab 栏（对齐现有）-->
+  <g transform="translate(30,132)">
+    <text x="0" y="-8" font-size="11" fill="#aaaa">顶部 tab（与现有 [装备][修仙] 并列，新增两项：伤口 / 状态）</text>
+    <rect width="130" height="34" fill="#40301a" stroke="#a08060"/>
+    <text x="65" y="22" font-size="12" fill="#cccccc" text-anchor="middle">装备</text>
+
+    <rect x="132" width="130" height="34" fill="#1a2a1a" stroke="#40a040"/>
+    <text x="197" y="22" font-size="12" fill="#aaaa" text-anchor="middle">修仙</text>
+
+    <rect x="264" width="130" height="34" fill="#2a1a1a" stroke="#a04040" stroke-width="2"/>
+    <text x="329" y="22" font-size="12" fill="#ff8080" text-anchor="middle" font-weight="bold">伤口（新增）</text>
+
+    <rect x="396" width="130" height="34" fill="#4a3a1a" stroke="#ffcc40" stroke-width="1"/>
+    <text x="461" y="22" font-size="12" fill="#ffcc80" text-anchor="middle">状态（新增）</text>
+
+    <text x="540" y="22" font-size="10" fill="#888">※ 所有 tab 复用 InspectScreen 主容器</text>
+  </g>
+
+  <!-- 左：BodyInspectComponent（实际 168×236）放大示意 -->
+  <g transform="translate(30,190)">
+    <rect width="560" height="760" fill="#0a0f18" stroke="#444" stroke-width="1" rx="4"/>
+    <text x="280" y="26" font-size="14" fill="#80c0ff" text-anchor="middle">复用现有 BodyInspectComponent</text>
+    <text x="280" y="44" font-size="11" fill="#666" text-anchor="middle">（实际 168×236 等比放大显示 · 16 部位 · 体表/经脉双层）</text>
+
+    <!-- Layer toggle -->
+    <g transform="translate(30,62)">
+      <rect width="120" height="28" fill="#2a1a1a" stroke="#ff4040" stroke-width="2"/>
+      <text x="60" y="18" font-size="11" fill="#ff8080" text-anchor="middle" font-weight="bold">体表（伤口）</text>
+      <rect x="130" width="120" height="28" fill="#1a1a2a" stroke="#6080ff" stroke-width="1"/>
+      <text x="190" y="18" font-size="11" fill="#aaaa" text-anchor="middle">经脉</text>
+      <text x="270" y="18" font-size="10" fill="#888">← 现有 Layer 枚举切换</text>
+    </g>
+
+    <!-- 简化人体（呼应现有像素画风） -->
+    <g transform="translate(280,360)" stroke="#6060a0" stroke-width="2" fill="#1a1f2a">
+      <!-- 头 (HEAD) -->
+      <circle cx="0" cy="-220" r="28" fill="#0a1a0a" stroke="#40a040"/>
+      <text x="0" y="-246" font-size="9" fill="#40a040" text-anchor="middle">HEAD (完好)</text>
+
+      <!-- 颈 (NECK) -->
+      <rect x="-10" y="-194" width="20" height="18" fill="#0a1a0a" stroke="#40a040"/>
+
+      <!-- 胸 LEFT_CHEST (重伤 - 红脉冲) -->
+      <rect x="-44" y="-174" width="44" height="70" fill="#4a1010" stroke="#ff4040" stroke-width="3"/>
+      <circle cx="-22" cy="-140" r="18" fill="#ff2020" opacity="0.4">
+        <animate attributeName="opacity" values="0.2;0.6;0.2" dur="1.2s" repeatCount="indefinite"/>
+      </circle>
+      <text x="-22" y="-135" font-size="9" fill="#ffffff" text-anchor="middle" font-weight="bold">刺穿</text>
+      <text x="-22" y="-184" font-size="8" fill="#ff6060" text-anchor="middle">LEFT_CHEST</text>
+
+      <!-- 胸 RIGHT_CHEST (完好) -->
+      <rect x="0" y="-174" width="44" height="70" fill="#0a1a0a" stroke="#40a040"/>
+      <text x="22" y="-184" font-size="8" fill="#40a040" text-anchor="middle">RIGHT_CHEST</text>
+
+      <!-- 腹 (ABDOMEN) 擦伤 -->
+      <rect x="-40" y="-104" width="80" height="56" fill="#2a2a0a" stroke="#ffcc40"/>
+      <circle cx="20" cy="-76" r="6" fill="#ffa040"/>
+      <text x="0" y="-40" font-size="8" fill="#ffcc40" text-anchor="middle">ABDOMEN</text>
+
+      <!-- 左臂 LEFT_UPPER_ARM / LEFT_LOWER_ARM / LEFT_HAND -->
+      <rect x="-84" y="-174" width="30" height="70" fill="#0a1a0a" stroke="#40a040"/>
+      <rect x="-84" y="-104" width="28" height="60" fill="#0a1a0a" stroke="#40a040"/>
+      <rect x="-84" y="-44" width="24" height="26" fill="#0a1a0a" stroke="#40a040"/>
+
+      <!-- 右臂（SEVERED 断肢示意）-->
+      <rect x="54" y="-174" width="30" height="70" fill="#1a1a1a" stroke="#606060" stroke-dasharray="3 2"/>
+      <rect x="54" y="-104" width="28" height="60" fill="#0f0f0f" stroke="#606060" stroke-dasharray="3 2" opacity="0.4"/>
+      <rect x="54" y="-44" width="24" height="26" fill="#0f0f0f" stroke="#606060" stroke-dasharray="3 2" opacity="0.2"/>
+      <text x="70" y="-184" font-size="8" fill="#aaaa" text-anchor="middle">SEVERED</text>
+
+      <!-- 左腿 (筋撕裂 - 骨折色橙)-->
+      <rect x="-30" y="-48" width="30" height="90" fill="#0a1a0a" stroke="#40a040"/>
+      <rect x="-30" y="42" width="30" height="80" fill="#3a2010" stroke="#ff8040" stroke-width="3"/>
+      <path d="M -24 80 L -4 80" stroke="#ff4040" stroke-width="2"/>
+      <path d="M -24 100 L -4 100" stroke="#ff4040" stroke-width="2"/>
+      <text x="-14" y="52" font-size="8" fill="#ff8040" text-anchor="middle">筋断</text>
+
+      <!-- 右腿 -->
+      <rect x="0" y="-48" width="30" height="90" fill="#0a1a0a" stroke="#40a040"/>
+      <rect x="0" y="42" width="30" height="80" fill="#0a1a0a" stroke="#40a040"/>
+
+      <!-- 脚 -->
+      <rect x="-30" y="122" width="30" height="14" fill="#0a1a0a" stroke="#40a040"/>
+      <rect x="0" y="122" width="30" height="14" fill="#1a1f1a" stroke="#ffcc40"/>
+      <circle cx="16" cy="132" r="4" fill="#ffa040"/>
+    </g>
+
+    <!-- 6 级等级图例（对齐现有 WoundLevel） -->
+    <g transform="translate(30,540)">
+      <text x="0" y="0" font-size="12" fill="#ffffff" font-weight="bold">伤势等级（现有 WoundLevel · 扩展 Wound.source/age）</text>
+      <g transform="translate(0,14)">
+        <g><rect width="60" height="22" fill="#0a1a0a" stroke="#40a040"/><text x="30" y="16" font-size="10" fill="#40a040" text-anchor="middle">INTACT</text></g>
+        <g transform="translate(65,0)"><rect width="60" height="22" fill="#1a1f0a" stroke="#80a040"/><text x="30" y="16" font-size="10" fill="#a0c040" text-anchor="middle">BRUISE</text></g>
+        <g transform="translate(130,0)"><rect width="60" height="22" fill="#2a2a0a" stroke="#ffcc40"/><text x="30" y="16" font-size="10" fill="#ffdd80" text-anchor="middle">ABRASION</text></g>
+        <g transform="translate(195,0)"><rect width="70" height="22" fill="#3a2010" stroke="#ff8040"/><text x="35" y="16" font-size="10" fill="#ffaa60" text-anchor="middle">LACERATION</text></g>
+        <g transform="translate(270,0)"><rect width="70" height="22" fill="#4a1010" stroke="#ff4040"/><text x="35" y="16" font-size="10" fill="#ff8080" text-anchor="middle">FRACTURE</text></g>
+        <g transform="translate(345,0)"><rect width="70" height="22" fill="#1a1a1a" stroke="#606060" stroke-dasharray="3 2"/><text x="35" y="16" font-size="10" fill="#aaaa" text-anchor="middle">SEVERED</text></g>
+      </g>
+      <text x="0" y="56" font-size="10" fill="#ff6060">⚠ 出血脉冲动画：现有代码已有 · Wound 映射到 PhysicalBody.partState().isBleeding()</text>
+    </g>
+
+    <!-- 说明区 -->
+    <g transform="translate(30,620)">
+      <rect width="500" height="120" fill="#0a0a1a" stroke="#444"/>
+      <text x="10" y="20" font-size="11" fill="#ffcc80">扩展（战斗 plan 新增）：</text>
+      <text x="10" y="40" font-size="10" fill="#cccccc">· BodyPartState 加字段：wound_source_id · wound_age_ms · treatment_state</text>
+      <text x="10" y="56" font-size="10" fill="#cccccc">· 悬停 tooltip 加：来源 entity / 发生时间 / 预计愈合（BodyInspectComponent.hoveredPart）</text>
+      <text x="10" y="72" font-size="10" fill="#cccccc">· 已有拖拽机制 → 治疗物品直接拖到部位（§5.6 三层疗愈）</text>
+      <text x="10" y="92" font-size="10" fill="#80ff80">· 无需改 enum BodyPart（现有 16 部位覆盖全身）</text>
+      <text x="10" y="108" font-size="10" fill="#80c0ff">· 无需改 Layer 切换（现有 PHYSICAL/MERIDIAN 已有）</text>
+    </g>
+  </g>
+
+  <!-- 右：选中部位详情（新增 tooltip 面板，InspectScreen 右侧） -->
+  <g transform="translate(610,190)">
+    <rect width="960" height="760" fill="#0f1015" stroke="#444" stroke-width="1" rx="4"/>
+    <text x="20" y="26" font-size="16" fill="#ffffff" font-weight="bold">右栏 · 选中部位详情（点击人体触发）</text>
+    <text x="20" y="46" font-size="11" fill="#888">新增 Component：WoundDetailPanel（owo-lib FlowLayout）· 绑定 BodyInspectComponent.selectionListeners</text>
+
+    <!-- 选中伤口头部 -->
+    <g transform="translate(20,70)">
+      <rect width="920" height="200" fill="#2a1010" stroke="#ff4040" stroke-width="2" rx="4"/>
+      <text x="10" y="26" font-size="15" fill="#ff8080" font-weight="bold">【LEFT_CHEST】刺穿伤 · FRACTURE 级</text>
+      <text x="10" y="50" font-size="11" fill="#cccccc">来源：野狼 · 利齿穿刺（source_entity_id = 0x7a3f）</text>
+      <text x="10" y="68" font-size="11" fill="#cccccc">Y-class：FRONT_UPPER · reach 命中匹配</text>
+      <text x="10" y="88" font-size="11" fill="#cccccc">当前严重度：12 / 20 · 流血速率：2.4 HP/s</text>
+      <text x="10" y="106" font-size="11" fill="#cccccc">发生时间：战斗中 12s 前 · 未处理</text>
+      <text x="10" y="126" font-size="11" fill="#ffcc80">状态效果联动：Bleeding × 3（PerSource policy · 见 inspect-status）</text>
+      <text x="10" y="146" font-size="11" fill="#cccccc">预计愈合：24h 无处理 → 感染风险 40%</text>
+      <rect x="10" y="162" width="900" height="12" fill="#2a0a0a" stroke="#ff4040"/>
+      <rect x="10" y="162" width="540" height="12" fill="#ff4040"/>
+      <text x="10" y="190" font-size="10" fill="#888">愈合进度 0%（未处理）· 见 §5.6 HealingState</text>
+    </g>
+
+    <!-- 拖拽治疗区（沿用现有拖拽机制） -->
+    <g transform="translate(20,290)">
+      <text x="0" y="0" font-size="14" fill="#ffffff" font-weight="bold">处理方式 · 拖放治疗物品到受伤部位（现有拖拽机制）</text>
+      <text x="0" y="20" font-size="10" fill="#888">无新按钮 UI — 直接从背包拖物品到左侧人体部位即触发</text>
+
+      <g transform="translate(0,36)">
+        <rect width="220" height="80" fill="#1a2a1a" stroke="#40a040" stroke-width="2" rx="4"/>
+        <text x="10" y="22" font-size="12" fill="#80ff80" font-weight="bold">🩹 止血包扎</text>
+        <text x="10" y="42" font-size="10" fill="#aaaa">L1 · 外科 · 拖"绷带"物品</text>
+        <text x="10" y="58" font-size="10" fill="#aaaa">立即止血 8 HP → 加速愈合</text>
+        <text x="10" y="74" font-size="9" fill="#666">Karma 不影响</text>
+      </g>
+      <g transform="translate(230,36)">
+        <rect width="220" height="80" fill="#3a2a1a" stroke="#ffcc40" stroke-width="2" rx="4"/>
+        <text x="10" y="22" font-size="12" fill="#ffcc80" font-weight="bold">🌿 敷药</text>
+        <text x="10" y="42" font-size="10" fill="#aaaa">L1 · 需"赤髓草"等药材</text>
+        <text x="10" y="58" font-size="10" fill="#aaaa">降感染率 -80%</text>
+        <text x="10" y="74" font-size="9" fill="#666">生态录药材表</text>
+      </g>
+      <g transform="translate(460,36)">
+        <rect width="220" height="80" fill="#1a2a3a" stroke="#40a0ff" stroke-width="2" rx="4"/>
+        <text x="10" y="22" font-size="12" fill="#80c0ff" font-weight="bold">✨ 导真元</text>
+        <text x="10" y="42" font-size="10" fill="#aaaa">L2 · 自身 40 qi</text>
+        <text x="10" y="58" font-size="10" fill="#aaaa">Karma ±1 影响成功率</text>
+        <text x="10" y="74" font-size="9" fill="#666">非拖拽 · 按键触发（见按键表）</text>
+      </g>
+      <g transform="translate(690,36)">
+        <rect width="230" height="80" fill="#2a1a3a" stroke="#c040ff" stroke-width="2" stroke-dasharray="3 2" rx="4"/>
+        <text x="10" y="22" font-size="12" fill="#c080ff" font-weight="bold">💊 服丹</text>
+        <text x="10" y="42" font-size="10" fill="#aaaa">L3 · 拖丹药到任何部位</text>
+        <text x="10" y="58" font-size="10" fill="#aaaa">全身效果 · 背包无丹</text>
+        <text x="10" y="74" font-size="9" fill="#666">修炼 plan 定义丹药列表</text>
+      </g>
+    </g>
+
+    <!-- 底部：全身伤口列表（ScrollContainer） -->
+    <g transform="translate(20,440)">
+      <text x="0" y="0" font-size="14" fill="#ffffff" font-weight="bold">全身伤口速览（ScrollContainer · 点击定位部位）</text>
+      <g transform="translate(0,15)">
+        <rect width="920" height="28" fill="#3a1010" stroke="#ff4040"/>
+        <circle cx="14" cy="14" r="6" fill="#ff4040"/>
+        <text x="30" y="19" font-size="11" fill="#ffa0a0">LEFT_CHEST · FRACTURE · 刺穿 · 流血中</text>
+        <text x="480" y="19" font-size="10" fill="#aaaa">来源：野狼</text>
+        <text x="890" y="19" font-size="10" fill="#aaaa" text-anchor="end">12s 前</text>
+      </g>
+      <g transform="translate(0,45)">
+        <rect width="920" height="28" fill="#2a1f10" stroke="#ff8040"/>
+        <circle cx="14" cy="14" r="5" fill="#ff8040"/>
+        <text x="30" y="19" font-size="11" fill="#ffc080">LEFT_LOWER_LEG · LACERATION · 筋撕裂</text>
+        <text x="480" y="19" font-size="10" fill="#aaaa">来源：缝合兽甩击</text>
+        <text x="890" y="19" font-size="10" fill="#aaaa" text-anchor="end">35s 前</text>
+      </g>
+      <g transform="translate(0,75)">
+        <rect width="920" height="28" fill="#1f1f10" stroke="#ffcc40"/>
+        <circle cx="14" cy="14" r="4" fill="#ffcc40"/>
+        <text x="30" y="19" font-size="11" fill="#ffee80">ABDOMEN · ABRASION · 擦伤</text>
+        <text x="890" y="19" font-size="10" fill="#aaaa" text-anchor="end">1m 前</text>
+      </g>
+      <g transform="translate(0,105)">
+        <rect width="920" height="28" fill="#1a1a1a" stroke="#606060" stroke-dasharray="3 2"/>
+        <circle cx="14" cy="14" r="6" fill="#606060" stroke="#888"/>
+        <text x="30" y="19" font-size="11" fill="#888">RIGHT_UPPER_ARM · SEVERED · 断肢（不可恢复）</text>
+        <text x="890" y="19" font-size="10" fill="#aaaa" text-anchor="end">3d 前</text>
+      </g>
+      <g transform="translate(0,135)">
+        <rect width="920" height="28" fill="#0a1f0a" stroke="#40a040"/>
+        <circle cx="14" cy="14" r="4" fill="#40ff80"/>
+        <text x="30" y="19" font-size="11" fill="#80ff80">RIGHT_FOOT · 已愈合 · 留疤</text>
+        <text x="890" y="19" font-size="10" fill="#aaaa" text-anchor="end">12h 前</text>
+      </g>
+    </g>
+
+    <!-- 气血总览 -->
+    <g transform="translate(20,610)">
+      <rect width="920" height="130" fill="#0a0f18" stroke="#6080ff"/>
+      <text x="10" y="22" font-size="13" fill="#a0c0ff" font-weight="bold">总览（PhysicalBodyStore.snapshot().aggregate()）</text>
+      <text x="10" y="46" font-size="12" fill="#cccccc">气血：17/20 · 当前流失速率 2.4/s</text>
+      <text x="10" y="66" font-size="12" fill="#cccccc">功能比：左臂 100% · 右臂 0%（断） · 左腿 45%（筋断）· 右腿 100%</text>
+      <text x="10" y="86" font-size="12" fill="#cccccc">疤痕累计：3 处 → 后续愈合效率 -12%</text>
+      <text x="10" y="108" font-size="12" fill="#ffaa40">⚠ 感染风险：40% · 脱战后（§3.7）愈合速率 ×2</text>
+    </g>
+  </g>
+
+  <text x="30" y="985" font-size="11" fill="#666">数据契约：bong:combat/wounds_sync CustomPayload 推送 → PhysicalBodyStore.replace() → BodyInspectComponent 自动刷新（listener 模式）</text>
+</svg>
