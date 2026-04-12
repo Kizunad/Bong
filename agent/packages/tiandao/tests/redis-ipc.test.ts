@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RedisIpc } from "../src/redis-ipc.js";
+import { RedisIpc, WORLD_MODEL_STATE_FIELDS, WORLD_MODEL_STATE_KEY } from "../src/redis-ipc.js";
 import { CHANNELS } from "@bong/schema";
 
 const { PLAYER_CHAT, WORLD_STATE } = CHANNELS;
@@ -12,6 +12,7 @@ interface FakeMultiResult {
 class FakeRedisListClient {
   private readonly lists = new Map<string, string[]>();
   private readonly subscribers = new Map<string, Array<(channel: string, message: string) => void>>();
+  private readonly hashes = new Map<string, Record<string, string>>();
   private nextMultiResult: FakeMultiResult | null = null;
 
   async subscribe(channel: string): Promise<number> {
@@ -60,6 +61,15 @@ class FakeRedisListClient {
       listener(channel, message);
     }
     return listeners.length;
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    return { ...(this.hashes.get(key) ?? {}) };
+  }
+
+  async hset(key: string, values: Record<string, string>): Promise<number> {
+    this.hashes.set(key, { ...values });
+    return Object.keys(values).length;
   }
 
   multi(): {
@@ -119,6 +129,14 @@ class FakeRedisListClient {
 
   setNextMultiResult(result: FakeMultiResult): void {
     this.nextMultiResult = result;
+  }
+
+  setHash(key: string, value: Record<string, string>): void {
+    this.hashes.set(key, { ...value });
+  }
+
+  getHash(key: string): Record<string, string> {
+    return { ...(this.hashes.get(key) ?? {}) };
   }
 }
 
@@ -277,5 +295,198 @@ describe("redis-ipc", () => {
 
     expect(callback).toHaveBeenCalledTimes(2);
     expect(ipc.getLatestState()?.tick).toBe(2);
+  });
+
+  it("loads world model state hash with field-level fail-soft", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.fn();
+
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: "{bad-json",
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({ blood_valley: [{
+        name: "blood_valley",
+        spirit_qi: 0.5,
+        danger_level: 1,
+        active_events: [],
+        player_count: 1,
+      }] }),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({ mutation: { commands: [], narrations: [], reasoning: "ok" } }),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: "{bad-json",
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "not-a-number",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "also-bad",
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const state = await ipc.loadWorldModelState({ warn });
+    expect(state).toEqual({
+      zoneHistory: {
+        blood_valley: [
+          {
+            name: "blood_valley",
+            spirit_qi: 0.5,
+            danger_level: 1,
+            active_events: [],
+            player_count: 1,
+          },
+        ],
+      },
+      lastDecisions: {
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      },
+    });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("warns and continues when redis state hash has missing fields", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.fn();
+
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
+        name: "末法纪",
+        sinceTick: 99,
+        globalEffect: "灵机渐枯",
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({
+        mutation: { commands: [], narrations: [], reasoning: "ok" },
+      }),
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const state = await ipc.loadWorldModelState({ warn });
+    expect(state).toEqual({
+      currentEra: {
+        name: "末法纪",
+        sinceTick: 99,
+        globalEffect: "灵机渐枯",
+      },
+      lastDecisions: {
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.zoneHistory} in ${WORLD_MODEL_STATE_KEY}`,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastTick} in ${WORLD_MODEL_STATE_KEY}`,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick} in ${WORLD_MODEL_STATE_KEY}`,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastStateTs} in ${WORLD_MODEL_STATE_KEY}`,
+    );
+  });
+
+  it("saves world model state hash in a single hset call", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    await ipc.saveWorldModelState({
+      currentEra: {
+        name: "末法纪",
+        sinceTick: 100,
+        globalEffect: "灵机渐枯",
+      },
+      zoneHistory: {
+        blood_valley: [
+          {
+            name: "blood_valley",
+            spirit_qi: 0.4,
+            danger_level: 2,
+            active_events: ["tribulation"],
+            player_count: 3,
+          },
+        ],
+      },
+      lastDecisions: {
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      },
+      playerFirstSeenTick: {
+        "offline:Elder": 88,
+      },
+      lastTick: 100,
+      lastStateTs: 1710000100,
+    });
+
+    const stored = pub.getHash(WORLD_MODEL_STATE_KEY);
+    expect(stored).toEqual({
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
+        name: "末法纪",
+        sinceTick: 100,
+        globalEffect: "灵机渐枯",
+      }),
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({
+        blood_valley: [
+          {
+            name: "blood_valley",
+            spirit_qi: 0.4,
+            danger_level: 2,
+            active_events: ["tribulation"],
+            player_count: 3,
+          },
+        ],
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      }),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({
+        "offline:Elder": 88,
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "100",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1710000100",
+    });
   });
 });

@@ -1,0 +1,107 @@
+name: E2E Redis Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "agent/**"
+      - "server/**"
+      - "scripts/**"
+      - "docker-compose.test.yml"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "agent/**"
+      - "server/**"
+      - "scripts/**"
+      - "docker-compose.test.yml"
+      - ".github/workflows/e2e.yml"
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUN_LABEL: ci
+      REDIS_URL: redis://127.0.0.1:6379
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            agent/package-lock.json
+            agent/packages/schema/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install agent workspace dependencies
+        working-directory: agent
+        run: npm ci
+
+      - name: Bring up Redis test service
+        run: docker compose -f docker-compose.test.yml up -d redis --wait
+
+      - name: Schema stage (build + check + test + generate)
+        working-directory: agent/packages/schema
+        run: |
+          npm run build
+          npm run check
+          npm test
+          npm run generate
+
+      - name: Agent stage (check + test)
+        working-directory: agent/packages/tiandao
+        run: |
+          npm run check
+          npm test
+
+      - name: Build server release binary
+        working-directory: server
+        run: cargo build --release
+
+      - name: Server stage (cargo test)
+        working-directory: server
+        run: cargo test
+
+      - name: Smoke/E2E stage (Task 13 harness)
+        env:
+          RUN_LABEL: ci-smoke
+        run: bash scripts/smoke-test-e2e.sh
+
+      - name: Upload e2e evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs redis
+
+      - name: Tear down Redis test service
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans

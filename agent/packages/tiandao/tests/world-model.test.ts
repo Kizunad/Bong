@@ -197,4 +197,123 @@ describe("WorldModel", () => {
       globalEffect: "灵机渐枯，诸域修行更艰",
     });
   });
+
+  it("round-trips durable snapshot via toJSON/fromJSON and keeps ephemeral newcomers out", () => {
+    const model = new WorldModel();
+
+    model.updateState(
+      createState({
+        tick: 99,
+        players: [
+          createPlayer("Elder", {
+            composite_power: 0.88,
+            zone: "blood_valley",
+            breakdown: { karma: -0.3 },
+          }),
+        ],
+        zones: [createZone("blood_valley", 0.66, { player_count: 1 })],
+      }),
+    );
+    model.updateState(
+      createState({
+        tick: 100,
+        players: [
+          createPlayer("Elder", {
+            composite_power: 0.9,
+            zone: "blood_valley",
+            breakdown: { karma: -0.35 },
+          }),
+          createPlayer("FreshFace", {
+            composite_power: 0.03,
+            zone: "blood_valley",
+            breakdown: { karma: 0 },
+          }),
+        ],
+        zones: [createZone("blood_valley", 0.62, { player_count: 2 })],
+      }),
+    );
+    model.setCurrentEra({
+      name: "末法纪",
+      sinceTick: 100,
+      globalEffect: "灵机渐枯，诸域修行更艰",
+    });
+    model.recordDecision("mutation", {
+      commands: [
+        {
+          type: "modify_zone",
+          target: "blood_valley",
+          params: { spirit_qi_delta: -0.03 },
+        },
+      ],
+      narrations: [],
+      reasoning: "cool down",
+    });
+
+    const snapshot = model.toJSON();
+    const restored = WorldModel.fromJSON(snapshot);
+
+    expect(restored.currentEra).toEqual(snapshot.currentEra);
+    expect(restored.lastTick).toBe(100);
+    expect(restored.lastStateTs).toBe(1_710_000_100);
+    expect(restored.getZoneHistory("blood_valley")).toEqual(snapshot.zoneHistory.blood_valley);
+    expect(restored.getPeerDecisions()).toEqual(model.getPeerDecisions());
+    expect(restored.getKeyPlayers().flatMap((player) => player.reasons)).not.toContain("新入世(0.03)");
+    expect(snapshot.playerFirstSeenTick).toEqual({
+      "offline:Elder": 99,
+      "offline:FreshFace": 100,
+    });
+  });
+
+  it("does not classify restored recurring players as newcomers on the first live tick for legacy snapshots", () => {
+    const restored = WorldModel.fromJSON({
+      currentEra: null,
+      zoneHistory: {},
+      lastDecisions: {},
+      lastTick: 100,
+    });
+
+    restored.updateState(
+      createState({
+        tick: 101,
+        players: [
+          createPlayer("Elder", {
+            composite_power: 0.88,
+            zone: "blood_valley",
+            breakdown: { karma: -0.3 },
+          }),
+        ],
+        zones: [createZone("blood_valley", 0.62, { player_count: 1 })],
+      }),
+    );
+
+    expect(restored.getKeyPlayers().flatMap((player) => player.reasons)).not.toContain("新入世(0.88)");
+    expect(restored.toJSON().playerFirstSeenTick).toEqual({
+      "offline:Elder": 101,
+    });
+  });
+
+  it("preserves newcomer detection after restore when player first-seen history is available", () => {
+    const model = new WorldModel();
+    model.updateState(
+      createState({
+        tick: 99,
+        players: [createPlayer("Elder", { composite_power: 0.88, zone: "blood_valley" })],
+        zones: [createZone("blood_valley", 0.66, { player_count: 1 })],
+      }),
+    );
+
+    const restored = WorldModel.fromJSON(model.toJSON());
+    restored.updateState(
+      createState({
+        tick: 100,
+        players: [
+          createPlayer("Elder", { composite_power: 0.9, zone: "blood_valley" }),
+          createPlayer("FreshFace", { composite_power: 0.03, zone: "blood_valley", breakdown: { karma: 0 } }),
+        ],
+        zones: [createZone("blood_valley", 0.62, { player_count: 2 })],
+      }),
+    );
+
+    expect(restored.getKeyPlayers().flatMap((player) => player.reasons)).toContain("新入世(0.03)");
+  });
 });

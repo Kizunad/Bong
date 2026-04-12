@@ -61,6 +61,15 @@ export interface KeyPlayerSummary {
   note: string;
 }
 
+export interface WorldModelSnapshot {
+  currentEra: CurrentEra | null;
+  zoneHistory: Record<string, ZoneSnapshot[]>;
+  lastDecisions: Record<string, AgentDecision>;
+  playerFirstSeenTick: Record<string, number>;
+  lastTick: number | null;
+  lastStateTs: number | null;
+}
+
 interface MutableKeyPlayerSummary {
   player: PlayerProfile;
   reasons: string[];
@@ -69,15 +78,27 @@ interface MutableKeyPlayerSummary {
 export class WorldModel {
   private latestStateValue: WorldStateV1 | null = null;
   private currentEraValue: CurrentEra | null = null;
+  private lastStateTsValue: number | null = null;
   readonly zoneHistory = new Map<string, ZoneSnapshot[]>();
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
   private newPlayersThisTick = new Set<string>();
+  private suppressNewPlayersThisTickOnNextUpdate = false;
 
   static fromState(state: WorldStateV1): WorldModel {
     const model = new WorldModel();
     model.updateState(state);
     return model;
+  }
+
+  static fromJSON(snapshot: Partial<WorldModelSnapshot> | null | undefined): WorldModel {
+    const model = new WorldModel();
+    model.restoreFromJSON(snapshot);
+    return model;
+  }
+
+  restoreFromJSON(snapshot: Partial<WorldModelSnapshot> | null | undefined): void {
+    this.applySnapshot(snapshot ?? {});
   }
 
   get latestState(): WorldStateV1 | null {
@@ -88,10 +109,42 @@ export class WorldModel {
     return cloneCurrentEra(this.currentEraValue);
   }
 
+  get lastTick(): number | null {
+    return this.latestStateValue?.tick ?? null;
+  }
+
+  get lastStateTs(): number | null {
+    return this.lastStateTsValue;
+  }
+
+  toJSON(): WorldModelSnapshot {
+    const zoneHistory: Record<string, ZoneSnapshot[]> = {};
+    for (const [zoneName, history] of this.zoneHistory.entries()) {
+      zoneHistory[zoneName] = history.map(cloneZoneSnapshot);
+    }
+
+    const lastDecisions: Record<string, AgentDecision> = {};
+    for (const [agentName, decision] of this.lastDecisions.entries()) {
+      lastDecisions[agentName] = cloneDecision(decision);
+    }
+
+    return {
+      currentEra: cloneCurrentEra(this.currentEraValue),
+      zoneHistory,
+      lastDecisions,
+      playerFirstSeenTick: Object.fromEntries(this.playerFirstSeenTick.entries()),
+      lastTick: this.lastTick,
+      lastStateTs: this.lastStateTs,
+    };
+  }
+
   updateState(state: WorldStateV1): void {
     const clonedState = cloneWorldState(state);
     const hadPreviousState = this.latestStateValue !== null;
+    const suppressNewPlayersThisTick = this.suppressNewPlayersThisTickOnNextUpdate;
+    this.suppressNewPlayersThisTickOnNextUpdate = false;
     this.latestStateValue = clonedState;
+    this.lastStateTsValue = clonedState.ts;
     this.newPlayersThisTick = new Set<string>();
 
     for (const zone of clonedState.zones) {
@@ -106,7 +159,7 @@ export class WorldModel {
     for (const player of clonedState.players) {
       if (!this.playerFirstSeenTick.has(player.uuid)) {
         this.playerFirstSeenTick.set(player.uuid, clonedState.tick);
-        if (hadPreviousState) {
+        if (hadPreviousState && !suppressNewPlayersThisTick) {
           this.newPlayersThisTick.add(player.uuid);
         }
       }
@@ -272,6 +325,50 @@ export class WorldModel {
         commandCount: decision.commands.length,
         narrationCount: decision.narrations.length,
       }));
+  }
+
+  private applySnapshot(snapshot: Partial<WorldModelSnapshot>): void {
+    this.currentEraValue = sanitizeCurrentEra(snapshot.currentEra);
+
+    this.zoneHistory.clear();
+    const zoneHistory = sanitizeZoneHistory(snapshot.zoneHistory);
+    for (const [zoneName, history] of Object.entries(zoneHistory)) {
+      this.zoneHistory.set(zoneName, history);
+    }
+
+    this.lastDecisions.clear();
+    const lastDecisions = sanitizeLastDecisions(snapshot.lastDecisions);
+    for (const [agentName, decision] of Object.entries(lastDecisions)) {
+      this.lastDecisions.set(agentName, decision);
+    }
+
+    this.playerFirstSeenTick.clear();
+    const playerFirstSeenTick = sanitizePlayerFirstSeenTick(snapshot.playerFirstSeenTick);
+    for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
+      this.playerFirstSeenTick.set(playerId, firstSeenTick);
+    }
+
+    const normalizedLastTick = sanitizeLastTick(snapshot.lastTick);
+    const normalizedLastStateTs = sanitizeLastStateTs(snapshot.lastStateTs);
+    this.lastStateTsValue = normalizedLastStateTs;
+    this.suppressNewPlayersThisTickOnNextUpdate =
+      normalizedLastTick !== null && !isRecord(snapshot.playerFirstSeenTick);
+    if (normalizedLastTick === null) {
+      this.latestStateValue = null;
+      this.newPlayersThisTick = new Set<string>();
+      return;
+    }
+
+    this.latestStateValue = {
+      v: 1,
+      ts: normalizedLastStateTs ?? 0,
+      tick: normalizedLastTick,
+      players: [],
+      npcs: [],
+      zones: [],
+      recent_events: [],
+    };
+    this.newPlayersThisTick = new Set<string>();
   }
 }
 
@@ -502,4 +599,219 @@ function cloneCurrentEra(currentEra: CurrentEra | null): CurrentEra | null {
     sinceTick: currentEra.sinceTick,
     globalEffect: currentEra.globalEffect,
   };
+}
+
+function sanitizeCurrentEra(currentEra: unknown): CurrentEra | null {
+  if (!isRecord(currentEra)) {
+    return null;
+  }
+
+  const name = currentEra.name;
+  const globalEffect = currentEra.globalEffect;
+  const sinceTick = currentEra.sinceTick;
+
+  if (
+    typeof name !== "string" ||
+    typeof globalEffect !== "string" ||
+    typeof sinceTick !== "number" ||
+    !Number.isFinite(sinceTick)
+  ) {
+    return null;
+  }
+
+  return {
+    name,
+    sinceTick,
+    globalEffect,
+  };
+}
+
+function sanitizeZoneHistory(zoneHistory: unknown): Record<string, ZoneSnapshot[]> {
+  if (!isRecord(zoneHistory)) {
+    return {};
+  }
+
+  const normalized: Record<string, ZoneSnapshot[]> = {};
+  for (const [zoneName, history] of Object.entries(zoneHistory)) {
+    if (!Array.isArray(history)) {
+      continue;
+    }
+
+    const snapshots: ZoneSnapshot[] = [];
+    for (const snapshot of history) {
+      const normalizedSnapshot = sanitizeZoneSnapshot(snapshot);
+      if (normalizedSnapshot) {
+        snapshots.push(normalizedSnapshot);
+      }
+    }
+
+    if (snapshots.length > 0) {
+      normalized[zoneName] = snapshots.slice(-MAX_ZONE_HISTORY);
+    }
+  }
+
+  return normalized;
+}
+
+function sanitizeZoneSnapshot(snapshot: unknown): ZoneSnapshot | null {
+  if (!isRecord(snapshot)) {
+    return null;
+  }
+
+  const name = snapshot.name;
+  const spiritQi = sanitizeFiniteNumber(snapshot.spirit_qi);
+  const dangerLevel = sanitizeFiniteNumber(snapshot.danger_level);
+  const activeEvents = snapshot.active_events;
+  const playerCount = sanitizeFiniteNumber(snapshot.player_count);
+
+  if (
+    typeof name !== "string" ||
+    spiritQi === null ||
+    dangerLevel === null ||
+    !Array.isArray(activeEvents) ||
+    playerCount === null
+  ) {
+    return null;
+  }
+
+  const normalizedActiveEvents = activeEvents.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+
+  return {
+    name,
+    spirit_qi: spiritQi,
+    danger_level: dangerLevel,
+    active_events: normalizedActiveEvents,
+    player_count: playerCount,
+  };
+}
+
+function sanitizeLastDecisions(lastDecisions: unknown): Record<string, AgentDecision> {
+  if (!isRecord(lastDecisions)) {
+    return {};
+  }
+
+  const normalized: Record<string, AgentDecision> = {};
+  for (const [agentName, decision] of Object.entries(lastDecisions)) {
+    const normalizedDecision = sanitizeDecision(decision);
+    if (normalizedDecision) {
+      normalized[agentName] = normalizedDecision;
+    }
+  }
+
+  return normalized;
+}
+
+function sanitizeDecision(decision: unknown): AgentDecision | null {
+  if (!isRecord(decision)) {
+    return null;
+  }
+
+  const commands = decision.commands;
+  const narrations = decision.narrations;
+  const reasoning = decision.reasoning;
+
+  if (!Array.isArray(commands) || !Array.isArray(narrations) || typeof reasoning !== "string") {
+    return null;
+  }
+
+  const normalizedCommands: AgentDecision["commands"] = [];
+  for (const command of commands) {
+    if (!isRecord(command)) {
+      continue;
+    }
+
+    const type = command.type;
+    const target = command.target;
+    const params = command.params;
+    if (typeof type !== "string" || typeof target !== "string" || !isRecord(params)) {
+      continue;
+    }
+
+    normalizedCommands.push({
+      type: type as AgentDecision["commands"][number]["type"],
+      target,
+      params: { ...params },
+    });
+  }
+
+  const normalizedNarrations: AgentDecision["narrations"] = [];
+  for (const narration of narrations) {
+    if (!isRecord(narration)) {
+      continue;
+    }
+
+    const scope = narration.scope;
+    const target = narration.target;
+    const text = narration.text;
+    const style = narration.style;
+    if (
+      typeof scope !== "string" ||
+      (target !== undefined && typeof target !== "string") ||
+      typeof text !== "string" ||
+      typeof style !== "string"
+    ) {
+      continue;
+    }
+
+    normalizedNarrations.push({
+      scope: scope as AgentDecision["narrations"][number]["scope"],
+      target,
+      text,
+      style: style as AgentDecision["narrations"][number]["style"],
+    });
+  }
+
+  return cloneDecision({
+    commands: normalizedCommands,
+    narrations: normalizedNarrations,
+    reasoning,
+  });
+}
+
+function sanitizeLastTick(lastTick: unknown): number | null {
+  const normalizedLastTick = sanitizeFiniteNumber(lastTick);
+  if (normalizedLastTick === null) {
+    return null;
+  }
+
+  return normalizedLastTick;
+}
+
+function sanitizeLastStateTs(lastStateTs: unknown): number | null {
+  const normalizedLastStateTs = sanitizeFiniteNumber(lastStateTs);
+  if (normalizedLastStateTs === null) {
+    return null;
+  }
+
+  return normalizedLastStateTs;
+}
+
+function sanitizePlayerFirstSeenTick(playerFirstSeenTick: unknown): Record<string, number> {
+  if (!isRecord(playerFirstSeenTick)) {
+    return {};
+  }
+
+  const normalized: Record<string, number> = {};
+  for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
+    const normalizedFirstSeenTick = sanitizeFiniteNumber(firstSeenTick);
+    if (normalizedFirstSeenTick !== null) {
+      normalized[playerId] = normalizedFirstSeenTick;
+    }
+  }
+
+  return normalized;
+}
+
+function sanitizeFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

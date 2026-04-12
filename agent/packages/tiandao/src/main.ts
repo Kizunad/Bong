@@ -1,19 +1,22 @@
 import { fileURLToPath } from "node:url";
-import type { Command, Narration, WorldStateV1 } from "@bong/schema";
-import { TiandaoAgent } from "./agent.js";
-import { Arbiter } from "./arbiter.js";
-import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
-import { createMockClient, createClient, type LlmClient, type LlmClientConfig } from "./llm.js";
+import type { Command, Narration } from "@bong/schema";
+import { createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
-import type { AgentDecision } from "./parse.js";
-import { loadEnv, resolveRuntimeConfig, runRuntime, createDefaultAgents } from "./runtime.js";
+import {
+  createDefaultAgents,
+  loadEnv,
+  resolveRuntimeConfig,
+  runRuntime,
+  runTick,
+  type TickPublishMetadata,
+} from "./runtime.js";
 import { WorldModel } from "./world-model.js";
 
 const MOCK_COMPLETION_MARKER = "[tiandao] mock tick complete";
 
 export interface PublishSink {
-  publishCommands(source: string, commands: Command[]): Promise<void>;
-  publishNarrations(narrations: Narration[]): Promise<void>;
+  publishCommands(source: string, commands: Command[], metadata?: TickPublishMetadata): Promise<void>;
+  publishNarrations(narrations: Narration[], metadata?: TickPublishMetadata): Promise<void>;
 }
 
 export interface MainOptions {
@@ -52,53 +55,25 @@ export async function runMockTickForTest(options: MockTickOptions): Promise<Mock
   const state = createMockWorldState();
 
   const agents = createDefaultAgents(now);
-  worldModel.updateState(state);
-
-  for (const agent of agents) {
-    agent.setWorldModel(worldModel);
-  }
-
-  const results = await Promise.allSettled(
-    agents.map((agent) => agent.tick(llmClient, model, state)),
-  );
-
-  const sourcedDecisions: Array<{ source: string; decision: AgentDecision }> = [];
-  let totalCommands = 0;
-  let totalNarrations = 0;
-
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result.status === "fulfilled" && result.value) {
-      sourcedDecisions.push({ source: agents[i].name, decision: result.value });
-      totalCommands += result.value.commands.length;
-      totalNarrations += result.value.narrations.length;
-    }
-  }
-
-  const merged = new Arbiter(state).merge(sourcedDecisions);
-
-  if (sink) {
-    if (merged.commands.length > 0) {
-      await sink.publishCommands("merged", merged.commands);
-    }
-    if (merged.narrations.length > 0) {
-      await sink.publishNarrations(merged.narrations);
-    }
-  }
-
-  if (merged.currentEra) {
-    worldModel.setCurrentEra(merged.currentEra);
-  }
-
-  for (const { source, decision } of sourcedDecisions) {
-    worldModel.recordDecision(source, decision);
-  }
+  const result = await runTick(state, {
+    agents,
+    llmClient,
+    model,
+    worldModel,
+    publishCommands: async (request) => {
+      await sink?.publishCommands("merged", request.commands, request.metadata);
+    },
+    publishNarrations: async (request) => {
+      await sink?.publishNarrations(request.narrations, request.metadata);
+    },
+    logger: console,
+  });
 
   return {
-    totalCommands,
-    totalNarrations,
+    totalCommands: result.totalCommands,
+    totalNarrations: result.totalNarrations,
     chatSignalCount: 0,
-    skipped: sourcedDecisions.length === 0,
+    skipped: result.skipped,
     durationMs: Date.now() - startMs,
   };
 }

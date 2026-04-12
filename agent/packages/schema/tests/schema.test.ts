@@ -3,8 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { AgentCommandV1 } from "../src/agent-command.js";
+import {
+  AgentCommandV1,
+  validateAgentCommandV1Contract,
+} from "../src/agent-command.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
+import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
@@ -14,10 +18,16 @@ import {
   SPIRIT_QI_TOTAL,
 } from "../src/common.js";
 import * as SchemaPackage from "../src/index.js";
-import { NarrationV1 } from "../src/narration.js";
+import {
+  NarrationV1,
+  validateNarrationV1Contract,
+} from "../src/narration.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import { validate } from "../src/validate.js";
-import { WorldStateV1 } from "../src/world-state.js";
+import {
+  WorldStateV1,
+  validateWorldStateV1Contract,
+} from "../src/world-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const samplesDir = join(__dirname, "..", "samples");
@@ -42,6 +52,18 @@ function asObject(value: unknown): Record<string, unknown> {
 function asArray(value: unknown): unknown[] {
   expect(Array.isArray(value)).toBe(true);
   return value as unknown[];
+}
+
+type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
+
+function expectContractAccepts(name: string, validator: ContractValidation, data: unknown): void {
+  const result = validator(data);
+  expect(result.ok, `${name} should be accepted: ${result.errors.join("; ")}`).toBe(true);
+}
+
+function expectContractRejects(name: string, validator: ContractValidation, data: unknown): void {
+  const result = validator(data);
+  expect(result.ok, `${name} should be rejected`).toBe(false);
 }
 
 function loadPackageJson(): {
@@ -213,6 +235,29 @@ describe("schema rejects invalid data", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects command batch with more than five commands", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    const commands = asArray(data.commands);
+    data.commands = [...commands, ...commands, ...commands];
+    expectContractRejects(
+      "AgentCommandV1.commands maxItems parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
+  });
+
+  it("rejects command with non-object params", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    const commands = asArray(data.commands);
+    const firstCommand = asObject(commands[0]);
+    firstCommand.params = ["invalid"];
+    expectContractRejects(
+      "AgentCommandV1.commands[].params object parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
+  });
+
   it("rejects narration without text", () => {
     const data = {
       v: 1,
@@ -227,6 +272,52 @@ describe("schema rejects invalid data", () => {
     data.trace_id = "narration-1";
     const result = validate(NarrationV1, data);
     expect(result.ok).toBe(false);
+  });
+
+  it("rejects narration entry with unexpected nested field", () => {
+    const data = loadObjectSample("narration.sample.json");
+    const narrations = asArray(data.narrations);
+    const firstNarration = asObject(narrations[0]);
+    firstNarration.audience = "sect_leaders";
+    expectContractRejects(
+      "NarrationV1 nested unknown field parity gate",
+      validateNarrationV1Contract,
+      data,
+    );
+  });
+
+  it("rejects narration without target when scope is not broadcast", () => {
+    const data = loadObjectSample("narration.sample.json");
+    const narrations = asArray(data.narrations);
+    const targetedNarration = asObject(narrations[1]);
+    delete targetedNarration.target;
+    expectContractRejects(
+      "NarrationV1 scope-target parity gate",
+      validateNarrationV1Contract,
+      data,
+    );
+  });
+
+  it("rejects narration with invalid style", () => {
+    const data = loadObjectSample("narration.sample.json");
+    const narrations = asArray(data.narrations);
+    const firstNarration = asObject(narrations[0]);
+    firstNarration.style = "ominous_whisper";
+    expectContractRejects(
+      "NarrationV1.style enum parity gate",
+      validateNarrationV1Contract,
+      data,
+    );
+  });
+
+  it("rejects world state with unexpected top-level field", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    data.realm_clock = 99;
+    expectContractRejects(
+      "WorldStateV1 top-level unknown field parity gate",
+      validateWorldStateV1Contract,
+      data,
+    );
   });
 
   it("rejects chat message with wrong version", () => {
@@ -256,6 +347,24 @@ describe("schema rejects invalid data", () => {
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  it("accepts Redis V1 contract samples through parity validators", () => {
+    expectContractAccepts(
+      "WorldStateV1 sample",
+      validateWorldStateV1Contract,
+      loadSample("world-state.sample.json"),
+    );
+    expectContractAccepts(
+      "AgentCommandV1 sample",
+      validateAgentCommandV1Contract,
+      loadSample("agent-command.sample.json"),
+    );
+    expectContractAccepts(
+      "NarrationV1 sample",
+      validateNarrationV1Contract,
+      loadSample("narration.sample.json"),
+    );
+  });
 });
 
 describe("package entrypoints expose runtime validation", () => {
@@ -274,6 +383,21 @@ describe("package entrypoints expose runtime validation", () => {
 // ─── Constants sanity ──────────────────────────────────
 
 describe("shared constants are sane", () => {
+  it("Redis V1 channel constants remain frozen", () => {
+    expect(CHANNELS).toEqual({
+      WORLD_STATE: "bong:world_state",
+      PLAYER_CHAT: "bong:player_chat",
+      AGENT_COMMAND: "bong:agent_command",
+      AGENT_NARRATE: "bong:agent_narrate",
+    });
+    expect(REDIS_V1_CHANNELS).toEqual([
+      "bong:world_state",
+      "bong:player_chat",
+      "bong:agent_command",
+      "bong:agent_narrate",
+    ]);
+  });
+
   it("intensity range is [0, 1]", () => {
     expect(INTENSITY_MIN).toBe(0.0);
     expect(INTENSITY_MAX).toBe(1.0);

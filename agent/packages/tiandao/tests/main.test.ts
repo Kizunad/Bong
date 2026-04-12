@@ -23,6 +23,17 @@ const ERA_DECLARATION_RESPONSE = JSON.stringify({
 });
 
 describe("main mock execution", () => {
+  it("keeps mock client metadata deterministic for smoke assertions", async () => {
+    const result = await createMockClient().chat("mock-model", [
+      { role: "system", content: "system" },
+      { role: "user", content: "user" },
+    ]);
+
+    expect(result.durationMs).toBe(0);
+    expect(result.requestId).toBeNull();
+    expect(result.model).toBe("mock-model");
+  });
+
   it("runs single mock tick without env and emits stable marker", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

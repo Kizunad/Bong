@@ -1,5 +1,5 @@
 import { ChatMessageV1, ChatSignal, validate, type ChatIntent } from "@bong/schema";
-import type { LlmClient } from "./llm.js";
+import { normalizeLlmChatResult, type LlmClient } from "./llm.js";
 
 const CHAT_CONTEXT_WINDOW_SECONDS = 5 * 60;
 const CHAT_CONTEXT_MAX_SIGNALS = 20;
@@ -22,8 +22,8 @@ export interface ChatSignalInput {
 
 export interface ProcessChatBatchOptions {
   messages: ChatMessageV1[];
-  llmClient: LlmClient;
-  model: string;
+  annotateClient: LlmClient;
+  annotateModel: string;
   logger: Pick<typeof console, "warn">;
 }
 
@@ -90,14 +90,14 @@ export function parseChatSignalBatch(raw: string, logger: Pick<typeof console, "
 }
 
 export async function processChatBatch(options: ProcessChatBatchOptions): Promise<ChatSignal[]> {
-  const { messages, llmClient, model, logger } = options;
+  const { messages, annotateClient, annotateModel, logger } = options;
   if (messages.length === 0) {
     return [];
   }
 
   const prompt = buildAnnotatePrompt(messages);
-  const raw = await llmClient.chat(
-    model,
+  const rawResult = await annotateClient.chat(
+    annotateModel,
     [
       {
         role: "system",
@@ -111,7 +111,8 @@ export async function processChatBatch(options: ProcessChatBatchOptions): Promis
     ],
   );
 
-  const batch = parseChatSignalBatch(raw, logger);
+  const result = normalizeLlmChatResult(rawResult, annotateModel);
+  const batch = parseChatSignalBatch(result.content, logger);
   const byKey = new Map(batch.map((entry) => [chatKey(entry.player, entry.zone, entry.raw), entry]));
 
   const signals: ChatSignal[] = [];

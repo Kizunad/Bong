@@ -14,6 +14,8 @@ describe("tiandao skill prompts", () => {
       expect(content).toMatch(/预兆|伏笔/);
       expect(content).toContain("纯 JSON");
       expect(content).toContain("合法 JSON 对象");
+      expect(content).toContain("只读");
+      expect(content).toContain("预算");
     }
   });
 
@@ -24,5 +26,21 @@ describe("tiandao skill prompts", () => {
     expect(content).toContain("era_name");
     expect(content).toContain("global_effect");
     expect(content).toContain("danger_level_delta");
+  });
+
+  it("documents optional read-only tool use in each skill prompt", () => {
+    const calamity = readFileSync(resolve(skillsDir, "calamity.md"), "utf-8");
+    const mutation = readFileSync(resolve(skillsDir, "mutation.md"), "utf-8");
+    const era = readFileSync(resolve(skillsDir, "era.md"), "utf-8");
+
+    expect(calamity).toContain("工具是可选的");
+    expect(calamity).toContain("query-player");
+    expect(calamity).toContain("list-active-events");
+    expect(mutation).toContain("工具是可选的");
+    expect(calamity).toContain("query-player");
+    expect(calamity).toContain("list-active-events");
+    expect(mutation).toContain("query-zone-history");
+    expect(era).toContain("默认不使用工具");
+    expect(era).toContain("默认无工具");
   });
 });
