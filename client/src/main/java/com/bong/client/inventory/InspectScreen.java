@@ -240,6 +240,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         actionScroll.scrollbarThiccness(3);
         cultivationActionScroll = actionScroll;
         cultivationTabContent.child(actionScroll);
+        // 初始 layer = PHYSICAL，按钮组应与 meridianFilterBar 一样初始隐藏；
+        // 否则首次切到 心·身·境 tab 时按钮短暂可见，直到用户切一次经脉层 switchBodyLayer 才触发 hide。
+        actionScroll.positioning(Positioning.absolute(-9999, -9999));
 
         // 状态条：境界 · 污染总量（数据来源 cultivation_detail S2C）
         LabelComponent bodyStatusLabel = Components.label(Text.literal(""));
@@ -946,6 +949,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int pw = item.gridWidth() * GridSlotComponent.CELL_SIZE - 4;
             int ph = item.gridHeight() * GridSlotComponent.CELL_SIZE - 4;
             drawItemTextureRaw(context, item, px, py, pw, ph);
+            GridSlotComponent.drawItemOverlays(
+                context, item,
+                anchor.x(), anchor.y(),
+                item.gridWidth() * GridSlotComponent.CELL_SIZE,
+                item.gridHeight() * GridSlotComponent.CELL_SIZE
+            );
         }
     }
 

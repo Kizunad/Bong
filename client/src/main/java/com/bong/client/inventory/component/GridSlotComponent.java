@@ -5,6 +5,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
 public class GridSlotComponent extends BaseComponent {
@@ -72,7 +74,38 @@ public class GridSlotComponent extends BaseComponent {
         // Only draw 1×1 items here; multi-cell items are drawn by InspectScreen overlay
         if (item != null && isAnchor && item.gridWidth() == 1 && item.gridHeight() == 1) {
             drawItemTexture(context, item, x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+            drawItemOverlays(context, item, x, y, CELL_SIZE, CELL_SIZE);
         }
+    }
+
+    /** 在任意槽（含多格 overlay）上方绘制堆叠数与 quality/durability 色调。 */
+    public static void drawItemOverlays(net.minecraft.client.gui.DrawContext context, InventoryItem item, int dx, int dy, int dw, int dh) {
+        if (item == null || item.isEmpty()) return;
+
+        // drawItemTexture 将贴图推到 z=100 并开启 depth test，overlay 必须抬到更高 z 才不会被遮挡。
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 200);
+
+        // 品质低于阈值 → 半透明灰叠层（越低越暗），暗示灵气流失或损耗。
+        double quality = Math.min(item.spiritQuality(), item.durability());
+        if (quality < 0.5) {
+            // 0.5 → alpha 0x00, 0.0 → alpha 0x66
+            int alpha = (int) ((0.5 - quality) * 2.0 * 0x66) & 0xFF;
+            int overlay = (alpha << 24) | 0x222222;
+            context.fill(dx + 1, dy + 1, dx + dw - 1, dy + dh - 1, overlay);
+        }
+
+        // 堆叠数字 —— 右下角（与原版 MC 物品栏一致，保证在贴图上层可见）。
+        if (item.stackCount() > 1) {
+            var tr = MinecraftClient.getInstance().textRenderer;
+            String txt = String.valueOf(item.stackCount());
+            int tx = dx + dw - tr.getWidth(txt) - 2;
+            int ty = dy + dh - tr.fontHeight - 1;
+            context.drawTextWithShadow(tr, Text.literal(txt), tx, ty, 0xFFFFFFFF);
+        }
+
+        matrices.pop();
     }
 
     public static void drawItemTexture(OwoUIDrawContext context, InventoryItem item, int dx, int dy, int dw, int dh) {

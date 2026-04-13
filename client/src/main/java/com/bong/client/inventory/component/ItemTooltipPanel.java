@@ -11,7 +11,7 @@ import java.util.Locale;
 
 public class ItemTooltipPanel extends BaseComponent {
     private static final int PANEL_WIDTH = 196;
-    private static final int PANEL_HEIGHT = 58;
+    private static final int PANEL_HEIGHT = 72;
     private static final int BG_COLOR = 0xCC181818;
     private static final int BORDER_COLOR = 0xFF3A3A3A;
     private static final int HINT_COLOR = 0x60AAAAAA;
@@ -54,8 +54,27 @@ public class ItemTooltipPanel extends BaseComponent {
         String meta = rarityLabel(hoveredItem.rarity())
             + " | " + hoveredItem.gridWidth() + "×" + hoveredItem.gridHeight()
             + " | " + String.format(Locale.ROOT, "%.1f", hoveredItem.weight()) + "kg";
+        if (hoveredItem.stackCount() > 1) {
+            meta += " | x" + hoveredItem.stackCount();
+        }
         context.drawTextWithShadow(textRenderer, Text.literal(meta), cx, cy, 0xFF888888);
         cy += textRenderer.fontHeight + 2;
+
+        // 纯度 / 耐久 —— 仅当 < 1.0 时显示，避免新玩家信息过载。
+        if (hoveredItem.spiritQuality() < 1.0 || hoveredItem.durability() < 1.0) {
+            StringBuilder status = new StringBuilder();
+            if (hoveredItem.spiritQuality() < 1.0) {
+                status.append(String.format(Locale.ROOT, "纯度 %.0f%%", hoveredItem.spiritQuality() * 100));
+            }
+            if (hoveredItem.durability() < 1.0) {
+                if (status.length() > 0) status.append("  ");
+                status.append(String.format(Locale.ROOT, "耐久 %.0f%%", hoveredItem.durability() * 100));
+            }
+            int statusColor = (hoveredItem.spiritQuality() < 0.3 || hoveredItem.durability() < 0.3)
+                ? 0xFFFF6666 : 0xFFAA8866;
+            context.drawTextWithShadow(textRenderer, Text.literal(status.toString()), cx, cy, statusColor);
+            cy += textRenderer.fontHeight + 2;
+        }
 
         // Description (truncate if needed)
         String desc = hoveredItem.description();

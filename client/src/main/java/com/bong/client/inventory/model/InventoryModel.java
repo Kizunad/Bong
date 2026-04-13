@@ -33,7 +33,7 @@ public final class InventoryModel {
     private final List<InventoryItem> hotbar;
     private final double currentWeight;
     private final double maxWeight;
-    private final long spiritStones;
+    private final long boneCoins;
     private final String realm;
     private final double qiCurrent;
     private final double qiMax;
@@ -46,7 +46,7 @@ public final class InventoryModel {
         List<InventoryItem> hotbar,
         double currentWeight,
         double maxWeight,
-        long spiritStones,
+        long boneCoins,
         String realm,
         double qiCurrent,
         double qiMax,
@@ -58,7 +58,7 @@ public final class InventoryModel {
         this.hotbar = Collections.unmodifiableList(new ArrayList<>(hotbar));
         this.currentWeight = currentWeight;
         this.maxWeight = maxWeight;
-        this.spiritStones = spiritStones;
+        this.boneCoins = boneCoins;
         this.realm = Objects.requireNonNull(realm, "realm");
         this.qiCurrent = qiCurrent;
         this.qiMax = qiMax;
@@ -108,8 +108,8 @@ public final class InventoryModel {
         return maxWeight;
     }
 
-    public long spiritStones() {
-        return spiritStones;
+    public long boneCoins() {
+        return boneCoins;
     }
 
     public String realm() {
@@ -151,7 +151,7 @@ public final class InventoryModel {
         private final InventoryItem[] hotbar = new InventoryItem[HOTBAR_SIZE];
         private double currentWeight = 0.0;
         private double maxWeight = 50.0;
-        private long spiritStones = 0;
+        private long boneCoins = 0;
         private String realm = "";
         private double qiCurrent = 0.0;
         private double qiMax = 100.0;
@@ -188,8 +188,8 @@ public final class InventoryModel {
             return this;
         }
 
-        public Builder spiritStones(long value) {
-            this.spiritStones = value;
+        public Builder boneCoins(long value) {
+            this.boneCoins = value;
             return this;
         }
 
@@ -208,7 +208,7 @@ public final class InventoryModel {
             }
             return new InventoryModel(
                 containers, gridItems, equipped, hotbarList,
-                currentWeight, maxWeight, spiritStones,
+                currentWeight, maxWeight, boneCoins,
                 realm, qiCurrent, qiMax, bodyLevel
             );
         }

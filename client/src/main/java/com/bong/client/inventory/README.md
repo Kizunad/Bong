@@ -19,7 +19,7 @@
 │  │ 体魄条   │                                   │
 │  └──────────┘                                   │
 │                                                 │
-│  1 2 3 4 5 6 7 8 9    重量: 12.3/50.0  灵石: 342│
+│  1 2 3 4 5 6 7 8 9         重量: 12.3/50.0     │
 │  └── 快捷栏 ──┘                                  │
 └─────────────────────────────────────────────────┘
 ```
@@ -40,7 +40,7 @@ inventory/
 │   ├── BodyInspectComponent.java # 双层人体检视 (体表 + 经脉)
 │   ├── ItemTooltipPanel.java     # 物品详情浮窗
 │   ├── StatusBarsPanel.java      # 境界/真元/体魄进度条
-│   └── BottomInfoBar.java        # 底栏：重量 + 灵石
+│   └── BottomInfoBar.java        # 底栏：重量
 ├── model/
 │   ├── InventoryModel.java       # 背包完整快照 (Builder 模式)
 │   ├── InventoryItem.java        # 物品定义 (id, 尺寸, 重量, 稀有度)

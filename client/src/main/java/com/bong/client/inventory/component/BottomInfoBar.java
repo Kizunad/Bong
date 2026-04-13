@@ -18,7 +18,6 @@ public class BottomInfoBar extends BaseComponent {
 
     private double currentWeight = 0;
     private double maxWeight = 50;
-    private long spiritStones = 0;
 
     public BottomInfoBar() {
         this.sizing(Sizing.fixed(BAR_WIDTH), Sizing.fixed(BAR_HEIGHT));
@@ -27,7 +26,6 @@ public class BottomInfoBar extends BaseComponent {
     public void updateFromModel(InventoryModel model) {
         this.currentWeight = model.currentWeight();
         this.maxWeight = model.maxWeight();
-        this.spiritStones = model.spiritStones();
     }
 
     @Override
@@ -36,16 +34,11 @@ public class BottomInfoBar extends BaseComponent {
 
         var textRenderer = MinecraftClient.getInstance().textRenderer;
 
-        // Weight — left
+        // Weight — left。骨币 已改为 grid 物品格形式，不再在底栏展示。
         boolean overweight = currentWeight > maxWeight;
         String weightText = String.format(Locale.ROOT, "重量 %.1f/%.1f", currentWeight, maxWeight);
         int weightColor = overweight ? OVERWEIGHT_COLOR : TEXT_COLOR;
         context.drawTextWithShadow(textRenderer, Text.literal(weightText), x + 4, y + 3, weightColor);
-
-        // Spirit stones — right
-        String stonesText = "灵石: " + spiritStones;
-        int stonesWidth = textRenderer.getWidth(stonesText);
-        context.drawTextWithShadow(textRenderer, Text.literal(stonesText), x + width - stonesWidth - 4, y + 3, 0xFFFFD700);
     }
 
     @Override
