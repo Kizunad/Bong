@@ -68,7 +68,7 @@ bash scripts/smoke-test.sh
 | 层 | 状态 |
 |----|------|
 | Server | MVP 0.1 ✅（草地平台、玩家连接、僵尸 NPC、Redis IPC） |
-| Agent | ✅（三 Agent 并发、Context Assembler、Arbiter、137 单测、端到端联调通过；剩 B3 WorldModel Redis 持久化） |
+| Agent | ✅（三 Agent 并发、Context Assembler、Arbiter、WorldModel Redis 持久化、137 单测、端到端联调通过） |
 | Client | MVP 0.1 ✅（Fabric 微端、CustomPayload、HUD 渲染） |
 | Schema | ✅ 双端对齐 |
 | Worldgen | Phase A ✅，LAYER_REGISTRY refactor ✅，Phase B ✅（巨树/洞穴/水体/子表面/平滑/结构物/群系细化） |

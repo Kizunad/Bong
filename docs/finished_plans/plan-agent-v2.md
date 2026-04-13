@@ -19,10 +19,10 @@
 | 个体关注 | ✅ 完成 | key player 识别、因果将至/天道可扶 |
 | 时代实质化 | ✅ 完成 | era 命令 + narration 双路径检测、globalEffect |
 
-**未覆盖的关键缺口**：
-- Agent 从未与真实 Server 端到端联调
+**未覆盖的关键缺口**（2026-04-13 更新）：
+- ~~Agent 从未与真实 Server 端到端联调~~ ✅ 本地验收通过
 - 无结构化指标，生产环境下无法观测
-- WorldModel 全在内存，重启即丢
+- ~~WorldModel 全在内存，重启即丢~~ ✅ B3 已完成
 - 所有 agent/task 共用同一模型
 - `tools/` 目录预留但为空
 - 无自动化 E2E smoke test
@@ -155,9 +155,11 @@ B2.4  错误分类
 
 ---
 
-## B3. WorldModel 持久化
+## B3. WorldModel 持久化 ✅（2026-04-13 验收）
 
 **目标**：Agent 重启后能恢复时代状态、zone 历史、上轮决策，不从零开始。
+
+**实现状态**：已完成 — `bong:tiandao:state` hash（6 字段，含 `last_state_ts`）+ `runtime.ts` 启动 restore + 每 tick save + 磁盘 snapshot 兜底；`tests/redis-ipc.test.ts` / `tests/runtime.test.ts` 覆盖往返与容错；137 测试全过。
 
 ### 持久化策略
 
