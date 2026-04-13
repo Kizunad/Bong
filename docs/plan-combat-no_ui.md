@@ -6,6 +6,112 @@
 
 ---
 
+## 实施边界（云端 worktree v1，2026-04-13）
+
+> 本章节由本地 Claude Code 在 M1 验收后基于代码逐行核查插入，供云端 worktree 下次 pull 时作为唯一权威约束。
+
+### 1. 本次 worktree 范围
+
+**只做 C1-C3（server + schema）**，拒绝 C4-C7 和任何跨 worktree 扩散。
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| C1 | `server/src/combat/` 模块骨架：`Wounds` / `AttackIntent` / `Lifecycle` components | 本次做 |
+| C2 | 攻击事务（距离衰减、污染写入、`MeridianCrack` 施加）、`DeathEvent` 收口 | 本次做 |
+| C3 | IPC schema 扩展：新 Redis 通道 `bong:combat_realtime` / `bong:combat_summary`，TypeBox TS + Rust serde 双端对齐 | 本次做 |
+| C4+ | 终结归档、亡者博物馆、重生语义、CharacterRegistry | **禁止** |
+
+### 2. 前置契约修复清单（已验证）
+
+以下问题由本地代码核查发现，云端开工前**必须先修**：
+
+#### 2a. `ContamSource` 无 `attacker_id` 字段【已验证 — 属实】
+- 文件：`server/src/cultivation/components.rs:185`
+- 现状：`ContamSource { amount, color, introduced_at }` — 无攻击者追溯字段
+- 修复：新增 `attacker_id: Option<String>`（`canonical_player_id` 或 NPC id）
+- 影响：战斗 plan §1.1 的污染事务依赖此字段写生平卷
+
+#### 2b. `LifeRecord` 无 `character_id` 字段【已验证 — 属实】
+- 文件：`server/src/cultivation/life_record.rs:72`
+- 现状：`LifeRecord { created_at, biography, insights_taken, spirit_root_first }` — 无跨重生身份锚
+- 修复：新增 `character_id: String`（= `canonical_player_id(username)`，建档时写入，重生保持不变）
+- 影响：同名玩家重连、终结归档查询链路全部依赖此字段
+
+#### 2c. `zone.spirit_qi` 被硬限在 `[0.0, 1.0]`，`negative_zone.rs` 需要负值【已验证 — 属实，但有细节】
+- 文件：`server/src/world/zone.rs:238`（加载验证）和 `server/src/network/command_executor.rs:14-15`（`modify_zone` 执行 clamp）
+- 现状：`validate_zone` 拒绝 `spirit_qi` 不在 `[0.0, 1.0]` 的 zones.json；`execute_modify_zone` 用 `ZONE_SPIRIT_QI_MIN=0.0` 和 `ZONE_SPIRIT_QI_MAX=1.0` clamp
+- `negative_zone.rs:18` 的 `siphon_amount` 正确处理负值，但实际上**永远不会被触发**（无法通过 zones.json 或 `modify_zone` 命令令 `spirit_qi < 0`）
+- 修复：定义负灵域的表示方案（两种选择之一）：(A) 放开 `spirit_qi` 下限到 `-1.0`，同步更新验证与 clamp；(B) 用独立布尔 `is_negative_zone` 标志 + 负值字段分离。**选型前必须与 worldview §二 对齐**
+
+#### 2d. Rust `CultivationDetail` 与 TS `ServerDataV1` schema 漂移【已验证 — 属实】
+- Rust：`server/src/schema/server_data.rs:73` 已有 `CultivationDetail { realm, opened, flow_rate, ... }` 分支
+- TS：`agent/packages/schema/src/server-data.ts:101` 的 `ServerDataV1` union 只有 7 个成员（welcome/heartbeat/narration/zone_info/event_alert/player_state/ui_open），**没有** `cultivation_detail` 分支
+- 修复：在 `server-data.ts` 补充 `ServerDataCultivationDetailV1` 类型并加入 union
+- 注意：此修复触碰 `agent/packages/schema/`，需要同步更新 sample JSON 并运行 `npm test` 验证
+- **紧迫性**：`network/cultivation_detail_emit.rs:18` 每 20 tick 已在发布该 payload，**当前分支 agent 端就在漏校验**，战斗 plan 开工前必须先补齐
+
+#### 2e. NPC 无 `Attacking` brain action【已验证 — 属实，C2 隐性前置】
+- 文件：`server/src/npc/brain.rs`
+- 现状：`NpcStateKind` 枚举包含 `Attacking` 变体，但 big-brain scorer / action 只实现了 `Patrol` / `Flee` / `Idle`；NPC 发起攻击的决策路径完全不存在
+- 修复：C2 攻击事务落地时必须配套实现 `AttackingScorer` + `AttackingAction`（触发 `AttackIntent`）
+- 影响：没有这一步，C2 测试只能验证"玩家→NPC"单向攻击，无法验证双向战斗回路
+
+### 3. 禁碰目录
+
+本次 worktree **禁止修改**以下路径：
+
+- `client/` — 全部客户端代码
+- `agent/packages/tiandao/` — 天道 Agent 业务逻辑
+- `library-web/` — 前端静态站点
+- `agent/packages/schema/src/client-payload.ts`（ClientPayload 不引入 combat 分支）
+- `agent/packages/schema/src/client-request.ts`（ClientRequest 不引入 combat 分支）
+- `server/src/schema/client_payload.rs`（同上）
+- `server/src/schema/client_request.rs`（同上）
+
+例外：`agent/packages/schema/src/server-data.ts` **允许**修改，仅补充 `CultivationDetail` 漂移修复（见 2d）。
+
+### 4. 观测通道
+
+- 新增：Redis `bong:combat_realtime`（每次攻击事务发布，含 attacker/target/damage/contam_delta）
+- 新增：Redis `bong:combat_summary`（每 200 tick 随 WorldState 发布，聚合战场摘要）
+- **不扩展** `ServerDataPayloadV1` 的 CustomPayload 分支中加入战斗类型
+- **不扩展** `ClientRequestV1` / `ClientPayloadV1` 加入战斗指令分支
+
+背景：`WORLD_STATE_PUBLISH_INTERVAL_TICKS = 200`（`server/src/network/mod.rs:41`），~10 秒 @ 20 TPS，不适合实时战斗观测，故需独立通道。
+
+### 5. 身份策略
+
+- `Lifecycle.character_id` **直接用** `canonical_player_id(username)` — 函数位于 `server/src/player/state.rs:146`，格式为 `offline:{username}`
+- 战斗持久化文件：`data/players/<canonical>.combat.json`（与现有 `data/players/<canonical>.json` 并列）
+- **禁止**引入 `CharacterRegistry` — 跨重生身份查询通过 `character_id` 字段在文件系统检索
+- `data/players/` 目录已存在实际文件（已验证：`offline:Kizun3Desu.json`, `offline:Player855.json`）
+
+### 6. 双战斗系统收敛
+
+现有 `/bong combat <target> <health>` 命令（`server/src/network/chat_collector.rs:177`）走 `GameplayAction::Combat` → `PlayerState` 直扣路径（扣 `spirit_qi`，加 `experience`）。
+
+战斗 plan 开工后：
+- `/bong combat` **降级为** `AttackIntent` 调试注入入口（保留命令，但路由到新的 `AttackIntentQueue`）
+- 旧的 `apply_combat_action`（`gameplay.rs:271`）**停止承载真实战斗语义**，改为 dev-only 调试用途，加 `#[cfg(debug_assertions)]` 门控
+- `GameplayAction::Combat` 枚举变体保留但标记 `deprecated`，防止其他代码路径意外引用
+
+### 7. Escalation Triggers（触发条件）
+
+以下情况须**暂停开工，向用户确认设计**再继续：
+
+| 触发条件 | 需要确认的设计决策 |
+|----------|-------------------|
+| 要支持瞄准向量战斗（方向性攻击） | 需先确认 Valence 1.20.1 `Look` / `pose` 字段是否可在 Server 查询；若不可，方向性战斗只能靠 Chat 命令注入 |
+| 要做 C4 终结归档（亡者博物馆） | 需先设计"同名玩家重连"语义：`character_id` 是否随重连自动续用，还是开新档；以及终结后文件保留策略 |
+| 要在 AgentCommand 中新增战斗指令类型 | 需先扩展 `CommandType` enum 并同步 TS schema，触碰 `agent/packages/schema/` 需要专项 PR |
+| —（NPC `Attacking` 骨架已移入 §2e 前置清单，不再作为 escalation） | — |
+
+### 8. 规模估计
+
+**Large（3d+）**：C1-C2 ECS 新模块 + 事务逻辑 + DeathEvent 收口 + C3 双端 schema + 2d/2c 契约修复，测试覆盖要求全程随行。
+
+---
+
 > 本计划落地 worldview.md §四/五/十二 的战斗机制与死亡-重生流程。**修炼系统单独由 `plan-cultivation-v1.md` 承载**——本计划只定义战斗事务、伤害管线、流派实现，并**统一收口死亡-重生流程**（含修炼侧上报的致死缘由）。
 
 **前置依赖**：
