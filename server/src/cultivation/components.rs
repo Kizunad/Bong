@@ -185,6 +185,8 @@ impl Meridian {
 pub struct ContamSource {
     pub amount: f64,
     pub color: ColorKind,
+    #[serde(default)]
+    pub attacker_id: Option<String>,
     pub introduced_at: u64,
 }
 
@@ -330,6 +332,10 @@ pub struct Karma {
 mod tests {
     use super::*;
 
+    use crate::npc::brain::canonical_npc_id;
+    use crate::player::state::canonical_player_id;
+    use valence::prelude::App;
+
     #[test]
     fn realm_previous_chain() {
         assert_eq!(Realm::Awaken.previous(), None);
@@ -378,5 +384,50 @@ mod tests {
         ms.get_mut(MeridianId::Lung).opened = true;
         assert!(ms.get(MeridianId::Lung).opened);
         assert_eq!(ms.opened_count(), 1);
+    }
+
+    #[test]
+    fn contam_source_serde_roundtrip_preserves_attacker_id() {
+        let source = ContamSource {
+            amount: 2.5,
+            color: ColorKind::Violent,
+            attacker_id: Some(canonical_player_id("Alice")),
+            introduced_at: 77,
+        };
+
+        let json = serde_json::to_string(&source).expect("contam source should serialize");
+        let decoded: ContamSource = serde_json::from_str(&json).expect("contam source should deserialize");
+
+        assert_eq!(decoded.attacker_id.as_deref(), Some("offline:Alice"));
+        assert_eq!(decoded.introduced_at, 77);
+    }
+
+    #[test]
+    fn contam_source_serde_defaults_missing_attacker_id_for_legacy_payloads() {
+        let legacy = serde_json::json!({
+            "amount": 1.0,
+            "color": "Sharp",
+            "introduced_at": 9,
+        });
+
+        let decoded: ContamSource =
+            serde_json::from_value(legacy).expect("legacy contam payload should deserialize");
+
+        assert_eq!(decoded.attacker_id, None);
+        assert_eq!(decoded.introduced_at, 9);
+    }
+
+    #[test]
+    fn canonical_identity_anchors_are_string_based_not_transient_ids() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn_empty().id();
+        let player_id = canonical_player_id("Wanderer");
+        let npc_id = canonical_npc_id(entity);
+
+        assert_eq!(player_id, "offline:Wanderer");
+        assert!(npc_id.starts_with(&format!("npc_{}", entity.index())));
+        assert!(npc_id.ends_with(&format!("v{}", entity.generation())));
+        assert_ne!(npc_id, format!("npc_{}", entity.index()));
+        assert_ne!(npc_id, entity.index().to_string());
     }
 }

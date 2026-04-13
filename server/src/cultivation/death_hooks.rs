@@ -138,6 +138,9 @@ pub fn log_death_trigger(
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::cultivation::tick::CultivationClock;
+    use crate::player::state::canonical_player_id;
+    use valence::prelude::App;
 
     #[test]
     fn revive_penalty_drops_one_realm_and_closes_excess() {
@@ -172,5 +175,36 @@ mod tests {
         let mut cn = Contamination::default();
         apply_revive_penalty(&mut c, &mut ms, &mut cn);
         assert_eq!(c.realm, Realm::Awaken);
+    }
+
+    #[test]
+    fn revive_penalty_does_not_mutate_character_anchor() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<PlayerRevived>();
+        app.add_systems(valence::prelude::Update, on_player_revived);
+
+        let entity = app.world_mut().spawn((
+            Cultivation {
+                realm: Realm::Induce,
+                qi_current: 8.0,
+                composure: 0.9,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            Contamination::default(),
+            LifeRecord::new(canonical_player_id("Alice")),
+        )).id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached after revive");
+
+        assert_eq!(life.character_id, canonical_player_id("Alice"));
+        assert!(matches!(life.biography.last(), Some(BiographyEntry::Rebirth { tick: 42, .. })));
     }
 }
