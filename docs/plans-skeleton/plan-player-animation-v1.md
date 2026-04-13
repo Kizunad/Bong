@@ -1,0 +1,327 @@
+# Bong · plan-player-animation-v1 · 模板
+
+**玩家动画系统专项**。基于 KosmX 的 PlayerAnimator 库，定义 Bong 的玩家动画栈：纯代码 / LLM 生成 JSON 的动画生产线、Server↔Client 触发同步、首批动画资产清单。
+
+**核心理念**：**不依赖 Blockbench/Blender**，全部用 Java 代码 + LLM 生成 JSON 完成动画制作。这是 Bong AI-Native 路线的天然延伸。
+
+**交叉引用**：`plan-vfx-v1.md`（VFX 基础栈）· `plan-particle-system-v1.md`（VFX 协议复用）· `../plan-HUD-v1.md` · `../plan-combat-no_ui.md` / `../plan-combat-ui_impl.md`。
+
+---
+
+## §0 设计轴心
+
+- [ ] **零美术工具依赖**：纯 Java 代码 / LLM 生成 JSON，禁用 Blender/Blockbench
+- [ ] **AI-Native 生产线**：天道 Agent 或开发期 LLM 直接吐 keyframe 代码
+- [ ] **服务端权威触发**：动画播放是表演层，触发由 server 决定
+- [ ] **协议复用**：和 VFX 共用 `bong:vfx_event` CustomPayload 通道
+- [ ] **多层叠加**：上半身动作 + 下半身行走 + 全身姿态独立通道
+
+---
+
+## §1 技术基础
+
+### 1.1 库依赖
+
+- KosmX **PlayerAnimator** ([Modrinth](https://modrinth.com/mod/playeranimator) | [GitHub](https://github.com/KosmX/minecraftPlayerAnimator))
+- **当前状态（2026-04-13 审计）**：✗ 尚未加入 `client/build.gradle`，实施第一步即是添加 `modImplementation` 依赖并验证编译
+- Fabric 1.20.1 兼容（库侧已确认，gradle 接入后需跑 `./gradlew test build` 复核）
+- 纯客户端库（**服务端无需安装**，对 Valence Rust 服务端友好）
+- 是 Better Combat / Epic Fight 的底层动画引擎
+
+### 1.2 核心 API（亲眼源码确认，2026-04-13）
+
+| 类 / 方法 | 用途 |
+|----------|------|
+| `KeyframeAnimation.AnimationBuilder` | 构建动画 |
+| `StateCollection.State.addKeyFrame(tick, value, ease, rotate, degrees, easingArg)` | 添加关键帧 |
+| `PlayerAnimationAccess.getPlayerAnimLayer(player)` | 获取玩家动画栈 |
+| `AnimationStack.addAnimLayer(priority, layer)` | 多层叠加 |
+| `ModifierLayer<KeyframeAnimationPlayer>` | 动画播放器（带 null 安全） |
+| `AbstractFadeModifier.standardFadeIn(ticks, ease)` | 淡入淡出 |
+| `AdjustmentModifier` | 运行时实时调整骨骼变换 |
+
+### 1.3 可控骨骼
+
+`head` · `torso` · `rightArm` · `leftArm` · `rightLeg` · `leftLeg` · `rightItem` · `leftItem` · `body`（整体）
+
+每根骨骼可调：`x, y, z, pitch, yaw, roll, bend, bendDirection, scaleX, scaleY, scaleZ`
+
+**单位**：度数（`degrees=true` 时）；时间单位 tick（20 tick = 1 秒）
+
+### 1.4 缓动函数
+
+`Ease.LINEAR / EASEINQUAD / EASEOUTQUAD / EASEINOUTCUBIC / EASEINBOUNCE / ...`（详见 `dev.kosmx.playerAnim.core.util.Ease`）
+
+---
+
+## §2 两条生产路径
+
+### 2.1 路径 A：纯 Java 代码（推荐）
+
+```java
+public static KeyframeAnimation buildSwordSwing() {
+    var b = new KeyframeAnimation.AnimationBuilder(AnimationFormat.UNKNOWN);
+    b.endTick = 10;  // 0.5 秒
+    b.isLoop = false;
+
+    b.rightArm.pitch.addKeyFrame(0,  -80f, Ease.LINEAR,    0, true, null);
+    b.rightArm.pitch.addKeyFrame(10,  60f, Ease.EASEOUTQUAD, 0, true, null);
+    b.rightArm.roll .addKeyFrame(0,  -10f, Ease.LINEAR,    0, true, null);
+    b.rightArm.roll .addKeyFrame(10,  10f, Ease.LINEAR,    0, true, null);
+
+    return b.build();
+}
+```
+
+**优势**：编译期检查、IDE 跳转、可单元测试  
+**适用**：固定动画、需要参数化的动画（按境界缩放幅度）
+
+### 2.2 路径 B：JSON 资源（LLM 生成）
+
+```json
+{
+  "name": "sword_swing",
+  "version": 3,
+  "emote": {
+    "beginTick": 0,
+    "endTick": 10,
+    "isLoop": false,
+    "moves": [
+      { "tick": 0,  "right_arm": { "pitch": -80 }, "easing": "linear" },
+      { "tick": 10, "right_arm": { "pitch": 60 },  "easing": "easeOutQuad" }
+    ]
+  }
+}
+```
+
+放 `client/src/main/resources/assets/bong/player_animation/<name>.json`
+
+**优势**：不重编译可热替换、LLM 一句话生成、非程序员可改  
+**适用**：大量招式变体、剧情演绎动画、玩家 UGC（远期）
+
+### 2.3 何时用哪条
+
+| 场景 | 路径 |
+|------|------|
+| 核心战斗动画（剑挥/格挡/受击） | A（参数化、单元测试） |
+| 修仙姿态（打坐/突破/渡劫） | A 或 B |
+| 大量招式变体（不同心法的挥剑微变） | B（LLM 批量生成） |
+| 情景演绎（NPC 对话动作、剧情） | B |
+| 天道 Agent 实时命名 + 生成的招式 | B（运行时 JSON 字符串注入） |
+
+---
+
+## §3 注册表与生命周期
+
+### 3.1 `BongAnimationRegistry`
+
+```java
+public class BongAnimationRegistry {
+    static Map<Identifier, KeyframeAnimation> ANIMATIONS = new HashMap<>();
+
+    public static void register(Identifier id, KeyframeAnimation anim) { ... }
+    public static void registerJson(Identifier id, Identifier resource) { ... }  // 从 assets 加载
+    public static KeyframeAnimation get(Identifier id) { ... }
+}
+```
+
+- [ ] 静态注册（编译期）+ 动态注册（运行时 JSON 字符串）
+- [ ] 客户端启动时扫描 `assets/bong/player_animation/*.json` 自动注册
+- [ ] 提供 `/bong anim test <id>` debug 命令本地试播
+
+### 3.2 播放抽象
+
+```java
+public class BongAnimationPlayer {
+    public static void play(AbstractClientPlayerEntity player,
+                            Identifier animId,
+                            int priority,
+                            int fadeInTicks);
+
+    public static void stop(AbstractClientPlayerEntity player,
+                            Identifier animId,
+                            int fadeOutTicks);
+}
+```
+
+- [ ] 自动 fade in/out（默认 3 tick）
+- [ ] 同 priority 自动替换
+- [ ] 维护"当前播放层"映射表，支持精确停止
+
+### 3.3 多层 Priority 约定
+
+| Priority | 用途 |
+|----------|------|
+| 100-499 | 持续姿态（打坐、悬浮、运功） |
+| 500-999 | 移动相关（修改步态、轻功） |
+| 1000-1999 | 战斗动作（挥剑、出掌、御剑） |
+| 2000-2999 | 受击 / 倒地 / 复活 |
+| 3000+ | 剧情演绎（不可被打断的天劫、突破） |
+
+---
+
+## §4 Server → Client 触发协议
+
+### 4.1 复用 `bong:vfx_event`
+
+不新开 channel，复用 `plan-particle-system-v1.md §2.2` 的 VFX 通道。新增事件类型：
+
+```json
+{
+  "type": "play_anim",
+  "target_player": "uuid",
+  "anim_id": "bong:sword_swing",
+  "priority": 1000,
+  "fade_in_ticks": 3,
+  "speed": 1.0
+}
+```
+
+```json
+{
+  "type": "stop_anim",
+  "target_player": "uuid",
+  "anim_id": "bong:sword_swing",
+  "fade_out_ticks": 5
+}
+```
+
+### 4.2 广播范围
+
+- 动画必须**广播给附近所有玩家**（不只是 target_player 自己）—— 旁观也要能看到挥剑
+- 默认范围：64 格（可配）
+- 配合 §1.4 plan-particle-system-v1 的 ChunkLayer viewer 过滤
+
+### 4.3 客户端自演 vs 服务端广播
+
+| 类型 | 归属 |
+|------|------|
+| **持续姿态**（运功、打坐、悬浮） | 客户端读 `player_state` 状态位自演 |
+| **一次性动作**（挥剑、出掌、御剑、突破、渡劫） | 服务端广播 `play_anim` |
+| **环境/idle 动画**（呼吸、扫视） | 客户端自己加，无需广播 |
+
+### 4.4 动态 JSON 注入（远期）
+
+天道 Agent 可生成完整 JSON payload，server 转发给 client：
+
+```json
+{
+  "type": "play_anim_inline",
+  "target_player": "uuid",
+  "anim_json": "{ ... 完整 KeyframeAnimation JSON ... }"
+}
+```
+
+客户端解析后注册到 `BongAnimationRegistry` 临时表 + 立即播放。**这是 LLM 生成动画的关键路径**。
+
+---
+
+## §5 首批动画资产清单
+
+### 5.1 战斗类（Phase 1）
+
+| id | 时长 | 描述 | 优先级 |
+|----|------|------|--------|
+| `bong:sword_swing_horiz` | 10t | 横扫 | 1000 |
+| `bong:sword_swing_vert` | 10t | 下劈 | 1000 |
+| `bong:sword_stab` | 8t | 直刺 | 1000 |
+| `bong:fist_punch_left` | 6t | 左拳 | 1000 |
+| `bong:fist_punch_right` | 6t | 右拳 | 1000 |
+| `bong:palm_thrust` | 12t | 推掌（带气劲） | 1000 |
+| `bong:guard_raise` | 4t | 举手格挡 | 1000 |
+| `bong:dodge_back` | 8t | 后跃闪避 | 1000 |
+| `bong:hit_recoil` | 6t | 受击退缩 | 2000 |
+
+### 5.2 修仙姿态类
+
+| id | 时长 | 描述 | 优先级 |
+|----|------|------|--------|
+| `bong:meditate_sit` | loop | 打坐运功（双手结印） | 200 |
+| `bong:cultivate_stand` | loop | 站桩运功 | 200 |
+| `bong:levitate` | loop | 御空悬浮 | 300 |
+| `bong:sword_ride` | loop | 御剑飞行 | 300 |
+| `bong:cast_invoke` | 15t | 引动法宝（双手抬起） | 1000 |
+| `bong:rune_draw` | 20t | 凌空画符 | 1000 |
+
+### 5.3 剧情演绎类
+
+| id | 时长 | 描述 | 优先级 |
+|----|------|------|--------|
+| `bong:breakthrough_burst` | 60t | 境界突破（手臂展开 + 仰天） | 3000 |
+| `bong:tribulation_brace` | loop | 抗劫姿态（双手交叉） | 3000 |
+| `bong:enlightenment_pose` | 40t | 顿悟（双手合十低头） | 3000 |
+| `bong:death_collapse` | 30t | 道消身陨 | 3000 |
+| `bong:bow_salute` | 25t | 抱拳行礼 | 500 |
+
+### 5.4 资源量预估
+
+约 20 个动画 × 平均 2 行 keyframe = **总 keyframe 数 < 100**。LLM 生成 JSON 一次性出货，**1 天可完成全部首批**。
+
+---
+
+## §6 LLM 生产工作流
+
+1. **需求描述**：开发者用自然语言描述（"剑修横扫，右臂从左肩位置 90° 横扫到右侧 -90°，0.5 秒，末尾有顿挫感"）
+2. **LLM 生成**：直接吐 JSON 或 Java AnimationBuilder 代码
+3. **本地预览**：`/bong anim test <id>` 命令在客户端立即试播
+4. **微调**：调整 keyframe 数值或 ease 函数，重新加载
+5. **入库**：满意后提交进 `assets/bong/player_animation/` 或 `BongAnimations.java`
+6. **审核**：开发期由人 review，运行时由天道 Agent 自审（远期）
+
+---
+
+## §7 实施节点
+
+- [ ] §1.1 引入 PlayerAnimator gradle 依赖，编译通过
+- [ ] §3.1 `BongAnimationRegistry` 骨架
+- [ ] §3.2 `BongAnimationPlayer` 播放抽象
+- [ ] §3.1 `/bong anim test` debug 命令
+- [ ] 第一个动画原型：`bong:sword_swing_horiz`（纯 Java 实现）
+- [ ] 第二个动画原型：从 JSON 加载 `bong:meditate_sit`
+- [ ] §4.1 协议 schema：`play_anim` / `stop_anim` 加入 VfxEvent TypeBox
+- [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑
+- [ ] §5.1 战斗类 9 个动画批量生产（LLM JSON）
+- [ ] §5.2 修仙姿态 6 个动画
+- [ ] §5.3 剧情演绎 5 个动画
+- [ ] §3.3 多层 priority 叠加测试（行走 + 挥剑同时）
+- [ ] §4.4 动态 JSON 注入原型（天道 Agent 生成）
+
+---
+
+## §8 已知风险
+
+- **第一人称视角不显示玩家自己的动画**：vanilla 限制，挥剑时玩家自己只看到原版手臂。可考虑 Mixin 强制第三人称切换或自定义第一人称视图（成本高）
+- **PlayerAnimator 升级风险**：API 不算稳定，作者偶尔重命名包/类。锁定具体版本号
+- **多人动画带宽**：20 人战斗场景每秒可能数百次动画事件，依赖 §4.2 的距离过滤 + §4.3 的客户端自演分流
+- **运行时 JSON 注入安全**：天道 Agent 生成的 JSON 必须做 schema 校验，避免恶意 keyframe（极大值导致客户端崩溃）
+- **vanilla 行为冲突**：PlayerAnimator 的高优先级层会覆盖 vanilla 的攻击挥手动画，可能让玩家感觉"两个动画打架"
+
+---
+
+## §9 开放问题
+
+- [ ] 第一人称视角下的动画显示策略：原版手臂 vs 强制第三人称 vs 自定义第一人称模型？
+- [ ] 是否需要"动画事件回调"（动画进行到某 tick 触发音效/粒子）？PlayerAnimator 是否原生支持？
+- [ ] 持物变换（rightItem / leftItem 骨骼）的 vanilla 兼容如何处理？
+- [ ] LLM 生成的 JSON schema 校验由谁做（client / server / agent）？
+- [ ] 是否需要"动画即时录制"工具：玩家在游戏内通过命令/按键记录关键帧，导出为 JSON？
+- [ ] 非人形 NPC（如灵兽、傀儡）的动画是否也走 PlayerAnimator？还是单独走 GeckoLib？
+
+---
+
+## §10 参考
+
+**调研报告**（2026-04-13 sonnet 调研，见对话历史）：
+- PlayerAnimator GitHub：https://github.com/KosmX/minecraftPlayerAnimator
+- PlayerAnimator Modrinth：https://modrinth.com/mod/playeranimator
+- 核心源码路径：`dev.kosmx.playerAnim.core.data.KeyframeAnimation`（含内嵌 `AnimationBuilder`）
+- 客户端 API 入口：`dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess`
+
+**关联设计**：
+- `plan-vfx-v1.md`（光影栈总纲）
+- `plan-particle-system-v1.md`（VFX 协议复用 `bong:vfx_event` channel）
+- Better Combat 调研结论（2026-04-13）：放弃 BC 集成，改用 PlayerAnimator 自建动画层 —— 本 plan 是该决策的落地
+
+**LLM 协作样式**：
+- 鬼谷八荒招式动画（参考"剑修横扫/突刺"的视觉感）
+- 太吾绘卷武学动作设计（参考"内外功不同动作风格"）
