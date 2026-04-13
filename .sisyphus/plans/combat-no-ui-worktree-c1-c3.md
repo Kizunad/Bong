@@ -470,3 +470,12 @@ Wave 3: Redis/schema 观测收口 + 全量验证（Tasks 7-8）
 - `DeathEvent` 能统一吸收 combat kill 与 `CultivationDeathTrigger`，并输出到 `bong:combat_realtime`。
 - `bong:combat_summary` 按 200 tick cadence 输出聚合摘要，且只走 Redis、不改 world state。
 - 没有任何 forbidden path 改动，也没有额外通道或 client/custom-payload 扩散。
+
+## Post-PR Review Follow-up
+- [x] Fix Codex review defects in combat resolver NPC target coverage and duplicate death emission.
+  - [x] Player -> NPC intents must resolve against runtime zombie NPCs spawned by `spawn_single_zombie_npc`.
+  - [x] `DeathEvent` must emit only on alive -> dead transition, not repeated corpse hits.
+  - [x] Add/adjust targeted Rust tests proving both behaviors.
+  - [x] Keep scope limited to already touched `server/src/combat/` and `server/src/npc/` paths plus evidence/notepad as needed.
+  - [x] Verification: `cd server && cargo test combat:: -- --nocapture` and `cd server && cargo test npc::brain -- --nocapture` pass.
+  - [x] Commit: allowed follow-up fix commit after verification.

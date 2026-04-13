@@ -72,6 +72,7 @@ pub fn resolve_attack_intents(
             continue;
         }
         let damage = (hinted_health * DEBUG_ATTACK_DAMAGE_FACTOR * decay).max(1.0);
+        let was_alive = wounds.health_current > 0.0;
 
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
@@ -134,7 +135,7 @@ pub fn resolve_attack_intents(
             });
         }
 
-        if wounds.health_current <= 0.0 {
+        if was_alive && wounds.health_current <= 0.0 {
             death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
@@ -265,10 +266,24 @@ mod tests {
     use crate::combat::events::AttackIntent;
     use crate::cultivation::components::{Contamination, Cultivation, MeridianId, MeridianSystem};
     use crate::npc::brain::canonical_npc_id;
-    use crate::npc::spawn::NpcMarker;
+    use crate::npc::spawn::{spawn_test_npc_runtime_shape, NpcMarker};
     use crate::player::state::PlayerState;
-    use valence::prelude::{App, Events, Position, Update};
+    use valence::prelude::{
+        bevy_ecs, App, Entity, Events, IntoSystemConfigs, Position, Resource, Update,
+    };
     use valence::testing::create_mock_client;
+
+    #[derive(Clone, Copy, Resource)]
+    struct TestLayer(Entity);
+
+    fn setup_test_layer(mut commands: valence::prelude::Commands) {
+        let layer = commands.spawn_empty().id();
+        commands.insert_resource(TestLayer(layer));
+    }
+
+    fn spawn_runtime_npc(mut commands: valence::prelude::Commands, layer: valence::prelude::Res<TestLayer>) {
+        spawn_test_npc_runtime_shape(&mut commands, layer.0);
+    }
 
     fn spawn_player(
         app: &mut App,
@@ -607,6 +622,122 @@ mod tests {
         assert!(
             !combat_events.is_empty(),
             "both directions should emit CombatEvent through the same resolver event family"
+        );
+    }
+
+    #[test]
+    fn player_to_runtime_spawned_zombie_npc_target_resolves_without_dropping_intent() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 128 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(valence::prelude::Startup, (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)));
+        app.add_systems(Update, resolve_attack_intents);
+
+        app.update();
+        app.update();
+
+        let npc = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query
+                .iter(world)
+                .next()
+                .expect("runtime zombie NPC should be spawned for resolver coverage test")
+        };
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [13.0, 66.0, 14.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(npc),
+            issued_at_tick: 127,
+            reach: 3.5,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let npc_ref = app.world().entity(npc);
+        let npc_wounds = npc_ref
+            .get::<Wounds>()
+            .expect("runtime zombie NPC should carry Wounds for shared resolver");
+        let npc_contamination = npc_ref
+            .get::<Contamination>()
+            .expect("runtime zombie NPC should carry Contamination for shared resolver");
+
+        assert_eq!(npc_wounds.entries.len(), 1, "player->runtime-zombie intent should apply one wound");
+        assert_eq!(
+            npc_contamination.entries[0].attacker_id.as_deref(),
+            Some("offline:Azure"),
+            "shared resolver should attribute player attacker on runtime zombie target"
+        );
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        assert!(
+            !combat_events.is_empty(),
+            "player->runtime-zombie intent should emit CombatEvent instead of dropping"
+        );
+    }
+
+    #[test]
+    fn repeated_hits_on_dead_target_emit_single_death_event() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 300 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 1.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 299,
+            reach: 3.5,
+            debug_command: None,
+        });
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 300,
+            reach: 3.5,
+            debug_command: None,
+        });
+        app.update();
+
+        let death_events = app.world().resource::<Events<DeathEvent>>();
+        assert_eq!(
+            death_events.len(),
+            1,
+            "DeathEvent should only emit on alive->dead transition, not repeated corpse hits"
         );
     }
 }
