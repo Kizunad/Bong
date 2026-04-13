@@ -15,6 +15,8 @@ const DEFAULT_SPAWN_BOUNDS_MAX_Y: f64 = 80.0;
 const DEFAULT_SPAWN_SPIRIT_QI: f64 = 0.9;
 const DEFAULT_SPAWN_PATROL_ANCHORS: [[f64; 3]; 1] = [[14.0, 66.0, 14.0]];
 const MAX_ZONE_DANGER_LEVEL: u8 = 5;
+const MIN_ZONE_SPIRIT_QI: f64 = -1.0;
+const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
@@ -235,9 +237,11 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
         return Err(format!("duplicate zone name `{name}`"));
     }
 
-    if !zone.spirit_qi.is_finite() || !(0.0..=1.0).contains(&zone.spirit_qi) {
+    if !zone.spirit_qi.is_finite()
+        || !(MIN_ZONE_SPIRIT_QI..=MAX_ZONE_SPIRIT_QI).contains(&zone.spirit_qi)
+    {
         return Err(format!(
-            "zone `{name}` spirit_qi must be a finite value within [0.0, 1.0]"
+            "zone `{name}` spirit_qi must be a finite value within [{MIN_ZONE_SPIRIT_QI}, {MAX_ZONE_SPIRIT_QI}]"
         ));
     }
 
@@ -406,7 +410,7 @@ mod zone_tests {
         "min": [100.0, 64.0, 100.0],
         "max": [120.0, 80.0, 120.0]
       },
-      "spirit_qi": 0.35,
+      "spirit_qi": -0.35,
       "danger_level": 4,
       "active_events": ["beast_tide"],
       "patrol_anchors": [
@@ -435,7 +439,7 @@ mod zone_tests {
         assert_eq!(spawn.patrol_anchors[0], DVec3::new(14.0, 66.0, 14.0));
         assert_eq!(spawn.blocked_tiles, vec![(15, 14), (16, 14)]);
         assert_eq!(blood_valley.name, "blood_valley");
-        assert_eq!(blood_valley.spirit_qi, 0.35);
+        assert_eq!(blood_valley.spirit_qi, -0.35);
         assert_eq!(blood_valley.danger_level, 4);
         assert_eq!(blood_valley.active_events, vec!["beast_tide".to_string()]);
         assert_eq!(
@@ -448,6 +452,94 @@ mod zone_tests {
         let fallback_registry = ZoneRegistry::load_from_path(&fallback_path);
         assert_eq!(fallback_registry.zones.len(), 1);
         assert_eq!(fallback_registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    #[test]
+    fn accepts_zone_spirit_qi_at_full_negative_bound() {
+        let valid_path = unique_temp_path("bong-zones-negative-bound", ".json");
+        fs::write(
+            &valid_path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": {
+        "min": [0.0, 64.0, 0.0],
+        "max": [32.0, 80.0, 32.0]
+      },
+      "spirit_qi": -1.0,
+      "danger_level": 0,
+      "active_events": [],
+      "patrol_anchors": [],
+      "blocked_tiles": []
+    }
+  ]
+}"#,
+        )
+        .expect("negative bound zones.json fixture should be writable");
+
+        let registry = ZoneRegistry::load_from_path(&valid_path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].spirit_qi, -1.0);
+    }
+
+    #[test]
+    fn rejects_zone_spirit_qi_below_negative_bound() {
+        let invalid_path = unique_temp_path("bong-zones-below-negative-bound", ".json");
+        fs::write(
+            &invalid_path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": {
+        "min": [0.0, 64.0, 0.0],
+        "max": [32.0, 80.0, 32.0]
+      },
+      "spirit_qi": -1.01,
+      "danger_level": 0,
+      "active_events": [],
+      "patrol_anchors": [],
+      "blocked_tiles": []
+    }
+  ]
+}"#,
+        )
+        .expect("invalid negative bound zones.json fixture should be writable");
+
+        let registry = ZoneRegistry::load_from_path(&invalid_path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(registry.zones[0].spirit_qi, super::DEFAULT_SPAWN_SPIRIT_QI);
+    }
+
+    #[test]
+    fn accepts_zone_spirit_qi_at_positive_bound() {
+        let valid_path = unique_temp_path("bong-zones-positive-bound", ".json");
+        fs::write(
+            &valid_path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": {
+        "min": [0.0, 64.0, 0.0],
+        "max": [32.0, 80.0, 32.0]
+      },
+      "spirit_qi": 1.0,
+      "danger_level": 0,
+      "active_events": [],
+      "patrol_anchors": [],
+      "blocked_tiles": []
+    }
+  ]
+}"#,
+        )
+        .expect("positive bound zones.json fixture should be writable");
+
+        let registry = ZoneRegistry::load_from_path(&valid_path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].spirit_qi, 1.0);
     }
 
     fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {

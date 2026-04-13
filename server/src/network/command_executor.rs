@@ -11,7 +11,7 @@ use crate::schema::common::{CommandType, MAX_COMMANDS_PER_TICK};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::ZoneRegistry;
 
-const ZONE_SPIRIT_QI_MIN: f64 = 0.0;
+const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
 const ZONE_SPIRIT_QI_MAX: f64 = 1.0;
 const ZONE_DANGER_LEVEL_MIN: i64 = 0;
 const ZONE_DANGER_LEVEL_MAX: i64 = 5;
@@ -315,10 +315,15 @@ fn apply_flee_threshold(
 }
 
 fn current_unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs()
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(err) => {
+            tracing::warn!(
+                "[bong][network] system clock before unix epoch; fallback timestamp=0s error={err}"
+            );
+            0
+        }
+    }
 }
 
 fn parse_npc_id(target: &str) -> Option<String> {
@@ -408,7 +413,7 @@ mod command_executor_tests {
     }
 
     #[test]
-    fn applies_modify_zone() {
+    fn clamps_modify_zone_to_negative_and_positive_bounds() {
         let mut app = setup_executor_app();
 
         let mut params = HashMap::new();
@@ -432,8 +437,87 @@ mod command_executor_tests {
             .find_zone(DVec3::new(8.0, 66.0, 8.0))
             .expect("spawn zone should still exist");
 
-        assert_eq!(spawn_zone.spirit_qi, 0.0);
+        assert_eq!(spawn_zone.spirit_qi, -1.0);
         assert_eq!(spawn_zone.danger_level, 5);
+
+        let mut params = HashMap::new();
+        params.insert("spirit_qi_delta".to_string(), json!(3.0));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_modify_zone_cap_upper",
+                vec![command(CommandType::ModifyZone, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let zone_registry = app.world().resource::<ZoneRegistry>();
+        let spawn_zone = zone_registry
+            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .expect("spawn zone should still exist");
+
+        assert_eq!(spawn_zone.spirit_qi, 1.0);
+    }
+
+    #[test]
+    fn modify_zone_preserves_negative_one_without_clamping_back_to_zero() {
+        let mut app = setup_executor_app();
+
+        let mut lower_to_negative_bound_params = HashMap::new();
+        lower_to_negative_bound_params.insert("spirit_qi_delta".to_string(), json!(-10.0));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_modify_zone_reach_negative_one",
+                vec![command(
+                    CommandType::ModifyZone,
+                    "spawn",
+                    lower_to_negative_bound_params,
+                )],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let zone_registry = app.world().resource::<ZoneRegistry>();
+        let spawn_zone = zone_registry
+            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .expect("spawn zone should still exist");
+
+        assert_eq!(spawn_zone.spirit_qi, -1.0);
+
+        let mut still_negative_params = HashMap::new();
+        still_negative_params.insert("spirit_qi_delta".to_string(), json!(-0.25));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_modify_zone_stay_negative",
+                vec![command(
+                    CommandType::ModifyZone,
+                    "spawn",
+                    still_negative_params,
+                )],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let zone_registry = app.world().resource::<ZoneRegistry>();
+        let spawn_zone = zone_registry
+            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .expect("spawn zone should still exist");
+
+        assert_eq!(spawn_zone.spirit_qi, -1.0);
     }
 
     #[test]

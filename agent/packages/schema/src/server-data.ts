@@ -12,6 +12,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("event_alert"),
   Type.Literal("player_state"),
   Type.Literal("ui_open"),
+  Type.Literal("cultivation_detail"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -50,7 +51,7 @@ export const ServerDataZoneInfoV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("zone_info"),
     zone: Type.String(),
-    spirit_qi: Type.Number({ minimum: 0, maximum: 1 }),
+    spirit_qi: Type.Number({ minimum: -1, maximum: 1 }),
     danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
     active_events: Type.Optional(Type.Array(Type.String())),
   },
@@ -98,6 +99,25 @@ export const ServerDataUiOpenV1 = Type.Object(
 );
 export type ServerDataUiOpenV1 = Static<typeof ServerDataUiOpenV1>;
 
+export const ServerDataCultivationDetailV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("cultivation_detail"),
+    realm: Type.String(),
+    opened: Type.Array(Type.Boolean()),
+    flow_rate: Type.Array(Type.Number()),
+    flow_capacity: Type.Array(Type.Number()),
+    integrity: Type.Array(Type.Number()),
+    open_progress: Type.Array(Type.Number()),
+    cracks_count: Type.Array(Type.Integer({ minimum: 0, maximum: 255 })),
+    contamination_total: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataCultivationDetailV1 = Static<
+  typeof ServerDataCultivationDetailV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -106,5 +126,6 @@ export const ServerDataV1 = Type.Union([
   ServerDataEventAlertV1,
   ServerDataPlayerStateV1,
   ServerDataUiOpenV1,
+  ServerDataCultivationDetailV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;
