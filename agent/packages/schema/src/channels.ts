@@ -29,6 +29,12 @@ export const CHANNELS = {
 
   /** Server → Agent: 修炼侧致死触发（plan-cultivation §4） (Pub/Sub) */
   CULTIVATION_DEATH: "bong:cultivation_death",
+
+  /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
+  COMBAT_REALTIME: "bong:combat_realtime",
+
+  /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
+  COMBAT_SUMMARY: "bong:combat_summary",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -41,6 +47,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BREAKTHROUGH_EVENT,
   CHANNELS.FORGE_EVENT,
   CHANNELS.CULTIVATION_DEATH,
+  CHANNELS.COMBAT_REALTIME,
+  CHANNELS.COMBAT_SUMMARY,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

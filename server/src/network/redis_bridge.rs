@@ -5,10 +5,12 @@ use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_CULTIVATION_DEATH,
-    CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
+    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
+use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
@@ -35,6 +37,8 @@ pub enum RedisOutbound {
     WorldState(WorldStateV1),
     #[allow(dead_code)]
     PlayerChat(ChatMessageV1),
+    CombatRealtime(CombatRealtimeEventV1),
+    CombatSummary(CombatSummaryV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
     CultivationDeath(CultivationDeathV1),
@@ -257,6 +261,26 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
 
             Ok(RedisIoCommand::ListPush {
                 key: CH_PLAYER_CHAT,
+                payload,
+            })
+        }
+        RedisOutbound::CombatRealtime(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize CombatRealtimeEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_COMBAT_REALTIME,
+                payload,
+            })
+        }
+        RedisOutbound::CombatSummary(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize CombatSummaryV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_COMBAT_SUMMARY,
                 payload,
             })
         }
@@ -837,6 +861,7 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
+    use crate::schema::combat_event::{CombatRealtimeKindV1, CombatRealtimeEventV1, CombatSummaryV1};
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -929,6 +954,56 @@ mod redis_bridge_tests {
         .expect("death payload should serialize");
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_combat_realtime_and_summary_on_correct_channels() {
+        let realtime = prepare_outbound_command(RedisOutbound::CombatRealtime(
+            CombatRealtimeEventV1 {
+                v: 1,
+                kind: CombatRealtimeKindV1::CombatEvent,
+                tick: 44,
+                target_id: "offline:Crimson".to_string(),
+                attacker_id: Some("offline:Azure".to_string()),
+                description: Some("shared path hit".to_string()),
+                cause: None,
+            },
+        ))
+        .expect("combat realtime payload should serialize");
+        match realtime {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_COMBAT_REALTIME);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["kind"], "combat_event");
+                assert_eq!(v["tick"], 44);
+                assert_eq!(v["target_id"], "offline:Crimson");
+                assert_eq!(v["attacker_id"], "offline:Azure");
+                assert_eq!(v["description"], "shared path hit");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let summary = prepare_outbound_command(RedisOutbound::CombatSummary(CombatSummaryV1 {
+            v: 1,
+            window_start_tick: 201,
+            window_end_tick: 400,
+            combat_event_count: 9,
+            death_event_count: 2,
+        }))
+        .expect("combat summary payload should serialize");
+        match summary {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_COMBAT_SUMMARY);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["window_start_tick"], 201);
+                assert_eq!(v["window_end_tick"], 400);
+                assert_eq!(v["combat_event_count"], 9);
+                assert_eq!(v["death_event_count"], 2);
+            }
             other => panic!("expected publish, got {other:?}"),
         }
     }
