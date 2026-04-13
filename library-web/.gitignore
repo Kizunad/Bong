@@ -2,3 +2,5 @@ node_modules/
 dist/
 .astro/
 .env
+src/content/books/
+src/lib/halls.json
