@@ -1,6 +1,6 @@
 # Plan: Inventory v1
 
-状态：草案（2026-04-13）
+状态：草案（2026-04-13，§3.1 频道部分 2026-04-13 校准为统一 `bong:server_data` 路由）
 作者：Claude Code + Kiz
 前置：`plan-cultivation-v1.md`（P1 客户端 UI 已落地）、`worldview.md` §486/§558/§686
 
@@ -148,10 +148,21 @@ pub struct ItemInstance {
 
 ### 3.1 Channels
 
-新增：
-- `bong:inventory_snapshot`（S2C，全量）
-- `bong:inventory_event`（S2C，delta）
-- 复用：`bong:client_request`（C2S，新增 3 个联合变体）
+**S2C 统一走 `bong:server_data` CustomPayload + `type` 路由**（与 `cultivation_detail` / `ui_open` / `player_state` 一致，禁止新建独立 channel）。
+
+需要扩的 `ServerDataType` 变体（`server/src/schema/server_data.rs`）：
+- `InventorySnapshot`（全量，进服 / 重生 / 容器切换时推一次）
+- `InventoryEvent`（delta，`kind: Added|Removed|Moved|StackChanged|DurabilityChanged` + `instance_id`）
+- `ItemRegistrySnapshot`（进服首次推送模板库，client 缓存到 `ItemRegistryStore`）
+
+Client 端照 `ServerDataRouter` 现有模式，新增三个 handler 注册到 dispatcher：
+```java
+handlers.put("inventory_snapshot", new InventorySnapshotHandler(store));
+handlers.put("inventory_event",    new InventoryEventHandler(store));
+handlers.put("item_registry_snapshot", new ItemRegistrySnapshotHandler(registry));
+```
+
+C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequestV1` / `ApplyPillRequestV1` / `DropItemRequestV1`）。
 
 ### 3.2 Schema 文件（`agent/packages/schema/src/`）
 
