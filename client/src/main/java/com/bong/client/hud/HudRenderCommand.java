@@ -27,6 +27,10 @@ public final class HudRenderCommand {
         return new HudRenderCommand(layer, Kind.SCREEN_TINT, "", 0, 0, color);
     }
 
+    public static HudRenderCommand edgeVignette(HudRenderLayer layer, int color) {
+        return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, color);
+    }
+
     public static HudRenderCommand toast(HudRenderLayer layer) {
         return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0);
     }
@@ -67,6 +71,10 @@ public final class HudRenderCommand {
         return kind == Kind.SCREEN_TINT;
     }
 
+    public boolean isEdgeVignette() {
+        return kind == Kind.EDGE_VIGNETTE;
+    }
+
     public boolean isToast() {
         return kind == Kind.TOAST;
     }
@@ -74,6 +82,7 @@ public final class HudRenderCommand {
     public enum Kind {
         TEXT,
         SCREEN_TINT,
+        EDGE_VIGNETTE,
         TOAST
     }
 }

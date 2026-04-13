@@ -4,6 +4,8 @@ import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.visual.EdgeDecalRenderer;
+import com.bong.client.visual.OverlayQuadRenderer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 
@@ -49,9 +51,13 @@ public class BongHud {
             }
         }
 
+        int scaledWidth = client.getWindow().getScaledWidth();
+        int scaledHeight = client.getWindow().getScaledHeight();
         for (HudRenderCommand command : commands) {
             if (command.isScreenTint()) {
-                context.fill(0, 0, client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight(), command.color());
+                OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            } else if (command.isEdgeVignette()) {
+                EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
     }

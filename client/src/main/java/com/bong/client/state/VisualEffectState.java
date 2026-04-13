@@ -85,7 +85,20 @@ public final class VisualEffectState {
         NONE("none"),
         SCREEN_SHAKE("screen_shake"),
         FOG_TINT("fog_tint"),
-        TITLE_FLASH("title_flash");
+        TITLE_FLASH("title_flash"),
+        BLOOD_MOON("blood_moon"),
+        DEMONIC_FOG("demonic_fog"),
+        ENLIGHTENMENT_FLASH("enlightenment_flash"),
+        TRIBULATION_PRESSURE("tribulation_pressure"),
+        FOV_ZOOM_IN("fov_zoom_in"),
+        FOV_STRETCH("fov_stretch"),
+        TRIBULATION_LOOK_UP("tribulation_look_up"),
+        MEDITATION_CALM("meditation_calm"),
+        POISON_TINT("poison_tint"),
+        FROSTBITE("frostbite"),
+        NEAR_DEATH_VIGNETTE("near_death_vignette"),
+        PRESSURE_JITTER("pressure_jitter"),
+        HIT_PUSHBACK("hit_pushback");
 
         private final String wireName;
 
@@ -99,6 +112,19 @@ public final class VisualEffectState {
                 case "screen_shake", "camera_shake" -> SCREEN_SHAKE;
                 case "fog_tint", "fog_pulse" -> FOG_TINT;
                 case "title_flash", "title" -> TITLE_FLASH;
+                case "blood_moon" -> BLOOD_MOON;
+                case "demonic_fog", "demonic" -> DEMONIC_FOG;
+                case "enlightenment_flash", "enlightenment" -> ENLIGHTENMENT_FLASH;
+                case "tribulation_pressure", "tribulation" -> TRIBULATION_PRESSURE;
+                case "fov_zoom_in", "fov_focus", "zoom_in" -> FOV_ZOOM_IN;
+                case "fov_stretch", "fov_breakthrough", "stretch" -> FOV_STRETCH;
+                case "tribulation_look_up", "look_up", "sky_gaze" -> TRIBULATION_LOOK_UP;
+                case "meditation_calm", "meditation", "calm" -> MEDITATION_CALM;
+                case "poison_tint", "poison" -> POISON_TINT;
+                case "frostbite", "ice_poison", "freeze" -> FROSTBITE;
+                case "near_death_vignette", "near_death", "low_hp" -> NEAR_DEATH_VIGNETTE;
+                case "pressure_jitter", "pressure", "qi_pressure" -> PRESSURE_JITTER;
+                case "hit_pushback", "pushback", "recoil", "knockback_cam" -> HIT_PUSHBACK;
                 default -> NONE;
             };
         }

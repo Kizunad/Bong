@@ -65,6 +65,64 @@ public final class VisualEffectPlanner {
                 0,
                 DECREE_TEXT_Y_DIVISOR
             );
+            case BLOOD_MOON, ENLIGHTENMENT_FLASH -> List.of(HudRenderCommand.screenTint(
+                HudRenderLayer.VISUAL,
+                HudTextHelper.withAlpha(profile.baseColor(), alpha)
+            ));
+            case DEMONIC_FOG -> List.of(HudRenderCommand.edgeVignette(
+                HudRenderLayer.VISUAL,
+                HudTextHelper.withAlpha(profile.baseColor(), alpha)
+            ));
+            case TRIBULATION_PRESSURE -> List.of(
+                HudRenderCommand.screenTint(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                ),
+                HudRenderCommand.edgeVignette(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                )
+            );
+            // FOV 类效果纯通过 MixinGameRenderer 修改相机 FOV，HUD 层无需画任何东西
+            case FOV_ZOOM_IN, FOV_STRETCH -> List.of();
+            // 天劫仰视纯通过 MixinCamera 修改 pitch，HUD 层同样无需画任何东西
+            case TRIBULATION_LOOK_UP -> List.of();
+            // 入定淡青：淡色 tint + 边缘渐暗，营造"入定"的收敛感
+            case MEDITATION_CALM -> List.of(
+                HudRenderCommand.screenTint(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                ),
+                HudRenderCommand.edgeVignette(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                )
+            );
+            // 中毒酸绿：单层 tint 即可，边缘不做装饰免喧宾夺主
+            case POISON_TINT -> List.of(HudRenderCommand.screenTint(
+                HudRenderLayer.VISUAL,
+                HudTextHelper.withAlpha(profile.baseColor(), alpha)
+            ));
+            // 寒毒冰蓝：tint + vignette 近似结霜边缘（结霜纹理留待资产）
+            case FROSTBITE -> List.of(
+                HudRenderCommand.screenTint(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                ),
+                HudRenderCommand.edgeVignette(
+                    HudRenderLayer.VISUAL,
+                    HudTextHelper.withAlpha(profile.baseColor(), alpha)
+                )
+            );
+            // 濒死：只画黑色 vignette，不做 tint 以免误读为"视野变黑"全屏
+            case NEAR_DEATH_VIGNETTE -> List.of(HudRenderCommand.edgeVignette(
+                HudRenderLayer.VISUAL,
+                HudTextHelper.withAlpha(profile.baseColor(), alpha)
+            ));
+            // 灵压晃动：纯相机抖动（低幅低频），走 MixinCamera+CameraShakeOffsets 同一管线
+            case PRESSURE_JITTER -> List.of();
+            // 受创后退：纯相机位移，走 MixinCamera TAIL 注入的 moveBy，HUD 层无输出
+            case HIT_PUSHBACK -> List.of();
         };
     }
 

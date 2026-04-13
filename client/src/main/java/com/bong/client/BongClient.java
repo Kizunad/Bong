@@ -1,5 +1,6 @@
 package com.bong.client;
 
+import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
@@ -23,7 +24,8 @@ public class BongClient implements ClientModInitializer {
         InspectScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
+        BongVfxCommand.register();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, and keybinding scheduler are active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, and /vfx test command are active.");
     }
 }
