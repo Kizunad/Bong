@@ -3,11 +3,11 @@ use valence::prelude::{
     Client, DVec3, Entity, EventReader, EventWriter, Position, Query, Res, ResMut, Username, With,
 };
 
+use crate::combat::CombatClock;
 use crate::combat::{
     components::{Stamina, StaminaState, Wound, Wounds},
     events::{AttackIntent, CombatEvent, DeathEvent},
 };
-use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, MeridianSystem};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -27,11 +27,17 @@ pub fn resolve_attack_intents(
     mut intents: EventReader<AttackIntent>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     clients: Query<
-        (Entity, &Position, &Username, &crate::player::state::PlayerState),
+        (
+            Entity,
+            &Position,
+            &Username,
+            &crate::player::state::PlayerState,
+        ),
         With<Client>,
     >,
     positions: Query<&Position>,
     npc_markers: Query<(), With<NpcMarker>>,
+    npc_positions: Query<(Entity, &Position), With<NpcMarker>>,
     mut combat_targets: Query<(
         &mut Wounds,
         &mut Stamina,
@@ -50,7 +56,7 @@ pub fn resolve_attack_intents(
             target_hint_qi_max,
             target_id,
             target_health_hint,
-        )) = resolve_intent_entities(intent, &clients, &positions, &npc_markers)
+        )) = resolve_intent_entities(intent, &clients, &positions, &npc_markers, &npc_positions)
         else {
             continue;
         };
@@ -82,7 +88,8 @@ pub fn resolve_attack_intents(
             inflicted_by: Some(attacker_id.clone()),
         });
 
-        stamina.current = (stamina.current - DEBUG_ATTACK_STAMINA_COST * decay).clamp(0.0, stamina.max);
+        stamina.current =
+            (stamina.current - DEBUG_ATTACK_STAMINA_COST * decay).clamp(0.0, stamina.max);
         stamina.last_drain_tick = Some(clock.tick);
         stamina.state = if stamina.current <= 0.0 {
             StaminaState::Exhausted
@@ -98,7 +105,8 @@ pub fn resolve_attack_intents(
         });
 
         if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
-            primary_meridian.throughput_current += DEBUG_ATTACK_QI_THROUGHPUT_GAIN * f64::from(decay);
+            primary_meridian.throughput_current +=
+                DEBUG_ATTACK_QI_THROUGHPUT_GAIN * f64::from(decay);
         }
 
         let action_label = if intent.debug_command.is_some() {
@@ -150,18 +158,30 @@ type ResolvedIntent = (DVec3, String, Entity, DVec3, f64, String, f32);
 fn resolve_intent_entities(
     intent: &AttackIntent,
     clients: &Query<
-        (Entity, &Position, &Username, &crate::player::state::PlayerState),
+        (
+            Entity,
+            &Position,
+            &Username,
+            &crate::player::state::PlayerState,
+        ),
         With<Client>,
     >,
     positions: &Query<&Position>,
     npc_markers: &Query<(), With<NpcMarker>>,
+    npc_positions: &Query<(Entity, &Position), With<NpcMarker>>,
 ) -> Option<ResolvedIntent> {
     let (attacker_position, attacker_id) =
         resolve_combat_actor(intent.attacker, clients, positions, npc_markers)?;
 
     if let Some(action) = intent.debug_command.as_ref() {
-        let (target_entity, target_position, target_hint_qi_max, target_id) =
-            resolve_debug_target(intent, action, clients)?;
+        let (target_entity, target_position, target_hint_qi_max, target_id) = resolve_debug_target(
+            intent,
+            action,
+            clients,
+            positions,
+            npc_markers,
+            npc_positions,
+        )?;
         return Some((
             attacker_position,
             attacker_id,
@@ -198,7 +218,12 @@ fn resolve_intent_entities(
 fn resolve_combat_actor(
     entity: Entity,
     clients: &Query<
-        (Entity, &Position, &Username, &crate::player::state::PlayerState),
+        (
+            Entity,
+            &Position,
+            &Username,
+            &crate::player::state::PlayerState,
+        ),
         With<Client>,
     >,
     positions: &Query<&Position>,
@@ -218,18 +243,34 @@ fn resolve_debug_target<'a>(
     intent: &AttackIntent,
     action: &crate::player::gameplay::CombatAction,
     clients: &Query<
-        (Entity, &Position, &Username, &crate::player::state::PlayerState),
+        (
+            Entity,
+            &Position,
+            &Username,
+            &crate::player::state::PlayerState,
+        ),
         With<Client>,
     >,
+    positions: &Query<&Position>,
+    npc_markers: &Query<(), With<NpcMarker>>,
+    npc_positions: &Query<(Entity, &Position), With<NpcMarker>>,
 ) -> Option<(Entity, DVec3, f64, String)> {
     if let Some(target) = intent.target {
-        let (_, position, username, player_state) = clients.get(target).ok()?;
-        return Some((
-            target,
-            position.get(),
-            player_state.spirit_qi_max,
-            canonical_player_id(username.0.as_str()),
-        ));
+        if let Ok((_, position, username, player_state)) = clients.get(target) {
+            return Some((
+                target,
+                position.get(),
+                player_state.spirit_qi_max,
+                canonical_player_id(username.0.as_str()),
+            ));
+        }
+
+        if npc_markers.get(target).is_ok() {
+            let position = positions.get(target).ok()?.get();
+            return Some((target, position, 0.0, canonical_npc_id(target)));
+        }
+
+        return None;
     }
 
     let target_name = action.target.trim();
@@ -237,21 +278,51 @@ fn resolve_debug_target<'a>(
         return None;
     }
 
-    clients.iter().find_map(|(entity, position, username, player_state)| {
+    if let Some(player_match) =
+        clients
+            .iter()
+            .find_map(|(entity, position, username, player_state)| {
+                if entity == intent.attacker {
+                    return None;
+                }
+
+                let canonical = canonical_player_id(username.0.as_str());
+                (username.0.eq_ignore_ascii_case(target_name)
+                    || canonical.eq_ignore_ascii_case(target_name))
+                .then_some((
+                    entity,
+                    position.get(),
+                    player_state.spirit_qi_max,
+                    canonical,
+                ))
+            })
+    {
+        return Some(player_match);
+    }
+
+    npc_positions.iter().find_map(|(entity, position)| {
         if entity == intent.attacker {
             return None;
         }
 
-        let canonical = canonical_player_id(username.0.as_str());
-        (username.0.eq_ignore_ascii_case(target_name) || canonical.eq_ignore_ascii_case(target_name))
-            .then_some((entity, position.get(), player_state.spirit_qi_max, canonical))
+        let canonical = canonical_npc_id(entity);
+        canonical.eq_ignore_ascii_case(target_name).then_some((
+            entity,
+            position.get(),
+            0.0,
+            canonical,
+        ))
     })
 }
 
 fn first_open_or_fallback_meridian(
     meridians: &mut MeridianSystem,
 ) -> Option<&mut crate::cultivation::components::Meridian> {
-    if let Some(index) = meridians.regular.iter().position(|meridian| meridian.opened) {
+    if let Some(index) = meridians
+        .regular
+        .iter()
+        .position(|meridian| meridian.opened)
+    {
         return meridians.regular.get_mut(index);
     }
 
@@ -281,7 +352,10 @@ mod tests {
         commands.insert_resource(TestLayer(layer));
     }
 
-    fn spawn_runtime_npc(mut commands: valence::prelude::Commands, layer: valence::prelude::Res<TestLayer>) {
+    fn spawn_runtime_npc(
+        mut commands: valence::prelude::Commands,
+        layer: valence::prelude::Res<TestLayer>,
+    ) {
         spawn_test_npc_runtime_shape(&mut commands, layer.0);
     }
 
@@ -320,12 +394,7 @@ mod tests {
             .id()
     }
 
-    fn spawn_npc(
-        app: &mut App,
-        position: [f64; 3],
-        wounds: Wounds,
-        stamina: Stamina,
-    ) -> Entity {
+    fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {
         let entity = app
             .world_mut()
             .spawn((
@@ -392,8 +461,12 @@ mod tests {
         app.update();
 
         let target_ref = app.world().entity(target);
-        let wounds = target_ref.get::<Wounds>().expect("target should keep wounds");
-        let stamina = target_ref.get::<Stamina>().expect("target should keep stamina");
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        let stamina = target_ref
+            .get::<Stamina>()
+            .expect("target should keep stamina");
         let contamination = target_ref
             .get::<Contamination>()
             .expect("target should keep contamination");
@@ -401,11 +474,21 @@ mod tests {
             .get::<MeridianSystem>()
             .expect("target should keep meridians");
 
-        assert!(wounds.health_current <= 0.0, "damage should reduce health to zero");
+        assert!(
+            wounds.health_current <= 0.0,
+            "damage should reduce health to zero"
+        );
         assert_eq!(wounds.entries.len(), 1, "damage should record one wound");
-        assert!(stamina.current < stamina.max, "damage should consume stamina");
+        assert!(
+            stamina.current < stamina.max,
+            "damage should consume stamina"
+        );
         assert_eq!(stamina.state, StaminaState::Combat);
-        assert_eq!(contamination.entries.len(), 1, "valid attack should write contamination");
+        assert_eq!(
+            contamination.entries.len(),
+            1,
+            "valid attack should write contamination"
+        );
         assert_eq!(
             contamination.entries[0].attacker_id.as_deref(),
             Some("offline:Azure")
@@ -417,8 +500,14 @@ mod tests {
 
         let combat_events = app.world().resource::<Events<CombatEvent>>();
         let death_events = app.world().resource::<Events<DeathEvent>>();
-        assert!(!combat_events.is_empty(), "resolver should emit CombatEvent");
-        assert!(!death_events.is_empty(), "lethal attack should emit DeathEvent");
+        assert!(
+            !combat_events.is_empty(),
+            "resolver should emit CombatEvent"
+        );
+        assert!(
+            !death_events.is_empty(),
+            "lethal attack should emit DeathEvent"
+        );
     }
 
     #[test]
@@ -470,8 +559,12 @@ mod tests {
         }
 
         let target_ref = app.world().entity(target);
-        let wounds = target_ref.get::<Wounds>().expect("target should keep wounds");
-        let stamina = target_ref.get::<Stamina>().expect("target should keep stamina");
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        let stamina = target_ref
+            .get::<Stamina>()
+            .expect("target should keep stamina");
         let contamination = target_ref
             .get::<Contamination>()
             .expect("target should keep contamination");
@@ -480,15 +573,27 @@ mod tests {
             .expect("target should keep meridians");
 
         assert_eq!(wounds.health_current, wounds.health_max);
-        assert!(wounds.entries.is_empty(), "invalid attacks must not create wounds");
+        assert!(
+            wounds.entries.is_empty(),
+            "invalid attacks must not create wounds"
+        );
         assert_eq!(stamina.current, stamina.max);
-        assert!(contamination.entries.is_empty(), "invalid attacks must not contaminate");
+        assert!(
+            contamination.entries.is_empty(),
+            "invalid attacks must not contaminate"
+        );
         assert_eq!(meridians.get(MeridianId::Lung).throughput_current, 0.0);
 
         let combat_events = app.world().resource::<Events<CombatEvent>>();
         let death_events = app.world().resource::<Events<DeathEvent>>();
-        assert!(combat_events.is_empty(), "invalid attacks must not emit CombatEvent");
-        assert!(death_events.is_empty(), "invalid attacks must not emit DeathEvent");
+        assert!(
+            combat_events.is_empty(),
+            "invalid attacks must not emit CombatEvent"
+        );
+        assert!(
+            death_events.is_empty(),
+            "invalid attacks must not emit DeathEvent"
+        );
     }
 
     #[test]
@@ -529,13 +634,22 @@ mod tests {
         app.update();
 
         let target_ref = app.world().entity(target);
-        let wounds = target_ref.get::<Wounds>().expect("target should keep wounds");
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
         let contamination = target_ref
             .get::<Contamination>()
             .expect("target should keep contamination");
 
-        assert!(wounds.health_current <= 0.0, "npc entity-target intent should apply lethal damage");
-        assert_eq!(wounds.entries.len(), 1, "resolver should append exactly one wound");
+        assert!(
+            wounds.health_current <= 0.0,
+            "npc entity-target intent should apply lethal damage"
+        );
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "resolver should append exactly one wound"
+        );
         assert_eq!(
             contamination.entries[0].attacker_id.as_deref(),
             Some(canonical_npc_id(npc_attacker).as_str()),
@@ -599,7 +713,9 @@ mod tests {
         let player_wounds = player_ref
             .get::<Wounds>()
             .expect("player target should keep wounds");
-        let npc_wounds = npc_ref.get::<Wounds>().expect("npc target should keep wounds");
+        let npc_wounds = npc_ref
+            .get::<Wounds>()
+            .expect("npc target should keep wounds");
         let player_contamination = player_ref
             .get::<Contamination>()
             .expect("player target should keep contamination");
@@ -607,8 +723,16 @@ mod tests {
             .get::<Contamination>()
             .expect("npc target should keep contamination");
 
-        assert_eq!(player_wounds.entries.len(), 1, "npc->player should resolve exactly one wound");
-        assert_eq!(npc_wounds.entries.len(), 1, "player->npc should resolve exactly one wound");
+        assert_eq!(
+            player_wounds.entries.len(),
+            1,
+            "npc->player should resolve exactly one wound"
+        );
+        assert_eq!(
+            npc_wounds.entries.len(),
+            1,
+            "player->npc should resolve exactly one wound"
+        );
         assert_eq!(
             player_contamination.entries[0].attacker_id.as_deref(),
             Some(canonical_npc_id(npc).as_str())
@@ -632,7 +756,10 @@ mod tests {
         app.add_event::<AttackIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
-        app.add_systems(valence::prelude::Startup, (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)));
+        app.add_systems(
+            valence::prelude::Startup,
+            (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
+        );
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -673,7 +800,11 @@ mod tests {
             .get::<Contamination>()
             .expect("runtime zombie NPC should carry Contamination for shared resolver");
 
-        assert_eq!(npc_wounds.entries.len(), 1, "player->runtime-zombie intent should apply one wound");
+        assert_eq!(
+            npc_wounds.entries.len(),
+            1,
+            "player->runtime-zombie intent should apply one wound"
+        );
         assert_eq!(
             npc_contamination.entries[0].attacker_id.as_deref(),
             Some("offline:Azure"),
@@ -738,6 +869,77 @@ mod tests {
             death_events.len(),
             1,
             "DeathEvent should only emit on alive->dead transition, not repeated corpse hits"
+        );
+    }
+
+    #[test]
+    fn debug_attack_resolves_canonical_npc_target_without_client_query_match() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 512 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let npc_target = spawn_npc(
+            &mut app,
+            [2.0, 64.0, 0.0],
+            Wounds {
+                health_current: 8.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+        let npc_id = canonical_npc_id(npc_target);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: None,
+            issued_at_tick: 511,
+            reach: 3.5,
+            debug_command: Some(crate::player::gameplay::CombatAction {
+                target: npc_id.clone(),
+                target_health: 40.0,
+            }),
+        });
+
+        app.update();
+
+        let npc_ref = app.world().entity(npc_target);
+        let wounds = npc_ref
+            .get::<Wounds>()
+            .expect("npc debug target should keep wounds");
+        let contamination = npc_ref
+            .get::<Contamination>()
+            .expect("npc debug target should keep contamination");
+
+        assert!(
+            wounds.health_current <= 0.0,
+            "debug npc target should receive resolver damage"
+        );
+        assert_eq!(
+            contamination.entries[0].attacker_id.as_deref(),
+            Some("offline:Azure"),
+            "debug npc target should preserve canonical player attacker identity"
+        );
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let death_events = app.world().resource::<Events<DeathEvent>>();
+        assert!(
+            !combat_events.is_empty(),
+            "debug npc target should emit CombatEvent through shared resolver"
+        );
+        assert!(
+            !death_events.is_empty(),
+            "lethal debug npc target should emit DeathEvent"
         );
     }
 }

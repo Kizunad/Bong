@@ -485,3 +485,10 @@ Wave 3: Redis/schema 观测收口 + 全量验证（Tasks 7-8）
   - [x] Keep scope limited to already touched server/schema/world-state paths plus evidence/notepad as needed.
   - [x] Verification: relevant schema tests pass and generated artifacts stay in sync.
   - [x] Commit: allowed follow-up fix commit after verification.
+- [x] Fix latest Codex review defects after commit `27ecfdd`.
+  - [x] Scenario-spawned NPCs must carry the combat/cultivation target components required by shared combat resolution, or shared resolver must otherwise support them without dropping intents.
+  - [x] `/bong combat <target> <health>` debug resolution must still support intended non-client targets rather than only online player clients.
+  - [x] Add/adjust targeted Rust tests proving both behaviors.
+  - [x] Keep scope limited to already touched combat/NPC/debug paths plus evidence/notepad as needed.
+  - [x] Verification: targeted combat/NPC/gameplay tests pass.
+  - [ ] Commit: allowed follow-up fix commit after verification.

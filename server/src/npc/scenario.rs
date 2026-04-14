@@ -7,14 +7,18 @@ use valence::prelude::{
 };
 
 use crate::npc::brain::{
-    ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction, MeleeAttackAction,
-    MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
+    canonical_npc_id, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction,
+    MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
 };
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+use crate::{
+    combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds},
+    cultivation::components::{Contamination, Cultivation, MeridianSystem},
+};
 
 /// Marker component for NPCs spawned by the `!npc_scenario` command.
 /// Used for bulk cleanup on `!npc_scenario clear`.
@@ -132,6 +136,20 @@ fn process_pending_scenarios(
             ))
             .id();
 
+        commands.entity(entity).insert((
+            Cultivation::default(),
+            MeridianSystem::default(),
+            Contamination::default(),
+            Wounds::default(),
+            Stamina::default(),
+            CombatState::default(),
+            DerivedAttrs::default(),
+            Lifecycle {
+                character_id: canonical_npc_id(entity),
+                ..Default::default()
+            },
+        ));
+
         spawned_entities.push(entity);
     }
 
@@ -195,5 +213,71 @@ fn scenario_capabilities(scenario: &ScenarioType) -> MovementCapabilities {
             can_dash: true,
         },
         _ => MovementCapabilities::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::combat::components::{Lifecycle, Stamina, Wounds};
+    use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+    use valence::prelude::{Entity, Update, With};
+    use valence::testing::ScenarioSingleClient;
+
+    #[test]
+    fn scenario_spawned_npcs_include_shared_combat_target_components() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::Duel, DVec3::new(8.0, 66.0, 8.0))),
+        });
+        app.add_systems(Update, process_pending_scenarios);
+
+        app.update();
+
+        let scenario_npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<ScenarioNpc>>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            scenario_npcs.len(),
+            2,
+            "duel scenario should spawn two NPCs for coverage"
+        );
+
+        for npc in scenario_npcs {
+            let entity_ref = app.world().entity(npc);
+            assert!(
+                entity_ref.get::<Cultivation>().is_some(),
+                "scenario NPC should include Cultivation for shared resolver"
+            );
+            assert!(
+                entity_ref.get::<MeridianSystem>().is_some(),
+                "scenario NPC should include MeridianSystem for shared resolver"
+            );
+            assert!(
+                entity_ref.get::<Contamination>().is_some(),
+                "scenario NPC should include Contamination for shared resolver"
+            );
+            assert!(
+                entity_ref.get::<Wounds>().is_some(),
+                "scenario NPC should include Wounds for shared resolver"
+            );
+            assert!(
+                entity_ref.get::<Stamina>().is_some(),
+                "scenario NPC should include Stamina for shared resolver"
+            );
+            let lifecycle = entity_ref
+                .get::<Lifecycle>()
+                .expect("scenario NPC should include Lifecycle identity component");
+            assert_eq!(
+                lifecycle.character_id,
+                canonical_npc_id(npc),
+                "scenario NPC Lifecycle should use canonical npc identity"
+            );
+        }
     }
 }
