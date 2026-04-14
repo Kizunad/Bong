@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "window_start_tick",
+    "window_end_tick",
+    "combat_event_count",
+    "death_event_count"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "window_start_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "window_end_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "combat_event_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "death_event_count": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

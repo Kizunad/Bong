@@ -7,6 +7,8 @@ use valence::prelude::{bevy_ecs, Component};
 
 use super::components::{ColorKind, MeridianId, Realm};
 
+const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BiographyEntry {
     BreakthroughStarted {
@@ -68,15 +70,37 @@ pub struct TakenInsight {
     pub realm_at_time: Realm,
 }
 
-#[derive(Debug, Clone, Component, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct LifeRecord {
+    #[serde(default = "default_character_id")]
+    pub character_id: String,
     pub created_at: u64,
     pub biography: Vec<BiographyEntry>,
     pub insights_taken: Vec<TakenInsight>,
     pub spirit_root_first: Option<MeridianId>,
 }
 
+impl Default for LifeRecord {
+    fn default() -> Self {
+        Self::new_unassigned()
+    }
+}
+
 impl LifeRecord {
+    pub fn new(character_id: impl Into<String>) -> Self {
+        Self {
+            character_id: character_id.into(),
+            created_at: 0,
+            biography: Vec::new(),
+            insights_taken: Vec::new(),
+            spirit_root_first: None,
+        }
+    }
+
+    pub fn new_unassigned() -> Self {
+        Self::new(default_character_id())
+    }
+
     pub fn push(&mut self, entry: BiographyEntry) {
         self.biography.push(entry);
     }
@@ -95,6 +119,10 @@ impl LifeRecord {
             .collect::<Vec<_>>()
             .join(" | ")
     }
+}
+
+fn default_character_id() -> String {
+    UNASSIGNED_CHARACTER_ID.to_string()
 }
 
 fn format_entry(entry: &BiographyEntry) -> String {
@@ -136,6 +164,8 @@ fn format_entry(entry: &BiographyEntry) -> String {
 mod tests {
     use super::*;
 
+    use crate::player::state::canonical_player_id;
+
     #[test]
     fn push_accumulates_indefinitely() {
         let mut lr = LifeRecord::default();
@@ -159,5 +189,42 @@ mod tests {
         }
         assert_eq!(lr.recent_summary(3).len(), 3);
         assert_eq!(lr.recent_summary(100).len(), 10);
+    }
+
+    #[test]
+    fn default_is_safe_with_unassigned_character_anchor() {
+        let lr = LifeRecord::default();
+
+        assert_eq!(lr.character_id, UNASSIGNED_CHARACTER_ID);
+        assert_eq!(lr.created_at, 0);
+        assert!(lr.biography.is_empty());
+        assert!(lr.recent_summary_text(5).is_empty());
+    }
+
+    #[test]
+    fn new_sets_canonical_character_id_without_affecting_summary_text() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::MeridianOpened {
+            id: MeridianId::Lung,
+            tick: 12,
+        });
+
+        assert_eq!(lr.character_id, "offline:Alice");
+        assert_eq!(lr.recent_summary_text(1), "t12:open:Lung");
+    }
+
+    #[test]
+    fn serde_defaults_missing_character_id_for_legacy_records() {
+        let legacy = serde_json::json!({
+            "created_at": 5,
+            "biography": [],
+            "insights_taken": [],
+            "spirit_root_first": null,
+        });
+
+        let decoded: LifeRecord =
+            serde_json::from_value(legacy).expect("legacy life record should deserialize");
+
+        assert_eq!(decoded.character_id, UNASSIGNED_CHARACTER_ID);
     }
 }

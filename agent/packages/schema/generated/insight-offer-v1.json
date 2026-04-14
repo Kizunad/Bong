@@ -4,6 +4,7 @@
   "required": [
     "offer_id",
     "trigger_id",
+    "character_id",
     "choices"
   ],
   "properties": {
@@ -15,6 +16,10 @@
     "trigger_id": {
       "minLength": 1,
       "maxLength": 128,
+      "type": "string"
+    },
+    "character_id": {
+      "minLength": 1,
       "type": "string"
     },
     "choices": {

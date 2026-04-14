@@ -1,0 +1,102 @@
+Task 8 Scope Audit Evidence
+Worktree: /workspace/worktrees/Bong-combat-no-ui-c1-c3
+Branch: atlas/combat-no-ui-c1-c3
+Date: 2026-04-13
+
+==== 1) Forbidden path audit ====
+
+Command:
+  git diff --name-only | grep -E '^(client/|agent/packages/tiandao/|library-web/|agent/packages/schema/src/client-(payload|request)\\.ts|server/src/schema/client_(payload|request)\\.rs)'
+Output:
+  (no output)
+Conclusion:
+  EN: PASS — no forbidden path changes detected in unstaged diff.
+  ZH: PASS — unstaged 变更中未命中禁改路径。
+
+Supplement command (staged+unstaged visibility):
+  git diff --name-only HEAD
+Output:
+  .sisyphus/boulder.json
+  agent/packages/schema/generated/insight-offer-v1.json
+  agent/packages/schema/generated/server-data-v1.json
+  agent/packages/schema/samples/server-data.zone-info.sample.json
+  agent/packages/schema/src/channels.ts
+  agent/packages/schema/src/index.ts
+  agent/packages/schema/src/schema-registry.ts
+  agent/packages/schema/src/server-data.ts
+  agent/packages/schema/tests/schema.test.ts
+  server/src/cultivation/components.rs
+  server/src/cultivation/contamination.rs
+  server/src/cultivation/death_hooks.rs
+  server/src/cultivation/life_record.rs
+  server/src/cultivation/mod.rs
+  server/src/main.rs
+  server/src/network/chat_collector.rs
+  server/src/network/client_request_handler.rs
+  server/src/network/command_executor.rs
+  server/src/network/mod.rs
+  server/src/network/redis_bridge.rs
+  server/src/npc/brain.rs
+  server/src/player/gameplay.rs
+  server/src/schema/channels.rs
+  server/src/schema/mod.rs
+  server/src/schema/server_data.rs
+  server/src/world/zone.rs
+Conclusion:
+  EN: PASS — staged+unstaged changed file list still excludes forbidden paths.
+  ZH: PASS — staged+unstaged 合并视角下仍未触及禁改路径。
+
+==== 2) Extra channel audit (must reject death_event|tribulation_event|status_effect|anticheat) ====
+
+Command:
+  grep pattern='bong:(death_event|tribulation_event|status_effect|anticheat)' include='*.{rs,ts,json}' path='.'
+Output:
+  No matches found
+Conclusion:
+  EN: PASS — no forbidden extra Redis channels introduced.
+  ZH: PASS — 未发现被禁的额外 Redis 通道。
+
+Supplement command (allowed combat channel visibility):
+  grep pattern='bong:combat_[a-z_]+' include='*.{rs,ts,md,json}' path='.'
+Output (excerpt):
+  agent/packages/schema/src/channels.ts -> bong:combat_realtime, bong:combat_summary
+  agent/packages/schema/tests/schema.test.ts -> bong:combat_realtime, bong:combat_summary
+  server/src/schema/channels.rs -> bong:combat_realtime, bong:combat_summary
+  docs/plan-combat-no_ui.md -> design references only
+Conclusion:
+  EN: PASS — only the two allowed combat channels are present in code/schema; doc mentions are expected references.
+  ZH: PASS — 代码/schema 仅包含允许的两条 combat 通道；文档命中为预期引用。
+
+==== 3) WorldState / ClientRequest / ClientPayload drift audit ====
+
+Commands and outputs:
+  git diff -- server/src/schema/world_state.rs
+  -> (no output)
+
+  git diff -- agent/packages/schema/src/world-state.ts
+  -> (no output)
+
+  git diff -- server/src/schema/client_request.rs
+  -> (no output)
+
+  git diff -- agent/packages/schema/src/client-request.ts
+  -> (no output)
+
+  git diff -- server/src/schema/client_payload.rs
+  -> (no output)
+
+  git diff -- agent/packages/schema/src/client-payload.ts
+  -> (no output)
+
+Conclusion:
+  EN: PASS — no drift detected in world-state/client-request/client-payload mirrors.
+  ZH: PASS — world-state/client-request/client-payload 镜像未出现扩散漂移。
+
+==== 4) Scope audit summary ====
+
+- Forbidden path audit: PASS
+- Extra channel audit (death_event|tribulation_event|status_effect|anticheat): PASS
+- world-state/client-request/client-payload drift audit: PASS
+
+Reviewer note:
+  This audit log includes command + output + one-line EN/ZH conclusion for each mandatory check, and explicitly covers both `git diff --name-only` (unstaged) and `git diff --name-only HEAD` (staged+unstaged) visibility.

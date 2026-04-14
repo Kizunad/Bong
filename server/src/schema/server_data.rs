@@ -200,6 +200,9 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.player-state.sample.json"
             ),
             include_str!("../../../agent/packages/schema/samples/server-data.ui-open.sample.json"),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.cultivation-detail.sample.json"
+            ),
         ];
 
         for json in samples {

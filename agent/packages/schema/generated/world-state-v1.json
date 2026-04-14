@@ -401,7 +401,7 @@
             "type": "string"
           },
           "spirit_qi": {
-            "minimum": 0,
+            "minimum": -1,
             "maximum": 1,
             "type": "number"
           },

@@ -107,6 +107,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 1.0,
             color: ColorKind::Sharp,
+            attacker_id: None,
             introduced_at: 0,
         };
         let (purge, cost, _) = purge_step(&mut c, 100.0);
@@ -118,6 +119,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 1.0,
             color: ColorKind::Sharp,
+            attacker_id: None,
             introduced_at: 0,
         };
         let (_purge, cost, _) = purge_step(&mut c, 0.05);
@@ -129,6 +131,7 @@ mod tests {
         let mut c = ContamSource {
             amount: 0.05,
             color: ColorKind::Sharp,
+            attacker_id: None,
             introduced_at: 0,
         };
         let (_, _, cleared) = purge_step(&mut c, 100.0);

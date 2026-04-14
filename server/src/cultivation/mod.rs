@@ -48,7 +48,7 @@ pub mod topology;
 pub mod tribulation;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, IntoSystemConfigs, Query, Update, Without,
+    Added, App, Client, Commands, Entity, IntoSystemConfigs, Query, Update, Username, Without,
 };
 
 use self::breakthrough::{breakthrough_system, BreakthroughOutcome, BreakthroughRequest};
@@ -82,6 +82,7 @@ use self::tribulation::{
     start_tribulation_system, tribulation_failure_system, tribulation_wave_system,
     InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed, TribulationWaveCleared,
 };
+use crate::player::state::canonical_player_id;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -154,9 +155,9 @@ type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
 
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<Entity, CultivationAttachFilter>,
+    joined_clients: Query<(Entity, &Username), CultivationAttachFilter>,
 ) {
-    for entity in &joined_clients {
+    for (entity, username) in &joined_clients {
         commands.entity(entity).insert((
             Cultivation::default(),
             MeridianSystem::default(),
@@ -164,11 +165,38 @@ fn attach_cultivation_to_joined_clients(
             Karma::default(),
             PracticeLog::default(),
             Contamination::default(),
-            LifeRecord::default(),
+            LifeRecord::new(canonical_player_id(username.0.as_str())),
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),
         ));
         tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::player::state::canonical_player_id;
+    use valence::prelude::App;
+    use valence::testing::create_mock_client;
+
+    #[test]
+    fn joined_clients_receive_canonical_player_character_id() {
+        let mut app = App::new();
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Alice");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let life_record = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("joined client should receive a LifeRecord");
+
+        assert_eq!(life_record.character_id, canonical_player_id("Alice"));
     }
 }
