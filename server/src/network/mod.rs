@@ -1,7 +1,7 @@
 pub mod agent_bridge;
 pub mod chat_collector;
-pub mod combat_bridge;
 pub mod client_request_handler;
+pub mod combat_bridge;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
@@ -2267,8 +2267,7 @@ mod tests {
                         .after(crate::combat::debug::tick_combat_clock),
                     crate::combat::resolve::resolve_attack_intents
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
-                    emit_gameplay_narrations
-                        .after(crate::combat::resolve::resolve_attack_intents),
+                    emit_gameplay_narrations.after(crate::combat::resolve::resolve_attack_intents),
                     emit_player_state_payloads
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     publish_world_state_to_redis
@@ -2463,15 +2462,24 @@ mod tests {
 
             let combat_events = app.world().resource::<Events<CombatEvent>>();
             let death_events = app.world().resource::<Events<DeathEvent>>();
-            assert!(!combat_events.is_empty(), "combat should emit CombatEvent via resolver");
-            assert!(!death_events.is_empty(), "lethal debug combat should emit DeathEvent");
+            assert!(
+                !combat_events.is_empty(),
+                "combat should emit CombatEvent via resolver"
+            );
+            assert!(
+                !death_events.is_empty(),
+                "lethal debug combat should emit DeathEvent"
+            );
 
             let attacker_state = app
                 .world()
                 .entity(attacker)
                 .get::<PlayerState>()
                 .expect("attacker player state should remain attached");
-            assert_eq!(attacker_state.spirit_qi, 70.0, "attacker PlayerState should not be fake-mutated");
+            assert_eq!(
+                attacker_state.spirit_qi, 70.0,
+                "attacker PlayerState should not be fake-mutated"
+            );
         }
 
         #[test]

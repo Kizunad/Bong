@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use valence::prelude::{
-    Entity, EventReader, Query, Res, ResMut, Resource, Username, With,
-};
+use valence::prelude::{Entity, EventReader, Query, Res, ResMut, Resource, Username, With};
 
-use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use crate::combat::components::Lifecycle;
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::npc::brain::canonical_npc_id;
@@ -65,7 +63,9 @@ pub fn publish_combat_realtime_events(
             cause: None,
         };
 
-        let _ = redis.tx_outbound.send(RedisOutbound::CombatRealtime(payload));
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::CombatRealtime(payload));
     }
 
     for ev in death_reader.read() {
@@ -92,7 +92,9 @@ pub fn publish_combat_realtime_events(
             cause: Some(ev.cause.clone()),
         };
 
-        let _ = redis.tx_outbound.send(RedisOutbound::CombatRealtime(payload));
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::CombatRealtime(payload));
     }
 }
 
@@ -136,7 +138,9 @@ fn publish_combat_summary_from_parts(
         combat_event_count: summary.combat_event_count,
         death_event_count: summary.death_event_count,
     };
-    let _ = redis.tx_outbound.send(RedisOutbound::CombatSummary(payload));
+    let _ = redis
+        .tx_outbound
+        .send(RedisOutbound::CombatSummary(payload));
 
     summary.window_start_tick = Some(window_end_tick.saturating_add(1));
     summary.combat_event_count = 0;
@@ -172,16 +176,14 @@ fn resolve_canonical_id(
 }
 
 fn attacker_id_from_cause(cause: &str) -> Option<String> {
-    cause
-        .split_once(':')
-        .and_then(|(_, maybe_id)| {
-            let trimmed = maybe_id.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
+    cause.split_once(':').and_then(|(_, maybe_id)| {
+        let trimmed = maybe_id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 #[cfg(test)]
@@ -213,14 +215,20 @@ mod tests {
         let (mut app, rx_outbound) = setup_app();
         app.add_systems(Update, publish_combat_realtime_events);
 
-        let attacker = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:AttackerCanonical".to_string(),
-            ..Default::default()
-        }).id();
-        let target = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:TargetCanonical".to_string(),
-            ..Default::default()
-        }).id();
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:AttackerCanonical".to_string(),
+                ..Default::default()
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:TargetCanonical".to_string(),
+                ..Default::default()
+            })
+            .id();
 
         app.world_mut().send_event(CombatEvent {
             attacker,
@@ -249,7 +257,10 @@ mod tests {
                 assert_eq!(payload.kind, CombatRealtimeKindV1::CombatEvent);
                 assert_eq!(payload.tick, 33);
                 assert_eq!(payload.target_id, "offline:TargetCanonical");
-                assert_eq!(payload.attacker_id.as_deref(), Some("offline:AttackerCanonical"));
+                assert_eq!(
+                    payload.attacker_id.as_deref(),
+                    Some("offline:AttackerCanonical")
+                );
                 assert_eq!(payload.description.as_deref(), Some("shared path hit"));
                 assert!(payload.cause.is_none());
             }
@@ -298,14 +309,20 @@ mod tests {
             ),
         );
 
-        let attacker = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:Attacker".to_string(),
-            ..Default::default()
-        }).id();
-        let target = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:Target".to_string(),
-            ..Default::default()
-        }).id();
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Attacker".to_string(),
+                ..Default::default()
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Target".to_string(),
+                ..Default::default()
+            })
+            .id();
 
         app.world_mut().send_event(CombatEvent {
             attacker,
@@ -320,14 +337,18 @@ mod tests {
         });
 
         {
-            let mut timer = app.world_mut().resource_mut::<crate::network::WorldStateTimer>();
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
             timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS - 1;
         }
 
         app.update();
 
         {
-            let mut timer = app.world_mut().resource_mut::<crate::network::WorldStateTimer>();
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
             timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS;
         }
 
@@ -340,7 +361,8 @@ mod tests {
             }
         }
 
-        let summary_payload = summary_payload.expect("summary publish should exist on 200-tick cadence");
+        let summary_payload =
+            summary_payload.expect("summary publish should exist on 200-tick cadence");
         assert_eq!(summary_payload.v, 1);
         assert_eq!(summary_payload.window_start_tick, 190);
         assert_eq!(
@@ -353,6 +375,9 @@ mod tests {
         let summary = app.world().resource::<CombatSummaryAccumulator>();
         assert_eq!(summary.combat_event_count, 0);
         assert_eq!(summary.death_event_count, 0);
-        assert_eq!(summary.window_start_tick, Some(TEST_WORLD_STATE_INTERVAL_TICKS + 1));
+        assert_eq!(
+            summary.window_start_tick,
+            Some(TEST_WORLD_STATE_INTERVAL_TICKS + 1)
+        );
     }
 }

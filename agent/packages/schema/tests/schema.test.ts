@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -9,6 +10,7 @@ import {
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,

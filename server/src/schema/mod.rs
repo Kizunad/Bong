@@ -5,9 +5,9 @@
 pub mod agent_command;
 pub mod channels;
 pub mod chat_message;
-pub mod combat_event;
 pub mod client_payload;
 pub mod client_request;
+pub mod combat_event;
 pub mod common;
 pub mod cultivation;
 pub mod inventory;

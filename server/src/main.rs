@@ -1,7 +1,7 @@
+mod combat;
 #[allow(dead_code)]
 mod cultivation;
 mod inventory;
-mod combat;
 mod network;
 mod npc;
 mod player;

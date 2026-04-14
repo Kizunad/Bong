@@ -776,37 +776,15 @@ impl LoadoutToml {
 }
 
 fn placed_item_footprints_overlap(left: &PlacedItemState, right: &PlacedItemState) -> bool {
-    footprints_overlap(
-        left.row,
-        left.col,
-        left.instance.grid_h,
-        left.instance.grid_w,
-        right.row,
-        right.col,
-        right.instance.grid_h,
-        right.instance.grid_w,
-    )
-}
+    let left_row_start = u16::from(left.row);
+    let left_row_end = left_row_start + u16::from(left.instance.grid_h);
+    let left_col_start = u16::from(left.col);
+    let left_col_end = left_col_start + u16::from(left.instance.grid_w);
 
-fn footprints_overlap(
-    left_row: u8,
-    left_col: u8,
-    left_grid_h: u8,
-    left_grid_w: u8,
-    right_row: u8,
-    right_col: u8,
-    right_grid_h: u8,
-    right_grid_w: u8,
-) -> bool {
-    let left_row_start = u16::from(left_row);
-    let left_row_end = left_row_start + u16::from(left_grid_h);
-    let left_col_start = u16::from(left_col);
-    let left_col_end = left_col_start + u16::from(left_grid_w);
-
-    let right_row_start = u16::from(right_row);
-    let right_row_end = right_row_start + u16::from(right_grid_h);
-    let right_col_start = u16::from(right_col);
-    let right_col_end = right_col_start + u16::from(right_grid_w);
+    let right_row_start = u16::from(right.row);
+    let right_row_end = right_row_start + u16::from(right.instance.grid_h);
+    let right_col_start = u16::from(right.col);
+    let right_col_end = right_col_start + u16::from(right.instance.grid_w);
 
     left_row_start < right_row_end
         && right_row_start < left_row_end

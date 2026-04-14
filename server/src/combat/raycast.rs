@@ -12,7 +12,12 @@ pub struct RaycastHit {
     pub point: DVec3,
 }
 
-pub fn raycast_aabb(origin: DVec3, direction: DVec3, max_distance: f64, aabb: Aabb) -> Option<RaycastHit> {
+pub fn raycast_aabb(
+    origin: DVec3,
+    direction: DVec3,
+    max_distance: f64,
+    aabb: Aabb,
+) -> Option<RaycastHit> {
     if max_distance <= 0.0 {
         return None;
     }
@@ -26,13 +31,19 @@ pub fn raycast_aabb(origin: DVec3, direction: DVec3, max_distance: f64, aabb: Aa
     let mut t_min = 0.0_f64;
     let mut t_max = max_distance;
 
-    if !slab_intersection(origin.x, dir.x, aabb.min.x, aabb.max.x, &mut t_min, &mut t_max) {
+    if !slab_intersection(
+        origin.x, dir.x, aabb.min.x, aabb.max.x, &mut t_min, &mut t_max,
+    ) {
         return None;
     }
-    if !slab_intersection(origin.y, dir.y, aabb.min.y, aabb.max.y, &mut t_min, &mut t_max) {
+    if !slab_intersection(
+        origin.y, dir.y, aabb.min.y, aabb.max.y, &mut t_min, &mut t_max,
+    ) {
         return None;
     }
-    if !slab_intersection(origin.z, dir.z, aabb.min.z, aabb.max.z, &mut t_min, &mut t_max) {
+    if !slab_intersection(
+        origin.z, dir.z, aabb.min.z, aabb.max.z, &mut t_min, &mut t_max,
+    ) {
         return None;
     }
 

@@ -22,6 +22,7 @@ const DEBUG_ATTACK_QI_THROUGHPUT_GAIN: f64 = 6.0;
 const DEBUG_ATTACK_CONTAMINATION_FACTOR: f64 = 0.25;
 const ENTITY_TARGET_ATTACK_HEALTH_HINT: f32 = 20.0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_intents(
     clock: Res<CombatClock>,
     mut intents: EventReader<AttackIntent>,
@@ -239,7 +240,7 @@ fn resolve_combat_actor(
     None
 }
 
-fn resolve_debug_target<'a>(
+fn resolve_debug_target(
     intent: &AttackIntent,
     action: &crate::player::gameplay::CombatAction,
     clients: &Query<
