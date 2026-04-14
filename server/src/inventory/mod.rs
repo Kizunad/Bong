@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -592,9 +592,16 @@ impl LoadoutToml {
         registry: &ItemRegistry,
     ) -> Result<LoadoutSpec, String> {
         let mut containers = Vec::new();
+        let mut seen_container_ids = HashSet::new();
         for raw_container in self.containers {
             let container_id = required_non_empty(raw_container.id, source_path, "containers.id")?;
             validate_container_id(container_id.as_str(), source_path)?;
+            if !seen_container_ids.insert(container_id.clone()) {
+                return Err(format!(
+                    "{} has duplicate container id `{container_id}` in loadout",
+                    source_path.display()
+                ));
+            }
             let container_name =
                 required_non_empty(raw_container.name, source_path, "containers.name")?;
 
@@ -660,7 +667,23 @@ impl LoadoutToml {
                     ));
                 }
 
-                items.push(PlacedItemState { row, col, instance });
+                let placed_item = PlacedItemState { row, col, instance };
+                if let Some(existing_item) = items.iter().find(|existing_item| {
+                    placed_item_footprints_overlap(existing_item, &placed_item)
+                }) {
+                    return Err(format!(
+                        "{} container `{container_id}` item `{}` at row {}, col {} overlaps existing item `{}` at row {}, col {}",
+                        source_path.display(),
+                        placed_item.instance.template_id,
+                        placed_item.row,
+                        placed_item.col,
+                        existing_item.instance.template_id,
+                        existing_item.row,
+                        existing_item.col
+                    ));
+                }
+
+                items.push(placed_item);
             }
 
             containers.push(ContainerState {
@@ -750,6 +773,45 @@ impl LoadoutToml {
             max_weight,
         })
     }
+}
+
+fn placed_item_footprints_overlap(left: &PlacedItemState, right: &PlacedItemState) -> bool {
+    footprints_overlap(
+        left.row,
+        left.col,
+        left.instance.grid_h,
+        left.instance.grid_w,
+        right.row,
+        right.col,
+        right.instance.grid_h,
+        right.instance.grid_w,
+    )
+}
+
+fn footprints_overlap(
+    left_row: u8,
+    left_col: u8,
+    left_grid_h: u8,
+    left_grid_w: u8,
+    right_row: u8,
+    right_col: u8,
+    right_grid_h: u8,
+    right_grid_w: u8,
+) -> bool {
+    let left_row_start = u16::from(left_row);
+    let left_row_end = left_row_start + u16::from(left_grid_h);
+    let left_col_start = u16::from(left_col);
+    let left_col_end = left_col_start + u16::from(left_grid_w);
+
+    let right_row_start = u16::from(right_row);
+    let right_row_end = right_row_start + u16::from(right_grid_h);
+    let right_col_start = u16::from(right_col);
+    let right_col_end = right_col_start + u16::from(right_grid_w);
+
+    left_row_start < right_row_end
+        && right_row_start < left_row_end
+        && left_col_start < right_col_end
+        && right_col_start < left_col_end
 }
 
 fn loadout_item_to_instance(
@@ -1097,6 +1159,46 @@ cols = 4
     }
 
     #[test]
+    fn loadout_rejects_duplicate_container_ids_during_parse() {
+        let registry = test_registry_from_strs(&[("starter_talisman", "启程护符")])
+            .expect("registry fixture should construct");
+
+        let loadout_toml = r#"
+[[containers]]
+id = "main_pack"
+name = "主背包"
+rows = 5
+cols = 7
+
+[[containers]]
+id = "main_pack"
+name = "备用主背包"
+rows = 4
+cols = 6
+
+[[containers]]
+id = "small_pouch"
+name = "小口袋"
+rows = 3
+cols = 3
+
+[[containers]]
+id = "front_satchel"
+name = "前挂包"
+rows = 3
+cols = 4
+"#;
+
+        let parsed: LoadoutToml =
+            toml::from_str(loadout_toml).expect("fixture TOML should parse into LoadoutToml");
+        let error = parsed
+            .try_into_loadout(Path::new("<inline-loadout.toml>"), &registry)
+            .expect_err("duplicate container id should fail during parse");
+
+        assert!(error.contains("duplicate container id `main_pack`"));
+    }
+
+    #[test]
     fn rejects_placed_item_whose_multicell_footprint_overflows_container_bounds() {
         let mut templates = HashMap::new();
         templates.insert(
@@ -1148,6 +1250,65 @@ cols = 4
             .expect_err("multi-cell footprint overflow should fail");
 
         assert!(error.contains("footprint overflows"));
+    }
+
+    #[test]
+    fn rejects_overlapping_multicell_item_footprints_within_container() {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "wide_talisman".to_string(),
+            ItemTemplate {
+                id: "wide_talisman".to_string(),
+                display_name: "阔符".to_string(),
+                category: ItemCategory::Misc,
+                grid_w: 2,
+                grid_h: 2,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: "test template".to_string(),
+                effect: None,
+            },
+        );
+        let registry = ItemRegistry { templates };
+
+        let loadout_toml = r#"
+[[containers]]
+id = "main_pack"
+name = "主背包"
+rows = 5
+cols = 7
+
+  [[containers.items]]
+  row = 0
+  col = 0
+  template_id = "wide_talisman"
+
+  [[containers.items]]
+  row = 1
+  col = 1
+  template_id = "wide_talisman"
+
+[[containers]]
+id = "small_pouch"
+name = "小口袋"
+rows = 3
+cols = 3
+
+[[containers]]
+id = "front_satchel"
+name = "前挂包"
+rows = 3
+cols = 4
+"#;
+
+        let parsed: LoadoutToml =
+            toml::from_str(loadout_toml).expect("fixture TOML should parse into LoadoutToml");
+        let error = parsed
+            .try_into_loadout(Path::new("<inline-loadout.toml>"), &registry)
+            .expect_err("overlapping multi-cell footprints should fail during parse");
+
+        assert!(error.contains("overlaps existing item `wide_talisman`"));
     }
 
     #[test]
