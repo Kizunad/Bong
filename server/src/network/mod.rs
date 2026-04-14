@@ -1,9 +1,10 @@
 pub mod agent_bridge;
 pub mod chat_collector;
-pub mod command_executor;
 pub mod client_request_handler;
+pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
+pub mod inventory_snapshot_emit;
 pub mod redis_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -150,6 +151,8 @@ pub fn register(app: &mut App) {
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
                 .after(crate::player::gameplay::apply_queued_gameplay_actions),
+            inventory_snapshot_emit::emit_join_inventory_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             cultivation_bridge::publish_breakthrough_events,
@@ -1028,7 +1031,7 @@ fn process_bridge_messages(bridge: Res<NetworkBridgeResource>, mut clients: Quer
     });
 }
 
-fn send_server_data_payload(client: &mut Client, payload: &[u8]) {
+pub(crate) fn send_server_data_payload(client: &mut Client, payload: &[u8]) {
     client.send_custom_payload(ident!("bong:server_data"), payload);
 }
 
@@ -1048,7 +1051,7 @@ fn drain_bridge_commands(bridge: &NetworkBridgeResource, mut on_heartbeat: impl 
     drained_messages
 }
 
-fn log_payload_build_error(payload_type: &str, error: &PayloadBuildError) {
+pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildError) {
     match error {
         PayloadBuildError::Json(json_error) => tracing::error!(
             "[bong][network] failed to serialize {payload_type} payload for {}: {json_error}",

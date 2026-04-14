@@ -20,6 +20,8 @@ public final class ServerDataRouter {
         PlayerStateHandler playerStateHandler = new PlayerStateHandler();
         UiOpenHandler uiOpenHandler = new UiOpenHandler();
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
+        InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
+        InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -30,6 +32,8 @@ public final class ServerDataRouter {
         handlers.put("player_state", playerStateHandler);
         handlers.put("ui_open", uiOpenHandler);
         handlers.put("cultivation_detail", cultivationDetailHandler);
+        handlers.put("inventory_snapshot", inventorySnapshotHandler);
+        handlers.put("inventory_event", inventoryEventHandler);
         return new ServerDataRouter(handlers);
     }
 

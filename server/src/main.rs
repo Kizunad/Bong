@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod cultivation;
+mod inventory;
 mod network;
 mod npc;
 mod player;
@@ -36,6 +37,7 @@ fn main() {
 
     world::register(&mut app);
     player::register(&mut app);
+    inventory::register(&mut app);
     cultivation::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);

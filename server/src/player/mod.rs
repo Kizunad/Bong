@@ -6,6 +6,7 @@ use self::state::{
     load_player_state, save_player_state, PlayerState, PlayerStateAutosaveTimer,
     PlayerStatePersistence, PLAYER_STATE_AUTOSAVE_INTERVAL_TICKS,
 };
+use crate::inventory::attach_inventory_to_joined_clients;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
@@ -41,6 +42,7 @@ pub fn register(app: &mut App) {
         (
             init_clients,
             attach_player_state_to_joined_clients.after(init_clients),
+            attach_inventory_to_joined_clients.after(attach_player_state_to_joined_clients),
             autosave_player_states,
             despawn_disconnected_clients,
         ),

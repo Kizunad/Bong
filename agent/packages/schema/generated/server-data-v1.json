@@ -18,7 +18,7 @@
           "type": "string"
         },
         "message": {
-          "maxLength": 1024,
+          "maxLength": 8192,
           "type": "string"
         }
       }
@@ -41,7 +41,7 @@
           "type": "string"
         },
         "message": {
-          "maxLength": 1024,
+          "maxLength": 8192,
           "type": "string"
         }
       }
@@ -326,6 +326,1476 @@
           "type": "string"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "realm",
+        "opened",
+        "flow_rate",
+        "flow_capacity",
+        "integrity",
+        "contamination_total"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "cultivation_detail",
+          "type": "string"
+        },
+        "realm": {
+          "type": "string"
+        },
+        "opened": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "flow_rate": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "flow_capacity": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "integrity": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          }
+        },
+        "open_progress": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          }
+        },
+        "cracks_count": {
+          "minItems": 20,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "maximum": 255,
+            "type": "integer"
+          }
+        },
+        "contamination_total": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "revision",
+        "containers",
+        "placed_items",
+        "equipped",
+        "hotbar",
+        "bone_coins",
+        "weight",
+        "realm",
+        "qi_current",
+        "qi_max",
+        "body_level"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "inventory_snapshot",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "containers": {
+          "minItems": 3,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "rows",
+              "cols"
+            ],
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "const": "main_pack",
+                    "type": "string"
+                  },
+                  {
+                    "const": "small_pouch",
+                    "type": "string"
+                  },
+                  {
+                    "const": "front_satchel",
+                    "type": "string"
+                  }
+                ]
+              },
+              "name": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "rows": {
+                "minimum": 1,
+                "maximum": 16,
+                "type": "integer"
+              },
+              "cols": {
+                "minimum": 1,
+                "maximum": 16,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "placed_items": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "container_id",
+              "row",
+              "col",
+              "item"
+            ],
+            "properties": {
+              "container_id": {
+                "anyOf": [
+                  {
+                    "const": "main_pack",
+                    "type": "string"
+                  },
+                  {
+                    "const": "small_pouch",
+                    "type": "string"
+                  },
+                  {
+                    "const": "front_satchel",
+                    "type": "string"
+                  }
+                ]
+              },
+              "row": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "col": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "item": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "instance_id",
+                  "item_id",
+                  "display_name",
+                  "grid_width",
+                  "grid_height",
+                  "weight",
+                  "rarity",
+                  "description",
+                  "stack_count",
+                  "spirit_quality",
+                  "durability"
+                ],
+                "properties": {
+                  "instance_id": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "item_id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "grid_width": {
+                    "minimum": 1,
+                    "maximum": 4,
+                    "type": "integer"
+                  },
+                  "grid_height": {
+                    "minimum": 1,
+                    "maximum": 4,
+                    "type": "integer"
+                  },
+                  "weight": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "rarity": {
+                    "anyOf": [
+                      {
+                        "const": "common",
+                        "type": "string"
+                      },
+                      {
+                        "const": "uncommon",
+                        "type": "string"
+                      },
+                      {
+                        "const": "rare",
+                        "type": "string"
+                      },
+                      {
+                        "const": "epic",
+                        "type": "string"
+                      },
+                      {
+                        "const": "legendary",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "stack_count": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "spirit_quality": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "durability": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "equipped": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "head",
+            "chest",
+            "legs",
+            "feet",
+            "main_hand",
+            "off_hand",
+            "two_hand"
+          ],
+          "properties": {
+            "head": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "chest": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "legs": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "feet": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "main_hand": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "off_hand": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "two_hand": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "instance_id",
+                    "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
+                    "stack_count",
+                    "spirit_quality",
+                    "durability"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "item_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "grid_width": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "grid_height": {
+                      "minimum": 1,
+                      "maximum": 4,
+                      "type": "integer"
+                    },
+                    "weight": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rarity": {
+                      "anyOf": [
+                        {
+                          "const": "common",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uncommon",
+                          "type": "string"
+                        },
+                        {
+                          "const": "rare",
+                          "type": "string"
+                        },
+                        {
+                          "const": "epic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legendary",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "stack_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "spirit_quality": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "durability": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "hotbar": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "instance_id",
+                  "item_id",
+                  "display_name",
+                  "grid_width",
+                  "grid_height",
+                  "weight",
+                  "rarity",
+                  "description",
+                  "stack_count",
+                  "spirit_quality",
+                  "durability"
+                ],
+                "properties": {
+                  "instance_id": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "item_id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "grid_width": {
+                    "minimum": 1,
+                    "maximum": 4,
+                    "type": "integer"
+                  },
+                  "grid_height": {
+                    "minimum": 1,
+                    "maximum": 4,
+                    "type": "integer"
+                  },
+                  "weight": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "rarity": {
+                    "anyOf": [
+                      {
+                        "const": "common",
+                        "type": "string"
+                      },
+                      {
+                        "const": "uncommon",
+                        "type": "string"
+                      },
+                      {
+                        "const": "rare",
+                        "type": "string"
+                      },
+                      {
+                        "const": "epic",
+                        "type": "string"
+                      },
+                      {
+                        "const": "legendary",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "stack_count": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "spirit_quality": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "durability": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "bone_coins": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "weight": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "current",
+            "max"
+          ],
+          "properties": {
+            "current": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "max": {
+              "minimum": 0,
+              "type": "number"
+            }
+          }
+        },
+        "realm": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "qi_current": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "qi_max": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "body_level": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "kind",
+            "revision",
+            "instance_id",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "inventory_event",
+              "type": "string"
+            },
+            "kind": {
+              "const": "moved",
+              "type": "string"
+            },
+            "revision": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance_id": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "from": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "container_id",
+                    "row",
+                    "col"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "container",
+                      "type": "string"
+                    },
+                    "container_id": {
+                      "anyOf": [
+                        {
+                          "const": "main_pack",
+                          "type": "string"
+                        },
+                        {
+                          "const": "small_pouch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "front_satchel",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "row": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "col": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "slot"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "equip",
+                      "type": "string"
+                    },
+                    "slot": {
+                      "anyOf": [
+                        {
+                          "const": "head",
+                          "type": "string"
+                        },
+                        {
+                          "const": "chest",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legs",
+                          "type": "string"
+                        },
+                        {
+                          "const": "feet",
+                          "type": "string"
+                        },
+                        {
+                          "const": "main_hand",
+                          "type": "string"
+                        },
+                        {
+                          "const": "off_hand",
+                          "type": "string"
+                        },
+                        {
+                          "const": "two_hand",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "index"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "hotbar",
+                      "type": "string"
+                    },
+                    "index": {
+                      "minimum": 0,
+                      "maximum": 8,
+                      "type": "integer"
+                    }
+                  }
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "container_id",
+                    "row",
+                    "col"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "container",
+                      "type": "string"
+                    },
+                    "container_id": {
+                      "anyOf": [
+                        {
+                          "const": "main_pack",
+                          "type": "string"
+                        },
+                        {
+                          "const": "small_pouch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "front_satchel",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "row": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "col": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "slot"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "equip",
+                      "type": "string"
+                    },
+                    "slot": {
+                      "anyOf": [
+                        {
+                          "const": "head",
+                          "type": "string"
+                        },
+                        {
+                          "const": "chest",
+                          "type": "string"
+                        },
+                        {
+                          "const": "legs",
+                          "type": "string"
+                        },
+                        {
+                          "const": "feet",
+                          "type": "string"
+                        },
+                        {
+                          "const": "main_hand",
+                          "type": "string"
+                        },
+                        {
+                          "const": "off_hand",
+                          "type": "string"
+                        },
+                        {
+                          "const": "two_hand",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "index"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "hotbar",
+                      "type": "string"
+                    },
+                    "index": {
+                      "minimum": 0,
+                      "maximum": 8,
+                      "type": "integer"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "kind",
+            "revision",
+            "instance_id",
+            "stack_count"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "inventory_event",
+              "type": "string"
+            },
+            "kind": {
+              "const": "stack_changed",
+              "type": "string"
+            },
+            "revision": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance_id": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "stack_count": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "kind",
+            "revision",
+            "instance_id",
+            "durability"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "inventory_event",
+              "type": "string"
+            },
+            "kind": {
+              "const": "durability_changed",
+              "type": "string"
+            },
+            "revision": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance_id": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "durability": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            }
+          }
+        }
+      ]
     }
   ]
 }

@@ -1,5 +1,6 @@
 package com.bong.client.state;
 
+import com.bong.client.network.ServerDataEnvelope;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,16 +43,28 @@ public class UiOpenStateTest {
 
     @Test
     void explicitDynamicXmlEnablementStillGuardsSizeAndUnknownSafeNoOps() {
-        String oversizeXml = "<" + "x".repeat(1_100) + "/>";
+        String oversizeXml = buildDynamicXmlOfSize(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1);
         UiOpenState oversize = UiOpenState.dynamicXml("cultivation_panel", oversizeXml, true);
         UiOpenState blank = UiOpenState.dynamicXml("   ", "<flow-layout/>", true);
         UiOpenState safe = UiOpenState.dynamicXml("cultivation_panel", "<flow-layout/>", true);
 
         assertTrue(oversize.isEmpty());
+        assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1, oversizeXml.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
         assertTrue(blank.isEmpty());
         assertFalse(safe.isEmpty());
         assertTrue(safe.opensDynamicXml());
         assertEquals("cultivation_panel", safe.screenId());
         assertEquals("<flow-layout/>", safe.xmlLayout().orElseThrow());
+    }
+
+    private static String buildDynamicXmlOfSize(int targetSizeBytes) {
+        String prefix = "<";
+        String suffix = "/>";
+        int bodyLength = targetSizeBytes - prefix.length() - suffix.length();
+        if (bodyLength < 0) {
+            throw new IllegalArgumentException("target size too small: " + targetSizeBytes);
+        }
+
+        return prefix + "x".repeat(bodyLength) + suffix;
     }
 }

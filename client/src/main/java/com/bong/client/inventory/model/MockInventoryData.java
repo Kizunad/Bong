@@ -5,6 +5,7 @@ public final class MockInventoryData {
 
     public static InventoryModel create() {
         return InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
             // Grid items — mixture of sizes；stack/quality/durability 用来验证 P1 UI 改造
             .gridItem(
                 InventoryItem.createFull(1, "spirit_grass", "灵草", 1, 1, 0.5, "common",
@@ -35,16 +36,16 @@ public final class MockInventoryData {
             )
             .gridItem(
                 InventoryItem.create("spirit_wood", "灵木", 1, 1, 2.0, "common", "蕴含微量灵气的木材"),
-                3, 4
+                InventoryModel.SMALL_POUCH_CONTAINER_ID, 0, 0
             )
             .gridItem(
                 InventoryItem.create("zhenyuan_mine", "真元诡雷", 2, 1, 1.5, "uncommon", "以真元驱动的陷阱，触之即爆"),
-                4, 5
+                InventoryModel.FRONT_SATCHEL_CONTAINER_ID, 1, 1
             )
             .gridItem(
                 InventoryItem.createFull(4, "rat_tail", "噬元鼠尾", 1, 1, 0.4, "common",
                     "噬元鼠的膨胀尾巴，可做炼器辅材", 7, 0.62, 1.0),
-                3, 5
+                InventoryModel.FRONT_SATCHEL_CONTAINER_ID, 0, 0
             )
             // Equipment
             .equip(EquipSlotType.HEAD,

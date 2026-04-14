@@ -189,19 +189,34 @@ describe("client payload schema rejects invalid data", () => {
     expectInvalidClientPayload(data);
   });
 
-  it("rejects serialized payloads over 1024 bytes", () => {
+  it("rejects payloads whose serialized form exceeds the shared byte budget", () => {
     const data = loadSampleObject("client-payload-event-alert.sample.json");
     const eventAlert = expectObject(data.event_alert);
+    const oversizedDetail = "x".repeat(MAX_PAYLOAD_BYTES + 1);
+    const oversizedPayload = Object.assign(
+      Object.create({
+        toJSON() {
+          return {
+            ...data,
+            event_alert: {
+              ...eventAlert,
+              detail: oversizedDetail,
+            },
+          };
+        },
+      }),
+      data,
+    );
 
-    eventAlert.title = "天道预警".repeat(10);
-    eventAlert.detail = "x".repeat(900);
-    eventAlert.zone = "blood_valley".repeat(5);
+    const rawValidation = validate(ClientPayloadV1, oversizedPayload);
 
-    const byteLength = rootGetClientPayloadByteLength(data);
+    expect(rawValidation.ok, rawValidation.errors.join("; ")).toBe(true);
+
+    const byteLength = rootGetClientPayloadByteLength(oversizedPayload);
 
     expect(byteLength).toBeGreaterThan(MAX_PAYLOAD_BYTES);
 
-    const errors = expectInvalidClientPayload(data);
+    const errors = expectInvalidClientPayload(oversizedPayload);
 
     expect(errors[0]).toContain(`serialized payload exceeds ${MAX_PAYLOAD_BYTES} bytes`);
   });

@@ -18,6 +18,7 @@ import {
   SPIRIT_QI_TOTAL,
 } from "../src/common.js";
 import * as SchemaPackage from "../src/index.js";
+import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
   NarrationV1,
   validateNarrationV1Contract,
@@ -101,6 +102,30 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("inventory-snapshot.sample.json", () => {
+    const data = loadSample("inventory-snapshot.sample.json");
+    const result = validate(InventorySnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("inventory-snapshot.sample.json keeps a non-mock sentinel item id", () => {
+    const data = loadObjectSample("inventory-snapshot.sample.json");
+    const placedItems = asArray(data.placed_items);
+    const itemIds = placedItems.map((entry) => {
+      const placedItem = asObject(entry);
+      const item = asObject(placedItem.item);
+      return item.item_id;
+    });
+
+    expect(itemIds).toContain("starter_talisman");
+  });
+
+  it("inventory-event.sample.json", () => {
+    const data = loadSample("inventory-event.sample.json");
+    const result = validate(InventoryEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.welcome.sample.json", () => {
     const data = loadSample("server-data.welcome.sample.json");
     const result = validate(ServerDataV1, data);
@@ -142,6 +167,18 @@ describe("sample files pass schema validation", () => {
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  it("server-data.inventory-snapshot.sample.json", () => {
+    const data = loadSample("server-data.inventory-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.inventory-event.sample.json", () => {
+    const data = loadSample("server-data.inventory-event.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 });
 
 describe("negative sample files fail schema validation", () => {
@@ -166,6 +203,12 @@ describe("negative sample files fail schema validation", () => {
   it("chat-message.invalid-extra-top-level-field.sample.json", () => {
     const data = loadSample("chat-message.invalid-extra-top-level-field.sample.json");
     const result = validate(ChatMessageV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("inventory-event.invalid-unknown-kind.sample.json", () => {
+    const data = loadSample("inventory-event.invalid-unknown-kind.sample.json");
+    const result = validate(InventoryEventV1, data);
     expect(result.ok).toBe(false);
   });
 

@@ -22,6 +22,7 @@ import {
 } from "./client-request.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { ForgeEventV1 } from "./forge-event.js";
+import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import { NarrationV1 } from "./narration.js";
@@ -34,6 +35,8 @@ export const SCHEMA_REGISTRY = {
   narrationV1: NarrationV1,
   chatMessageV1: ChatMessageV1,
   chatSignal: ChatSignal,
+  inventorySnapshotV1: InventorySnapshotV1,
+  inventoryEventV1: InventoryEventV1,
   serverDataV1: ServerDataV1,
   clientPayloadV1: ClientPayloadV1,
   clientPayloadWelcomeV1: WelcomePayloadV1,
@@ -61,6 +64,8 @@ export const GENERATED_SCHEMA_FILES = {
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,
+  "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
+  "inventory-event-v1.json": SCHEMA_REGISTRY.inventoryEventV1,
   "server-data-v1.json": SCHEMA_REGISTRY.serverDataV1,
   "client-payload-v1.json": SCHEMA_REGISTRY.clientPayloadV1,
   "client-payload-welcome-v1.json": SCHEMA_REGISTRY.clientPayloadWelcomeV1,

@@ -15,17 +15,25 @@ public class BackpackGridPanel {
 
     private final int rows;
     private final int cols;
+    private final String containerId;
     private final GridSlotComponent[][] slots;
     private final InventoryItem[][] occupied;
     private final FlowLayout container;
 
     public BackpackGridPanel() {
-        this(DEFAULT_ROWS, DEFAULT_COLS);
+        this(InventoryModel.PRIMARY_CONTAINER_ID, DEFAULT_ROWS, DEFAULT_COLS);
     }
 
     public BackpackGridPanel(int rows, int cols) {
+        this(InventoryModel.PRIMARY_CONTAINER_ID, rows, cols);
+    }
+
+    public BackpackGridPanel(String containerId, int rows, int cols) {
         this.rows = rows;
         this.cols = cols;
+        this.containerId = containerId == null || containerId.isBlank()
+            ? InventoryModel.PRIMARY_CONTAINER_ID
+            : containerId;
         this.slots = new GridSlotComponent[rows][cols];
         this.occupied = new InventoryItem[rows][cols];
 
@@ -54,6 +62,7 @@ public class BackpackGridPanel {
 
     public int rows() { return rows; }
     public int cols() { return cols; }
+    public String containerId() { return containerId; }
     public FlowLayout container() { return container; }
 
     public GridSlotComponent slotAt(int row, int col) {
@@ -128,6 +137,9 @@ public class BackpackGridPanel {
     public void populateFromModel(InventoryModel model) {
         clearAll();
         for (InventoryModel.GridEntry entry : model.gridItems()) {
+            if (!containerId.equals(entry.containerId())) {
+                continue;
+            }
             place(entry.item(), entry.row(), entry.col());
         }
     }
@@ -182,7 +194,7 @@ public class BackpackGridPanel {
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 if (occupied[r][c] != null && slots[r][c].isAnchor()) {
-                    entries.add(new InventoryModel.GridEntry(occupied[r][c], r, c));
+                    entries.add(new InventoryModel.GridEntry(occupied[r][c], containerId, r, c));
                 }
             }
         }

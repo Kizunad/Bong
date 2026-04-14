@@ -9,6 +9,7 @@ pub mod client_payload;
 pub mod client_request;
 pub mod common;
 pub mod cultivation;
+pub mod inventory;
 pub mod narration;
 pub mod server_data;
 pub mod world_state;

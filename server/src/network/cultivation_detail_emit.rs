@@ -22,19 +22,18 @@ pub struct CultivationDetailEmitState {
     last_emit_tick: u64,
 }
 
+type CultivationDetailEmitQueryItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a MeridianSystem,
+    &'a Cultivation,
+    Option<&'a Contamination>,
+);
+
 pub fn emit_cultivation_detail_payloads(
     clock: Res<CultivationClock>,
     mut state: ResMut<CultivationDetailEmitState>,
-    mut clients: Query<
-        (
-            Entity,
-            &mut Client,
-            &MeridianSystem,
-            &Cultivation,
-            Option<&Contamination>,
-        ),
-        With<Client>,
-    >,
+    mut clients: Query<CultivationDetailEmitQueryItem<'_>, With<Client>>,
 ) {
     if clock.tick.saturating_sub(state.last_emit_tick) < EMIT_INTERVAL_TICKS {
         return;
