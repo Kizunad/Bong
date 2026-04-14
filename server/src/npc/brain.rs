@@ -4,13 +4,14 @@ use big_brain::prelude::{
 use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, IntoSystemConfigs, Position,
-    PreUpdate, Query, Res, Resource, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventReader, EventWriter,
+    IntoSystemConfigs, Position, PreUpdate, Query, Res, Resource, With, Without,
 };
 
+use crate::combat::events::AttackIntent;
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
-    MovementCooldowns, MovementMode, PendingKnockback,
+    MovementCooldowns, MovementMode,
 };
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -505,8 +506,7 @@ fn melee_range_scorer_system(
 fn melee_attack_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<MeleeAttackAction>>,
     mut npcs: Query<(&Position, &mut NpcBlackboard, &mut Navigator), With<NpcMarker>>,
-    all_positions: Query<&Position>,
-    mut commands: Commands,
+    mut attack_intents: EventWriter<AttackIntent>,
     game_tick: Option<Res<GameTick>>,
 ) {
     let tick = game_tick.map(|t| t.0).unwrap_or(0);
@@ -520,7 +520,7 @@ fn melee_attack_action_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok((npc_pos, mut bb, _)) = npcs.get_mut(*actor) else {
+                let Ok((_npc_pos, mut bb, _)) = npcs.get_mut(*actor) else {
                     continue;
                 };
 
@@ -529,16 +529,19 @@ fn melee_attack_action_system(
                     continue;
                 }
 
-                // Attack on cooldown — apply knockback to target.
+                // Attack on cooldown — emit AttackIntent into shared combat resolver.
                 if tick.wrapping_sub(bb.last_melee_tick) >= MELEE_ATTACK_COOLDOWN_TICKS {
                     bb.last_melee_tick = tick;
 
                     if let Some(target_entity) = bb.nearest_player {
-                        if let Ok(target_pos) = all_positions.get(target_entity) {
-                            let dir = target_pos.get() - npc_pos.get();
-                            commands
-                                .entity(target_entity)
-                                .insert(PendingKnockback { direction: dir });
+                        if target_entity != *actor {
+                            attack_intents.send(AttackIntent {
+                                attacker: *actor,
+                                target: Some(target_entity),
+                                issued_at_tick: u64::from(tick),
+                                reach: MELEE_RANGE,
+                                debug_command: None,
+                            });
                         }
                     }
                 }
@@ -679,6 +682,7 @@ fn dash_action_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::events::AttackIntent;
     use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
     use crate::npc::navigator::Navigator;
     use crate::npc::patrol::NpcPatrol;
@@ -686,6 +690,18 @@ mod tests {
     use bevy_transform::components::Transform;
     use big_brain::prelude::{FirstToScore, Thinker};
     use valence::prelude::{App, Position};
+
+    #[derive(Default)]
+    struct CapturedAttackIntents(Vec<AttackIntent>);
+
+    impl valence::prelude::Resource for CapturedAttackIntents {}
+
+    fn capture_attack_intents(
+        mut events: EventReader<AttackIntent>,
+        mut captured: valence::prelude::ResMut<CapturedAttackIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
 
     #[test]
     fn player_proximity_scorer_thresholds() {
@@ -844,6 +860,112 @@ mod tests {
         assert!(
             blackboard.player_distance.is_infinite(),
             "without players, distance must remain infinity"
+        );
+    }
+
+    #[test]
+    fn melee_attack_action_bridges_to_attack_intent_without_knockback_side_path() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(120));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                Navigator::new(),
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        app.update();
+        app.update();
+
+        let action_state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .expect("melee action entity should still exist");
+        assert_eq!(*action_state, ActionState::Executing);
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert_eq!(captured.len(), 1, "melee cooldown should emit one AttackIntent");
+        assert_eq!(captured[0].attacker, npc);
+        assert_eq!(captured[0].target, Some(target));
+        assert_eq!(captured[0].reach, MELEE_RANGE);
+        assert_eq!(captured[0].debug_command, None);
+
+        assert!(
+            app.world().get::<crate::npc::movement::PendingKnockback>(target).is_none(),
+            "melee bridge should not rely on PendingKnockback as primary damage path"
+        );
+    }
+
+    #[test]
+    fn melee_attack_action_same_tick_does_not_emit_duplicate_attack_intents() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(240));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                Navigator::new(),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested));
+
+        app.update();
+        app.update();
+        app.update();
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert_eq!(
+            captured.len(),
+            1,
+            "same GameTick should not produce duplicate melee AttackIntent"
         );
     }
 

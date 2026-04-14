@@ -55,8 +55,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("player_state"),
   Type.Literal("ui_open"),
   Type.Literal("cultivation_detail"),
-  Type.Literal("inventory_snapshot"),
   Type.Literal("inventory_event"),
+  Type.Literal("inventory_snapshot"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 

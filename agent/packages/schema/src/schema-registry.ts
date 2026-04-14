@@ -20,6 +20,7 @@ import {
   InsightDecisionRequestV1,
   SetMeridianTargetRequestV1,
 } from "./client-request.js";
+import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { ForgeEventV1 } from "./forge-event.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
@@ -51,6 +52,8 @@ export const SCHEMA_REGISTRY = {
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
+  combatRealtimeEventV1: CombatRealtimeEventV1,
+  combatSummaryV1: CombatSummaryV1,
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
@@ -80,6 +83,8 @@ export const GENERATED_SCHEMA_FILES = {
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
+  "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
+  "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,

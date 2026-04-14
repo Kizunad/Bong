@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "kind": "combat_event",
+  "tick": 84011,
+  "target_id": "offline:Crimson",
+  "attacker_id": "offline:Azure",
+  "description": "debug_attack_intent offline:Azure -> offline:Crimson dealt 20.0 damage"
+}
