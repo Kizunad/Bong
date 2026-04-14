@@ -1,28 +1,25 @@
 use std::collections::{HashMap, VecDeque};
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
-    App, Client, Entity, IntoSystemConfigs, ParamSet, Position, Query, Res, ResMut, Resource,
-    Update, Username, With,
+    App, Client, Entity, EventWriter, IntoSystemConfigs, ParamSet, Position, Query, Res, ResMut,
+    Resource, Update, Username, With,
 };
 
 use super::state::{canonical_player_id, PlayerState};
+use crate::combat::{debug::enqueue_debug_attack_intent, events::AttackIntent};
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-const COMBAT_DAMAGE_DEALT: f64 = 24.0;
-const COMBAT_DAMAGE_TAKEN: f64 = 18.0;
-const COMBAT_SPIRIT_QI_COST: f64 = 8.0;
-const COMBAT_EXPERIENCE_REWARD: u64 = 120;
-const COMBAT_INVENTORY_REWARD: f64 = 0.05;
 const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
 const GATHER_EXPERIENCE_REWARD: u64 = 90;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
-const LOW_SPIRIT_QI_WARNING_RATIO: f64 = 0.25;
+const DEBUG_COMBAT_REACH: f32 = 3.5;
 
 const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
     BreakthroughRule {
@@ -52,7 +49,7 @@ const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
 ];
 
 #[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CombatAction {
     pub target: String,
     pub target_health: f64,
@@ -168,6 +165,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     zone_registry: Option<Res<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
+    mut attack_intents: EventWriter<AttackIntent>,
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
@@ -183,9 +181,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                     player_matches_request(request.player.as_str(), username.0.as_str()).then(
                         || {
                             let validation = match &request.action {
-                                GameplayAction::Combat(action) => {
-                                    combat_rejection_message(action).map_or(Ok(None), Err)
-                                }
+                                GameplayAction::Combat(_) => Ok(None),
                                 GameplayAction::Gather(_) => Ok(None),
                                 GameplayAction::AttemptBreakthrough => {
                                     validate_breakthrough(player_state).map(Some)
@@ -219,110 +215,69 @@ pub(crate) fn apply_queued_gameplay_actions(
                 NarrationStyle::SystemWarning,
             ),
             Ok(rule) => {
-                let mut mutable_players = player_sets.p1();
-                let mut player_state = mutable_players
-                    .get_mut(player_entity)
-                    .expect("validated gameplay target should still have mutable PlayerState");
                 let event_tick = gameplay_tick.tick;
 
                 match request.action {
-                    GameplayAction::Combat(action) => apply_combat_action(
-                        canonical_player.as_str(),
-                        zone_name.as_str(),
+                    GameplayAction::Combat(action) => bridge_debug_combat_action(
+                        player_entity,
                         event_tick,
-                        &action,
-                        &mut player_state,
-                        active_events.as_deref_mut(),
-                        &mut pending_narrations,
+                        action,
+                        &mut attack_intents,
                     ),
-                    GameplayAction::Gather(action) => apply_gather_action(
-                        canonical_player.as_str(),
-                        zone_name.as_str(),
-                        event_tick,
-                        &action,
-                        &mut player_state,
-                        active_events.as_deref_mut(),
-                        &mut pending_narrations,
-                    ),
-                    GameplayAction::AttemptBreakthrough => apply_breakthrough_action(
-                        canonical_player.as_str(),
-                        zone_name.as_str(),
-                        event_tick,
-                        rule.expect("breakthrough action should carry a rule after validation"),
-                        &mut player_state,
-                        active_events.as_deref_mut(),
-                        &mut pending_narrations,
-                    ),
+                    GameplayAction::Gather(action) => {
+                        let mut mutable_players = player_sets.p1();
+                        let mut player_state = mutable_players.get_mut(player_entity).expect(
+                            "validated gameplay target should still have mutable PlayerState",
+                        );
+
+                        apply_gather_action(
+                            canonical_player.as_str(),
+                            zone_name.as_str(),
+                            event_tick,
+                            &action,
+                            &mut player_state,
+                            active_events.as_deref_mut(),
+                            &mut pending_narrations,
+                        )
+                    }
+                    GameplayAction::AttemptBreakthrough => {
+                        let mut mutable_players = player_sets.p1();
+                        let mut player_state = mutable_players.get_mut(player_entity).expect(
+                            "validated gameplay target should still have mutable PlayerState",
+                        );
+
+                        apply_breakthrough_action(
+                            canonical_player.as_str(),
+                            zone_name.as_str(),
+                            event_tick,
+                            rule.expect("breakthrough action should carry a rule after validation"),
+                            &mut player_state,
+                            active_events.as_deref_mut(),
+                            &mut pending_narrations,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-fn combat_rejection_message(action: &CombatAction) -> Option<String> {
-    (action.target.trim().is_empty() || action.target_health <= 0.0).then(|| {
-        format!(
-            "{} 已无可战之机，你收住了攻势。",
-            empty_target_fallback(action.target.as_str())
-        )
-    })
-}
-
-fn apply_combat_action(
-    canonical_player: &str,
-    zone_name: &str,
+fn bridge_debug_combat_action(
+    attacker: Entity,
     event_tick: u64,
-    action: &CombatAction,
-    player_state: &mut PlayerState,
-    active_events: Option<&mut ActiveEventsResource>,
-    pending_narrations: &mut PendingGameplayNarrations,
+    action: CombatAction,
+    attack_intents: &mut EventWriter<AttackIntent>,
 ) {
-    player_state.spirit_qi = (player_state.spirit_qi - COMBAT_DAMAGE_TAKEN - COMBAT_SPIRIT_QI_COST)
-        .clamp(0.0, player_state.spirit_qi_max);
-    player_state.experience = player_state
-        .experience
-        .saturating_add(COMBAT_EXPERIENCE_REWARD);
-    player_state.inventory_score =
-        (player_state.inventory_score + COMBAT_INVENTORY_REWARD).clamp(0.0, 1.0);
-
-    if let Some(active_events) = active_events {
-        active_events.record_recent_event(GameEvent {
-            event_type: GameEventType::PlayerKillNpc,
-            tick: event_tick,
-            player: Some(canonical_player.to_string()),
-            target: Some(action.target.clone()),
-            zone: Some(zone_name.to_string()),
-            details: Some(HashMap::from([
-                ("action".to_string(), json!("combat")),
-                ("damage_dealt".to_string(), json!(COMBAT_DAMAGE_DEALT)),
-                (
-                    "damage_taken".to_string(),
-                    json!(COMBAT_DAMAGE_TAKEN + COMBAT_SPIRIT_QI_COST),
-                ),
-                (
-                    "experience_gain".to_string(),
-                    json!(COMBAT_EXPERIENCE_REWARD),
-                ),
-            ])),
-        });
-    }
-
-    pending_narrations.push_player(
-        canonical_player,
-        format!("你击溃了 {}，余势仍震得经脉作痛。", action.target),
-        NarrationStyle::Perception,
+    enqueue_debug_attack_intent(
+        attack_intents,
+        AttackIntent {
+            attacker,
+            target: None,
+            issued_at_tick: event_tick,
+            reach: DEBUG_COMBAT_REACH,
+            debug_command: Some(action),
+        },
     );
-
-    if spirit_qi_ratio(player_state) <= LOW_SPIRIT_QI_WARNING_RATIO {
-        pending_narrations.push_player(
-            canonical_player,
-            format!(
-                "你在与 {} 的交锋中受创，灵息跌至 {:.0}/{:.0}。",
-                action.target, player_state.spirit_qi, player_state.spirit_qi_max
-            ),
-            NarrationStyle::SystemWarning,
-        );
-    }
 }
 
 fn apply_gather_action(
@@ -498,10 +453,88 @@ fn empty_target_fallback(value: &str) -> &str {
     }
 }
 
-fn spirit_qi_ratio(player_state: &PlayerState) -> f64 {
-    if player_state.spirit_qi_max <= 0.0 {
-        0.0
-    } else {
-        (player_state.spirit_qi / player_state.spirit_qi_max).clamp(0.0, 1.0)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use valence::prelude::{App, EventReader, Position, ResMut, Update};
+    use valence::testing::create_mock_client;
+
+    struct CapturedAttackIntents(Vec<AttackIntent>);
+
+    impl Default for CapturedAttackIntents {
+        fn default() -> Self {
+            Self(Vec::new())
+        }
+    }
+
+    impl valence::prelude::Resource for CapturedAttackIntents {}
+
+    fn capture_attack_intents(
+        mut events: EventReader<AttackIntent>,
+        mut captured: ResMut<CapturedAttackIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    #[test]
+    fn combat_actions_bridge_to_attack_intent_without_mutating_player_state() {
+        let mut app = App::new();
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(GameplayTick::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            Update,
+            (
+                apply_queued_gameplay_actions,
+                capture_attack_intents.after(apply_queued_gameplay_actions),
+            ),
+        );
+
+        let initial_state = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 70.0,
+            spirit_qi_max: 100.0,
+            karma: 0.05,
+            experience: 200,
+            inventory_score: 0.10,
+        };
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn((client_bundle, initial_state.clone())).id();
+
+        app.world_mut().resource_mut::<GameplayActionQueue>().enqueue(
+            "offline:Azure",
+            GameplayAction::Combat(CombatAction {
+                target: "Crimson".to_string(),
+                target_health: 18.0,
+            }),
+        );
+
+        app.update();
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert_eq!(captured.len(), 1, "combat queue should bridge into AttackIntent");
+        assert_eq!(captured[0].attacker, entity);
+        assert_eq!(captured[0].target, None);
+        assert_eq!(captured[0].issued_at_tick, 1);
+        assert!((captured[0].reach - DEBUG_COMBAT_REACH).abs() < f32::EPSILON);
+        assert_eq!(
+            captured[0].debug_command,
+            Some(CombatAction {
+                target: "Crimson".to_string(),
+                target_health: 18.0,
+            })
+        );
+
+        let player_state = app
+            .world()
+            .entity(entity)
+            .get::<PlayerState>()
+            .expect("player state should remain attached after bridge");
+        assert_eq!(player_state, &initial_state);
     }
 }

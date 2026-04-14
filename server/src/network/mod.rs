@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod chat_collector;
+pub mod combat_bridge;
 pub mod command_executor;
 pub mod client_request_handler;
 pub mod cultivation_bridge;
@@ -138,6 +139,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
     app.insert_resource(NarrationDedupeResource::default());
+    app.insert_resource(combat_bridge::CombatSummaryAccumulator::default());
 
     app.add_systems(
         Update,
@@ -152,6 +154,9 @@ pub fn register(app: &mut App) {
                 .after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
+            combat_bridge::publish_combat_realtime_events
+                .after(crate::combat::resolve::resolve_attack_intents),
+            combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
             cultivation_bridge::publish_breakthrough_events,
             cultivation_bridge::publish_forge_events,
             cultivation_bridge::publish_cultivation_death_events,
@@ -2214,12 +2219,19 @@ mod tests {
 
     mod gameplay_tests {
         use super::*;
+        use crate::combat::{
+            components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds},
+            events::{AttackIntent, CombatEvent, DeathEvent},
+            CombatClock,
+        };
+        use crate::cultivation::components::{Contamination, MeridianId, MeridianSystem};
         use crate::player::gameplay::{
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
         };
         use crate::world::events::ActiveEventsResource;
         use crossbeam_channel::{unbounded, Receiver};
+        use valence::prelude::Events;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
@@ -2240,16 +2252,24 @@ mod tests {
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(PendingGameplayNarrations::default());
             app.insert_resource(GameplayTick::default());
+            app.insert_resource(CombatClock::default());
+            app.add_event::<AttackIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
             app.add_systems(
                 Update,
                 (
-                    crate::player::gameplay::apply_queued_gameplay_actions,
-                    emit_gameplay_narrations
+                    crate::combat::debug::tick_combat_clock,
+                    crate::player::gameplay::apply_queued_gameplay_actions
+                        .after(crate::combat::debug::tick_combat_clock),
+                    crate::combat::resolve::resolve_attack_intents
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                    emit_gameplay_narrations
+                        .after(crate::combat::resolve::resolve_attack_intents),
                     emit_player_state_payloads
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     publish_world_state_to_redis
-                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                        .after(crate::combat::resolve::resolve_attack_intents),
                 ),
             );
 
@@ -2264,7 +2284,23 @@ mod tests {
         ) -> (Entity, MockClientHelper) {
             let (mut client_bundle, helper) = create_mock_client(username);
             client_bundle.player.position = Position::new(position);
-            let entity = app.world_mut().spawn((client_bundle, player_state)).id();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    player_state,
+                    Wounds::default(),
+                    Stamina::default(),
+                    CombatState::default(),
+                    DerivedAttrs::default(),
+                    Lifecycle {
+                        character_id: canonical_player_id(username),
+                        ..Default::default()
+                    },
+                    Contamination::default(),
+                    MeridianSystem::default(),
+                ))
+                .id();
             (entity, helper)
         }
 
@@ -2326,9 +2362,9 @@ mod tests {
         }
 
         #[test]
-        fn combat_updates_player_state() {
+        fn combat_routes_debug_attack_through_resolver() {
             let (mut app, rx_outbound) = setup_gameplay_app();
-            let (entity, mut helper) = spawn_test_client_with_state(
+            let (attacker, _attacker_helper) = spawn_test_client_with_state(
                 &mut app,
                 "Azure",
                 [8.0, 66.0, 8.0],
@@ -2341,13 +2377,37 @@ mod tests {
                     inventory_score: 0.10,
                 },
             );
+            let (target, _target_helper) = spawn_test_client_with_state(
+                &mut app,
+                "Crimson",
+                [10.0, 66.0, 8.0],
+                PlayerState {
+                    realm: "qi_refining_1".to_string(),
+                    spirit_qi: 65.0,
+                    spirit_qi_max: 100.0,
+                    karma: 0.0,
+                    experience: 80,
+                    inventory_score: 0.05,
+                },
+            );
+
+            let mut target_meridians = MeridianSystem::default();
+            target_meridians.get_mut(MeridianId::Lung).opened = true;
+            app.world_mut().entity_mut(target).insert((
+                Wounds {
+                    entries: Vec::new(),
+                    health_current: 8.0,
+                    health_max: 100.0,
+                },
+                target_meridians,
+            ));
 
             app.world_mut()
                 .resource_mut::<GameplayActionQueue>()
                 .enqueue(
                     "Azure",
                     GameplayAction::Combat(CombatAction {
-                        target: "rogue_boar".to_string(),
+                        target: "Crimson".to_string(),
                         target_health: 40.0,
                     }),
                 );
@@ -2355,102 +2415,60 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_server_data_payloads(&mut helper);
-            let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
-            let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(
-                player_state_payloads.len(),
-                1,
-                "combat should emit one player_state payload"
-            );
-            assert_eq!(
-                narration_payloads.len(),
-                1,
-                "combat should emit one narration payload"
-            );
-
-            match &player_state_payloads[0].payload {
-                ServerDataPayloadV1::PlayerState {
-                    realm,
-                    spirit_qi,
-                    player,
-                    ..
-                } => {
-                    assert_eq!(player.as_deref(), Some("offline:Azure"));
-                    assert_eq!(realm, "qi_refining_1");
-                    assert_eq!(*spirit_qi, 44.0);
-                }
-                other => panic!("expected player_state payload, got {other:?}"),
-            }
-
-            match &narration_payloads[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(narrations.len(), 1);
-                    assert_eq!(
-                        narrations[0].style,
-                        crate::schema::common::NarrationStyle::Perception
-                    );
-                    assert!(narrations[0].text.contains("rogue_boar"));
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
             let world_state = dequeue_world_state(&rx_outbound);
             assert_eq!(world_state.recent_events.len(), 1);
             assert_eq!(
                 world_state.recent_events[0].event_type,
-                crate::schema::common::GameEventType::PlayerKillNpc
+                crate::schema::common::GameEventType::EventTriggered
             );
+
+            let expected_target_id = canonical_player_id("Crimson");
             assert_eq!(
                 world_state.recent_events[0].target.as_deref(),
-                Some("rogue_boar")
+                Some(expected_target_id.as_str())
             );
 
             {
                 let world = app.world_mut();
-                let player_state = world
-                    .entity(entity)
-                    .get::<PlayerState>()
-                    .expect("player state should remain attached after combat");
-                assert_eq!(player_state.spirit_qi, 44.0);
-                assert_eq!(player_state.experience, 320);
-                assert_approx_eq(player_state.inventory_score, 0.15);
+                let wounds = world
+                    .entity(target)
+                    .get::<Wounds>()
+                    .expect("target should keep combat wounds after resolver");
+                let stamina = world
+                    .entity(target)
+                    .get::<Stamina>()
+                    .expect("target should keep stamina after resolver");
+                let contamination = world
+                    .entity(target)
+                    .get::<Contamination>()
+                    .expect("target should keep contamination after resolver");
+                let meridians = world
+                    .entity(target)
+                    .get::<MeridianSystem>()
+                    .expect("target should keep meridians after resolver");
+
+                assert!(wounds.health_current <= 0.0);
+                assert_eq!(wounds.entries.len(), 1);
+                assert!(stamina.current < stamina.max);
+                let expected_attacker_id = canonical_player_id("Azure");
+                assert_eq!(
+                    contamination.entries[0].attacker_id.as_deref(),
+                    Some(expected_attacker_id.as_str())
+                );
+                assert!(meridians.get(MeridianId::Lung).throughput_current > 0.0);
             }
 
-            app.world_mut()
-                .resource_mut::<GameplayActionQueue>()
-                .enqueue(
-                    "offline:Azure",
-                    GameplayAction::Combat(CombatAction {
-                        target: "fallen_bandit".to_string(),
-                        target_health: 0.0,
-                    }),
-                );
+            let combat_events = app.world().resource::<Events<CombatEvent>>();
+            let death_events = app.world().resource::<Events<DeathEvent>>();
+            assert!(!combat_events.is_empty(), "combat should emit CombatEvent via resolver");
+            assert!(!death_events.is_empty(), "lethal debug combat should emit DeathEvent");
 
-            app.update();
-            flush_all_client_packets(&mut app);
-
-            let invalid_payloads = collect_server_data_payloads(&mut helper);
-            assert!(
-                extract_player_state_payloads(invalid_payloads.as_slice()).is_empty(),
-                "dead target rejection should not emit a new player_state payload"
-            );
-            let invalid_narrations = extract_narration_payloads(invalid_payloads.as_slice());
-            assert_eq!(
-                invalid_narrations.len(),
-                1,
-                "dead target rejection should narrate safe rejection"
-            );
-
-            let recent_events = app
+            let attacker_state = app
                 .world()
-                .resource::<ActiveEventsResource>()
-                .recent_events_snapshot();
-            assert_eq!(
-                recent_events.len(),
-                1,
-                "dead target rejection must not append a gameplay event"
-            );
+                .entity(attacker)
+                .get::<PlayerState>()
+                .expect("attacker player state should remain attached");
+            assert_eq!(attacker_state.spirit_qi, 70.0, "attacker PlayerState should not be fake-mutated");
         }
 
         #[test]

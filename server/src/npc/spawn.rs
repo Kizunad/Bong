@@ -6,7 +6,9 @@ use valence::prelude::{
     EntityLayerId, IntoSystemConfigs, Position, PostStartup, Query, With,
 };
 
-use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
+use crate::combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds};
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+use crate::npc::brain::{canonical_npc_id, FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -71,7 +73,7 @@ fn spawn_single_zombie_npc_on_startup(
 }
 
 fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             ZombieEntityBundle {
                 kind: EntityKind::ZOMBIE,
@@ -105,7 +107,28 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
                 })
                 .when(PlayerProximityScorer, FleeAction),
         ))
-        .id()
+        .id();
+
+    commands.entity(entity).insert((
+        Cultivation::default(),
+        MeridianSystem::default(),
+        Contamination::default(),
+        Wounds::default(),
+        Stamina::default(),
+        CombatState::default(),
+        DerivedAttrs::default(),
+        Lifecycle {
+            character_id: canonical_npc_id(entity),
+            ..Default::default()
+        },
+    ));
+
+    entity
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_test_npc_runtime_shape(commands: &mut Commands, layer: Entity) -> Entity {
+    spawn_single_zombie_npc(commands, layer)
 }
 
 fn log_npc_marker_count(query: Query<Entity, With<NpcMarker>>) {

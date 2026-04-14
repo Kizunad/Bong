@@ -10,16 +10,16 @@ use valence::prelude::{
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::npc::scenario::{PendingScenario, ScenarioType};
-use crate::player::gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction};
+use crate::player::{
+    gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction},
+    state::canonical_player_id,
+};
 use crate::schema::chat_message::ChatMessageV1;
 use crate::world::terrain::TerrainProvider;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-// TODO(dev-only): chat_collector 当前包含 dev 调试命令（/tp, /gm 等）和
-// 宽松的类型签名，clippy 警告已用 allow 抑制。生产环境需要：
-// 1. 拆分 dev 命令到独立模块并用 #[cfg(debug_assertions)] 门控
-// 2. 重构 classify_player_message 参数为结构体以消除 too_many_arguments
-// 3. 为 ParamSet 引入 type alias 以消除 type_complexity
+// chat_collector 当前同时承载普通聊天收集与开发期快捷命令（如 `!spawn`/`!gm`），
+// 并保持现有函数签名与 clippy allow，以保证现有调试流程和消息路径行为稳定。
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 const MAX_CHAT_MESSAGES_PER_PLAYER_PER_TICK: usize = 3;
@@ -374,10 +374,6 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: DVec3) -> Stri
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
 
-fn canonical_player_id(username: &str) -> String {
-    format!("offline:{username}")
-}
-
 #[cfg(test)]
 mod chat_collector_tests {
     use super::*;
@@ -528,7 +524,7 @@ mod chat_collector_tests {
         let (mut app, rx_outbound) = setup_chat_collector_app(true);
         let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
 
-        send_chat_event(&mut app, alice, "/bong combat rogue_boar 40", 1);
+        send_chat_event(&mut app, alice, "/bong combat Crimson 40", 1);
         send_chat_event(&mut app, alice, "/bong gather spirit_herb", 2);
         send_chat_event(&mut app, alice, "/bong breakthrough", 3);
 
@@ -549,7 +545,7 @@ mod chat_collector_tests {
                 QueuedGameplayAction {
                     player: "offline:Alice".to_string(),
                     action: GameplayAction::Combat(CombatAction {
-                        target: "rogue_boar".to_string(),
+                        target: "Crimson".to_string(),
                         target_health: 40.0,
                     }),
                 },

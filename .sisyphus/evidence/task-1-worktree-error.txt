@@ -1,0 +1,2 @@
+Preparing worktree (detached HEAD 6bd556f)
+fatal: '/workspace/worktrees/Bong-combat-no-ui-c1-c3' already exists

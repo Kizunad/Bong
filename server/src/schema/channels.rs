@@ -11,6 +11,10 @@ pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
 pub const CH_FORGE_EVENT: &str = "bong:forge_event";
 pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 
+// 战斗观测 (combat-no-ui-c1-c3 Task 7)
+pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
+pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -21,5 +25,7 @@ mod tests {
         assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
+        assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
+        assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
     }
 }

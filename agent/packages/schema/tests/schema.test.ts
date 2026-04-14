@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "../src/agent-command.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
+import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
@@ -140,6 +141,24 @@ describe("sample files pass schema validation", () => {
   it("server-data.ui-open.sample.json", () => {
     const data = loadSample("server-data.ui-open.sample.json");
     const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.cultivation-detail.sample.json", () => {
+    const data = loadSample("server-data.cultivation-detail.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("combat-event.realtime.sample.json", () => {
+    const data = loadSample("combat-event.realtime.sample.json");
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("combat-event.summary.sample.json", () => {
+    const data = loadSample("combat-event.summary.sample.json");
+    const result = validate(CombatSummaryV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });
@@ -320,6 +339,18 @@ describe("schema rejects invalid data", () => {
     );
   });
 
+  it("accepts world state zone spirit_qi at negative boundary", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const zones = asArray(data.zones);
+    const firstZone = asObject(zones[0]);
+    firstZone.spirit_qi = -1;
+    expectContractAccepts(
+      "WorldStateV1 zone spirit_qi allows -1..=1 parity gate",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
   it("rejects chat message with wrong version", () => {
     const data = loadObjectSample("chat-message.sample.json");
     data.v = 99;
@@ -394,6 +425,8 @@ describe("shared constants are sane", () => {
       BREAKTHROUGH_EVENT: "bong:breakthrough_event",
       FORGE_EVENT: "bong:forge_event",
       CULTIVATION_DEATH: "bong:cultivation_death",
+      COMBAT_REALTIME: "bong:combat_realtime",
+      COMBAT_SUMMARY: "bong:combat_summary",
     });
     expect(REDIS_V1_CHANNELS).toEqual([
       "bong:world_state",
@@ -405,6 +438,8 @@ describe("shared constants are sane", () => {
       "bong:breakthrough_event",
       "bong:forge_event",
       "bong:cultivation_death",
+      "bong:combat_realtime",
+      "bong:combat_summary",
     ]);
   });
 

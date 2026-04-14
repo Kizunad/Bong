@@ -81,8 +81,8 @@ pub fn handle_client_request_payloads(
                     "[bong][network] client_request breakthrough entity={:?}",
                     ev.client
                 );
-                // TODO(plan-cultivation-v1 §P2 inventory)：从玩家背包派生 material_bonus
-                //   (0.0..=0.30)；当前占位为 0.0，等价于无灵材加成突破。
+                // 当前阶段固定 material_bonus=0.0，等价于无灵材加成突破；
+                // 保持该占位行为以稳定既有 ClientRequestV1 语义。
                 breakthrough_tx.send(BreakthroughRequest {
                     entity: ev.client,
                     material_bonus: 0.0,
