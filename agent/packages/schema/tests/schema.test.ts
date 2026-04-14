@@ -339,6 +339,18 @@ describe("schema rejects invalid data", () => {
     );
   });
 
+  it("accepts world state zone spirit_qi at negative boundary", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const zones = asArray(data.zones);
+    const firstZone = asObject(zones[0]);
+    firstZone.spirit_qi = -1;
+    expectContractAccepts(
+      "WorldStateV1 zone spirit_qi allows -1..=1 parity gate",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
   it("rejects chat message with wrong version", () => {
     const data = loadObjectSample("chat-message.sample.json");
     data.v = 99;

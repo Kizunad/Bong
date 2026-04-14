@@ -479,3 +479,9 @@ Wave 3: Redis/schema 观测收口 + 全量验证（Tasks 7-8）
   - [x] Keep scope limited to already touched `server/src/combat/` and `server/src/npc/` paths plus evidence/notepad as needed.
   - [x] Verification: `cd server && cargo test combat:: -- --nocapture` and `cd server && cargo test npc::brain -- --nocapture` pass.
   - [x] Commit: allowed follow-up fix commit after verification.
+- [x] Fix world-state negative-zone contract mismatch reported after commit `0231c6b`.
+  - [x] `ZoneSnapshot.spirit_qi` contract must accept the same negative range already allowed by `server/src/world/zone.rs`.
+  - [x] Regenerate any affected schema artifacts/samples and update targeted tests if needed.
+  - [x] Keep scope limited to already touched server/schema/world-state paths plus evidence/notepad as needed.
+  - [x] Verification: relevant schema tests pass and generated artifacts stay in sync.
+  - [x] Commit: allowed follow-up fix commit after verification.
