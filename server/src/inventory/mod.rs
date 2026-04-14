@@ -615,29 +615,52 @@ impl LoadoutToml {
 
             let mut items = Vec::new();
             for raw_item in raw_container.items {
-                if raw_item.row >= raw_container.rows {
+                let row = raw_item.row;
+                let col = raw_item.col;
+
+                if row >= raw_container.rows {
                     return Err(format!(
                         "{} container `{container_id}` item row {} out of bounds for rows {}",
                         source_path.display(),
-                        raw_item.row,
+                        row,
                         raw_container.rows
                     ));
                 }
-                if raw_item.col >= raw_container.cols {
+                if col >= raw_container.cols {
                     return Err(format!(
                         "{} container `{container_id}` item col {} out of bounds for cols {}",
                         source_path.display(),
-                        raw_item.col,
+                        col,
                         raw_container.cols
                     ));
                 }
 
                 let instance = loadout_item_to_instance(raw_item, source_path, registry)?;
-                items.push(PlacedItemState {
-                    row: instance.0,
-                    col: instance.1,
-                    instance: instance.2,
-                });
+                let row_footprint_end = u16::from(row) + u16::from(instance.grid_h);
+                let col_footprint_end = u16::from(col) + u16::from(instance.grid_w);
+
+                if row_footprint_end > u16::from(raw_container.rows) {
+                    return Err(format!(
+                        "{} container `{container_id}` item `{}` footprint overflows rows: row {} + grid_h {} > {}",
+                        source_path.display(),
+                        instance.template_id,
+                        row,
+                        instance.grid_h,
+                        raw_container.rows
+                    ));
+                }
+                if col_footprint_end > u16::from(raw_container.cols) {
+                    return Err(format!(
+                        "{} container `{container_id}` item `{}` footprint overflows cols: col {} + grid_w {} > {}",
+                        source_path.display(),
+                        instance.template_id,
+                        col,
+                        instance.grid_w,
+                        raw_container.cols
+                    ));
+                }
+
+                items.push(PlacedItemState { row, col, instance });
             }
 
             containers.push(ContainerState {
@@ -733,18 +756,15 @@ fn loadout_item_to_instance(
     raw_item: LoadoutPlacedItemToml,
     source_path: &Path,
     registry: &ItemRegistry,
-) -> Result<(u8, u8, ItemInstance), String> {
-    let row = raw_item.row;
-    let col = raw_item.col;
-    let instance = build_item_instance_from_template(
+) -> Result<ItemInstance, String> {
+    build_item_instance_from_template(
         raw_item.template_id,
         raw_item.stack_count,
         raw_item.spirit_quality,
         raw_item.durability,
         source_path,
         registry,
-    )?;
-    Ok((row, col, instance))
+    )
 }
 
 fn build_item_instance_from_template(
@@ -1074,6 +1094,60 @@ cols = 4
             .expect_err("unknown container id should fail");
 
         assert!(error.contains("unsupported container id `unknown_pack`"));
+    }
+
+    #[test]
+    fn rejects_placed_item_whose_multicell_footprint_overflows_container_bounds() {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "wide_talisman".to_string(),
+            ItemTemplate {
+                id: "wide_talisman".to_string(),
+                display_name: "阔符".to_string(),
+                category: ItemCategory::Misc,
+                grid_w: 2,
+                grid_h: 2,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: "test template".to_string(),
+                effect: None,
+            },
+        );
+        let registry = ItemRegistry { templates };
+
+        let loadout_toml = r#"
+[[containers]]
+id = "main_pack"
+name = "主背包"
+rows = 5
+cols = 7
+
+  [[containers.items]]
+  row = 4
+  col = 6
+  template_id = "wide_talisman"
+
+[[containers]]
+id = "small_pouch"
+name = "小口袋"
+rows = 3
+cols = 3
+
+[[containers]]
+id = "front_satchel"
+name = "前挂包"
+rows = 3
+cols = 4
+"#;
+
+        let parsed: LoadoutToml =
+            toml::from_str(loadout_toml).expect("fixture TOML should parse into LoadoutToml");
+        let error = parsed
+            .try_into_loadout(Path::new("<inline-loadout.toml>"), &registry)
+            .expect_err("multi-cell footprint overflow should fail");
+
+        assert!(error.contains("footprint overflows"));
     }
 
     #[test]

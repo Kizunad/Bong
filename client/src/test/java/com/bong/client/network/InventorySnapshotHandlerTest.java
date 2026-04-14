@@ -120,6 +120,71 @@ public class InventorySnapshotHandlerTest {
         assertEquals(-1L, InventoryStateStore.revision());
     }
 
+    @Test
+    void rejectsPlacedItemWhoseFootprintOverflowsTargetContainerBounds() {
+        String overflow = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 12,
+              "containers": [
+                {"id":"main_pack","name":"主背包","rows":5,"cols":7},
+                {"id":"small_pouch","name":"小口袋","rows":3,"cols":3},
+                {"id":"front_satchel","name":"前挂包","rows":3,"cols":4}
+              ],
+              "placed_items": [
+                {
+                  "container_id": "small_pouch",
+                  "row": 2,
+                  "col": 2,
+                  "item": {
+                    "instance_id": 1001,
+                    "item_id": "starter_talisman",
+                    "display_name": "启程护符",
+                    "grid_width": 2,
+                    "grid_height": 2,
+                    "weight": 0.2,
+                    "rarity": "uncommon",
+                    "description": "初入修途者配发的护身符。",
+                    "stack_count": 1,
+                    "spirit_quality": 0.76,
+                    "durability": 0.93
+                  }
+                }
+              ],
+              "equipped": {
+                "head": null,
+                "chest": null,
+                "legs": null,
+                "feet": null,
+                "main_hand": null,
+                "off_hand": null,
+                "two_hand": null
+              },
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 57,
+              "weight": {"current": 0.2, "max": 50.0},
+              "realm": "qi_refining_1",
+              "qi_current": 24,
+              "qi_max": 100,
+              "body_level": 0.18
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            overflow,
+            overflow.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.logMessage().contains("placed_items"));
+        assertFalse(InventoryStateStore.isAuthoritativeLoaded());
+        assertEquals(-1L, InventoryStateStore.revision());
+        assertTrue(InventoryStateStore.snapshot().isEmpty());
+    }
+
     private static String loadSharedFixture(String fileName) throws IOException {
         Path fixturePath = SHARED_SCHEMA_SAMPLES_DIR.resolve(fileName);
         return Files.readString(fixturePath, StandardCharsets.UTF_8);

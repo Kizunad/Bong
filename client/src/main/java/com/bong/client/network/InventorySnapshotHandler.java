@@ -11,10 +11,9 @@ import com.google.gson.JsonPrimitive;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 public final class InventorySnapshotHandler implements ServerDataHandler {
@@ -73,12 +72,15 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             );
         }
 
-        Set<String> containerIds = new HashSet<>();
-        for (InventoryModel.ContainerDef container : containers) {
-            containerIds.add(container.id());
+        Map<String, InventoryModel.ContainerDef> containersById = indexContainersById(containers);
+        if (containersById == null) {
+            return ServerDataDispatch.noOp(
+                envelope.type(),
+                "Ignoring inventory_snapshot payload: containers contain duplicate ids"
+            );
         }
 
-        List<InventoryModel.GridEntry> gridEntries = parsePlacedItems(placedItemElements, containerIds);
+        List<InventoryModel.GridEntry> gridEntries = parsePlacedItems(placedItemElements, containersById);
         if (gridEntries == null) {
             return ServerDataDispatch.noOp(
                 envelope.type(),
@@ -155,7 +157,21 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         return containers;
     }
 
-    private static List<InventoryModel.GridEntry> parsePlacedItems(JsonArray placedItemElements, Set<String> containerIds) {
+    private static Map<String, InventoryModel.ContainerDef> indexContainersById(List<InventoryModel.ContainerDef> containers) {
+        Map<String, InventoryModel.ContainerDef> containersById = new HashMap<>(containers.size());
+        for (InventoryModel.ContainerDef container : containers) {
+            InventoryModel.ContainerDef previous = containersById.put(container.id(), container);
+            if (previous != null) {
+                return null;
+            }
+        }
+        return containersById;
+    }
+
+    private static List<InventoryModel.GridEntry> parsePlacedItems(
+        JsonArray placedItemElements,
+        Map<String, InventoryModel.ContainerDef> containersById
+    ) {
         List<InventoryModel.GridEntry> gridEntries = new ArrayList<>(placedItemElements.size());
         for (JsonElement placedItemElement : placedItemElements) {
             if (placedItemElement == null || placedItemElement.isJsonNull() || !placedItemElement.isJsonObject()) {
@@ -170,12 +186,17 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             if (containerId == null || row == null || col == null || itemObject == null || row < 0 || col < 0) {
                 return null;
             }
-            if (!containerIds.contains(containerId)) {
+            InventoryModel.ContainerDef targetContainer = containersById.get(containerId);
+            if (targetContainer == null) {
                 return null;
             }
 
             InventoryItem item = parseInventoryItem(itemObject);
             if (item == null) {
+                return null;
+            }
+            if (row + item.gridHeight() > targetContainer.rows()
+                || col + item.gridWidth() > targetContainer.cols()) {
                 return null;
             }
 
