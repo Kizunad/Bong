@@ -36,13 +36,13 @@ def _layer_file_name(layer_name: str) -> str:
     return f"{layer_name}.bin"
 
 
-def _write_float_layer(path: Path, values: list[float | int]) -> None:
-    arr = np.array(values, dtype=np.float32)
+def _write_float_layer(path: Path, values: np.ndarray) -> None:
+    arr = np.ascontiguousarray(values, dtype=np.float32)
     path.write_bytes(arr.tobytes())
 
 
-def _write_u8_layer(path: Path, values: list[float | int]) -> None:
-    arr = np.array(values, dtype=np.uint8)
+def _write_u8_layer(path: Path, values: np.ndarray) -> None:
+    arr = np.ascontiguousarray(values, dtype=np.uint8)
     path.write_bytes(arr.tobytes())
 
 

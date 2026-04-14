@@ -140,13 +140,13 @@ def fill_broken_peaks_tile(
     area = tile_size * tile_size
     biome_id = np.where(height > 300.0, frozen_peaks_biome_id, peaks_biome_id)
 
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = biome_id.ravel().tolist()
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

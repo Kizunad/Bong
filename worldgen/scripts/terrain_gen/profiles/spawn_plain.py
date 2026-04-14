@@ -92,13 +92,13 @@ def fill_spawn_plain_tile(
     biome_id = np.where(feature_mask > 0.12, flower_forest_biome_id, spawn_biome_id)
 
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = np.round(water_level, 3).ravel().tolist()
-    buffer.layers["biome_id"] = biome_id.ravel().tolist()
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.round(water_level, 3).ravel()
+    buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

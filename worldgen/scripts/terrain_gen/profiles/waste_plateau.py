@@ -113,15 +113,15 @@ def fill_waste_plateau_tile(
     )
 
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [plateau_biome_id] * area
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
-    buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel().tolist()
-    buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel().tolist()
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = np.full(area, plateau_biome_id, dtype=np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel()
+    buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer
