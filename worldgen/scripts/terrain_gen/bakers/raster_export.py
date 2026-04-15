@@ -8,8 +8,12 @@ import numpy as np
 
 from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
-from ..profiles import list_profile_generators
-from ..profiles import get_profile_generator
+from ..profiles import (
+    GLOBAL_DECORATION_PALETTE,
+    PROFILE_DECORATION_OFFSETS,
+    get_profile_generator,
+    list_profile_generators,
+)
 from ..profiles.base import DecorationSpec, EcologySpec
 
 BIOME_PALETTE = (
@@ -92,6 +96,7 @@ def export_rasters(
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
+    global_decoration_palette = _collect_global_decoration_palette()
 
     manifest = {
         "version": 1,
@@ -135,6 +140,7 @@ def export_rasters(
             "5": "wild_formation",
         },
         "profiles_ecology": ecology_payload,
+        "global_decoration_palette": global_decoration_palette,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
@@ -182,9 +188,16 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     return payload
 
 
-def _decoration_dict(idx: int, deco: DecorationSpec) -> dict[str, object]:
+def _decoration_dict(
+    profile_name: str, local_idx: int, deco: DecorationSpec
+) -> dict[str, object]:
+    """Per-profile decoration view that carries both local and global ids."""
+    local_id = local_idx + 1
+    offset = PROFILE_DECORATION_OFFSETS.get(profile_name, 0)
+    global_id = offset + local_idx if offset > 0 else 0
     return {
-        "variant_id": idx,
+        "local_id": local_id,
+        "global_id": global_id,
         "name": deco.name,
         "kind": deco.kind,
         "blocks": list(deco.blocks),
@@ -194,11 +207,12 @@ def _decoration_dict(idx: int, deco: DecorationSpec) -> dict[str, object]:
     }
 
 
-def _ecology_dict(spec: EcologySpec) -> dict[str, object]:
+def _ecology_dict(profile_name: str, spec: EcologySpec) -> dict[str, object]:
     # variant_id 0 is reserved for "no flora"; actual palette starts at 1.
     return {
         "decorations": [
-            _decoration_dict(i + 1, d) for i, d in enumerate(spec.decorations)
+            _decoration_dict(profile_name, i, d)
+            for i, d in enumerate(spec.decorations)
         ],
         "ambient_effects": list(spec.ambient_effects),
         "notes": spec.notes,
@@ -209,8 +223,17 @@ def _collect_profile_ecology() -> dict[str, object]:
     payload: dict[str, object] = {}
     for profile_name in list_profile_generators():
         gen = get_profile_generator(profile_name)
-        payload[profile_name] = _ecology_dict(gen.ecology)
+        payload[profile_name] = _ecology_dict(profile_name, gen.ecology)
     return payload
+
+
+def _collect_global_decoration_palette() -> list[dict[str, object]]:
+    """Return the flat global palette for the raster manifest.
+
+    flora_variant_id rasters are written in global-id space (see stitcher
+    _remap_flora_variant_to_global). Consumers index this list directly.
+    """
+    return [dict(entry) for entry in GLOBAL_DECORATION_PALETTE]
 
 
 def build_raster_bake_plan(plan: TerrainGenerationPlan, output_root: Path) -> BakePlan:

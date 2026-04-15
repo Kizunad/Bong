@@ -74,5 +74,20 @@ pub fn sample(
         fracture_mask: 0.0,
         neg_pressure: 0.0,
         ruin_density: 0.0,
+        // Mofa wilderness baseline: thin qi, moderate decay, no vein / isles /
+        // deep caves / flora variant / anomalies. Matches Python wilderness defaults
+        // (see worldgen/scripts/terrain_gen/profiles/wilderness.py).
+        qi_density: 0.12,
+        mofa_decay: 0.40,
+        qi_vein_flow: 0.0,
+        sky_island_mask: 0.0,
+        sky_island_base_y: 9999.0,
+        sky_island_thickness: 0.0,
+        underground_tier: 0,
+        cavern_floor_y: 9999.0,
+        flora_density: 0.0,
+        flora_variant_id: 0,
+        anomaly_intensity: 0.0,
+        anomaly_kind: 0,
     }
 }

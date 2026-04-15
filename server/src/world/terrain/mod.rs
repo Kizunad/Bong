@@ -83,8 +83,10 @@ pub fn spawn_raster_world(
     let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, &biomes)
         .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
     tracing::info!(
-        "[bong][world] loaded {} terrain tiles from {}",
+        "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations from {}",
         provider.tile_count(),
+        provider.pois().len(),
+        provider.decoration_count(),
         config.manifest_path.display()
     );
 

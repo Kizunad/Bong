@@ -43,6 +43,32 @@ pub struct ColumnSample {
     pub fracture_mask: f32,
     pub neg_pressure: f32,
     pub ruin_density: f32,
+    // --- xianxia semantic layers ---
+    pub qi_density: f32,
+    pub mofa_decay: f32,
+    pub qi_vein_flow: f32,
+    // --- vertical-dimension layers (2D rasters encoding 3D structure) ---
+    /// 0..1 likelihood this column hosts a floating isle above. Gate on >= 0.2.
+    pub sky_island_mask: f32,
+    /// World-y of isle bottom face. 9999.0 sentinel = "no isle here".
+    pub sky_island_base_y: f32,
+    /// Isle thickness in blocks (carved downward from base_y).
+    pub sky_island_thickness: f32,
+    /// Deepest active cave tier at this column: 0 (none), 1 shallow, 2 middle, 3 deep.
+    pub underground_tier: u8,
+    /// World-y of deepest cavern floor. 9999.0 sentinel = no cavern.
+    pub cavern_floor_y: f32,
+    // --- ecology layers ---
+    /// 0..1 decoration placement probability.
+    pub flora_density: f32,
+    /// Global decoration id (0 = none; lookup via TerrainProvider::decoration).
+    pub flora_variant_id: u8,
+    // --- event / anomaly layers ---
+    /// 0..1 local anomaly strength (event system threshold ≈ 0.3).
+    pub anomaly_intensity: f32,
+    /// 0..5: 0 none, 1 spacetime_rift, 2 qi_turbulence,
+    /// 3 blood_moon_anchor, 4 cursed_echo, 5 wild_formation.
+    pub anomaly_kind: u8,
 }
 
 impl ColumnSample {
@@ -82,6 +108,12 @@ pub struct TerrainProvider {
     default_wilderness_biome: BiomeId,
     forest_wilderness_biome: BiomeId,
     river_wilderness_biome: BiomeId,
+    // --- narrative / event metadata read once from manifest ---
+    pois: Vec<Poi>,
+    anomaly_kinds: HashMap<u8, String>,
+    /// Global decoration palette: index by global id (0-slot is unused placeholder).
+    decoration_palette: Vec<Option<Decoration>>,
+    abyssal_tier_floor_y: HashMap<u8, f32>,
 }
 
 impl Resource for TerrainProvider {}
@@ -103,6 +135,20 @@ struct TileFields {
     fracture_mask: Option<Mmap>,
     neg_pressure: Option<Mmap>,
     ruin_density: Option<Mmap>,
+    // Semantic / vertical / ecology / anomaly layers — all optional so older
+    // manifests without them still load cleanly.
+    qi_density: Option<Mmap>,
+    mofa_decay: Option<Mmap>,
+    qi_vein_flow: Option<Mmap>,
+    sky_island_mask: Option<Mmap>,
+    sky_island_base_y: Option<Mmap>,
+    sky_island_thickness: Option<Mmap>,
+    underground_tier: Option<Mmap>,
+    cavern_floor_y: Option<Mmap>,
+    flora_density: Option<Mmap>,
+    flora_variant_id: Option<Mmap>,
+    anomaly_intensity: Option<Mmap>,
+    anomaly_kind: Option<Mmap>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +158,14 @@ struct RasterManifest {
     surface_palette: Vec<String>,
     biome_palette: Vec<String>,
     tiles: Vec<ManifestTile>,
+    #[serde(default)]
+    pois: Vec<ManifestPoi>,
+    #[serde(default)]
+    anomaly_kinds: HashMap<String, String>,
+    #[serde(default)]
+    abyssal_tier_floor_y: HashMap<String, f32>,
+    #[serde(default)]
+    global_decoration_palette: Vec<ManifestDecoration>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +182,69 @@ struct ManifestTile {
     tile_z: i32,
     dir: String,
     layers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestPoi {
+    zone: String,
+    kind: String,
+    name: String,
+    pos_xyz: [f32; 3],
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    unlock: String,
+    #[serde(default)]
+    qi_affinity: f32,
+    #[serde(default)]
+    danger_bias: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestDecoration {
+    global_id: u32,
+    profile: String,
+    #[serde(default)]
+    local_id: u32,
+    name: String,
+    kind: String,
+    #[serde(default)]
+    blocks: Vec<String>,
+    #[serde(default)]
+    size_range: [i32; 2],
+    #[serde(default)]
+    rarity: f32,
+    #[serde(default)]
+    notes: String,
+}
+
+// --- Public read-only views of manifest data ----------------------------
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct Poi {
+    pub zone: String,
+    pub kind: String,
+    pub name: String,
+    pub pos_xyz: [f32; 3],
+    pub tags: Vec<String>,
+    pub unlock: String,
+    pub qi_affinity: f32,
+    pub danger_bias: i32,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct Decoration {
+    pub global_id: u32,
+    pub profile: String,
+    pub local_id: u32,
+    pub name: String,
+    pub kind: String,
+    pub blocks: Vec<String>,
+    pub size_range: [i32; 2],
+    pub rarity: f32,
+    pub notes: String,
 }
 
 impl TerrainProvider {
@@ -175,10 +292,65 @@ impl TerrainProvider {
             .unwrap_or(default_wilderness_biome);
 
         let mut tiles = HashMap::with_capacity(manifest.tiles.len());
-        for tile in manifest.tiles {
+        for tile in &manifest.tiles {
             let tile_dir = raster_dir.join(&tile.dir);
             let tile_fields = TileFields::load(&tile_dir, &tile.layers, tile_area)?;
             tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
+        }
+
+        // --- Narrative / event metadata ---
+        let pois = manifest
+            .pois
+            .into_iter()
+            .map(|raw| Poi {
+                zone: raw.zone,
+                kind: raw.kind,
+                name: raw.name,
+                pos_xyz: raw.pos_xyz,
+                tags: raw.tags,
+                unlock: raw.unlock,
+                qi_affinity: raw.qi_affinity,
+                danger_bias: raw.danger_bias,
+            })
+            .collect::<Vec<_>>();
+
+        let anomaly_kinds = manifest
+            .anomaly_kinds
+            .into_iter()
+            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|id| (id, v)))
+            .collect::<HashMap<u8, String>>();
+
+        let abyssal_tier_floor_y = manifest
+            .abyssal_tier_floor_y
+            .into_iter()
+            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|tier| (tier, v)))
+            .collect::<HashMap<u8, f32>>();
+
+        // Build indexed decoration palette — expand to `max global_id + 1` so
+        // variant lookup is a single Vec::get.
+        let max_deco_id = manifest
+            .global_decoration_palette
+            .iter()
+            .map(|d| d.global_id)
+            .max()
+            .unwrap_or(0);
+        let mut decoration_palette: Vec<Option<Decoration>> = vec![None; max_deco_id as usize + 1];
+        for raw in manifest.global_decoration_palette {
+            let id = raw.global_id as usize;
+            if id == 0 || id >= decoration_palette.len() {
+                continue;
+            }
+            decoration_palette[id] = Some(Decoration {
+                global_id: raw.global_id,
+                profile: raw.profile,
+                local_id: raw.local_id,
+                name: raw.name,
+                kind: raw.kind,
+                blocks: raw.blocks,
+                size_range: raw.size_range,
+                rarity: raw.rarity,
+                notes: raw.notes,
+            });
         }
 
         Ok(Self {
@@ -195,7 +367,46 @@ impl TerrainProvider {
             default_wilderness_biome,
             forest_wilderness_biome,
             river_wilderness_biome,
+            pois,
+            anomaly_kinds,
+            decoration_palette,
+            abyssal_tier_floor_y,
         })
+    }
+
+    /// Zone-scoped POI list from the worldgen blueprint.
+    #[allow(dead_code)]
+    pub fn pois(&self) -> &[Poi] {
+        &self.pois
+    }
+
+    /// Look up a decoration by its global id (0 → None).
+    #[allow(dead_code)]
+    pub fn decoration(&self, global_id: u8) -> Option<&Decoration> {
+        self.decoration_palette
+            .get(global_id as usize)
+            .and_then(|o| o.as_ref())
+    }
+
+    /// Total number of decorations in the global palette.
+    #[allow(dead_code)]
+    pub fn decoration_count(&self) -> usize {
+        self.decoration_palette
+            .iter()
+            .filter(|d| d.is_some())
+            .count()
+    }
+
+    /// Human-readable name for an anomaly_kind enum value.
+    #[allow(dead_code)]
+    pub fn anomaly_name(&self, kind: u8) -> Option<&str> {
+        self.anomaly_kinds.get(&kind).map(String::as_str)
+    }
+
+    /// Floor y for an abyssal tier (1..=3). None for tier 0 or unknown.
+    #[allow(dead_code)]
+    pub fn abyssal_tier_floor(&self, tier: u8) -> Option<f32> {
+        self.abyssal_tier_floor_y.get(&tier).copied()
     }
 
     pub fn tile_count(&self) -> usize {
@@ -252,28 +463,58 @@ impl TerrainProvider {
             fracture_mask: read_optional_f32(&tile.fracture_mask, index, 0.0),
             neg_pressure: read_optional_f32(&tile.neg_pressure, index, 0.0),
             ruin_density: read_optional_f32(&tile.ruin_density, index, 0.0),
+            qi_density: read_optional_f32(&tile.qi_density, index, 0.12),
+            mofa_decay: read_optional_f32(&tile.mofa_decay, index, 0.40),
+            qi_vein_flow: read_optional_f32(&tile.qi_vein_flow, index, 0.0),
+            sky_island_mask: read_optional_f32(&tile.sky_island_mask, index, 0.0),
+            sky_island_base_y: read_optional_f32(&tile.sky_island_base_y, index, 9999.0),
+            sky_island_thickness: read_optional_f32(&tile.sky_island_thickness, index, 0.0),
+            underground_tier: read_optional_u8(&tile.underground_tier, index, 0),
+            cavern_floor_y: read_optional_f32(&tile.cavern_floor_y, index, 9999.0),
+            flora_density: read_optional_f32(&tile.flora_density, index, 0.0),
+            flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
+            anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
+            anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
         }
     }
 }
 
 impl TileFields {
     fn load(tile_dir: &Path, layers: &[String], tile_area: usize) -> Result<Self, String> {
+        let area4 = tile_area * 4;
         Ok(Self {
-            height: map_required_layer(tile_dir, "height.bin", tile_area * 4)?,
+            height: map_required_layer(tile_dir, "height.bin", area4)?,
             surface_id: map_required_layer(tile_dir, "surface_id.bin", tile_area)?,
             subsurface_id: map_required_layer(tile_dir, "subsurface_id.bin", tile_area)?,
             biome_id: map_required_layer(tile_dir, "biome_id.bin", tile_area)?,
-            water_level: map_required_layer(tile_dir, "water_level.bin", tile_area * 4)?,
-            feature_mask: map_required_layer(tile_dir, "feature_mask.bin", tile_area * 4)?,
-            boundary_weight: map_required_layer(tile_dir, "boundary_weight.bin", tile_area * 4)?,
-            rift_axis_sdf: map_optional_layer(tile_dir, layers, "rift_axis_sdf", tile_area * 4)?,
-            rim_edge_mask: map_optional_layer(tile_dir, layers, "rim_edge_mask", tile_area * 4)?,
-            cave_mask: map_optional_layer(tile_dir, layers, "cave_mask", tile_area * 4)?,
-            ceiling_height: map_optional_layer(tile_dir, layers, "ceiling_height", tile_area * 4)?,
-            entrance_mask: map_optional_layer(tile_dir, layers, "entrance_mask", tile_area * 4)?,
-            fracture_mask: map_optional_layer(tile_dir, layers, "fracture_mask", tile_area * 4)?,
-            neg_pressure: map_optional_layer(tile_dir, layers, "neg_pressure", tile_area * 4)?,
-            ruin_density: map_optional_layer(tile_dir, layers, "ruin_density", tile_area * 4)?,
+            water_level: map_required_layer(tile_dir, "water_level.bin", area4)?,
+            feature_mask: map_required_layer(tile_dir, "feature_mask.bin", area4)?,
+            boundary_weight: map_required_layer(tile_dir, "boundary_weight.bin", area4)?,
+            rift_axis_sdf: map_optional_layer(tile_dir, layers, "rift_axis_sdf", area4)?,
+            rim_edge_mask: map_optional_layer(tile_dir, layers, "rim_edge_mask", area4)?,
+            cave_mask: map_optional_layer(tile_dir, layers, "cave_mask", area4)?,
+            ceiling_height: map_optional_layer(tile_dir, layers, "ceiling_height", area4)?,
+            entrance_mask: map_optional_layer(tile_dir, layers, "entrance_mask", area4)?,
+            fracture_mask: map_optional_layer(tile_dir, layers, "fracture_mask", area4)?,
+            neg_pressure: map_optional_layer(tile_dir, layers, "neg_pressure", area4)?,
+            ruin_density: map_optional_layer(tile_dir, layers, "ruin_density", area4)?,
+            qi_density: map_optional_layer(tile_dir, layers, "qi_density", area4)?,
+            mofa_decay: map_optional_layer(tile_dir, layers, "mofa_decay", area4)?,
+            qi_vein_flow: map_optional_layer(tile_dir, layers, "qi_vein_flow", area4)?,
+            sky_island_mask: map_optional_layer(tile_dir, layers, "sky_island_mask", area4)?,
+            sky_island_base_y: map_optional_layer(tile_dir, layers, "sky_island_base_y", area4)?,
+            sky_island_thickness: map_optional_layer(
+                tile_dir,
+                layers,
+                "sky_island_thickness",
+                area4,
+            )?,
+            underground_tier: map_optional_layer(tile_dir, layers, "underground_tier", tile_area)?,
+            cavern_floor_y: map_optional_layer(tile_dir, layers, "cavern_floor_y", area4)?,
+            flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
+            flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
+            anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
+            anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
         })
     }
 }
@@ -332,6 +573,13 @@ fn read_optional_f32(bytes: &Option<Mmap>, index: usize, fallback: f32) -> f32 {
     bytes
         .as_ref()
         .map(|mmap| read_f32(mmap, index))
+        .unwrap_or(fallback)
+}
+
+fn read_optional_u8(bytes: &Option<Mmap>, index: usize, fallback: u8) -> u8 {
+    bytes
+        .as_ref()
+        .map(|mmap| read_u8(mmap, index))
         .unwrap_or(fallback)
 }
 
