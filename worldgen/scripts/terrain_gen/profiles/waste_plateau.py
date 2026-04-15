@@ -5,12 +5,59 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+WASTE_PLATEAU_DECORATIONS = (
+    DecorationSpec(
+        name="whalefall_rib_tree",
+        kind="tree",
+        blocks=("bone_block", "quartz_block", "white_concrete"),
+        size_range=(10, 18),
+        rarity=0.12,
+        notes="鲸坠肋骨树：鲸类化石肋骨被腐朽之力立起，状若白树。地标级稀有。",
+    ),
+    DecorationSpec(
+        name="dust_thorn",
+        kind="shrub",
+        blocks=("dead_bush", "sand", "sandstone"),
+        size_range=(1, 3),
+        rarity=0.70,
+        notes="尘棘：半埋沙中的枯枝，划人而无汁。遍布平原。",
+    ),
+    DecorationSpec(
+        name="null_pressure_rock",
+        kind="boulder",
+        blocks=("soul_sand", "soul_soil", "basalt"),
+        size_range=(3, 7),
+        rarity=0.30,
+        notes="虚压岩：灵魂沙与玄武岩堆成的巨石，近之有压迫感。",
+    ),
+    DecorationSpec(
+        name="ancient_ruin_fragment",
+        kind="boulder",
+        blocks=("chiseled_stone_bricks", "cracked_stone_bricks", "mossy_stone_bricks"),
+        size_range=(2, 5),
+        rarity=0.25,
+        notes="古废片：雕刻石砖的断柱残基，诉说消逝的王朝。",
+    ),
+)
 
 
 class WastePlateauGenerator(TerrainProfileGenerator):
     profile_name = "waste_plateau"
     extra_layers = ("neg_pressure", "ruin_density", "qi_density", "mofa_decay")
+    ecology = EcologySpec(
+        decorations=WASTE_PLATEAU_DECORATIONS,
+        ambient_effects=("dust_storm", "bone_creak", "heavy_silence"),
+        notes="北荒生态：极度稀疏。唯尘棘遍地，鲸坠肋骨树为罕见地标，"
+              "虚压岩围绕 neg_pressure 区域，古废片是势力曾到达的证明。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (

@@ -15,14 +15,22 @@ from ..fields import (
 from ..noise import _tile_coords, fbm_2d
 
 
+WILDERNESS_DECORATIONS_INFO = (
+    "Generic wilderness flora fallback: oak/birch trees (variant 0 → Rust defaults), "
+    "cobblestone boulders, grass & fern shrubs. Density encoded per-column in "
+    "flora_density raster; variant_id stays 0 so Rust picks wilderness fallbacks."
+)
+
+
 def build_wilderness_base_plan(bounds_xz: Bounds2D) -> WildernessFieldPlan:
     return WildernessFieldPlan(
         profile_name="wilderness",
         bounds_xz=bounds_xz,
-        required_layers=DEFAULT_FIELD_LAYERS,
+        required_layers=DEFAULT_FIELD_LAYERS + ("flora_density", "flora_variant_id"),
         notes=(
             "Acts as the global fallback outside named zones.",
             "First-pass stitching targets zone-to-wilderness blending only.",
+            f"Ecology: {WILDERNESS_DECORATIONS_INFO}",
         ),
     )
 
@@ -175,5 +183,19 @@ def fill_wilderness_tile(
         buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
 
     # qi_vein_flow 默认 0，荒野无灵脉，由 zone profile 显式生成。
+
+    # --- Wilderness flora baseline ---
+    # Sparse, generic flora — concrete variant id is 0 (zone profiles override
+    # with their own palettes). Only flora_density carries information here;
+    # Rust can fall back to generic oak/stone-boulder placement when it sees
+    # variant_id == 0 within wilderness bounds.
+    if "flora_density" in buffer.layers:
+        flora_cloud = fbm_2d(wx, wz, scale=180.0, octaves=3, seed=903)
+        # Density 0.05..0.45 across wilderness, biased toward grass/coarse surfaces.
+        flora_density = np.clip(0.20 + flora_cloud * 0.18, 0.0, 0.55)
+        # Thin out in gravel/scar zones.
+        flora_density = np.where(scar > 0.82, flora_density * 0.3, flora_density)
+        flora_density = np.where(drainage < 0.09, flora_density * 0.5, flora_density)
+        buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
 
     return buffer

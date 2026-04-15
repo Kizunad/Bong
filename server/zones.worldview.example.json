@@ -387,6 +387,133 @@
           "qi_affinity": 0.0
         }
       ]
+    },
+    {
+      "name": "celestial_isles",
+      "display_name": "九霄浮岛",
+      "aabb": {
+        "min": [-5200.0, -64.0, 400.0],
+        "max": [-3600.0, 400.0, 2000.0]
+      },
+      "center_xz": [-4400.0, 1200.0],
+      "size_xz": [1600.0, 1600.0],
+      "spirit_qi": 0.85,
+      "danger_level": 3,
+      "active_events": [],
+      "patrol_anchors": [
+        [-4600.0, 72.0, 900.0],
+        [-4200.0, 74.0, 1400.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "sky_isle",
+        "shape": "ellipse",
+        "boundary": { "mode": "soft", "width": 160 },
+        "height_model": { "ground": [70, 76], "isles_y": [260, 340] },
+        "surface_palette": ["grass_block", "moss_block", "calcite", "stone", "gravel"],
+        "biome_mix": ["mofa:kui_zeng_rich", "mofa:spawn_haven"],
+        "landmarks": ["isle_archipelago", "descending_vein", "sky_shrine"],
+        "notes": "Open meditative plain with sparse floating isles at y≈270-340; sky_island_* layers drive Rust overhang synthesis."
+      },
+      "pois": [
+        {
+          "kind": "shrine",
+          "name": "悬空观道坛",
+          "pos_xyz": [-4400.0, 320.0, 1200.0],
+          "tags": ["cultivation_site", "sky_isle", "high_tier"],
+          "unlock": "需御风诀或灵鸟坐骑抵达",
+          "qi_affinity": 0.7
+        },
+        {
+          "kind": "spirit_font",
+          "name": "天脉垂露",
+          "pos_xyz": [-4200.0, 288.0, 1440.0],
+          "tags": ["cultivation_site", "sky_isle", "water"],
+          "unlock": "位于浮岛底部凹坑",
+          "qi_affinity": 0.6
+        },
+        {
+          "kind": "ruin",
+          "name": "坠落仙桥残基",
+          "pos_xyz": [-4800.0, 68.0, 800.0],
+          "tags": ["ruin", "legacy", "ground"],
+          "unlock": "地面残片可拾取仙桥碎铁",
+          "qi_affinity": 0.25
+        }
+      ]
+    },
+    {
+      "name": "wuxing_abyss",
+      "display_name": "无垠深渊",
+      "aabb": {
+        "min": [4500.0, -64.0, 500.0],
+        "max": [6000.0, 120.0, 2300.0]
+      },
+      "center_xz": [5250.0, 1400.0],
+      "size_xz": [1500.0, 1800.0],
+      "spirit_qi": 0.55,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [
+        [4820.0, 30.0, 900.0],
+        [5280.0, 6.0, 1420.0],
+        [5720.0, -20.0, 1900.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "abyssal_maze",
+        "shape": "subterranean_cluster",
+        "boundary": { "mode": "semi_hard", "width": 104 },
+        "height_model": { "surface": [68, 90], "tiers": [-36, -4, 28] },
+        "surface_palette": ["stone", "deepslate", "gravel", "coarse_dirt"],
+        "tier_layout": "three_stacked",
+        "biome_mix": ["mofa:fu_ling", "mofa:fu_ling_abyss"],
+        "landmarks": ["three_tier_gates", "abyss_vein", "forgotten_halls", "bottomless_shaft"],
+        "notes": "Triple-stack cave tiers (y≈28, -4, -36); underground_tier/cavern_floor_y encode which tier is deepest at each column."
+      },
+      "pois": [
+        {
+          "kind": "cave_mouth",
+          "name": "玄渊主门",
+          "pos_xyz": [5250.0, 60.0, 1400.0],
+          "tags": ["entrance", "main"],
+          "qi_affinity": 0.2
+        },
+        {
+          "kind": "forbidden_hall",
+          "name": "三重镇禁殿",
+          "pos_xyz": [5200.0, -30.0, 1480.0],
+          "tags": ["secret_realm", "locked", "high_tier"],
+          "unlock": "依次破除三层禁阵（浅→中→深）",
+          "qi_affinity": 0.6,
+          "danger_bias": 3
+        },
+        {
+          "kind": "spirit_font",
+          "name": "深渊藏脉眼",
+          "pos_xyz": [5480.0, -38.0, 1820.0],
+          "tags": ["cultivation_site", "tier_3", "hidden"],
+          "unlock": "仅深渊层可达",
+          "qi_affinity": 0.85
+        },
+        {
+          "kind": "tomb",
+          "name": "无名修士骸骨阵",
+          "pos_xyz": [4880.0, 28.0, 780.0],
+          "tags": ["battlefield", "tier_1"],
+          "qi_affinity": -0.1,
+          "danger_bias": 2
+        },
+        {
+          "kind": "anomaly",
+          "name": "坠渊井",
+          "pos_xyz": [5600.0, 68.0, 2100.0],
+          "tags": ["bottomless", "hazard"],
+          "unlock": "一跃直达 tier 3（损伤极高）",
+          "qi_affinity": 0.3,
+          "danger_bias": 4
+        }
+      ]
     }
   ],
   "paths": [
@@ -419,6 +546,18 @@
       "to": "north_wastes",
       "kind": "long_exile_road",
       "approx_distance": 7000
+    },
+    {
+      "from": "qingyun_peaks",
+      "to": "celestial_isles",
+      "kind": "cloud_ascent",
+      "approx_distance": 2800
+    },
+    {
+      "from": "youan_depths",
+      "to": "wuxing_abyss",
+      "kind": "deep_cavern_passage",
+      "approx_distance": 3500
     }
   ]
 }

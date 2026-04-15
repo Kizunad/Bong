@@ -72,6 +72,27 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
     "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
     "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- vertical-dimension layers ---
+    # sky_island_mask: 该列上空是否存在浮岛 (0~1). profile 写入浮岛核心强度，
+    #   stitcher `maximum`+weight 让边界自然消退 → 浮岛视觉上边缘逐渐变薄。
+    # sky_island_base_y: 浮岛底面世界 y. safe_default=9999 表示"无浮岛"，
+    #   用 `minimum` blend 避免边界乘 weight 导致坐标值失真；Rust 消费时以
+    #   sky_island_mask>0.01 做 gate 判定是否真的生成浮岛块。
+    # sky_island_thickness: 浮岛厚度（沿 -Y 方向挖 thickness 深）. maximum blend.
+    # underground_tier: 0=地表，1=浅洞，2=中洞，3=深渊. uint8 maximum blend.
+    # cavern_floor_y: 最深层大空洞的地板 y. safe_default=9999, `minimum` blend.
+    "sky_island_mask":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "sky_island_base_y":    LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    "sky_island_thickness": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "underground_tier":     LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
+    "cavern_floor_y":       LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    # --- ecology layers ---
+    # flora_density: [0,1] likelihood a decoration occupies this column.
+    #   Rust consumer samples it per-chunk and rolls against per-variant rarity.
+    # flora_variant_id: uint8 index into the zone profile's EcologySpec.decorations
+    #   tuple (or into a merged palette — manifest declares both). 0 = none.
+    "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
 
 

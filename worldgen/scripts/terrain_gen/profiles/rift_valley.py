@@ -7,7 +7,48 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+RIFT_VALLEY_DECORATIONS = (
+    DecorationSpec(
+        name="scarlet_bone_tree",
+        kind="tree",
+        blocks=("crimson_stem", "bone_block", "nether_wart_block"),
+        size_range=(5, 10),
+        rarity=0.30,
+        notes="赤骨树：绯红菌柄与骨块穿插，树冠如凝血。血谷独有。",
+    ),
+    DecorationSpec(
+        name="fire_vein_cactus",
+        kind="shrub",
+        blocks=("magma_block", "blackstone", "red_concrete"),
+        size_range=(2, 4),
+        rarity=0.55,
+        notes="火脉仙人掌：裂隙旁丛生，通体发烫，吸附裂缝火气。",
+    ),
+    DecorationSpec(
+        name="blood_stele",
+        kind="boulder",
+        blocks=("red_sandstone", "chiseled_red_sandstone", "terracotta"),
+        size_range=(3, 6),
+        rarity=0.40,
+        notes="血碑：独立矗立的红砂岩碑，表面似被血染。古战纪录。",
+    ),
+    DecorationSpec(
+        name="nether_nylium_patch",
+        kind="shrub",
+        blocks=("crimson_nylium", "crimson_roots", "weeping_vines"),
+        size_range=(1, 2),
+        rarity=0.65,
+        notes="绯血苔藓：成片覆盖石缝，根须下探灵脉。",
+    ),
+)
 
 
 class RiftValleyGenerator(TerrainProfileGenerator):
@@ -19,6 +60,12 @@ class RiftValleyGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+    )
+    ecology = EcologySpec(
+        decorations=RIFT_VALLEY_DECORATIONS,
+        ambient_effects=("sulfur_puff", "distant_roar", "blood_moon_haze"),
+        notes="血谷生态：赤骨树沿裂隙生长，火脉仙人掌在断层边吐热气，"
+              "血碑散布谷底。绯血苔藓铺地，红黑主调。",
     )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:

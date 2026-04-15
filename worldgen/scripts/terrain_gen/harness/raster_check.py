@@ -7,6 +7,9 @@ Catches known data integrity issues before they reach the Rust server:
 - missing layers in tiles
 - qi_density / mofa_decay outside [0, 1]
 - qi_density vs zone.spirit_qi declared gross mismatch
+- sky_island_base_y outside [200, 400] when mask > 0
+- underground_tier outside {0,1,2,3}
+- cavern_floor_y outside [-64, 64] when tier > 0
 """
 
 from __future__ import annotations
@@ -69,6 +72,47 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     warnings.append(
                         f"{tile_id}: height max={h_max:.1f} near world ceiling"
                     )
+
+        # Validate vertical layers: sky_island_base_y / cavern_floor_y use
+        # sentinel 9999 for "no isle/cavern here", so presence must correlate
+        # with the companion mask/tier layer.
+        sky_mask_file = tile_dir / "sky_island_mask.bin"
+        sky_base_file = tile_dir / "sky_island_base_y.bin"
+        if sky_mask_file.exists() and sky_base_file.exists():
+            mask_vals = _read_float_layer(sky_mask_file, area)
+            base_vals = _read_float_layer(sky_base_file, area)
+            if mask_vals is not None and base_vals is not None:
+                for m, b in zip(mask_vals, base_vals):
+                    if m > 0.05 and (b < 200.0 or b > 400.0):
+                        warnings.append(
+                            f"{tile_id}: sky_island_base_y={b:.1f} out of "
+                            f"[200,400] while mask={m:.2f} (zones={zones})"
+                        )
+                        break
+
+        # underground_tier must be {0,1,2,3}. It's uint8 so just spot-check range.
+        tier_file = tile_dir / "underground_tier.bin"
+        if tier_file.exists():
+            raw = tier_file.read_bytes()
+            if len(raw) == area:
+                t_max = max(raw)
+                if t_max > 3:
+                    errors.append(
+                        f"{tile_id}: underground_tier max={t_max} > 3 (zones={zones})"
+                    )
+
+        floor_file = tile_dir / "cavern_floor_y.bin"
+        if floor_file.exists() and tier_file.exists():
+            floor_vals = _read_float_layer(floor_file, area)
+            tier_raw = tier_file.read_bytes()
+            if floor_vals is not None and len(tier_raw) == area:
+                for t, f in zip(tier_raw, floor_vals):
+                    if t > 0 and (f < -64.0 or f > 64.0):
+                        warnings.append(
+                            f"{tile_id}: cavern_floor_y={f:.1f} out of "
+                            f"[-64,64] while tier={t} (zones={zones})"
+                        )
+                        break
 
         # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
         # qi_vein_flow likewise. These are narrative-facing so out-of-range

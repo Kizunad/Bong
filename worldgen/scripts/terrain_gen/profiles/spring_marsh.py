@@ -5,12 +5,67 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+SPRING_MARSH_DECORATIONS = (
+    DecorationSpec(
+        name="ling_yun_mangrove",
+        kind="tree",
+        blocks=("mangrove_log", "mangrove_leaves", "mangrove_roots", "muddy_mangrove_roots"),
+        size_range=(7, 11),
+        rarity=0.40,
+        notes="灵云红树：盘根错节立于浅水，根部聚灵气。水乡地标。",
+    ),
+    DecorationSpec(
+        name="spirit_willow",
+        kind="tree",
+        blocks=("jungle_log", "moss_block", "azalea_leaves", "flowering_azalea_leaves"),
+        size_range=(8, 13),
+        rarity=0.25,
+        notes="灵垂柳：绿意浓密的长枝柳，花叶茂盛于灵泉眼周边。",
+    ),
+    DecorationSpec(
+        name="lotus_cluster",
+        kind="flower",
+        blocks=("lily_pad", "pink_tulip", "peony"),
+        size_range=(1, 1),
+        rarity=0.65,
+        notes="灵莲丛：水面浮满莲叶与粉花，修士静坐处。",
+    ),
+    DecorationSpec(
+        name="reed_thicket",
+        kind="shrub",
+        blocks=("sugar_cane", "tall_grass", "fern"),
+        size_range=(2, 4),
+        rarity=0.70,
+        notes="灵苇：成片高苇将水道分隔成迷宫，藏鱼与小灵兽。",
+    ),
+    DecorationSpec(
+        name="jade_moss_rock",
+        kind="boulder",
+        blocks=("moss_block", "mossy_cobblestone", "prismarine"),
+        size_range=(2, 4),
+        rarity=0.35,
+        notes="翠苔石：水边苔石，偶含微弱夜光。",
+    ),
+)
 
 
 class SpringMarshGenerator(TerrainProfileGenerator):
     profile_name = "spring_marsh"
     extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
+    ecology = EcologySpec(
+        decorations=SPRING_MARSH_DECORATIONS,
+        ambient_effects=("water_droplets", "frog_call", "gentle_qi_shimmer"),
+        notes="灵泉湿地生态：红树与垂柳环抱水眼，莲丛与苇草铺满浅滩，翠苔石点缀岛岸。"
+              "每一种植被都透着灵气，天然修行胜地。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (

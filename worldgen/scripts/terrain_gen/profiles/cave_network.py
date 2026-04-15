@@ -5,7 +5,48 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+CAVE_NETWORK_DECORATIONS = (
+    DecorationSpec(
+        name="glow_lichen_column",
+        kind="shrub",
+        blocks=("glow_lichen", "dripstone_block", "pointed_dripstone"),
+        size_range=(3, 6),
+        rarity=0.60,
+        notes="光苔钟柱：洞顶垂下的钟乳石群，表面覆夜光苔藓。",
+    ),
+    DecorationSpec(
+        name="red_vine_curtain",
+        kind="shrub",
+        blocks=("weeping_vines", "crimson_roots"),
+        size_range=(4, 8),
+        rarity=0.50,
+        notes="血藤帘：从入口垂下的红藤，遮盖洞口不可轻入。",
+    ),
+    DecorationSpec(
+        name="sinkhole_boulder",
+        kind="boulder",
+        blocks=("deepslate", "tuff", "cobbled_deepslate"),
+        size_range=(3, 5),
+        rarity=0.45,
+        notes="陷穴石：陷落井周边堆积的深板岩块。",
+    ),
+    DecorationSpec(
+        name="forbidden_pillar",
+        kind="crystal",
+        blocks=("chiseled_deepslate", "amethyst_cluster", "soul_lantern"),
+        size_range=(5, 8),
+        rarity=0.18,
+        notes="禁制柱：古修士封印时立下的石柱，表面镌刻符纹。",
+    ),
+)
 
 
 class CaveNetworkGenerator(TerrainProfileGenerator):
@@ -17,6 +58,12 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+    )
+    ecology = EcologySpec(
+        decorations=CAVE_NETWORK_DECORATIONS,
+        ambient_effects=("dripstone_drip", "cool_cave_echo"),
+        notes="幽暗地穴生态：入口处血藤成帘，内部光苔钟柱遍布提供照明，"
+              "深处偶立禁制柱（古修士封印）。陷穴石铺满侧道。",
     )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:

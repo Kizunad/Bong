@@ -5,12 +5,59 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+BROKEN_PEAKS_DECORATIONS = (
+    DecorationSpec(
+        name="qing_yun_pine",
+        kind="tree",
+        blocks=("spruce_log", "spruce_leaves", "mossy_cobblestone"),
+        size_range=(8, 14),
+        rarity=0.28,
+        notes="青云松：挺立山脊，松针四季不凋。曾是青云宗标志。",
+    ),
+    DecorationSpec(
+        name="frost_silver_tree",
+        kind="tree",
+        blocks=("stripped_birch_log", "packed_ice", "blue_ice"),
+        size_range=(6, 10),
+        rarity=0.22,
+        notes="霜银树：银白树干顶着冰晶树冠，仅高处雪线上下生长。",
+    ),
+    DecorationSpec(
+        name="ridge_monolith",
+        kind="boulder",
+        blocks=("deepslate", "andesite", "cobbled_deepslate"),
+        size_range=(4, 10),
+        rarity=0.38,
+        notes="断脊碑：山脊上的黑灰巨石，有些刻有残缺符文。",
+    ),
+    DecorationSpec(
+        name="ice_thorn",
+        kind="shrub",
+        blocks=("packed_ice", "snow_block", "pointed_dripstone"),
+        size_range=(2, 4),
+        rarity=0.50,
+        notes="冰棘：密集的冰刺灌丛，划手而含灵气。",
+    ),
+)
 
 
 class BrokenPeaksGenerator(TerrainProfileGenerator):
     profile_name = "broken_peaks"
     extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
+    ecology = EcologySpec(
+        decorations=BROKEN_PEAKS_DECORATIONS,
+        ambient_effects=("high_wind", "occasional_snowfall", "faint_bell"),
+        notes="青云残峰生态：低处青松遍布，山脊多断脊碑，雪线以上生霜银树与冰棘。"
+              "整体冷峻，灵气游走于林间缝隙。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (

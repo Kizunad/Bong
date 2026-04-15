@@ -8,6 +8,9 @@ import numpy as np
 
 from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
+from ..profiles import list_profile_generators
+from ..profiles import get_profile_generator
+from ..profiles.base import DecorationSpec, EcologySpec
 
 BIOME_PALETTE = (
     "minecraft:plains",
@@ -88,6 +91,7 @@ def export_rasters(
         )
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
+    ecology_payload = _collect_profile_ecology()
 
     manifest = {
         "version": 1,
@@ -109,10 +113,29 @@ def export_rasters(
             for name in ("qi_density", "mofa_decay", "qi_vein_flow")
             if name in LAYER_REGISTRY
         ],
+        "vertical_layers": [
+            name
+            for name in (
+                "sky_island_mask",
+                "sky_island_base_y",
+                "sky_island_thickness",
+                "underground_tier",
+                "cavern_floor_y",
+                "ceiling_height",
+            )
+            if name in LAYER_REGISTRY
+        ],
+        "abyssal_tier_floor_y": {"1": 28.0, "2": -4.0, "3": -36.0},
+        "profiles_ecology": ecology_payload,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
             "Semantic layers (qi_density / mofa_decay / qi_vein_flow) carry the xianxia world model.",
+            "Vertical layers encode 3D world from 2D rasters: sky_island_* for floating isles above",
+            "  (Rust should gate on mask>=0.2), underground_tier+cavern_floor_y for stacked caves below",
+            "  (tier 1/2/3 floors per abyssal_tier_floor_y). Sentinel 9999 = 'no isle/cavern here'.",
+            "Ecology: flora_density (0..1) + flora_variant_id (uint8 index into ",
+            "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
             "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
         ],
     }
@@ -146,6 +169,37 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     for zone in zones:
         for poi in zone.pois:
             payload.append(_poi_dict(zone.name, poi))
+    return payload
+
+
+def _decoration_dict(idx: int, deco: DecorationSpec) -> dict[str, object]:
+    return {
+        "variant_id": idx,
+        "name": deco.name,
+        "kind": deco.kind,
+        "blocks": list(deco.blocks),
+        "size_range": list(deco.size_range),
+        "rarity": deco.rarity,
+        "notes": deco.notes,
+    }
+
+
+def _ecology_dict(spec: EcologySpec) -> dict[str, object]:
+    # variant_id 0 is reserved for "no flora"; actual palette starts at 1.
+    return {
+        "decorations": [
+            _decoration_dict(i + 1, d) for i, d in enumerate(spec.decorations)
+        ],
+        "ambient_effects": list(spec.ambient_effects),
+        "notes": spec.notes,
+    }
+
+
+def _collect_profile_ecology() -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for profile_name in list_profile_generators():
+        gen = get_profile_generator(profile_name)
+        payload[profile_name] = _ecology_dict(gen.ecology)
     return payload
 
 

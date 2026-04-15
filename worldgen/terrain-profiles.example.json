@@ -42,6 +42,20 @@
       "surface": ["stone", "gravel", "sand", "dead_bush"],
       "water": { "level": "none", "coverage": 0.0 },
       "passability": "high"
+    },
+    "sky_isle": {
+      "height": { "ground": [70, 76], "isles_y": [260, 340] },
+      "boundary": { "mode": "soft", "width": 160 },
+      "surface": ["grass_block", "moss_block", "calcite", "stone", "gravel"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "ground_high_aerial_special"
+    },
+    "abyssal_maze": {
+      "height": { "surface": [68, 90], "tiers_y": [-36, -4, 28] },
+      "boundary": { "mode": "semi_hard", "width": 104 },
+      "surface": ["stone", "deepslate", "gravel", "coarse_dirt"],
+      "water": { "level": "very_low", "coverage": 0.02 },
+      "passability": "tiered_deep_requires_descent"
     }
   }
 }

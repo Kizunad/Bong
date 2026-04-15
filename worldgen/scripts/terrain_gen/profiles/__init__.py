@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from .abyssal_maze import AbyssalMazeGenerator
 from .base import ProfileContext, TerrainProfileGenerator
 from .broken_peaks import BrokenPeaksGenerator
 from .cave_network import CaveNetworkGenerator
 from .rift_valley import RiftValleyGenerator
+from .sky_isle import SkyIsleGenerator
 from .spawn_plain import SpawnPlainGenerator
 from .spring_marsh import SpringMarshGenerator
 from .waste_plateau import WastePlateauGenerator
@@ -17,6 +19,8 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         RiftValleyGenerator(),
         CaveNetworkGenerator(),
         WastePlateauGenerator(),
+        SkyIsleGenerator(),
+        AbyssalMazeGenerator(),
     )
 }
 
