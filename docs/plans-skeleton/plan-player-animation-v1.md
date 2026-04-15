@@ -272,25 +272,29 @@ public class BongAnimationPlayer {
 
 ## §7 实施节点
 
-- [ ] §1.1 引入 PlayerAnimator gradle 依赖，编译通过
-- [ ] §3.1 `BongAnimationRegistry` 骨架
-- [ ] §3.2 `BongAnimationPlayer` 播放抽象
-- [ ] §3.1 `/bong anim test` debug 命令
-- [ ] 第一个动画原型：`bong:sword_swing_horiz`（纯 Java 实现）
-- [ ] 第二个动画原型：从 JSON 加载 `bong:meditate_sit`
-- [ ] §4.1 协议 schema：`play_anim` / `stop_anim` 加入 VfxEvent TypeBox
-- [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑
-- [ ] §5.1 战斗类 9 个动画批量生产（LLM JSON）
-- [ ] §5.2 修仙姿态 6 个动画
-- [ ] §5.3 剧情演绎 5 个动画
-- [ ] §3.3 多层 priority 叠加测试（行走 + 挥剑同时）
+- [x] §1.1 引入 PlayerAnimator gradle 依赖，编译通过
+- [x] §3.1 `BongAnimationRegistry` 骨架
+- [x] §3.2 `BongAnimationPlayer` 播放抽象
+- [x] §3.1 `/anim test` debug 命令（见 `BongAnimCommand`）
+- [x] 第一个动画原型：`bong:sword_swing_horiz`（纯 Java 实现）
+- [x] 第二个动画原型：从 JSON 加载（Phase 2 已完成全量迁移——20 个 Phase 1 动画全部入 `assets/bong/player_animation/*.json`，PlayerAnimator resource reload listener 自动加载；`BongAnimationRegistry` 走 JSON-first fallback Java，Java 源现已空）
+- [x] §4.1 协议 schema：`play_anim` / `stop_anim` 加入 VfxEvent TypeBox（2026-04-14 完成：`agent/packages/schema/src/vfx-event.ts` 双 variant Union + `server/src/schema/vfx_event.rs` roundtrip + sample.json 双端对齐；客户端 `VfxEventEnvelope` / `VfxEventRouter` / `ClientAnimationBridge` 解析 `bong:vfx_event` CustomPayload 并派发到 `BongAnimationPlayer`，16 个单测覆盖 play/stop/错误三档；未包含 `speed`，待 KeyframeAnimationPlayer 接 setSpeed API 再扩）
+- [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑（schema + client receiver 已通，剩服务端广播调用点：Bevy system 把战斗事件映射到 `VfxEventV1::play_anim` 并按 §4.2 距离过滤广播）
+- [x] §5.1 战斗类 9 个动画批量生产（sword_swing_horiz/vert/stab、fist_punch_left/right、palm_thrust、guard_raise、dodge_back、hit_recoil）
+- [x] §5.2 修仙姿态 6 个动画（meditate_sit、cultivate_stand、levitate、sword_ride、cast_invoke、rune_draw）
+- [x] §5.3 剧情演绎 5 个动画（breakthrough_burst、tribulation_brace、enlightenment_pose、death_collapse、bow_salute）
+- [x] §3.3 多层 priority 叠加测试（行走 + 挥剑同时）—— `BongAnimationPlayerMultiLayerTest` 6 个 case 覆盖：两档同播 / 三档同播（姿态+移动+战斗）/ priority 升序排列 / stop 单条不影响其它 / 同 id 重触发走 replaceAnimationWithFade 不新增层 / stop 不存在 id 不误伤；测试用 `BongAnimationPlayer.playOnStack` seam 绕开 Mixin 依赖
 - [ ] §4.4 动态 JSON 注入原型（天道 Agent 生成）
+
+**Phase 1 资产**（§5.1/§5.2/§5.3 共 20 个）全部落地，见 `BongAnimations.java` v3.4 conventions。本地 `/anim test <id>` 即可单独验证每个。首批视觉验证通过 PunchCombo demo 已验收（见 `docs/player-animation-conventions.md` §7 迭代简史）。
+
+**§4.1 协议层已通**（2026-04-14）：`bong:vfx_event` CustomPayload 通道双端对齐 + 客户端 `ClientAnimationBridge` 派发到 `BongAnimationPlayer`。下一步瓶颈挪到端到端 demo——服务端 Bevy system 要把战斗/剧情事件翻译成 `VfxEventV1::play_anim` 并按 §4.2 距离过滤广播；schema + client receiver 已经准备好接这个调用点。
 
 ---
 
 ## §8 已知风险
 
-- **第一人称视角不显示玩家自己的动画**：vanilla 限制，挥剑时玩家自己只看到原版手臂。可考虑 Mixin 强制第三人称切换或自定义第一人称视图（成本高）
+- **第一人称视角需显式配置**：PlayerAnimator 动画默认不在第一人称渲染（`FirstPersonMode.NONE`）。需要在每个动画上设 `FirstPersonMode.VANILLA`（手臂跟动画）或 `FirstPersonMode.THIRD_PERSON_MODEL`（直接渲染第三人称模型上半身）。不是硬限制，但每个新动画都要记得配。
 - **PlayerAnimator 升级风险**：API 不算稳定，作者偶尔重命名包/类。锁定具体版本号
 - **多人动画带宽**：20 人战斗场景每秒可能数百次动画事件，依赖 §4.2 的距离过滤 + §4.3 的客户端自演分流
 - **运行时 JSON 注入安全**：天道 Agent 生成的 JSON 必须做 schema 校验，避免恶意 keyframe（极大值导致客户端崩溃）
@@ -300,7 +304,7 @@ public class BongAnimationPlayer {
 
 ## §9 开放问题
 
-- [ ] 第一人称视角下的动画显示策略：原版手臂 vs 强制第三人称 vs 自定义第一人称模型？
+- [ ] 第一人称视角下的默认 `FirstPersonMode` 选哪个？`VANILLA`（仅手臂）适合挥剑/出掌，`THIRD_PERSON_MODEL`（全身）适合翻滚/抱拳/打坐——可能按动画类型分组配置
 - [ ] 是否需要"动画事件回调"（动画进行到某 tick 触发音效/粒子）？PlayerAnimator 是否原生支持？
 - [ ] 持物变换（rightItem / leftItem 骨骼）的 vanilla 兼容如何处理？
 - [ ] LLM 生成的 JSON schema 校验由谁做（client / server / agent）？
