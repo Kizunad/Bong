@@ -1,0 +1,10 @@
+[11:07:54] [Test worker/INFO]: Received event_alert payload kind=thunder_tribulation severity=critical
+[11:07:54] [Test worker/INFO]: Received welcome payload: 欢迎踏入洞天，天道正在观测你的命数。
+[11:07:54] [Test worker/INFO]: Received event_alert payload kind=thunder_tribulation severity=critical
+[11:07:55] [Test worker/WARN]: [insight] cannot resolve idx: offer snapshot missing or stale for some_offer
+[11:07:55] [Test worker/INFO]: [insight] dispatch some_offer -> CHOSEN mock_choice_E1 (idx=null)
+[11:07:55] [Test worker/WARN]: [insight] choiceId nonexistent_choice not found in offer first_breakthrough_to_Induce; downgrading to DECLINED
+[11:07:55] [Test worker/INFO]: [insight] dispatch first_breakthrough_to_Induce -> CHOSEN nonexistent_choice (idx=null)
+[11:07:55] [Test worker/INFO]: [insight] dispatch first_breakthrough_to_Induce -> TIMED_OUT (idx=null)
+[11:07:55] [Test worker/INFO]: [insight] dispatch first_breakthrough_to_Induce -> DECLINED (idx=null)
+[11:07:55] [Test worker/INFO]: [insight] dispatch first_breakthrough_to_Induce -> CHOSEN mock_choice_C3 (idx=1)
