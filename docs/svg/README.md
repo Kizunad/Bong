@@ -1,4 +1,4 @@
-# UI 草图索引（plan-combat-v1）
+# UI 草图索引（plan-combat-v1 + 其他）
 
 线框级 SVG 草图，表达 **布局意图 / 数据位置 / 交互流程 / 接入现有 owo-lib 基础设施的方式**，不约束视觉风格。
 实际像素尺寸、字体、配色由 `plan-client.md` 及 owo-lib 实现阶段决定。
@@ -31,6 +31,19 @@ payload 受 `ServerDataEnvelope.MAX_PAYLOAD_BYTES` 约束，XML 过滤 `<!DOCTYP
 | [`death-screens.svg`](./death-screens.svg) | §8 | B | DeathScreen + TerminateScreen 两个独立硬编码 Screen · 遗念/终焉之言预生成 |
 | [`tribulation-ui.svg`](./tribulation-ui.svg) | §10 | A + C | 顶栏红幅广播 + 渡劫者 HUD = A · 观战询问弹窗 = C（server 下发带距离/方向） |
 | [`weapon-treasure.svg`](./weapon-treasure.svg) | §6 | A + B | tooltip 扩展现有 ItemTooltipPanel（A）+ TreasureDetailScreen + ForgeWeaponScreen（B） |
+
+### 其他 plan 的草图
+
+| 文件 | 对应 plan | 层 | 内容 |
+|---|---|---|---|
+| [`alchemy-furnace.svg`](./alchemy-furnace.svg) | plan-alchemy-v1 §3.3 | B | 炼丹炉 Screen · 三列（方子卷轴 + 炉体/火候 + 塔科夫背包 5×7）· 底栏五结果桶 + 丹毒预警 · 拖料投炉 · 翻页学方 |
+| [`forge-station.svg`](./forge-station.svg) | plan-forge-v1 §3.3 | B | 锻炉 Screen · 同布局范式 · 中列按 current_step 切舞台（本图展 Tempering 节奏轨道 J/K/L QTE）· 四步：Billet → Tempering → Inscription → Consecration |
+| [`harvest-popup.svg`](./harvest-popup.svg) | plan-botany-v1 §1.3 | A | 采集小浮窗（非全屏）· 手动/自动二选 · 自动需采药经验 ≥ 3 级解锁 · XP / 品质差异 · 非阻塞，开着仍可见场景 |
+| [`lingtian-plot.svg`](./lingtian-plot.svg) | plan-lingtian-v1 §1.3-1.6 | A | 灵田三态浮窗：生长/补灵（4 来源）· 熟/收获（复用 harvest-popup）· 贫瘠/翻新（锄头+肥料）|
+| [`lingtian-planting.svg`](./lingtian-planting.svg) | plan-lingtian-v1 §1.2.3-1.2.4 | A | 空 plot 种植浮窗（第四入口）· SeedRegistry 列表 · biome/qi 条件校验但不强制 · 1s 轻 session |
+| [`inspect-skill.svg`](./inspect-skill.svg) | plan-skill-v1 §5.1 | B | InspectScreen 新 tab "技艺" · 左列 skill 列表（3 已学 + v2+ 灰显）· 右详 XP 曲线 + Lv 效果表 + 流水 + 里程碑 · 底部残卷拖入槽 |
+
+**布局范式共享**：alchemy + forge 采用统一三列（380 + 640 + 440 in 1560×900 居中），复用 `InventoryStateStore` / `BackpackGridPanel` / `DragState` / `ItemTooltipPanel`；差异只在"中列主舞台"按系统特性定制。
 
 ## 每张草图 · owo-lib 对齐表
 
@@ -141,6 +154,17 @@ payload 受 `ServerDataEnvelope.MAX_PAYLOAD_BYTES` 约束，XML 过滤 `<!DOCTYP
 | `QuickUseSlotStore` | hud-combat（快捷使用栏） | `bong:combat/quickslot_config` |
 | `CastStateStore` | hud-combat（cast bar） | `bong:combat/cast_sync` |
 | `UnifiedEventStore` | hud-combat（事件流） | 合流多 channel：`bong:combat/event` + `bong:cultivation/event` + `bong:world/event` + `bong:social/chat` + `bong:system/notice` |
+| `AlchemyFurnaceStore` | alchemy-furnace | `bong:alchemy/tick`（炉体状态） |
+| `AlchemySessionStore` | alchemy-furnace | `bong:alchemy/tick`（session 进程 + 投料槽） |
+| `RecipeScrollStore` | alchemy-furnace | `bong:alchemy/start`（当前卷轴 + LearnedRecipes） |
+| `WeaponForgeStationStore` | forge-station | `bong:forge/tick`（砧体状态） |
+| `ForgeSessionStore` | forge-station | `bong:forge/tick` + `bong:forge/hit`（step / rhythm_track 实时） |
+| `BlueprintScrollStore` | forge-station | `bong:forge/start`（当前图谱 + LearnedBlueprints） |
+| `HarvestSessionStore` | harvest-popup | `bong:botany/harvest_progress`（当前采集 session + 模式） |
+| `BotanySkillStore` | harvest-popup | `bong:botany/skill`（采药经验 Lv + XP） |
+| `LingtianPlotStore` | lingtian-plot | `bong:lingtian/tick`（当前 plot 状态：作物/plot_qi/harvest_count） |
+| `PlantingSessionStore` | lingtian-planting | `bong:lingtian/plant`（列种子 + 选中 seed_id + session 进度） |
+| `SkillSetStore` | inspect-skill · harvest-popup 顶栏 · alchemy/forge Screen 顶栏 | `bong:skill/xp_gain` + `bong:skill/lv_up` + `bong:skill/cap_changed`（SoT，`BotanySkillStore` 降为派生视图） |
 
 ## 使用方式
 

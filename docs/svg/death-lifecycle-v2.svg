@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1400" font-family="'Noto Sans CJK SC','Noto Sans',sans-serif">
+  <defs>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="75%">
+      <stop offset="55%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.75"/>
+    </radialGradient>
+    <linearGradient id="lifespanBar" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#4a90d9"/>
+      <stop offset="70%" stop-color="#b47a2a"/>
+      <stop offset="100%" stop-color="#7a1f1f"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="1400" fill="#070709"/>
+
+  <!-- Header band -->
+  <text x="60" y="60" font-size="24" fill="#e8e8e8" font-weight="700">死亡-重生-终结 UI（v2 · 对齐 plan-death-lifecycle-v1）</text>
+  <text x="60" y="88" font-size="13" fill="#8a8a8a">渲染层 B (Screen) · 6 个独立 template 共享 screen_id="death_screen" · server 按触发情景只 push 一个，玩家一次只看见一屏</text>
+  <text x="60" y="108" font-size="11" fill="#c8a040">⚠ 本图为设计对照稿，6 格并排仅为阅读方便；运行时互斥渲染，绝不会同时出现</text>
+  <text x="60" y="128" font-size="11" fill="#5a5a5a">布局留白原则：每屏仅展示"此刻需要玩家决策或感受"的最少信息，生平细节留给亡者博物馆网页</text>
+
+  <!-- =============== 行 1 =============== -->
+
+  <!-- [1] 运数期死亡 -->
+  <g transform="translate(60,170)">
+    <rect width="560" height="560" fill="#0f0a0a" stroke="#5a2a2a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#8a5a5a">[1] 运数期死亡 · template="death_fortune"</text>
+
+    <text x="280" y="130" font-size="42" fill="#d94040" text-anchor="middle" font-weight="700">你 死 了</text>
+    <text x="280" y="170" font-size="14" fill="#9a9a9a" text-anchor="middle">第 2 次死亡 · 运数 2 / 3</text>
+
+    <text x="30" y="250" font-size="11" fill="#6a6a6a">死因</text>
+    <text x="30" y="275" font-size="15" fill="#d0a0a0">被野狼撕裂颈动脉 · 血谷西坡</text>
+
+    <text x="30" y="340" font-size="11" fill="#6a6a6a">寿元</text>
+    <rect x="30" y="358" width="500" height="10" fill="#1a1a1a" rx="2"/>
+    <rect x="30" y="358" width="80" height="10" fill="url(#lifespanBar)" rx="2"/>
+    <text x="30" y="390" font-size="12" fill="#b0b0b0">引气 · 已活 16 / 200 年</text>
+    <text x="530" y="390" font-size="12" fill="#d96a6a" text-anchor="end">本次扣寿 −10 年</text>
+
+    <g transform="translate(30,450)">
+      <rect width="500" height="64" fill="#1a2a40" stroke="#4a90d9" stroke-width="2" rx="4"/>
+      <text x="250" y="32" font-size="18" fill="#bcdcff" text-anchor="middle" font-weight="700">重 生</text>
+      <text x="250" y="52" font-size="10" fill="#8a9ab0" text-anchor="middle">运数 −1 · 降阶 · 真元归零 · 虚弱 3min</text>
+    </g>
+    <text x="30" y="538" font-size="10" fill="#5a5a5a">30s 未操作 → 默认重生</text>
+  </g>
+
+  <!-- [2] 劫数期 + 劝退 -->
+  <g transform="translate(680,170)">
+    <rect width="560" height="560" fill="#0a0a0f" stroke="#3a3a6a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#6a6a8a">[2] 劫数期死亡 · template="death_calamity"</text>
+
+    <text x="280" y="130" font-size="36" fill="#c88080" text-anchor="middle" font-weight="700">命 数 将 尽</text>
+    <text x="280" y="168" font-size="14" fill="#9a9a9a" text-anchor="middle">第 5 次死亡 · 运数已竭</text>
+
+    <!-- 概率环 -->
+    <g transform="translate(280,280)">
+      <circle r="72" fill="none" stroke="#1a1a1a" stroke-width="10"/>
+      <circle r="72" fill="none" stroke="#c8a040" stroke-width="10"
+              stroke-dasharray="226 452" stroke-dashoffset="0"
+              transform="rotate(-90)"/>
+      <text y="6" font-size="30" fill="#e8d4a0" text-anchor="middle" font-weight="700">50%</text>
+      <text y="30" font-size="10" fill="#8a8a6a" text-anchor="middle">重生概率</text>
+    </g>
+
+    <text x="280" y="400" font-size="11" fill="#8a8a8a" text-anchor="middle">P = max(5%, 80% − 15% × (n−3))</text>
+
+    <!-- 二选按钮 -->
+    <g transform="translate(30,440)">
+      <rect width="240" height="80" fill="#1a2a40" stroke="#4a90d9" stroke-width="2" rx="4"/>
+      <text x="120" y="36" font-size="16" fill="#bcdcff" text-anchor="middle" font-weight="700">接受重生</text>
+      <text x="120" y="58" font-size="10" fill="#8a9ab0" text-anchor="middle">Roll 50% · 失败 → 终结</text>
+    </g>
+    <g transform="translate(290,440)">
+      <rect width="240" height="80" fill="#1a1a1a" stroke="#8a8a8a" stroke-width="1" rx="4"/>
+      <text x="120" y="36" font-size="16" fill="#d0d0d0" text-anchor="middle" font-weight="700">自主归隐</text>
+      <text x="120" y="58" font-size="10" fill="#8a8a8a" text-anchor="middle">善终路径 · 不掉物品</text>
+    </g>
+  </g>
+
+  <!-- [3] 老死善终 -->
+  <g transform="translate(1300,170)">
+    <rect width="560" height="560" fill="#0a0e08" stroke="#3a4a2a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#6a8a5a">[3] 老死（善终）· template="death_natural"</text>
+
+    <text x="280" y="140" font-size="32" fill="#cae0a8" text-anchor="middle" font-weight="700">寿 终 正 寝</text>
+    <text x="280" y="175" font-size="13" fill="#8a9a7a" text-anchor="middle">已活 1000 / 1000 年 · 通灵境</text>
+
+    <text x="30" y="260" font-size="11" fill="#6a7a5a">遗念（agent 生成回顾性长诗）</text>
+    <text x="30" y="290" font-size="13" fill="#c8d8b8" font-style="italic">「山河看过了，刀也收了。</text>
+    <text x="30" y="314" font-size="13" fill="#c8d8b8" font-style="italic">  这一局，够了。」</text>
+
+    <text x="30" y="400" font-size="11" fill="#6a7a5a">身后事</text>
+    <text x="30" y="424" font-size="12" fill="#a8b898">· 原地 3×3 留遗骸容器（物品全留）</text>
+    <text x="30" y="446" font-size="12" fill="#a8b898">· 生平卷标记 善终</text>
+    <text x="30" y="468" font-size="12" fill="#a8b898">· 亡者博物馆永久公开</text>
+
+    <g transform="translate(30,500)">
+      <rect width="500" height="40" fill="#1a2a1a" stroke="#6a8a4a" rx="4"/>
+      <text x="250" y="26" font-size="14" fill="#c8d8b8" text-anchor="middle">安 息</text>
+    </g>
+  </g>
+
+  <!-- =============== 行 2 =============== -->
+
+  <!-- [4] 终结归档 -->
+  <g transform="translate(60,790)">
+    <rect width="560" height="560" fill="#0a0a0a" stroke="#4a4a4a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#7a7a7a">[4] 终结归档 · template="terminate"</text>
+
+    <text x="280" y="140" font-size="44" fill="#e8e8e8" text-anchor="middle" font-weight="300" letter-spacing="20">终</text>
+
+    <text x="30" y="230" font-size="11" fill="#6a6a6a">角色</text>
+    <text x="30" y="252" font-size="14" fill="#d0d0d0">陈怀素 · 引气境 · 真元色 青</text>
+
+    <text x="30" y="300" font-size="11" fill="#6a6a6a">在世</text>
+    <text x="30" y="322" font-size="14" fill="#d0d0d0">14 天 6 时 · 死 5 次 · 杀 16</text>
+
+    <text x="30" y="370" font-size="11" fill="#6a6a6a">归档分类</text>
+    <g transform="translate(30,388)">
+      <rect width="110" height="28" fill="#2a1a1a" stroke="#8a4a4a" rx="2"/>
+      <text x="55" y="18" font-size="11" fill="#d0a0a0" text-anchor="middle">横死 ✓</text>
+    </g>
+    <g transform="translate(150,388)">
+      <rect width="110" height="28" fill="#1a1a1a" stroke="#4a4a4a" rx="2"/>
+      <text x="55" y="18" font-size="11" fill="#6a6a6a" text-anchor="middle">善终</text>
+    </g>
+    <g transform="translate(270,388)">
+      <rect width="110" height="28" fill="#1a1a1a" stroke="#4a4a4a" rx="2"/>
+      <text x="55" y="18" font-size="11" fill="#6a6a6a" text-anchor="middle">自主归隐</text>
+    </g>
+    <g transform="translate(390,388)">
+      <rect width="110" height="28" fill="#1a1a1a" stroke="#4a4a4a" rx="2"/>
+      <text x="55" y="18" font-size="11" fill="#6a6a6a" text-anchor="middle">夺舍者</text>
+    </g>
+
+    <text x="30" y="452" font-size="11" fill="#6a6a6a">生平卷已冻结 · library-web 亡者博物馆可查</text>
+    <text x="30" y="472" font-size="10" fill="#5a5a5a">新角色与此角色无机制关联（坚守 plan §5）</text>
+
+    <g transform="translate(30,500)">
+      <rect width="500" height="40" fill="#202020" stroke="#c0c0c0" stroke-width="2" rx="4"/>
+      <text x="250" y="26" font-size="14" fill="#e0e0e0" text-anchor="middle">创建新角色</text>
+    </g>
+  </g>
+
+  <!-- [5] 夺舍确认 -->
+  <g transform="translate(680,790)">
+    <rect width="560" height="560" fill="#140a0a" stroke="#6a1a1a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#8a4a4a">[5] 夺舍确认 · template="duoshe_confirm"</text>
+
+    <text x="280" y="130" font-size="28" fill="#e8a8a8" text-anchor="middle" font-weight="700">夺 舍</text>
+    <text x="280" y="160" font-size="12" fill="#8a6a6a" text-anchor="middle">警告：不可撤销 · 生平卷永久标记</text>
+
+    <text x="30" y="220" font-size="11" fill="#8a4a4a">目标</text>
+    <text x="30" y="244" font-size="14" fill="#d8b8b8">凡人 · 王二 · 29 岁 · 青云镇</text>
+    <text x="30" y="264" font-size="10" fill="#7a5a5a">仅限 凡人/醒灵 可夺（plan §4e）</text>
+
+    <text x="30" y="320" font-size="11" fill="#8a4a4a">代价</text>
+    <text x="30" y="344" font-size="13" fill="#d8b8b8">· 业力 +100（重罪）</text>
+    <text x="30" y="366" font-size="13" fill="#d8b8b8">· 真元上限永久 −20%</text>
+    <text x="30" y="388" font-size="13" fill="#d8b8b8">· 生平卷 tag=夺舍者 · 公开</text>
+
+    <text x="30" y="430" font-size="11" fill="#8a4a4a">收益</text>
+    <text x="30" y="452" font-size="13" fill="#b8c8d8">· 已活年岁 86 → 29（回拨 57 年）</text>
+
+    <g transform="translate(30,500)">
+      <rect width="240" height="40" fill="#2a0a0a" stroke="#d94040" stroke-width="2" rx="4"/>
+      <text x="120" y="26" font-size="14" fill="#ffb0b0" text-anchor="middle" font-weight="700">舍</text>
+    </g>
+    <g transform="translate(290,500)">
+      <rect width="240" height="40" fill="#1a1a1a" stroke="#8a8a8a" rx="4"/>
+      <text x="120" y="26" font-size="14" fill="#d0d0d0" text-anchor="middle">放弃</text>
+    </g>
+  </g>
+
+  <!-- [6] 续命菜单 -->
+  <g transform="translate(1300,790)">
+    <rect width="560" height="560" fill="#0a0a14" stroke="#3a3a6a" rx="4"/>
+    <rect width="560" height="560" fill="url(#vignette)"/>
+    <text x="30" y="40" font-size="12" fill="#6a6a8a">[6] 续命菜单 · template="extension_menu" · 风烛触发</text>
+
+    <text x="280" y="120" font-size="26" fill="#c8c8e8" text-anchor="middle" font-weight="700">续 命</text>
+
+    <text x="30" y="170" font-size="11" fill="#6a6a8a">累计续寿（硬上限 2× 当前境界）</text>
+    <rect x="30" y="188" width="500" height="10" fill="#1a1a1a" rx="2"/>
+    <rect x="30" y="188" width="140" height="10" fill="#6a80c8" rx="2"/>
+    <text x="530" y="216" font-size="11" fill="#9aa0c8" text-anchor="end">280 / 1000 年</text>
+
+    <!-- 选项 1: 续命丹 -->
+    <g transform="translate(30,260)">
+      <rect width="500" height="70" fill="#12121f" stroke="#4a4a7a" rx="4"/>
+      <text x="16" y="22" font-size="13" fill="#c0c0e0" font-weight="700">续命丹 · +20 年</text>
+      <text x="16" y="42" font-size="10" fill="#8a8aa8">代价 真元上限 −40（永久）</text>
+      <text x="16" y="60" font-size="10" fill="#6a6a8a">材料 千年血参 ×1 · 乌玉 ×3</text>
+    </g>
+
+    <!-- 选项 2: 悟道延寿 -->
+    <g transform="translate(30,340)">
+      <rect width="500" height="70" fill="#121a1f" stroke="#4a7a7a" rx="4"/>
+      <text x="16" y="22" font-size="13" fill="#c0e0e0" font-weight="700">悟道延寿 · 回拨至上限 30%</text>
+      <text x="16" y="42" font-size="10" fill="#8aa8a8">代价 顿悟名额 1/1 · 悟境天花板 −1</text>
+      <text x="16" y="60" font-size="10" fill="#c8a040">一生一次（剩余 1）</text>
+    </g>
+
+    <!-- 选项 3: 坍缩渊换寿 -->
+    <g transform="translate(30,420)">
+      <rect width="500" height="70" fill="#1f1212" stroke="#7a4a4a" rx="4"/>
+      <text x="16" y="22" font-size="13" fill="#e0c0c0" font-weight="700">坍缩渊换寿 · 深潜</text>
+      <text x="16" y="42" font-size="10" fill="#a88a8a">代价 境界进度回退 30% · 失败即老死</text>
+      <text x="16" y="60" font-size="10" fill="#6a6a6a">需前往 负灵域 POI「寿核」</text>
+    </g>
+
+    <text x="30" y="530" font-size="10" fill="#5a5a7a">※ 所有续命事件写入生平卷 lifespan_events[] · 公开不屏蔽</text>
+  </g>
+
+  <!-- Footer -->
+  <text x="60" y="1360" font-size="11" fill="#4a4a4a">数据契约 LifespanComponent · DeathRegistry · ExtensionContract · DuoSheEvent · EnlightenmentExtendEvent（见 plan §7）</text>
+  <text x="1860" y="1360" font-size="11" fill="#4a4a4a" text-anchor="end">旧版 death-screens.svg 应归档（机制已不符）</text>
+</svg>

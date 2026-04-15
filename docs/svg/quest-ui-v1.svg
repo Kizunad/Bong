@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1000" font-family="'Noto Sans CJK SC','Noto Sans',sans-serif">
+  <defs>
+    <radialGradient id="vg" cx="50%" cy="50%" r="75%">
+      <stop offset="55%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+  </defs>
+  <rect width="1400" height="1000" fill="#080808"/>
+
+  <!-- Header -->
+  <text x="40" y="48" font-size="22" fill="#e8e8e8" font-weight="700">任务 UI 草图（plan-quest-v1 · 交接自 plan-npc-ai-v1 §10）</text>
+  <text x="40" y="72" font-size="12" fill="#8a8a8a">4 视图：[1] NPC 派任务弹窗 · [2] 任务日志 · [3] 任务详情 · [4] HUD 追踪条（常驻）</text>
+  <text x="40" y="92" font-size="11" fill="#c8a040">⚠ 设计对照稿，实际运行时 [1][2][3] 为独立 Screen（互斥）· [4] 为 HUD 叠加层（与其他 HUD 共存）</text>
+
+  <!-- ============ [1] NPC 派任务弹窗（B 类 Screen） ============ -->
+  <g transform="translate(40,130)">
+    <rect width="640" height="400" fill="#0f0c08" stroke="#5a4a2a" rx="4"/>
+    <rect width="640" height="400" fill="url(#vg)"/>
+    <text x="24" y="34" font-size="12" fill="#8a7a5a">[1] 接任务弹窗 · template="quest_offer"</text>
+
+    <!-- NPC 头像占位 + 名字派系 -->
+    <g transform="translate(30,60)">
+      <rect width="64" height="64" fill="#2a2218" stroke="#6a5a3a" rx="2"/>
+      <text x="32" y="40" font-size="24" fill="#8a7a4a" text-anchor="middle">卫</text>
+    </g>
+    <text x="110" y="82" font-size="16" fill="#e0d4a0">卫长老 · 青霜剑宗 · 内门</text>
+    <text x="110" y="104" font-size="11" fill="#8a7a5a">声望 +32 · 师承 第三代</text>
+
+    <!-- 任务标题 + 简述（给大量留白） -->
+    <g transform="translate(30,160)">
+      <text x="0" y="0" font-size="11" fill="#7a6a4a">任务</text>
+      <text x="0" y="28" font-size="18" fill="#e8d8a8" font-weight="700">寻回青霜剑谱残卷</text>
+      <text x="0" y="56" font-size="12" fill="#c8b890">北风崖遗迹曾见有人持残卷西行。</text>
+      <text x="0" y="76" font-size="12" fill="#c8b890">取回者，入真传。</text>
+    </g>
+
+    <!-- 奖励 / 代价 -->
+    <g transform="translate(30,260)">
+      <text x="0" y="0" font-size="11" fill="#7a6a4a">奖励</text>
+      <text x="0" y="22" font-size="12" fill="#a8c8a8">· 声望 +40 · 骨币 500 · 晋升真传</text>
+      <text x="340" y="0" font-size="11" fill="#7a6a4a">限期</text>
+      <text x="340" y="22" font-size="12" fill="#c8a890">· 7 日（168 h in-game）</text>
+    </g>
+
+    <!-- 按钮 -->
+    <g transform="translate(30,330)">
+      <rect width="280" height="44" fill="#1a2a1a" stroke="#6a8a4a" stroke-width="2" rx="4"/>
+      <text x="140" y="28" font-size="14" fill="#c8d8a8" text-anchor="middle" font-weight="700">接下</text>
+    </g>
+    <g transform="translate(330,330)">
+      <rect width="280" height="44" fill="#1a1a1a" stroke="#6a6a6a" rx="4"/>
+      <text x="140" y="28" font-size="14" fill="#a8a8a8" text-anchor="middle">容我思量（保留 24h）</text>
+    </g>
+  </g>
+
+  <!-- ============ [2] 任务日志（B 类 Screen，按 J 打开） ============ -->
+  <g transform="translate(720,130)">
+    <rect width="640" height="400" fill="#080c0f" stroke="#2a4a5a" rx="4"/>
+    <rect width="640" height="400" fill="url(#vg)"/>
+    <text x="24" y="34" font-size="12" fill="#5a7a8a">[2] 任务日志 · template="quest_log" · 按 J</text>
+
+    <text x="30" y="78" font-size="16" fill="#c8d8e8" font-weight="700">进行中</text>
+
+    <!-- 任务行 1（active） -->
+    <g transform="translate(30,100)">
+      <rect width="580" height="52" fill="#12181f" stroke="#4a7aaa" rx="2"/>
+      <text x="16" y="22" font-size="13" fill="#d8e8f8">寻回青霜剑谱残卷</text>
+      <text x="16" y="40" font-size="10" fill="#6a8aaa">卫长老 · 剩余 5d 12h · 进度 ▓▓▓░░░</text>
+    </g>
+    <!-- 任务行 2 -->
+    <g transform="translate(30,170)">
+      <rect width="580" height="52" fill="#12181f" stroke="#3a5a7a" stroke-dasharray="3 2" rx="2"/>
+      <text x="16" y="22" font-size="13" fill="#a8c0d8">护送药童回青云镇</text>
+      <text x="16" y="40" font-size="10" fill="#6a8aaa">散修 周姑 · 剩余 2d · 进度 ░░░░░░</text>
+    </g>
+
+    <text x="30" y="268" font-size="14" fill="#7a6a5a">已完成 · 3 条</text>
+    <text x="30" y="294" font-size="11" fill="#6a5a4a">· 山门日课 · 猎杀野狼三只 · 替卫长老送信</text>
+
+    <text x="30" y="332" font-size="14" fill="#6a4040">已失败 · 1 条</text>
+    <text x="30" y="358" font-size="11" fill="#8a5a5a">· 救援盟友（超时 · 声望 -10）</text>
+  </g>
+
+  <!-- ============ [3] 任务详情（从日志点击进入） ============ -->
+  <g transform="translate(40,570)">
+    <rect width="640" height="400" fill="#0a0a0f" stroke="#3a3a5a" rx="4"/>
+    <rect width="640" height="400" fill="url(#vg)"/>
+    <text x="24" y="34" font-size="12" fill="#6a6a8a">[3] 任务详情 · template="quest_detail"</text>
+
+    <text x="30" y="78" font-size="18" fill="#e0d8f0" font-weight="700">寻回青霜剑谱残卷</text>
+    <text x="30" y="100" font-size="11" fill="#8a8aaa">委托人 卫长老（青霜剑宗）· 剩余 5d 12h</text>
+
+    <!-- 分阶段进度 -->
+    <g transform="translate(30,140)">
+      <text x="0" y="0" font-size="11" fill="#6a6a8a">目标</text>
+      <g transform="translate(0,20)">
+        <circle cx="8" cy="8" r="6" fill="#4a8a4a"/>
+        <text x="24" y="12" font-size="12" fill="#a8c8a8">前往北风崖遗迹</text>
+      </g>
+      <g transform="translate(0,46)">
+        <circle cx="8" cy="8" r="6" fill="#4a8a4a"/>
+        <text x="24" y="12" font-size="12" fill="#a8c8a8">找到持残卷之人（西行）</text>
+      </g>
+      <g transform="translate(0,72)">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="#8a8a8a" stroke-width="2"/>
+        <text x="24" y="12" font-size="12" fill="#c8c8c8">取回残卷 · 当前位置</text>
+      </g>
+      <g transform="translate(0,98)">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="#4a4a4a" stroke-width="2"/>
+        <text x="24" y="12" font-size="12" fill="#6a6a6a">回交卫长老</text>
+      </g>
+    </g>
+
+    <!-- 奖励 -->
+    <g transform="translate(30,290)">
+      <text x="0" y="0" font-size="11" fill="#6a6a8a">成功</text>
+      <text x="0" y="20" font-size="11" fill="#a8c8a8">声望 +40 · 骨币 500 · 晋升真传</text>
+      <text x="320" y="0" font-size="11" fill="#6a6a8a">失败</text>
+      <text x="320" y="20" font-size="11" fill="#c8a8a8">声望 -20 · 派系好感 -15</text>
+    </g>
+
+    <!-- 按钮 -->
+    <g transform="translate(30,350)">
+      <rect width="280" height="36" fill="#2a1818" stroke="#6a4a4a" rx="4"/>
+      <text x="140" y="24" font-size="12" fill="#d0a8a8" text-anchor="middle">放弃任务（声望 -20）</text>
+    </g>
+    <g transform="translate(330,350)">
+      <rect width="280" height="36" fill="#1a1a2a" stroke="#4a4a6a" rx="4"/>
+      <text x="140" y="24" font-size="12" fill="#b8b8d8" text-anchor="middle">在地图上标记目标</text>
+    </g>
+  </g>
+
+  <!-- ============ [4] HUD 追踪条（A 层，常驻）============ -->
+  <g transform="translate(720,570)">
+    <rect width="640" height="400" fill="#060606" stroke="#2a2a2a" rx="4"/>
+    <text x="24" y="34" font-size="12" fill="#5a5a5a">[4] HUD 追踪条（A 层常驻）· 右上角位置 · 不遮挡战斗主 HUD</text>
+
+    <!-- 模拟游戏画面 -->
+    <rect x="24" y="60" width="592" height="300" fill="#0a0a0a" stroke="#1a1a1a"/>
+    <text x="320" y="215" font-size="10" fill="#2a2a2a" text-anchor="middle">（游戏视口示意）</text>
+
+    <!-- 右上角追踪条 -->
+    <g transform="translate(436,80)">
+      <rect width="172" height="88" fill="#000000" fill-opacity="0.6" stroke="#3a5a7a" rx="2"/>
+      <text x="12" y="18" font-size="10" fill="#7a9abf">当前任务</text>
+      <text x="12" y="38" font-size="12" fill="#d8e8f8" font-weight="700">青霜剑谱</text>
+      <text x="12" y="54" font-size="10" fill="#a8c0d8">· 取回残卷</text>
+      <text x="12" y="74" font-size="9" fill="#6a7a8a">5d 12h</text>
+      <!-- 距离指示 -->
+      <text x="160" y="74" font-size="9" fill="#c8a040" text-anchor="end">↗ 210m</text>
+    </g>
+
+    <!-- 说明 -->
+    <g transform="translate(24,380)">
+      <text x="0" y="0" font-size="11" fill="#6a6a6a">· 仅显示"钉选"的 1 个任务（按 J 日志中右键切换）</text>
+    </g>
+  </g>
+
+  <text x="40" y="990" font-size="10" fill="#4a4a4a">数据契约 QuestState · QuestLogStore · QuestTrackerStore · NpcOfferEvent · RewardSettlement（plan-quest-v1 §6 填充）</text>
+</svg>

@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" font-family="'Noto Sans CJK SC', sans-serif">
+  <!-- 游戏背景（透过 MC 世界模糊层示意；不填满屏幕） -->
+  <defs>
+    <pattern id="mcbg" width="40" height="40" patternUnits="userSpaceOnUse">
+      <rect width="40" height="40" fill="#1a1a22"/>
+      <rect width="40" height="40" fill="#222230" opacity="0.3"/>
+      <circle cx="10" cy="10" r="0.8" fill="#333344"/>
+      <circle cx="30" cy="25" r="0.6" fill="#2a2a38"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#mcbg)"/>
+  <rect width="1920" height="1200" fill="#000000" opacity="0.55"/>
+
+  <!-- ============ 居中面板容器 · 1560 × 900 ============ -->
+  <g transform="translate(180,110)">
+    <!-- 面板底 -->
+    <rect width="1560" height="900" fill="#0d0d15" stroke="#4a4050" stroke-width="2" rx="8"/>
+
+    <!-- Header -->
+    <text x="30" y="38" font-size="20" fill="#ffffff" font-weight="bold">炼丹炉 · AlchemyFurnace Screen</text>
+    <text x="30" y="60" font-size="12" fill="#888">plan-alchemy-v1 §1.3 火候进程 + §3.3 MVP · B 层 BaseOwoScreen&lt;FlowLayout&gt; · 右键炉方块打开</text>
+    <text x="1530" y="38" font-size="13" fill="#aaaa" text-anchor="end">ESC 关闭（session 继续 tick）</text>
+    <text x="1530" y="60" font-size="11" fill="#888" text-anchor="end">边距 180/110 留给 MC 世界背景（炉火光映入场景）</text>
+    <line x1="30" y1="78" x2="1530" y2="78" stroke="#2a2a35"/>
+
+    <!-- ====== LEFT · 配方手札（卷轴文案） ====== -->
+    <g transform="translate(30,100)">
+      <!-- 卷轴底纹 -->
+      <rect width="380" height="740" fill="#2a2318" stroke="#6a5030" stroke-width="2" rx="4"/>
+      <rect x="6" y="6" width="368" height="728" fill="#3a3020" stroke="#8a6a40" rx="2"/>
+      <!-- 卷轴上下装饰（包轴） -->
+      <rect x="0" y="0" width="380" height="14" fill="#5a4020" stroke="#3a2810"/>
+      <rect x="0" y="726" width="380" height="14" fill="#5a4020" stroke="#3a2810"/>
+
+      <!-- 翻页箭头（已学会的方子之间快速切换） -->
+      <g transform="translate(40,40)">
+        <polygon points="0,14 14,4 14,24" fill="#8a6a40" stroke="#c8a878"/>
+      </g>
+      <g transform="translate(326,40)">
+        <polygon points="14,14 0,4 0,24" fill="#c8a878" stroke="#e8d8a8"/>
+      </g>
+      <text x="190" y="50" font-size="18" fill="#e8d8a8" text-anchor="middle" font-weight="bold">开脉丹方</text>
+      <text x="190" y="70" font-size="10" fill="#a89878" text-anchor="middle" font-style="italic">— 散修 刘三 手抄 · 末法 十二年 · 已学 3 / 8</text>
+      <line x1="40" y1="84" x2="340" y2="84" stroke="#8a6a40" stroke-dasharray="3 3"/>
+
+      <!-- 方子正文（玩家必须读并自行投料） -->
+      <g transform="translate(30,110)" fill="#e8d8a8" font-size="13">
+        <text x="0" y="0">凡炼开脉，先取【开脉草】三株，</text>
+        <text x="0" y="22">须是灵气 &gt; 0.3 处所生，枯者不可用。</text>
+        <text x="0" y="50">佐以【灵水】一勺，以凝脉引。</text>
+        <text x="0" y="78">入炉前须净手，炉温起于温火，</text>
+        <text x="0" y="100">渐旺至 <tspan fill="#ffcc40" font-weight="bold">六成火</tspan>（约 0.60），</text>
+        <text x="0" y="122">持 <tspan fill="#ffcc40" font-weight="bold">二百息</tspan>（约 200 ticks），</text>
+        <text x="0" y="144">期间徐徐注真元，总计 <tspan fill="#40d0d0" font-weight="bold">一十五</tspan>。</text>
+
+        <text x="0" y="180" fill="#c8a878">火候偏差：</text>
+        <text x="20" y="202" fill="#a89878" font-size="12">· 温差 ±一成（0.10）内为佳</text>
+        <text x="20" y="222" fill="#a89878" font-size="12">· 时差 ±三十息（30）尚可</text>
+        <text x="20" y="242" fill="#a89878" font-size="12">· 逾则丹废、炉裂、人伤</text>
+
+        <text x="0" y="278" fill="#c8a878">成则：</text>
+        <text x="20" y="300" font-size="12">开脉丹 · 推一经三成</text>
+        <text x="20" y="320" font-size="12" fill="#a89878">副毒：醇（Mellow）半钱</text>
+
+        <text x="0" y="358" fill="#e06060">⚠ 切记</text>
+        <text x="20" y="380" font-size="12" fill="#c89090">· 体内醇毒未化尽，切勿再服</text>
+        <text x="20" y="400" font-size="12" fill="#c89090">· 经脉愈固，化毒愈速</text>
+
+        <line x1="0" y1="430" x2="320" y2="430" stroke="#6a5030"/>
+
+        <text x="0" y="456" fill="#a89878" font-size="11" font-style="italic">（其他方子放在 inventory 的</text>
+        <text x="0" y="472" fill="#a89878" font-size="11" font-style="italic">"丹方残卷"物品里，</text>
+        <text x="0" y="488" fill="#a89878" font-size="11" font-style="italic">拖入下方"方书架"格阅读）</text>
+      </g>
+
+      <!-- 学新方：拖拽丹方残卷到卷轴（无额外 UI，复用 DragState） -->
+      <g transform="translate(30,608)">
+        <rect width="320" height="78" fill="#2a2018" stroke="#8a6a40" stroke-dasharray="4 3" rx="3"/>
+        <text x="160" y="24" font-size="11" fill="#c8a878" text-anchor="middle" font-weight="bold">学习新方</text>
+        <text x="160" y="44" font-size="10" fill="#a89878" text-anchor="middle">从右侧背包拖【丹方残卷】到卷轴</text>
+        <text x="160" y="62" font-size="10" fill="#a89878" text-anchor="middle">即永久录入此方书 · 残卷消耗</text>
+      </g>
+
+      <text x="190" y="712" font-size="10" fill="#8a7858" text-anchor="middle" font-style="italic">← → 翻页切换已学方子 · 材料自投</text>
+    </g>
+
+    <!-- ====== CENTER · 炉体 + 投料槽 + 火候控制 ====== -->
+    <g transform="translate(430,100)">
+      <rect width="640" height="740" fill="#14141f" stroke="#c04040" stroke-width="2" rx="6"/>
+      <text x="20" y="28" font-size="15" fill="#ff8080" font-weight="bold">炉体 · AlchemySession</text>
+      <text x="20" y="48" font-size="10" fill="#aaaa">从右侧背包拖材料到下方投料槽 · 按住 F 注真元 · ↑↓ 调温</text>
+
+      <!-- 炉体可视化（顶部） -->
+      <g transform="translate(180,70)">
+        <path d="M 40 20 Q 140 0 240 20 L 220 50 L 60 50 Z" fill="#2a1a1a" stroke="#a06040" stroke-width="2"/>
+        <rect x="40" y="50" width="200" height="150" fill="#1a1010" stroke="#a06040" stroke-width="2"/>
+        <!-- 丹胚 -->
+        <circle cx="100" cy="158" r="10" fill="#c0a040" opacity="0.8"/>
+        <circle cx="140" cy="150" r="12" fill="#d0b050" opacity="0.9"/>
+        <circle cx="176" cy="160" r="9" fill="#c09030" opacity="0.7"/>
+        <!-- 火焰 -->
+        <path d="M 70 200 Q 80 175 90 200 Q 100 180 110 200 Q 120 170 130 200 Q 140 175 150 200 Q 160 165 170 200 Q 180 175 190 200 Q 200 180 210 200 Z" fill="#ff6020" opacity="0.85"/>
+        <path d="M 80 200 Q 90 188 100 200 Q 110 185 120 200 Q 130 188 140 200 Q 150 183 160 200 Q 170 190 180 200 Q 190 185 200 200 Z" fill="#ffaa40" opacity="0.9"/>
+        <rect x="30" y="200" width="220" height="18" fill="#1a0808" stroke="#805030"/>
+        <text x="140" y="244" font-size="11" fill="#ffcc40" text-anchor="middle">炉温 0.58 / 0.60（容差带内）· elapsed 120 / 200</text>
+      </g>
+
+      <!-- 投料槽（4 个通用 drop target） -->
+      <g transform="translate(30,340)">
+        <text x="0" y="0" font-size="12" fill="#cccccc">投料槽（从背包拖入）</text>
+        <text x="580" y="0" font-size="10" fill="#888" text-anchor="end">DragState 接入现有拖拽系统</text>
+
+        <!-- 槽 1：已放开脉草 ×3 -->
+        <g transform="translate(0,14)">
+          <rect width="56" height="56" fill="#1a2a1a" stroke="#80ff80" stroke-width="2"/>
+          <rect x="6" y="6" width="44" height="44" fill="#2a4a2a"/>
+          <text x="28" y="34" font-size="12" fill="#ffffff" text-anchor="middle" font-weight="bold">开脉草</text>
+          <text x="50" y="54" font-size="11" fill="#80ff80" text-anchor="end">×3</text>
+          <text x="28" y="72" font-size="10" fill="#80ff80" text-anchor="middle">✓</text>
+        </g>
+
+        <!-- 槽 2：已放灵水 ×1 -->
+        <g transform="translate(70,14)">
+          <rect width="56" height="56" fill="#1a2a3a" stroke="#80c0ff" stroke-width="2"/>
+          <rect x="6" y="6" width="44" height="44" fill="#2a3a4a"/>
+          <text x="28" y="34" font-size="12" fill="#ffffff" text-anchor="middle" font-weight="bold">灵水</text>
+          <text x="50" y="54" font-size="11" fill="#80c0ff" text-anchor="end">×1</text>
+          <text x="28" y="72" font-size="10" fill="#80ff80" text-anchor="middle">✓</text>
+        </g>
+
+        <!-- 槽 3：空 -->
+        <g transform="translate(140,14)">
+          <rect width="56" height="56" fill="#0a0a12" stroke="#444" stroke-dasharray="3 2"/>
+          <text x="28" y="32" font-size="10" fill="#555" text-anchor="middle">空</text>
+        </g>
+
+        <!-- 槽 4：空 -->
+        <g transform="translate(210,14)">
+          <rect width="56" height="56" fill="#0a0a12" stroke="#444" stroke-dasharray="3 2"/>
+          <text x="28" y="32" font-size="10" fill="#555" text-anchor="middle">空</text>
+        </g>
+
+        <!-- 提示：玩家错投会失败 -->
+        <g transform="translate(300,14)">
+          <rect width="280" height="56" fill="#1a0a10" stroke="#c04060" rx="4"/>
+          <text x="10" y="20" font-size="11" fill="#ff80a0">⚠ 不做"配方匹配校验"</text>
+          <text x="10" y="38" font-size="10" fill="#c88090">投错料 → 炸炉 / 废丹</text>
+          <text x="10" y="54" font-size="10" fill="#c88090">方子读错是玩家的事（plan §0 "玩法深度"）</text>
+        </g>
+      </g>
+
+      <!-- 进度条 -->
+      <g transform="translate(30,440)">
+        <text x="0" y="0" font-size="12" fill="#cccccc">进度 · elapsed 120 / 200 ticks</text>
+        <rect x="0" y="10" width="580" height="16" fill="#001020" stroke="#666"/>
+        <rect x="0" y="10" width="348" height="16" fill="#c04040"/>
+        <text x="290" y="22" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold">60%</text>
+      </g>
+
+      <!-- 火候控制双行 -->
+      <g transform="translate(30,480)">
+        <!-- 温度条 -->
+        <text x="0" y="18" font-size="12" fill="#cccccc">炉温（↑↓ 调）</text>
+        <text x="580" y="18" font-size="12" fill="#ffcc40" text-anchor="end">0.58</text>
+        <rect x="0" y="28" width="580" height="10" fill="#333" rx="5"/>
+        <rect x="278" y="28" width="64" height="10" fill="#40ff80" opacity="0.3"/>
+        <line x1="310" y1="22" x2="310" y2="42" stroke="#40ff80" stroke-width="2"/>
+        <rect x="294" y="20" width="12" height="26" fill="#ffcc40"/>
+        <text x="0" y="60" font-size="9" fill="#888">0.0 冷</text>
+        <text x="310" y="60" font-size="9" fill="#40ff80" text-anchor="middle">target 0.60 ± 0.10</text>
+        <text x="580" y="60" font-size="9" fill="#888" text-anchor="end">1.0 过炎</text>
+
+        <!-- 注真元 -->
+        <g transform="translate(0,80)">
+          <rect width="400" height="44" fill="#0a2030" stroke="#40d0d0" rx="4"/>
+          <text x="16" y="20" font-size="13" fill="#80ffff" font-weight="bold">F · 注真元</text>
+          <text x="16" y="36" font-size="10" fill="#aaaa">单次 +1.0 · 已注 9.2 / 目标 15.0</text>
+          <rect x="200" y="14" width="180" height="16" fill="#001020" stroke="#666"/>
+          <rect x="200" y="14" width="110" height="16" fill="#40d0d0"/>
+          <text x="290" y="26" font-size="9" fill="#ffffff" text-anchor="middle">61%</text>
+        </g>
+        <g transform="translate(420,80)">
+          <rect width="160" height="44" fill="#1a1a22" stroke="#555" stroke-dasharray="3 2" rx="4"/>
+          <text x="80" y="20" font-size="11" fill="#888" text-anchor="middle">AutoProfile</text>
+          <text x="80" y="36" font-size="9" fill="#666" text-anchor="middle">v2 预留 · 自动化入口</text>
+        </g>
+      </g>
+
+      <!-- 干预日志（底部） -->
+      <g transform="translate(30,630)">
+        <text x="0" y="0" font-size="11" fill="#888">Interventions（最近 3）</text>
+        <text x="0" y="18" font-size="10" fill="#aaaa">[t+58]  InjectQi(2.5)</text>
+        <text x="0" y="34" font-size="10" fill="#aaaa">[t+94]  AdjustTemp(−0.08)</text>
+        <text x="0" y="50" font-size="10" fill="#ff80ff">[t+118] InjectQi(1.0) ← 刚刚</text>
+
+        <text x="300" y="0" font-size="11" fill="#888">炉体</text>
+        <text x="300" y="18" font-size="10" fill="#aaaa">tier 1 · 完整度 92 / 100</text>
+        <text x="300" y="34" font-size="10" fill="#aaaa">owner: self</text>
+        <text x="300" y="50" font-size="10" fill="#ffaa40">炸炉 −5 完整度 · 修炉走 plan-forge-v1</text>
+      </g>
+    </g>
+
+    <!-- ====== RIGHT · 玩家背包（塔科夫式 · 复用现有 BackpackGridPanel） ====== -->
+    <g transform="translate(1090,100)">
+      <rect width="440" height="740" fill="#14141f" stroke="#808080" stroke-width="2" rx="6"/>
+      <text x="20" y="28" font-size="15" fill="#ffffff" font-weight="bold">玩家背包 · 拖拽源</text>
+      <text x="20" y="48" font-size="10" fill="#aaaa">复用 InventoryStateStore / BackpackGridPanel / DragState</text>
+
+      <!-- 容器 tab -->
+      <g transform="translate(20,60)">
+        <rect width="96" height="24" fill="#2a2040" stroke="#c040ff" stroke-width="1.5" rx="2"/>
+        <text x="48" y="17" font-size="11" fill="#ffffff" text-anchor="middle">主背包 5×7</text>
+        <rect x="100" y="0" width="96" height="24" fill="#0f0f1a" stroke="#444" rx="2"/>
+        <text x="148" y="17" font-size="11" fill="#aaaa" text-anchor="middle">小口袋 3×3</text>
+        <rect x="200" y="0" width="96" height="24" fill="#0f0f1a" stroke="#444" rx="2"/>
+        <text x="248" y="17" font-size="11" fill="#aaaa" text-anchor="middle">前挂包 3×4</text>
+      </g>
+
+      <!-- 网格（5×7，CELL_SIZE=28 放大示意 ×1.6 → 每格 ~45px 示意） -->
+      <g transform="translate(20,96)">
+        <!-- 底板 -->
+        <rect width="400" height="260" fill="#0a0a18" stroke="#3a3a4a"/>
+        <!-- 棋盘格（7×5 示意，缩小展示） -->
+        <g stroke="#2a2a38" fill="none">
+          <path d="M 0 52 H 400 M 0 104 H 400 M 0 156 H 400 M 0 208 H 400"/>
+          <path d="M 57 0 V 260 M 114 0 V 260 M 171 0 V 260 M 228 0 V 260 M 285 0 V 260 M 342 0 V 260"/>
+        </g>
+        <!-- 物品示例 -->
+        <!-- 开脉草 ×3（1×1，绿） -->
+        <g transform="translate(2,2)">
+          <rect width="53" height="48" fill="#2a4a2a" stroke="#80ff80"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">开脉草</text>
+          <text x="50" y="44" font-size="9" fill="#80ff80" text-anchor="end">×5</text>
+        </g>
+        <!-- 灵水 ×1（1×1，蓝） -->
+        <g transform="translate(59,2)">
+          <rect width="53" height="48" fill="#2a3a4a" stroke="#80c0ff"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">灵水</text>
+          <text x="50" y="44" font-size="9" fill="#80c0ff" text-anchor="end">×2</text>
+        </g>
+        <!-- 百草 ×2 -->
+        <g transform="translate(116,2)">
+          <rect width="53" height="48" fill="#2a3a2a" stroke="#60c060"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">百草</text>
+          <text x="50" y="44" font-size="9" fill="#60c060" text-anchor="end">×2</text>
+        </g>
+        <!-- 丹方残卷 1×2 -->
+        <g transform="translate(173,2)">
+          <rect width="53" height="100" fill="#3a3020" stroke="#c8a060"/>
+          <text x="26" y="50" font-size="10" fill="#e8d8a8" text-anchor="middle">丹方</text>
+          <text x="26" y="66" font-size="10" fill="#e8d8a8" text-anchor="middle">残卷</text>
+        </g>
+        <!-- 骨币 -->
+        <g transform="translate(230,2)">
+          <rect width="53" height="48" fill="#1a1a2a" stroke="#8888aa"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">骨币</text>
+          <text x="50" y="44" font-size="9" fill="#aaaaaa" text-anchor="end">×12</text>
+        </g>
+        <!-- 赌命散（高危 2×1） -->
+        <g transform="translate(2,54)">
+          <rect width="110" height="48" fill="#3a1a1a" stroke="#ff4040"/>
+          <text x="55" y="24" font-size="10" fill="#ff8080" text-anchor="middle">赌命散 × 1</text>
+          <text x="55" y="40" font-size="8" fill="#ff6060" text-anchor="middle">Violent 丹毒 +1.2</text>
+        </g>
+        <!-- 凝脉散 -->
+        <g transform="translate(2,106)">
+          <rect width="53" height="48" fill="#2a2040" stroke="#c080ff"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">凝脉散</text>
+          <text x="50" y="44" font-size="9" fill="#c080ff" text-anchor="end">×1</text>
+        </g>
+        <!-- 被拖中的 "开脉草"（半透明跟随光标示意） -->
+        <g transform="translate(320,130)" opacity="0.6">
+          <rect width="53" height="48" fill="#2a4a2a" stroke="#80ff80" stroke-dasharray="3 2"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">拖拽中</text>
+          <text x="26" y="40" font-size="8" fill="#80ff80" text-anchor="middle">→ 炉槽</text>
+        </g>
+      </g>
+
+      <!-- 物品 tooltip（悬停） -->
+      <g transform="translate(20,370)">
+        <rect width="400" height="130" fill="#0a0a18" stroke="#4a4a55" rx="4"/>
+        <text x="12" y="22" font-size="13" fill="#80ff80" font-weight="bold">开脉草 × 5</text>
+        <text x="12" y="40" font-size="10" fill="#aaaa">灵草 · 灵气需求 &gt; 0.3 · 采自灵泉湿地</text>
+        <text x="12" y="58" font-size="10" fill="#aaaa">尺寸 1×1 · 重量 0.1 · 操作磨损 1%（worldview §七）</text>
+        <line x1="12" y1="68" x2="388" y2="68" stroke="#2a2a35"/>
+        <text x="12" y="86" font-size="10" fill="#c8a878">"老散修都晓得：开脉草须晨露采。"</text>
+        <text x="12" y="108" font-size="10" fill="#888">左键拖 · Shift+左键快速投入炉槽 · 右键详情</text>
+      </g>
+
+      <!-- 底栏：重量 + 关闭提示 -->
+      <g transform="translate(20,520)">
+        <text x="0" y="0" font-size="11" fill="#888">重量 12.3 / 50.0 · plan-inventory-v1 对齐</text>
+        <rect x="0" y="10" width="400" height="10" fill="#001020" stroke="#444"/>
+        <rect x="0" y="10" width="100" height="10" fill="#60a060"/>
+      </g>
+
+      <!-- 快捷栏镜像 -->
+      <g transform="translate(20,570)">
+        <text x="0" y="0" font-size="11" fill="#888">快捷栏（1-9）</text>
+        <g transform="translate(0,10)">
+          <rect width="400" height="36" fill="#0a0a18" stroke="#3a3a4a"/>
+          <g>
+            <rect x="4" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="48" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="92" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="136" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="180" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="224" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="268" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="312" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="356" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+          </g>
+        </g>
+      </g>
+
+      <text x="20" y="660" font-size="10" fill="#888">键位：Shift+左键 快速投入炉槽（自动选空槽）</text>
+      <text x="20" y="678" font-size="10" fill="#888">右键炉槽 取回材料（起炉前）</text>
+      <text x="20" y="714" font-size="10" fill="#ff9090">⚠ 起炉后投料槽锁定 · 材料不可退</text>
+    </g>
+
+    <!-- ====== BOTTOM STRIP · 结果预测 + 丹毒预警（较窄） ====== -->
+    <g transform="translate(30,780)">
+      <rect width="1500" height="100" fill="#14141f" stroke="#ffcc40" stroke-width="1.5" rx="6"/>
+      <text x="16" y="22" font-size="13" fill="#ffcc40" font-weight="bold">实时结果预测 + 丹毒预警</text>
+
+      <!-- 五桶 -->
+      <g transform="translate(16,34)">
+        <g><rect width="140" height="54" fill="#0a2a0a" stroke="#40ff80" rx="3"/><text x="70" y="18" font-size="10" fill="#80ff80" text-anchor="middle" font-weight="bold">perfect</text><text x="70" y="38" font-size="16" fill="#40ff80" text-anchor="middle">18%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q1.0 · Mellow 0.30</text></g>
+        <g transform="translate(150,0)"><rect width="140" height="54" fill="#1a2a18" stroke="#a0ff60" rx="3"/><text x="70" y="18" font-size="10" fill="#a0ff60" text-anchor="middle" font-weight="bold">good</text><text x="70" y="38" font-size="16" fill="#a0ff60" text-anchor="middle">54%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q0.7 · Mellow 0.50</text></g>
+        <g transform="translate(300,0)"><rect width="140" height="54" fill="#2a220a" stroke="#ffcc40" rx="3"/><text x="70" y="18" font-size="10" fill="#ffcc40" text-anchor="middle" font-weight="bold">flawed</text><text x="70" y="38" font-size="16" fill="#ffcc40" text-anchor="middle">22%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q0.4 · Turbid 0.80</text></g>
+        <g transform="translate(450,0)"><rect width="100" height="54" fill="#1a1a1a" stroke="#888" rx="3"/><text x="50" y="18" font-size="10" fill="#aaaa" text-anchor="middle" font-weight="bold">waste</text><text x="50" y="38" font-size="16" fill="#aaaa" text-anchor="middle">5%</text></g>
+        <g transform="translate(560,0)"><rect width="100" height="54" fill="#2a0a0a" stroke="#ff4040" rx="3"/><text x="50" y="18" font-size="10" fill="#ff6060" text-anchor="middle" font-weight="bold">explode</text><text x="50" y="38" font-size="16" fill="#ff4040" text-anchor="middle">1%</text></g>
+
+        <!-- 丹毒预警 -->
+        <g transform="translate(680,0)">
+          <rect width="800" height="54" fill="#1a0a1a" stroke="#c040ff" rx="3"/>
+          <text x="12" y="18" font-size="11" fill="#e080ff" font-weight="bold">体内丹毒 · Contamination 复用</text>
+          <text x="12" y="36" font-size="10" fill="#cccccc">Mellow</text>
+          <rect x="64" y="26" width="200" height="12" fill="#001020" stroke="#666"/>
+          <rect x="64" y="26" width="60" height="12" fill="#c09040"/>
+          <text x="270" y="36" font-size="9" fill="#aaaa">0.18/0.60</text>
+          <text x="330" y="36" font-size="10" fill="#80ff80">✓ 可再服</text>
+
+          <text x="420" y="36" font-size="10" fill="#cccccc">Violent</text>
+          <rect x="470" y="26" width="200" height="12" fill="#001020" stroke="#666"/>
+          <rect x="470" y="26" width="188" height="12" fill="#e05050"/>
+          <text x="676" y="36" font-size="9" fill="#aaaa">0.93/1.00</text>
+          <text x="720" y="18" font-size="10" fill="#ff6060">✗ 过量警戒</text>
+
+          <text x="12" y="50" font-size="9" fill="#888">代谢速率 = 经脉 sum_rate × integrity（contamination_tick 10:15）</text>
+        </g>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============ 底脚说明（面板外） ============ -->
+  <g transform="translate(180,1030)">
+    <text x="0" y="0" font-size="11" fill="#aaa">Screen 总尺寸 1560×900 · 居中于 1920×1200 · 上下留 110/160 / 左右留 180 给 MC 世界（炉火光映入场景）</text>
+    <text x="0" y="20" font-size="11" fill="#aaa">复用：<tspan fill="#80ffff">InventoryStateStore</tspan> · <tspan fill="#80ffff">BackpackGridPanel</tspan>（5×7 · CELL_SIZE 28）· <tspan fill="#80ffff">DragState</tspan>（IDLE/DRAGGING 状态机）· <tspan fill="#80ffff">ItemTooltipPanel</tspan> · <tspan fill="#80ffff">Contamination</tspan></text>
+    <text x="0" y="40" font-size="11" fill="#aaa">新增 Store：<tspan fill="#80ffff">AlchemyFurnaceStore</tspan>（炉体状态）· <tspan fill="#80ffff">AlchemySessionStore</tspan>（会话 + 投料槽）· <tspan fill="#80ffff">RecipeScrollStore</tspan>（当前阅读方子文本）</text>
+    <text x="0" y="60" font-size="11" fill="#ffcc40">关键交互：方子是文本 → 玩家自读 → 自己从背包拖料进槽 → 按错 / 投错 / 火候差都自然"失败"（玩法深度，非 UI 自动校验）</text>
+    <text x="0" y="80" font-size="11" fill="#888">起炉后：投料槽锁定 · session 每 tick 对比实际温度/qi 注入 与 fire_profile · 结算分桶到 perfect/good/flawed/waste/explode</text>
+  </g>
+</svg>

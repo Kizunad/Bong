@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" font-family="'Noto Sans CJK SC', sans-serif">
+  <defs>
+    <pattern id="mcbg" width="40" height="40" patternUnits="userSpaceOnUse">
+      <rect width="40" height="40" fill="#1a1a22"/>
+      <rect width="40" height="40" fill="#222230" opacity="0.3"/>
+      <circle cx="10" cy="10" r="0.8" fill="#333344"/>
+      <circle cx="30" cy="25" r="0.6" fill="#2a2a38"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#mcbg)"/>
+  <rect width="1920" height="1200" fill="#000000" opacity="0.55"/>
+
+  <!-- ============ 居中面板 · 1560 × 900 ============ -->
+  <g transform="translate(180,110)">
+    <rect width="1560" height="900" fill="#0d0d15" stroke="#504840" stroke-width="2" rx="8"/>
+
+    <!-- Header -->
+    <text x="30" y="38" font-size="20" fill="#ffffff" font-weight="bold">锻炉 · WeaponForgeStation Screen</text>
+    <text x="30" y="60" font-size="12" fill="#888">plan-forge-v1 §1.3 四步进程 + §3.3 MVP · B 层 BaseOwoScreen · 右键砧方块打开</text>
+    <text x="1530" y="38" font-size="13" fill="#aaaa" text-anchor="end">ESC 关闭（session 继续 tick）</text>
+    <text x="1530" y="60" font-size="11" fill="#888" text-anchor="end">当前步骤 · Tempering（淬炼）· step 2/4</text>
+    <line x1="30" y1="78" x2="1530" y2="78" stroke="#2a2a35"/>
+
+    <!-- ====== LEFT · 图谱卷轴 ====== -->
+    <g transform="translate(30,100)">
+      <rect width="380" height="740" fill="#2a2318" stroke="#6a5030" stroke-width="2" rx="4"/>
+      <rect x="6" y="6" width="368" height="728" fill="#3a3020" stroke="#8a6a40" rx="2"/>
+      <rect x="0" y="0" width="380" height="14" fill="#5a4020" stroke="#3a2810"/>
+      <rect x="0" y="726" width="380" height="14" fill="#5a4020" stroke="#3a2810"/>
+
+      <!-- 翻页 -->
+      <g transform="translate(40,40)"><polygon points="0,14 14,4 14,24" fill="#8a6a40" stroke="#c8a878"/></g>
+      <g transform="translate(326,40)"><polygon points="14,14 0,4 0,24" fill="#c8a878" stroke="#e8d8a8"/></g>
+      <text x="190" y="50" font-size="18" fill="#e8d8a8" text-anchor="middle" font-weight="bold">灵锋谱</text>
+      <text x="190" y="70" font-size="10" fill="#a89878" text-anchor="middle" font-style="italic">— 老铁匠 陈六 残本 · 已学 2 / 5</text>
+      <line x1="40" y1="84" x2="340" y2="84" stroke="#8a6a40" stroke-dasharray="3 3"/>
+
+      <!-- 四步进度指示 -->
+      <g transform="translate(30,100)">
+        <text x="0" y="0" font-size="12" fill="#c8a878" font-weight="bold">四步</text>
+
+        <!-- step 1 done -->
+        <g transform="translate(0,16)">
+          <circle cx="14" cy="14" r="12" fill="#2a4a2a" stroke="#80ff80" stroke-width="2"/>
+          <text x="14" y="19" font-size="12" fill="#80ff80" text-anchor="middle">✓</text>
+          <text x="36" y="12" font-size="12" fill="#cccccc" font-weight="bold">坯料</text>
+          <text x="36" y="26" font-size="10" fill="#80ff80">玄铁 ×3 + 异兽骨 + 灵木 → tier cap 4</text>
+        </g>
+
+        <!-- step 2 active -->
+        <g transform="translate(0,58)">
+          <circle cx="14" cy="14" r="12" fill="#4a3020" stroke="#ffcc40" stroke-width="2"/>
+          <text x="14" y="19" font-size="11" fill="#ffcc40" text-anchor="middle">▶</text>
+          <text x="36" y="12" font-size="12" fill="#ffcc40" font-weight="bold">淬炼</text>
+          <text x="36" y="26" font-size="10" fill="#a89878">15 击节奏 · 允许失误 1 次</text>
+        </g>
+
+        <!-- step 3 pending -->
+        <g transform="translate(0,100)">
+          <circle cx="14" cy="14" r="12" fill="#1a1410" stroke="#6a5030"/>
+          <text x="14" y="19" font-size="11" fill="#6a5030" text-anchor="middle">3</text>
+          <text x="36" y="12" font-size="12" fill="#a89878" font-weight="bold">铭文</text>
+          <text x="36" y="26" font-size="10" fill="#8a7858">需铭文残卷 ×2 · 可跳（锁灵器）</text>
+        </g>
+
+        <!-- step 4 pending -->
+        <g transform="translate(0,142)">
+          <circle cx="14" cy="14" r="12" fill="#1a1410" stroke="#6a5030"/>
+          <text x="14" y="19" font-size="11" fill="#6a5030" text-anchor="middle">4</text>
+          <text x="36" y="12" font-size="12" fill="#a89878" font-weight="bold">开光</text>
+          <text x="36" y="26" font-size="10" fill="#8a7858">注真元 80 · 通灵+ · 染己色 · 可跳（锁灵器）</text>
+        </g>
+      </g>
+
+      <!-- 方子正文（当前步骤节选） -->
+      <g transform="translate(30,290)">
+        <text x="0" y="0" font-size="12" fill="#c8a878" font-weight="bold">淬炼心法</text>
+        <g fill="#e8d8a8" font-size="12">
+          <text x="0" y="22">"取玄铁之韧，须三炼三折。"</text>
+          <text x="0" y="42">"轻锤定形，重锤取势，折锤归一。"</text>
+          <text x="0" y="62">"节奏 <tspan fill="#ffcc40">一十五</tspan> 息，</text>
+          <text x="0" y="80">窗 <tspan fill="#ffcc40">八息</tspan>，失一则疤，失二则废。"</text>
+        </g>
+
+        <text x="0" y="112" font-size="12" fill="#c8a878" font-weight="bold">按键</text>
+        <g font-size="12">
+          <text x="0" y="134"><tspan fill="#80ff80">J</tspan> · 轻锤 Light</text>
+          <text x="0" y="152"><tspan fill="#ffaa40">K</tspan> · 重锤 Heavy</text>
+          <text x="0" y="170"><tspan fill="#ff80ff">L</tspan> · 折锤 Fold</text>
+        </g>
+
+        <line x1="0" y1="190" x2="320" y2="190" stroke="#6a5030"/>
+
+        <text x="0" y="210" font-size="11" fill="#e06060">⚠ 切记</text>
+        <text x="20" y="228" font-size="10" fill="#c89090">· 载体不对 → 品阶上限下滑</text>
+        <text x="20" y="246" font-size="10" fill="#c89090">· 节奏失多于窗口 → 器废</text>
+      </g>
+
+      <!-- 学新图 -->
+      <g transform="translate(30,590)">
+        <rect width="320" height="80" fill="#2a2018" stroke="#8a6a40" stroke-dasharray="4 3" rx="3"/>
+        <text x="160" y="24" font-size="11" fill="#c8a878" text-anchor="middle" font-weight="bold">学新图</text>
+        <text x="160" y="42" font-size="10" fill="#a89878" text-anchor="middle">从右侧背包拖【图谱残卷】到卷轴</text>
+        <text x="160" y="58" font-size="10" fill="#a89878" text-anchor="middle">铭文残卷另拖到铭文槽（step 3）</text>
+      </g>
+
+      <text x="190" y="712" font-size="10" fill="#8a7858" text-anchor="middle" font-style="italic">← → 翻页切换已学图谱 · 材料自投</text>
+    </g>
+
+    <!-- ====== CENTER · 当前步骤主舞台（Tempering） ====== -->
+    <g transform="translate(430,100)">
+      <rect width="640" height="740" fill="#14141f" stroke="#ffcc40" stroke-width="2" rx="6"/>
+      <text x="20" y="28" font-size="15" fill="#ffcc40" font-weight="bold">当前 · 淬炼 Tempering</text>
+      <text x="20" y="48" font-size="10" fill="#aaaa">15 击节奏 · 按 J/K/L 在窗口内命中 · 偏差累积 &gt; 容差 = 废器</text>
+
+      <!-- 砧体可视化 -->
+      <g transform="translate(200,70)">
+        <rect x="40" y="0" width="200" height="24" fill="#3a2818" stroke="#6a5030"/>
+        <rect x="20" y="24" width="240" height="80" fill="#1a1010" stroke="#a06040" stroke-width="2"/>
+        <!-- 剑坯 -->
+        <rect x="60" y="54" width="160" height="16" fill="#606080" stroke="#a0a0c0"/>
+        <rect x="216" y="50" width="14" height="24" fill="#4a4060" stroke="#6a6080"/>
+        <!-- 火星 -->
+        <g opacity="0.8">
+          <circle cx="90" cy="48" r="2" fill="#ff8040"/>
+          <circle cx="130" cy="52" r="2" fill="#ffaa60"/>
+          <circle cx="160" cy="46" r="2" fill="#ff6030"/>
+        </g>
+        <!-- 锤 -->
+        <g transform="translate(100,20)">
+          <rect x="0" y="0" width="8" height="28" fill="#6a5030"/>
+          <rect x="-10" y="-8" width="28" height="18" fill="#4a4060" stroke="#8a80a0"/>
+        </g>
+        <rect x="10" y="104" width="260" height="16" fill="#0a0808" stroke="#4a3020"/>
+        <text x="140" y="148" font-size="11" fill="#ffcc40" text-anchor="middle">击 8 / 15 · combo ×5 · 偏差 1 / 允许 1</text>
+      </g>
+
+      <!-- 节奏轨道（核心交互） -->
+      <g transform="translate(20,240)">
+        <text x="0" y="0" font-size="12" fill="#cccccc">节奏轨道 ← 滚动</text>
+        <text x="600" y="0" font-size="10" fill="#888" text-anchor="end">命中窗口 ±4 tick</text>
+
+        <!-- 轨道底 -->
+        <rect x="0" y="12" width="600" height="80" fill="#050510" stroke="#444"/>
+
+        <!-- 命中带（中央垂直柱） -->
+        <rect x="290" y="12" width="20" height="80" fill="#ffcc40" opacity="0.15"/>
+        <line x1="300" y1="8" x2="300" y2="96" stroke="#ffcc40" stroke-width="2"/>
+
+        <!-- 已过去的节拍（左，淡色 + 命中标记） -->
+        <g opacity="0.5">
+          <circle cx="30"  cy="52" r="12" fill="#2a4a2a" stroke="#80ff80"/><text x="30" y="57" font-size="12" fill="#80ff80" text-anchor="middle">J</text>
+          <circle cx="70"  cy="52" r="12" fill="#2a4a2a" stroke="#80ff80"/><text x="70" y="57" font-size="12" fill="#80ff80" text-anchor="middle">J</text>
+          <circle cx="110" cy="52" r="12" fill="#4a3020" stroke="#ffaa40"/><text x="110" y="57" font-size="12" fill="#ffaa40" text-anchor="middle">K</text>
+          <circle cx="150" cy="52" r="12" fill="#2a4a2a" stroke="#80ff80"/><text x="150" y="57" font-size="12" fill="#80ff80" text-anchor="middle">J</text>
+          <circle cx="190" cy="52" r="12" fill="#3a2040" stroke="#ff80ff"/><text x="190" y="57" font-size="12" fill="#ff80ff" text-anchor="middle">L</text>
+          <!-- miss -->
+          <circle cx="230" cy="52" r="12" fill="#2a0a0a" stroke="#ff4040" stroke-dasharray="2 2"/><text x="230" y="57" font-size="10" fill="#ff6060" text-anchor="middle">miss</text>
+          <circle cx="270" cy="52" r="12" fill="#2a4a2a" stroke="#80ff80"/><text x="270" y="57" font-size="12" fill="#80ff80" text-anchor="middle">J</text>
+        </g>
+
+        <!-- 当前窗口 —— 应按 L -->
+        <g>
+          <circle cx="300" cy="52" r="16" fill="#3a2040" stroke="#ff80ff" stroke-width="3"/>
+          <text x="300" y="58" font-size="16" fill="#ffffff" text-anchor="middle" font-weight="bold">L</text>
+        </g>
+
+        <!-- 即将到来（右） -->
+        <g>
+          <circle cx="340" cy="52" r="12" fill="#4a3020" stroke="#ffaa40"/><text x="340" y="57" font-size="12" fill="#ffaa40" text-anchor="middle">K</text>
+          <circle cx="380" cy="52" r="12" fill="#4a3020" stroke="#ffaa40"/><text x="380" y="57" font-size="12" fill="#ffaa40" text-anchor="middle">K</text>
+          <circle cx="420" cy="52" r="12" fill="#3a2040" stroke="#ff80ff"/><text x="420" y="57" font-size="12" fill="#ff80ff" text-anchor="middle">L</text>
+          <circle cx="460" cy="52" r="12" fill="#2a4a2a" stroke="#80ff80"/><text x="460" y="57" font-size="12" fill="#80ff80" text-anchor="middle">J</text>
+          <circle cx="500" cy="52" r="12" fill="#4a3020" stroke="#ffaa40"/><text x="500" y="57" font-size="12" fill="#ffaa40" text-anchor="middle">K</text>
+          <circle cx="540" cy="52" r="12" fill="#3a2040" stroke="#ff80ff"/><text x="540" y="57" font-size="12" fill="#ff80ff" text-anchor="middle">L</text>
+          <circle cx="580" cy="52" r="12" fill="#4a3020" stroke="#ffaa40"/><text x="580" y="57" font-size="12" fill="#ffaa40" text-anchor="middle">K</text>
+        </g>
+
+        <text x="300" y="112" font-size="10" fill="#ff80ff" text-anchor="middle">↓ 按 L</text>
+      </g>
+
+      <!-- 击中反馈 / 统计 -->
+      <g transform="translate(20,370)">
+        <rect width="600" height="110" fill="#0a0a18" stroke="#444" rx="4"/>
+        <text x="16" y="22" font-size="12" fill="#cccccc" font-weight="bold">反馈</text>
+
+        <g transform="translate(16,36)">
+          <text x="0" y="0" font-size="11" fill="#80ff80">Perfect   × 5</text>
+          <text x="140" y="0" font-size="11" fill="#a0ff60">Good      × 2</text>
+          <text x="280" y="0" font-size="11" fill="#ffcc40">Early     × 0</text>
+          <text x="420" y="0" font-size="11" fill="#ffaa40">Late      × 0</text>
+          <text x="0"   y="24" font-size="11" fill="#ff6060">Miss      × 1 / 允许 1</text>
+          <text x="140" y="24" font-size="11" fill="#80ff80">Combo     × 5</text>
+          <text x="280" y="24" font-size="11" fill="#aaaa">qi 花费    4.0 / 估 12.0</text>
+          <text x="0" y="52" font-size="10" fill="#888">Perfect 命中窗内 ±2 ticks / Good ±4 ticks / 此外 miss</text>
+          <text x="0" y="68" font-size="10" fill="#ffaa40">⚠ 再失误一次即走 flawed（品阶降级）</text>
+        </g>
+      </g>
+
+      <!-- 品阶预估 -->
+      <g transform="translate(20,500)">
+        <text x="0" y="0" font-size="12" fill="#cccccc">本次品阶预估 · tier_cap 4（道器上限）</text>
+        <rect x="0" y="10" width="600" height="18" fill="#001020" stroke="#666"/>
+        <!-- 已达法器 → 满足 step2 后预期灵器，若后续两步成则道器 -->
+        <rect x="0" y="10" width="300" height="18" fill="#c0a040"/>
+        <text x="40" y="24" font-size="10" fill="#000" font-weight="bold">凡</text>
+        <text x="180" y="24" font-size="10" fill="#000" font-weight="bold">法（当前）</text>
+        <text x="360" y="24" font-size="10" fill="#888">灵（step3 后）</text>
+        <text x="510" y="24" font-size="10" fill="#888">道（step4 后）</text>
+      </g>
+
+      <!-- 步骤切换提示 -->
+      <g transform="translate(20,560)">
+        <text x="0" y="0" font-size="11" fill="#888">淬炼结束后自动进入 step 3 铭文（可跳）· 跳则锁当前品阶</text>
+      </g>
+
+      <!-- 砧信息 -->
+      <g transform="translate(20,600)">
+        <text x="0" y="0" font-size="11" fill="#888">砧体</text>
+        <text x="60" y="0" font-size="10" fill="#aaaa">tier 2 灵铁砧 · 完整度 88 / 100 · owner: self</text>
+        <text x="0" y="18" font-size="11" fill="#888">Interventions 最近 3</text>
+        <text x="120" y="18" font-size="10" fill="#aaaa">[t+64] J · Perfect · combo+1</text>
+        <text x="120" y="34" font-size="10" fill="#aaaa">[t+72] K · Good  · combo+1</text>
+        <text x="120" y="50" font-size="10" fill="#ff80ff">[t+86] L · Miss · combo reset</text>
+      </g>
+    </g>
+
+    <!-- ====== RIGHT · 塔科夫背包（复用） ====== -->
+    <g transform="translate(1090,100)">
+      <rect width="440" height="740" fill="#14141f" stroke="#808080" stroke-width="2" rx="6"/>
+      <text x="20" y="28" font-size="15" fill="#ffffff" font-weight="bold">玩家背包 · 拖拽源</text>
+      <text x="20" y="48" font-size="10" fill="#aaaa">复用 InventoryStateStore / BackpackGridPanel / DragState</text>
+
+      <g transform="translate(20,60)">
+        <rect width="96" height="24" fill="#2a2040" stroke="#c040ff" stroke-width="1.5" rx="2"/>
+        <text x="48" y="17" font-size="11" fill="#ffffff" text-anchor="middle">主背包 5×7</text>
+        <rect x="100" y="0" width="96" height="24" fill="#0f0f1a" stroke="#444" rx="2"/>
+        <text x="148" y="17" font-size="11" fill="#aaaa" text-anchor="middle">小口袋 3×3</text>
+        <rect x="200" y="0" width="96" height="24" fill="#0f0f1a" stroke="#444" rx="2"/>
+        <text x="248" y="17" font-size="11" fill="#aaaa" text-anchor="middle">前挂包 3×4</text>
+      </g>
+
+      <g transform="translate(20,96)">
+        <rect width="400" height="260" fill="#0a0a18" stroke="#3a3a4a"/>
+        <g stroke="#2a2a38" fill="none">
+          <path d="M 0 52 H 400 M 0 104 H 400 M 0 156 H 400 M 0 208 H 400"/>
+          <path d="M 57 0 V 260 M 114 0 V 260 M 171 0 V 260 M 228 0 V 260 M 285 0 V 260 M 342 0 V 260"/>
+        </g>
+
+        <!-- 玄铁 ×3（1×1 灰蓝） -->
+        <g transform="translate(2,2)">
+          <rect width="53" height="48" fill="#2a2a3a" stroke="#aaaacc"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">玄铁</text>
+          <text x="50" y="44" font-size="9" fill="#aaaacc" text-anchor="end">×4</text>
+        </g>
+        <!-- 异兽骨（1×2 棕） -->
+        <g transform="translate(59,2)">
+          <rect width="53" height="100" fill="#3a2a1a" stroke="#c8a060"/>
+          <text x="26" y="46" font-size="10" fill="#e8d8a8" text-anchor="middle">异兽</text>
+          <text x="26" y="62" font-size="10" fill="#e8d8a8" text-anchor="middle">骨</text>
+          <text x="50" y="94" font-size="9" fill="#c8a060" text-anchor="end">×1</text>
+        </g>
+        <!-- 灵木（1×2 绿） -->
+        <g transform="translate(116,2)">
+          <rect width="53" height="100" fill="#1a3a1a" stroke="#60c060"/>
+          <text x="26" y="46" font-size="10" fill="#c0e0c0" text-anchor="middle">灵木</text>
+          <text x="50" y="94" font-size="9" fill="#60c060" text-anchor="end">×2</text>
+        </g>
+        <!-- 图谱残卷 1×2 棕金 -->
+        <g transform="translate(173,2)">
+          <rect width="53" height="100" fill="#3a3020" stroke="#c8a060"/>
+          <text x="26" y="46" font-size="10" fill="#e8d8a8" text-anchor="middle">图谱</text>
+          <text x="26" y="62" font-size="10" fill="#e8d8a8" text-anchor="middle">残卷</text>
+        </g>
+        <!-- 铭文残卷 1×1 紫 -->
+        <g transform="translate(230,2)">
+          <rect width="53" height="48" fill="#2a1a3a" stroke="#a080c0"/>
+          <text x="26" y="18" font-size="9" fill="#d8c0e8" text-anchor="middle">铭文</text>
+          <text x="26" y="32" font-size="9" fill="#d8c0e8" text-anchor="middle">残卷</text>
+          <text x="50" y="44" font-size="9" fill="#a080c0" text-anchor="end">×2</text>
+        </g>
+        <!-- 青钢 1×1 -->
+        <g transform="translate(287,2)">
+          <rect width="53" height="48" fill="#1a2a3a" stroke="#60a0c0"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">青钢</text>
+          <text x="50" y="44" font-size="9" fill="#60a0c0" text-anchor="end">×2</text>
+        </g>
+        <!-- 铁剑（已锻，2×1） -->
+        <g transform="translate(2,54)">
+          <rect width="110" height="48" fill="#2a2a2a" stroke="#888"/>
+          <text x="55" y="22" font-size="10" fill="#ffffff" text-anchor="middle">铁剑（凡）</text>
+          <text x="55" y="38" font-size="8" fill="#aaaa" text-anchor="middle">q0.8 · 无染色</text>
+        </g>
+        <!-- 骨币 -->
+        <g transform="translate(230,54)">
+          <rect width="53" height="48" fill="#1a1a2a" stroke="#8888aa"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">骨币</text>
+          <text x="50" y="44" font-size="9" fill="#aaaaaa" text-anchor="end">×8</text>
+        </g>
+
+        <!-- 拖拽中示意 -->
+        <g transform="translate(320,130)" opacity="0.6">
+          <rect width="53" height="48" fill="#2a1a3a" stroke="#a080c0" stroke-dasharray="3 2"/>
+          <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">拖拽中</text>
+          <text x="26" y="40" font-size="8" fill="#a080c0" text-anchor="middle">→ 铭文槽</text>
+        </g>
+      </g>
+
+      <!-- 物品 tooltip -->
+      <g transform="translate(20,370)">
+        <rect width="400" height="130" fill="#0a0a18" stroke="#4a4a55" rx="4"/>
+        <text x="12" y="22" font-size="13" fill="#a080c0" font-weight="bold">铭文残卷 × 2</text>
+        <text x="12" y="40" font-size="10" fill="#aaaa">书籍 · 1×1 · inscription_id: "sharp_edge_v0"</text>
+        <text x="12" y="58" font-size="10" fill="#aaaa">铭文内容：锋锐 +12% · qi 消耗 +0.1/刺</text>
+        <line x1="12" y1="68" x2="388" y2="68" stroke="#2a2a35"/>
+        <text x="12" y="86" font-size="10" fill="#c8a878">"匠者先磨心，再磨铁。"</text>
+        <text x="12" y="108" font-size="10" fill="#888">左键拖到铭文槽（step 3）· 一经使用即消耗</text>
+      </g>
+
+      <!-- 底栏 -->
+      <g transform="translate(20,520)">
+        <text x="0" y="0" font-size="11" fill="#888">重量 14.6 / 50.0</text>
+        <rect x="0" y="10" width="400" height="10" fill="#001020" stroke="#444"/>
+        <rect x="0" y="10" width="120" height="10" fill="#60a060"/>
+      </g>
+
+      <g transform="translate(20,570)">
+        <text x="0" y="0" font-size="11" fill="#888">快捷栏（1-9）</text>
+        <g transform="translate(0,10)">
+          <rect width="400" height="36" fill="#0a0a18" stroke="#3a3a4a"/>
+          <g>
+            <rect x="4" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="48" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="92" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="136" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="180" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="224" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="268" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="312" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+            <rect x="356" y="4" width="40" height="28" fill="#1a1a22" stroke="#444"/>
+          </g>
+        </g>
+      </g>
+
+      <text x="20" y="660" font-size="10" fill="#888">Shift+左键 快投（按步骤自动选槽）</text>
+      <text x="20" y="678" font-size="10" fill="#888">右键已投槽 取回（仅起炉前）</text>
+      <text x="20" y="714" font-size="10" fill="#ff9090">⚠ 起炉后材料全锁 · 失败不返还</text>
+    </g>
+
+    <!-- ====== BOTTOM STRIP · 结果预测 + 步骤偏差 ====== -->
+    <g transform="translate(30,780)">
+      <rect width="1500" height="100" fill="#14141f" stroke="#ffcc40" stroke-width="1.5" rx="6"/>
+      <text x="16" y="22" font-size="13" fill="#ffcc40" font-weight="bold">结果预测 · 本次按当前偏差走桶</text>
+
+      <g transform="translate(16,34)">
+        <g><rect width="140" height="54" fill="#0a2a0a" stroke="#40ff80" rx="3"/><text x="70" y="18" font-size="10" fill="#80ff80" text-anchor="middle" font-weight="bold">perfect</text><text x="70" y="38" font-size="16" fill="#40ff80" text-anchor="middle">22%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q1.0 · 顺利至 step 4</text></g>
+        <g transform="translate(150,0)"><rect width="140" height="54" fill="#1a2a18" stroke="#a0ff60" rx="3"/><text x="70" y="18" font-size="10" fill="#a0ff60" text-anchor="middle" font-weight="bold">good</text><text x="70" y="38" font-size="16" fill="#a0ff60" text-anchor="middle">55%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q0.8 · 可跳步锁灵</text></g>
+        <g transform="translate(300,0)"><rect width="140" height="54" fill="#2a220a" stroke="#ffcc40" rx="3"/><text x="70" y="18" font-size="10" fill="#ffcc40" text-anchor="middle" font-weight="bold">flawed</text><text x="70" y="38" font-size="16" fill="#ffcc40" text-anchor="middle">18%</text><text x="70" y="50" font-size="8" fill="#aaaa" text-anchor="middle">q0.4 · random side</text></g>
+        <g transform="translate(450,0)"><rect width="100" height="54" fill="#1a1a1a" stroke="#888" rx="3"/><text x="50" y="18" font-size="10" fill="#aaaa" text-anchor="middle" font-weight="bold">waste</text><text x="50" y="38" font-size="16" fill="#aaaa" text-anchor="middle">4%</text></g>
+        <g transform="translate(560,0)"><rect width="100" height="54" fill="#2a0a0a" stroke="#ff4040" rx="3"/><text x="50" y="18" font-size="10" fill="#ff6060" text-anchor="middle" font-weight="bold">explode</text><text x="50" y="38" font-size="16" fill="#ff4040" text-anchor="middle">1%</text></g>
+
+        <!-- 当前步偏差 -->
+        <g transform="translate(680,0)">
+          <rect width="800" height="54" fill="#1a1a0a" stroke="#ffcc40" rx="3"/>
+          <text x="12" y="18" font-size="11" fill="#ffcc40" font-weight="bold">本步偏差 · Tempering</text>
+          <text x="12" y="36" font-size="10" fill="#cccccc">命中率</text>
+          <rect x="70" y="26" width="200" height="12" fill="#001020" stroke="#666"/>
+          <rect x="70" y="26" width="164" height="12" fill="#a0ff60"/>
+          <text x="276" y="36" font-size="9" fill="#aaaa">82%</text>
+
+          <text x="340" y="36" font-size="10" fill="#cccccc">miss 容忍</text>
+          <rect x="410" y="26" width="200" height="12" fill="#001020" stroke="#666"/>
+          <rect x="410" y="26" width="200" height="12" fill="#e05050"/>
+          <text x="616" y="36" font-size="9" fill="#aaaa">1/1</text>
+          <text x="660" y="18" font-size="10" fill="#ff6060">✗ 再 miss 即 flawed</text>
+
+          <text x="12" y="50" font-size="9" fill="#888">服务器权威 tick · 客户端只上报击键 · 命中判定 server 侧</text>
+        </g>
+      </g>
+    </g>
+  </g>
+
+  <!-- 底脚 -->
+  <g transform="translate(180,1030)">
+    <text x="0" y="0" font-size="11" fill="#aaa">Screen 1560×900 · 居中 · 与 alchemy-furnace 同布局范式（左卷轴 + 中主舞台 + 右塔科夫背包）</text>
+    <text x="0" y="20" font-size="11" fill="#aaa">中列按 <tspan fill="#ffcc40">current_step</tspan> 切换舞台：Billet 配比 / Tempering 节奏轨道（本图）/ Inscription 铭文槽 / Consecration 真元注入</text>
+    <text x="0" y="40" font-size="11" fill="#aaa">新 Store：<tspan fill="#80ffff">WeaponForgeStationStore</tspan> · <tspan fill="#80ffff">ForgeSessionStore</tspan>（step + rhythm_track 实时）· <tspan fill="#80ffff">BlueprintScrollStore</tspan></text>
+    <text x="0" y="60" font-size="11" fill="#ffcc40">关键差异：alchemy = 温度/时长模拟（慢）· forge = 锻打节奏 QTE（按键）· 但失败规则/残缺匹配/side_effect_pool/LifeRecord 全对齐</text>
+    <text x="0" y="80" font-size="11" fill="#888">四步可跳：Inscription/Consecration 跳过则品阶锁在已达档；Billet/Tempering 不可跳</text>
+  </g>
+</svg>

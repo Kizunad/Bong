@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" font-family="'Noto Sans CJK SC', sans-serif">
+  <rect width="1920" height="1080" fill="#0a0a12"/>
+
+  <text x="30" y="40" font-size="22" fill="#ffffff" font-weight="bold">InspectScreen · 技艺面板（Skill Tab）</text>
+  <text x="30" y="64" font-size="13" fill="#888">plan-skill-v1 §5.1 · 层 B · 右侧常驻背包（与 inspect-wounds / inspect-status 同约定）</text>
+
+  <!-- 顶部 meta -->
+  <g transform="translate(30,82)">
+    <rect width="1860" height="32" fill="#15151a" stroke="#444"/>
+    <text x="16" y="20" font-size="11" fill="#cccccc">Store：<tspan fill="#ffcc40">SkillSetStore</tspan> · 消费 <tspan fill="#80ff80">bong:skill/xp_gain</tspan> + <tspan fill="#80ff80">bong:skill/lv_up</tspan> · 背包复用 <tspan fill="#ffcc40">InventoryStateStore</tspan> + <tspan fill="#ffcc40">DragState</tspan></text>
+  </g>
+
+  <!-- Tab 栏 -->
+  <g transform="translate(30,124)">
+    <rect width="130" height="34" fill="#40301a" stroke="#a08060" stroke-width="1"/>
+    <text x="65" y="22" font-size="12" fill="#aaaa" text-anchor="middle">装备</text>
+    <rect x="132" width="130" height="34" fill="#1a2a1a" stroke="#40a040" stroke-width="1"/>
+    <text x="197" y="22" font-size="12" fill="#aaaa" text-anchor="middle">修仙</text>
+    <rect x="264" width="130" height="34" fill="#2a1a1a" stroke="#a04040" stroke-width="1"/>
+    <text x="329" y="22" font-size="12" fill="#aaaa" text-anchor="middle">伤口</text>
+    <rect x="396" width="130" height="34" fill="#2a2a3a" stroke="#6a6a8a" stroke-width="1"/>
+    <text x="461" y="22" font-size="12" fill="#aaaa" text-anchor="middle">状态</text>
+    <rect x="528" width="130" height="34" fill="#1a2a2a" stroke="#40c0c0" stroke-width="2"/>
+    <text x="593" y="22" font-size="12" fill="#80ffff" text-anchor="middle" font-weight="bold">⚑ 技艺 · 当前</text>
+  </g>
+
+  <!-- 头部统计（压缩，为三列让位） -->
+  <g transform="translate(670,124)">
+    <rect width="1220" height="34" fill="#1a1a2a" stroke="#444" rx="4"/>
+    <text x="20" y="16" font-size="12" fill="#ffffff">已学 3 · Lv 总和 10 · 总 XP 4_820 · 当前境界 <tspan fill="#ffcc40">凝脉</tspan> · cap 7</text>
+    <text x="20" y="30" font-size="10" fill="#888">Q 展开详情 / R 按活跃排序 · 残卷从右侧背包拖到左下槽</text>
+  </g>
+
+  <!-- ========== LEFT · skill 列表 + 残卷槽 (380 wide) ========== -->
+  <g transform="translate(30,176)">
+    <rect width="380" height="820" fill="#141820" stroke="#444" rx="4"/>
+    <text x="12" y="22" font-size="13" fill="#cccccc" font-weight="bold">已学 skill</text>
+    <text x="368" y="22" font-size="10" fill="#888" text-anchor="end">MVP 3 / 10 总位</text>
+
+    <!-- herbalism 选中 -->
+    <g transform="translate(10,36)">
+      <rect width="360" height="82" fill="#1a2818" stroke="#60c080" stroke-width="2" rx="3"/>
+      <rect x="10" y="10" width="36" height="36" fill="#0a1a08" stroke="#80ff80"/>
+      <text x="28" y="34" font-size="13" fill="#80ff80" text-anchor="middle" font-weight="bold">采</text>
+      <text x="54" y="22" font-size="13" fill="#ffffff" font-weight="bold">采药 herbalism</text>
+      <text x="54" y="38" font-size="10" fill="#cccccc">Lv <tspan fill="#80ff80" font-weight="bold">4</tspan> / cap <tspan fill="#ffcc40">7</tspan> · XP 320 / 2500</text>
+      <rect x="54" y="46" width="296" height="6" fill="#001020" stroke="#444"/>
+      <rect x="54" y="46" width="38" height="6" fill="#80ff80"/>
+      <text x="54" y="70" font-size="9" fill="#888">+5 · 3min 前 · 自动收获（连刷 -10%）</text>
+      <text x="350" y="22" font-size="10" fill="#80ff80" text-anchor="end">●</text>
+    </g>
+
+    <!-- alchemy -->
+    <g transform="translate(10,126)">
+      <rect width="360" height="82" fill="#1a1a24" stroke="#555" rx="3"/>
+      <rect x="10" y="10" width="36" height="36" fill="#1a0a18" stroke="#c040ff"/>
+      <text x="28" y="34" font-size="13" fill="#c080ff" text-anchor="middle" font-weight="bold">丹</text>
+      <text x="54" y="22" font-size="13" fill="#ffffff">炼丹 alchemy</text>
+      <text x="54" y="38" font-size="10" fill="#cccccc">Lv <tspan fill="#c080ff">2</tspan> / cap 7 · XP 180 / 900</text>
+      <rect x="54" y="46" width="296" height="6" fill="#001020" stroke="#444"/>
+      <rect x="54" y="46" width="59" height="6" fill="#c080ff"/>
+      <text x="54" y="70" font-size="9" fill="#888">+2 · 12min 前 · 开脉丹 flawed · 炸炉 ×2</text>
+    </g>
+
+    <!-- forging -->
+    <g transform="translate(10,216)">
+      <rect width="360" height="82" fill="#1a1a24" stroke="#555" rx="3"/>
+      <rect x="10" y="10" width="36" height="36" fill="#0a0a14" stroke="#ffcc40"/>
+      <text x="28" y="34" font-size="13" fill="#ffcc40" text-anchor="middle" font-weight="bold">锻</text>
+      <text x="54" y="22" font-size="13" fill="#ffffff">锻造 forging</text>
+      <text x="54" y="38" font-size="10" fill="#cccccc">Lv <tspan fill="#ffcc40">1</tspan> / cap 7 · XP 240 / 400</text>
+      <rect x="54" y="46" width="296" height="6" fill="#001020" stroke="#444"/>
+      <rect x="54" y="46" width="178" height="6" fill="#ffcc40"/>
+      <text x="54" y="70" font-size="9" fill="#888">+1 · 1h 前 · 铁剑坯料</text>
+    </g>
+
+    <!-- 未解锁分节 -->
+    <g transform="translate(10,310)">
+      <rect width="360" height="24" fill="#15151a" stroke="#333"/>
+      <text x="12" y="16" font-size="11" fill="#666" font-weight="bold">未开放（v2+）</text>
+    </g>
+
+    <g transform="translate(10,338)" opacity="0.45">
+      <rect width="360" height="34" fill="#0f0f14" stroke="#2a2a33" stroke-dasharray="3 2" rx="3"/>
+      <rect x="10" y="4" width="26" height="26" fill="#15151a" stroke="#555"/>
+      <text x="23" y="20" font-size="10" fill="#666" text-anchor="middle">武</text>
+      <text x="46" y="15" font-size="11" fill="#888">战斗武学</text>
+      <text x="46" y="28" font-size="9" fill="#555">combat §5 立项后开放</text>
+    </g>
+    <g transform="translate(10,378)" opacity="0.45">
+      <rect width="360" height="34" fill="#0f0f14" stroke="#2a2a33" stroke-dasharray="3 2" rx="3"/>
+      <rect x="10" y="4" width="26" height="26" fill="#15151a" stroke="#555"/>
+      <text x="23" y="20" font-size="10" fill="#666" text-anchor="middle">阵</text>
+      <text x="46" y="15" font-size="11" fill="#888">阵法</text>
+      <text x="46" y="28" font-size="9" fill="#555">zhenfa 自带进阶</text>
+    </g>
+    <g transform="translate(10,418)" opacity="0.45">
+      <rect width="360" height="34" fill="#0f0f14" stroke="#2a2a33" stroke-dasharray="3 2" rx="3"/>
+      <rect x="10" y="4" width="26" height="26" fill="#15151a" stroke="#555"/>
+      <text x="23" y="20" font-size="10" fill="#666" text-anchor="middle">师</text>
+      <text x="46" y="15" font-size="11" fill="#888">师承</text>
+      <text x="46" y="28" font-size="9" fill="#555">plan-social §2 接入</text>
+    </g>
+
+    <!-- 残卷拖入槽 -->
+    <g transform="translate(10,620)">
+      <rect width="360" height="180" fill="#2a2318" stroke="#8a6a40" stroke-width="2" stroke-dasharray="5 3" rx="4"/>
+      <text x="180" y="28" font-size="13" fill="#c8a878" text-anchor="middle" font-weight="bold">残卷拖入槽</text>
+      <text x="180" y="48" font-size="10" fill="#a89878" text-anchor="middle">拖【skill_scroll】→ 自动匹配 skill_id</text>
+
+      <!-- 单格 -->
+      <g transform="translate(148,70)">
+        <rect width="64" height="64" fill="#1a1410" stroke="#c8a878" stroke-dasharray="3 2"/>
+        <text x="32" y="36" font-size="10" fill="#8a7858" text-anchor="middle">空槽</text>
+        <text x="32" y="54" font-size="9" fill="#8a7858" text-anchor="middle">拖入即用</text>
+      </g>
+
+      <text x="180" y="156" font-size="10" fill="#aaaa" text-anchor="middle">使用即消耗 · 不可撤销</text>
+      <text x="180" y="170" font-size="9" fill="#ff9090" text-anchor="middle">⚠ 已学残卷会提示"此卷已悟"不消耗</text>
+    </g>
+  </g>
+
+  <!-- ========== MIDDLE · 选中 skill 详情 (780 wide) ========== -->
+  <g transform="translate(430,176)">
+    <rect width="1020" height="820" fill="#1a2220" stroke="#444" rx="4"/>
+
+    <!-- 标题 -->
+    <g transform="translate(20,18)">
+      <text x="0" y="18" font-size="18" fill="#ffffff" font-weight="bold">采药 herbalism · Lv 4 / cap 7</text>
+      <text x="0" y="38" font-size="11" fill="#aaaa">total_xp 820 · 本等级 320 / 2500 · 连续重复扣 10%（已触发）</text>
+      <text x="980" y="26" font-size="12" fill="#ffcc40" text-anchor="end">effective_lv 4（未压制）</text>
+    </g>
+
+    <!-- XP 曲线 -->
+    <g transform="translate(20,70)">
+      <rect width="490" height="220" fill="#0a1210" stroke="#333"/>
+      <text x="12" y="20" font-size="12" fill="#cccccc" font-weight="bold">XP 累计曲线 · 100 × (lv+1)²</text>
+
+      <line x1="40" y1="180" x2="470" y2="180" stroke="#555"/>
+      <line x1="40" y1="30" x2="40" y2="180" stroke="#555"/>
+
+      <g font-size="9" fill="#888">
+        <text x="40" y="196" text-anchor="middle">0</text>
+        <text x="83" y="196" text-anchor="middle">1</text>
+        <text x="126" y="196" text-anchor="middle">2</text>
+        <text x="169" y="196" text-anchor="middle">3</text>
+        <text x="212" y="196" text-anchor="middle">4</text>
+        <text x="255" y="196" text-anchor="middle">5</text>
+        <text x="298" y="196" text-anchor="middle">6</text>
+        <text x="341" y="196" text-anchor="middle">7</text>
+        <text x="384" y="196" text-anchor="middle">8</text>
+        <text x="462" y="196" text-anchor="middle">10</text>
+      </g>
+
+      <line x1="341" y1="30" x2="341" y2="180" stroke="#ffcc40" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+      <text x="341" y="24" font-size="9" fill="#ffcc40" text-anchor="middle">cap 7</text>
+
+      <polyline
+        points="40,178 83,175 126,168 169,158 212,142 255,118 298,88 341,52 384,38 462,32"
+        fill="none" stroke="#80ff80" stroke-width="2"/>
+
+      <circle cx="212" cy="142" r="5" fill="#ff80ff"/>
+      <text x="212" y="134" font-size="9" fill="#ff80ff" text-anchor="middle">你在这</text>
+
+      <text x="40" y="26" font-size="9" fill="#888">Lv.0→1 = 100 · 累计 Lv.10 = 38_500（封顶）</text>
+    </g>
+
+    <!-- Lv → 效果表 -->
+    <g transform="translate(530,70)">
+      <rect width="470" height="220" fill="#0a1210" stroke="#333"/>
+      <text x="12" y="20" font-size="12" fill="#cccccc" font-weight="bold">§6.1 效果表 · 线性插值</text>
+
+      <g transform="translate(12,36)" font-size="10">
+        <text x="0"   y="14" fill="#aaaa">Lv</text>
+        <text x="50"  y="14" fill="#aaaa">自动采</text>
+        <text x="130" y="14" fill="#aaaa">手动 -时</text>
+        <text x="220" y="14" fill="#aaaa">种子率</text>
+        <text x="310" y="14" fill="#aaaa">品质偏移</text>
+        <line x1="0" y1="18" x2="440" y2="18" stroke="#333"/>
+
+        <g transform="translate(0,34)"><text x="0" y="0" fill="#888">0</text><text x="50" y="0" fill="#888">✗</text><text x="130" y="0" fill="#888">+0</text><text x="220" y="0" fill="#888">+0%</text><text x="310" y="0" fill="#888">0</text></g>
+        <g transform="translate(0,52)"><text x="0" y="0" fill="#aaaa">1</text><text x="50" y="0" fill="#aaaa">✗</text><text x="130" y="0" fill="#aaaa">-0.2s</text><text x="220" y="0" fill="#aaaa">+2%</text><text x="310" y="0" fill="#aaaa">+5% 品</text></g>
+        <g transform="translate(0,70)"><text x="0" y="0" fill="#aaaa">3</text><text x="50" y="0" fill="#80ff80">✓ 8s</text><text x="130" y="0" fill="#aaaa">-0.5s</text><text x="220" y="0" fill="#aaaa">+5%</text><text x="310" y="0" fill="#aaaa">+10% 品</text></g>
+        <g transform="translate(0,88)">
+          <rect x="-4" y="-12" width="450" height="18" fill="#2a3a1a" stroke="#80ff80" rx="2"/>
+          <text x="0"   y="0" fill="#80ff80" font-weight="bold">4 ←</text>
+          <text x="50"  y="0" fill="#80ff80" font-weight="bold">✓ 7s</text>
+          <text x="130" y="0" fill="#80ff80" font-weight="bold">-0.75s</text>
+          <text x="220" y="0" fill="#80ff80" font-weight="bold">+7%</text>
+          <text x="310" y="0" fill="#80ff80" font-weight="bold">+12% 品</text>
+        </g>
+        <g transform="translate(0,110)"><text x="0" y="0" fill="#aaaa">5</text><text x="50" y="0" fill="#aaaa">✓ 6s</text><text x="130" y="0" fill="#aaaa">-1.0s</text><text x="220" y="0" fill="#aaaa">+10%</text><text x="310" y="0" fill="#aaaa">+15% 品</text></g>
+        <g transform="translate(0,128)"><text x="0" y="0" fill="#aaaa">7</text><text x="50" y="0" fill="#aaaa">✓ 5s</text><text x="130" y="0" fill="#aaaa">-1.2s</text><text x="220" y="0" fill="#aaaa">+15%</text><text x="310" y="0" fill="#aaaa">+20% 品</text></g>
+        <g transform="translate(0,146)" opacity="0.5"><text x="0" y="0" fill="#666">10</text><text x="50" y="0" fill="#666">✓ 5s</text><text x="130" y="0" fill="#666">-1.5s</text><text x="220" y="0" fill="#666">+25%</text><text x="310" y="0" fill="#666">+30% +5% 极</text></g>
+        <text x="0" y="170" fill="#888" font-style="italic">Lv > cap 灰显 · 境界提升解锁</text>
+      </g>
+    </g>
+
+    <!-- 近期流水 -->
+    <g transform="translate(20,306)">
+      <rect width="490" height="230" fill="#0a1210" stroke="#333"/>
+      <text x="12" y="20" font-size="12" fill="#cccccc" font-weight="bold">近期 XP 流水</text>
+
+      <g transform="translate(12,38)" font-size="10">
+        <g transform="translate(0,0)"><text x="0" y="0" fill="#aaaa">3min</text><text x="70" y="0" fill="#80ff80">+5</text><text x="100" y="0" fill="#ffffff">自动收获 · 凝脉草</text><text x="320" y="0" fill="#888">plot (1240,72)</text></g>
+        <g transform="translate(0,18)"><text x="0" y="0" fill="#aaaa">18min</text><text x="70" y="0" fill="#60c060">+4</text><text x="100" y="0" fill="#ffffff">自动收获（连刷 -10%）</text><text x="320" y="0" fill="#888">同 plot</text></g>
+        <g transform="translate(0,36)"><text x="0" y="0" fill="#aaaa">45min</text><text x="70" y="0" fill="#60c060">+2</text><text x="100" y="0" fill="#ffffff">手动采 · 刺舌蒿 ×3</text><text x="320" y="0" fill="#888">初醒原边</text></g>
+        <g transform="translate(0,54)"><text x="0" y="0" fill="#aaaa">1h</text><text x="70" y="0" fill="#60c060">+2</text><text x="100" y="0" fill="#ffffff">翻新 plot</text><text x="320" y="0" fill="#888">同 plot</text></g>
+        <g transform="translate(0,72)"><text x="0" y="0" fill="#aaaa">2h</text><text x="70" y="0" fill="#60c060">+1</text><text x="100" y="0" fill="#ffffff">种植 · 凝脉草</text><text x="320" y="0" fill="#888">同 plot</text></g>
+        <g transform="translate(0,90)"><text x="0" y="0" fill="#aaaa">2h</text><text x="70" y="0" fill="#60c060">+1</text><text x="100" y="0" fill="#ffffff">开垦</text><text x="320" y="0" fill="#888">同 plot</text></g>
+        <g transform="translate(0,112)"><text x="0" y="0" fill="#888" font-style="italic">—— 昨日 ——</text></g>
+        <g transform="translate(0,130)" opacity="0.7"><text x="0" y="0" fill="#888">18h</text><text x="70" y="0" fill="#c080ff">Lv 3→4 ✦</text><text x="180" y="0" fill="#aaaa">"你摘得百草渐熟，今已识八分。"</text></g>
+        <g transform="translate(0,148)" opacity="0.7"><text x="0" y="0" fill="#888">2d</text><text x="70" y="0" fill="#c080ff">Lv 2→3 ✦</text><text x="180" y="0" fill="#aaaa">解锁自动采集</text></g>
+        <g transform="translate(0,172)"><text x="0" y="0" fill="#888">总动作数：67 · 成功 58 · 失败 0 · 浪费 0</text></g>
+      </g>
+    </g>
+
+    <!-- 里程碑 -->
+    <g transform="translate(530,306)">
+      <rect width="470" height="230" fill="#0a1210" stroke="#333"/>
+      <text x="12" y="20" font-size="12" fill="#cccccc" font-weight="bold">里程碑（LifeRecord · 亡者博物馆公开）</text>
+
+      <g transform="translate(12,42)" font-size="10">
+        <g transform="translate(0,0)">
+          <rect x="-4" y="-12" width="450" height="24" fill="#1a2a1a" stroke="#60c060" rx="2"/>
+          <text x="0" y="0" fill="#80ff80">✦ Lv 4</text>
+          <text x="80" y="0" fill="#cccccc">达成 · 18h 前</text>
+          <text x="230" y="0" fill="#888">"今已识八分。"</text>
+        </g>
+        <g transform="translate(0,34)" opacity="0.8">
+          <text x="0" y="0" fill="#a0ff60">✦ Lv 3 · 解锁自动</text>
+          <text x="200" y="0" fill="#888">2d 前</text>
+        </g>
+        <g transform="translate(0,52)" opacity="0.7">
+          <text x="0" y="0" fill="#a0ff60">✦ Lv 2</text>
+          <text x="200" y="0" fill="#888">4d 前</text>
+        </g>
+        <g transform="translate(0,70)" opacity="0.6">
+          <text x="0" y="0" fill="#a0ff60">✦ Lv 1</text>
+          <text x="200" y="0" fill="#888">7d 前</text>
+        </g>
+        <g transform="translate(0,96)">
+          <text x="0" y="0" fill="#888" font-style="italic">下个目标</text>
+        </g>
+        <g transform="translate(0,114)" opacity="0.6">
+          <rect x="-4" y="-12" width="450" height="24" fill="#1a1a26" stroke="#555" stroke-dasharray="3 2" rx="2"/>
+          <text x="0" y="0" fill="#aaaa">⌛ Lv 5</text>
+          <text x="80" y="0" fill="#888">再 2180 XP</text>
+          <text x="230" y="0" fill="#888">自动 6s · 品质 +15%</text>
+        </g>
+        <g transform="translate(0,146)" opacity="0.45">
+          <rect x="-4" y="-12" width="450" height="24" fill="#1a1a26" stroke="#444" stroke-dasharray="3 2" rx="2"/>
+          <text x="0" y="0" fill="#888">⌛ Lv 7</text>
+          <text x="80" y="0" fill="#888">cap 天花板</text>
+          <text x="230" y="0" fill="#888">需突破固元方可继续</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- 当前生效 -->
+    <g transform="translate(20,554)">
+      <rect width="980" height="246" fill="#1a2420" stroke="#80c060" rx="4"/>
+      <text x="12" y="22" font-size="13" fill="#c0ff80" font-weight="bold">当前 Lv 4 实际生效</text>
+
+      <g transform="translate(12,44)" font-size="11">
+        <text x="0" y="16" fill="#cccccc">• 自动采集时长 <tspan fill="#80ff80">7.0s</tspan>（Lv.3 的 8s → Lv.5 的 6s 线性插值）</text>
+        <text x="0" y="38" fill="#cccccc">• 手动采集节省 <tspan fill="#80ff80">-0.75s</tspan>（基础 2s → 实际 1.25s）</text>
+        <text x="0" y="60" fill="#cccccc">• 种子掉率加成 <tspan fill="#80ff80">+7%</tspan>（基础 30% → 实际 37%）</text>
+        <text x="0" y="82" fill="#cccccc">• 品质偏移 <tspan fill="#80ff80">+12%</tspan>（良品概率显著上升）</text>
+        <text x="0" y="106" fill="#aaaa" font-style="italic">数值按 Lv 线性插值，非指数（§12 风险 1）</text>
+        <text x="0" y="138" fill="#c8a878">升 Lv.5 后：自动采 -1s · 种子率 +3%pt · 良品再提升</text>
+
+        <!-- 小曲线 mini -->
+        <g transform="translate(580,6)">
+          <rect width="380" height="120" fill="#0a1a18" stroke="#333"/>
+          <text x="8" y="14" font-size="10" fill="#aaaa">品质分布（当前 Lv 4 vs Lv 5）</text>
+
+          <!-- 劣 普 良 极 条比对 -->
+          <g font-size="9">
+            <text x="10" y="36" fill="#888">Lv.4 →</text>
+            <rect x="60" y="28" width="50" height="10" fill="#2a2020"/>
+            <rect x="110" y="28" width="80" height="10" fill="#604020"/>
+            <rect x="190" y="28" width="168" height="10" fill="#806040"/>
+            <rect x="358" y="28" width="12" height="10" fill="#c0a060"/>
+
+            <text x="10" y="68" fill="#888">Lv.5 →</text>
+            <rect x="60" y="60" width="38" height="10" fill="#2a2020"/>
+            <rect x="98" y="60" width="72" height="10" fill="#604020"/>
+            <rect x="170" y="60" width="180" height="10" fill="#806040"/>
+            <rect x="350" y="60" width="20" height="10" fill="#c0a060"/>
+
+            <text x="18" y="92" fill="#666">劣</text>
+            <text x="90" y="92" fill="#666">普</text>
+            <text x="220" y="92" fill="#666">良</text>
+            <text x="360" y="92" fill="#666" text-anchor="end">极</text>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+
+  <!-- ========== RIGHT · 常驻背包 (440 wide) · 复用塔科夫 ========== -->
+  <g transform="translate(1470,176)">
+    <rect width="420" height="820" fill="#141820" stroke="#808080" stroke-width="2" rx="4"/>
+    <text x="14" y="22" font-size="13" fill="#ffffff" font-weight="bold">背包 · 拖残卷来此</text>
+    <text x="406" y="22" font-size="9" fill="#888" text-anchor="end">常驻（与其他 tab 一致）</text>
+
+    <!-- 多容器 tab（worldview 说背包不止一个） -->
+    <g transform="translate(14,38)">
+      <rect width="92" height="22" fill="#2a2040" stroke="#c040ff" stroke-width="1.5" rx="2"/>
+      <text x="46" y="16" font-size="10" fill="#ffffff" text-anchor="middle">主 5×7</text>
+      <rect x="96" width="92" height="22" fill="#0f0f1a" stroke="#444" rx="2"/>
+      <text x="142" y="16" font-size="10" fill="#aaaa" text-anchor="middle">小口袋 3×3</text>
+      <rect x="192" width="92" height="22" fill="#0f0f1a" stroke="#444" rx="2"/>
+      <text x="238" y="16" font-size="10" fill="#aaaa" text-anchor="middle">前挂 3×4</text>
+      <rect x="288" width="92" height="22" fill="#2a1a10" stroke="#6a5030" stroke-dasharray="3 2" rx="2"/>
+      <text x="334" y="16" font-size="10" fill="#8a7858" text-anchor="middle">腰包（未解）</text>
+    </g>
+
+    <!-- 主背包网格 5×7，每格 53×48（示意） -->
+    <g transform="translate(14,68)">
+      <rect width="392" height="254" fill="#0a0a18" stroke="#3a3a4a"/>
+      <g stroke="#2a2a38" fill="none">
+        <path d="M 0 51 H 392 M 0 102 H 392 M 0 153 H 392 M 0 204 H 392"/>
+        <path d="M 56 0 V 254 M 112 0 V 254 M 168 0 V 254 M 224 0 V 254 M 280 0 V 254 M 336 0 V 254"/>
+      </g>
+
+      <!-- 第 1 行：残卷们（与技艺 tab 语境相关） -->
+      <!-- 百草图考残（herbalism）· 1×2 · 被拖起（拖拽中） -->
+      <g transform="translate(2,2)" opacity="0.55">
+        <rect width="52" height="98" fill="#3a3020" stroke="#e8d8a8" stroke-dasharray="3 2"/>
+        <text x="26" y="36" font-size="9" fill="#e8d8a8" text-anchor="middle">百草</text>
+        <text x="26" y="50" font-size="9" fill="#e8d8a8" text-anchor="middle">图考残</text>
+        <text x="26" y="80" font-size="8" fill="#c8a878" text-anchor="middle">拖拽中</text>
+      </g>
+
+      <!-- 炉火心诀残（alchemy skill_scroll） -->
+      <g transform="translate(58,2)">
+        <rect width="52" height="50" fill="#3a2030" stroke="#c080ff"/>
+        <text x="26" y="22" font-size="9" fill="#e0a0ff" text-anchor="middle">炉火心</text>
+        <text x="26" y="36" font-size="9" fill="#e0a0ff" text-anchor="middle">诀残</text>
+        <text x="50" y="48" font-size="8" fill="#c080ff" text-anchor="end">×1</text>
+      </g>
+
+      <!-- 锻锤古铭（forging skill_scroll） -->
+      <g transform="translate(114,2)">
+        <rect width="52" height="50" fill="#3a3018" stroke="#ffcc40"/>
+        <text x="26" y="22" font-size="9" fill="#ffe080" text-anchor="middle">锻锤</text>
+        <text x="26" y="36" font-size="9" fill="#ffe080" text-anchor="middle">古铭</text>
+        <text x="50" y="48" font-size="8" fill="#ffcc40" text-anchor="end">×1</text>
+      </g>
+
+      <!-- 丹方残卷（recipe, 不是 skill_scroll，区分） -->
+      <g transform="translate(170,2)">
+        <rect width="52" height="98" fill="#3a2820" stroke="#c8a060"/>
+        <text x="26" y="36" font-size="9" fill="#e8d8a8" text-anchor="middle">丹方</text>
+        <text x="26" y="50" font-size="9" fill="#e8d8a8" text-anchor="middle">残卷</text>
+        <text x="26" y="74" font-size="8" fill="#ff9090" text-anchor="middle">非 skill</text>
+        <text x="26" y="88" font-size="8" fill="#ff9090" text-anchor="middle">拖不进</text>
+      </g>
+
+      <!-- 骨币 -->
+      <g transform="translate(226,2)">
+        <rect width="52" height="50" fill="#1a1a2a" stroke="#8888aa"/>
+        <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">骨币</text>
+        <text x="50" y="48" font-size="8" fill="#aaaaaa" text-anchor="end">×12</text>
+      </g>
+
+      <!-- 灵水 -->
+      <g transform="translate(282,2)">
+        <rect width="52" height="50" fill="#2a3a4a" stroke="#80c0ff"/>
+        <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">灵水</text>
+        <text x="50" y="48" font-size="8" fill="#80c0ff" text-anchor="end">×3</text>
+      </g>
+
+      <!-- 第 2 行 -->
+      <g transform="translate(58,54)">
+        <rect width="52" height="50" fill="#2a4a2a" stroke="#80ff80"/>
+        <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">刺舌蒿</text>
+        <text x="50" y="48" font-size="8" fill="#80ff80" text-anchor="end">×7</text>
+      </g>
+      <g transform="translate(114,54)">
+        <rect width="52" height="50" fill="#2a4a2a" stroke="#80ff80"/>
+        <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">凝脉草</text>
+        <text x="50" y="48" font-size="8" fill="#80ff80" text-anchor="end">×4</text>
+      </g>
+      <g transform="translate(282,54)">
+        <rect width="52" height="50" fill="#2a2a3a" stroke="#aaaacc"/>
+        <text x="26" y="22" font-size="9" fill="#ffffff" text-anchor="middle">玄铁</text>
+        <text x="50" y="48" font-size="8" fill="#aaaacc" text-anchor="end">×3</text>
+      </g>
+
+      <!-- 第 3 行：种子 -->
+      <g transform="translate(2,106)">
+        <rect width="52" height="50" fill="#1a2814" stroke="#60c060"/>
+        <text x="26" y="22" font-size="8" fill="#ffffff" text-anchor="middle">刺舌蒿</text>
+        <text x="26" y="33" font-size="8" fill="#c0ffc0" text-anchor="middle">种</text>
+        <text x="50" y="48" font-size="8" fill="#60c060" text-anchor="end">×4</text>
+      </g>
+      <g transform="translate(58,106)">
+        <rect width="52" height="50" fill="#1a2814" stroke="#60c060"/>
+        <text x="26" y="22" font-size="8" fill="#ffffff" text-anchor="middle">凝脉草</text>
+        <text x="26" y="33" font-size="8" fill="#c0ffc0" text-anchor="middle">种</text>
+        <text x="50" y="48" font-size="8" fill="#60c060" text-anchor="end">×2</text>
+      </g>
+      <!-- 铁剑 -->
+      <g transform="translate(226,106)">
+        <rect width="108" height="50" fill="#2a2a2a" stroke="#888"/>
+        <text x="54" y="22" font-size="10" fill="#ffffff" text-anchor="middle">铁剑（凡）</text>
+        <text x="54" y="36" font-size="8" fill="#aaaa" text-anchor="middle">q0.8</text>
+      </g>
+    </g>
+
+    <!-- tooltip · 悬停"百草图考残" -->
+    <g transform="translate(14,336)">
+      <rect width="392" height="130" fill="#0a0a18" stroke="#c8a878" rx="4"/>
+      <text x="12" y="22" font-size="13" fill="#e8d8a8" font-weight="bold">《百草图考·残》</text>
+      <text x="12" y="40" font-size="10" fill="#c8a878">skill_scroll · 1×2 · skill_id: <tspan fill="#80ff80">herbalism</tspan></text>
+      <text x="12" y="58" font-size="10" fill="#aaaa">xp_grant: <tspan fill="#80ff80">+500</tspan>（相当于 Lv.4 内半级）</text>
+      <line x1="12" y1="68" x2="380" y2="68" stroke="#333"/>
+      <text x="12" y="86" font-size="10" fill="#c8a878" font-style="italic">"此页残损过半，然三味辛草识法尚存。"</text>
+      <text x="12" y="108" font-size="10" fill="#80ff80">→ 拖到左下残卷槽 或 Shift+左键快速使用</text>
+      <text x="12" y="122" font-size="9" fill="#888">已学过的残卷 → 使用时提示"此卷已悟"，不消耗</text>
+    </g>
+
+    <!-- 说明：跨 tab 一致性 -->
+    <g transform="translate(14,480)">
+      <rect width="392" height="80" fill="#1a1a22" stroke="#444" rx="3"/>
+      <text x="12" y="20" font-size="11" fill="#cccccc" font-weight="bold">背包是"常驻不变"的</text>
+      <text x="12" y="38" font-size="10" fill="#aaaa">切换到其他 tab（装备/修仙/伤口/状态）</text>
+      <text x="12" y="54" font-size="10" fill="#aaaa">右侧背包列表不会刷新也不会重置。</text>
+      <text x="12" y="72" font-size="10" fill="#80ff80">→ DragState 可跨 tab 持续（拖着物品切 tab）</text>
+    </g>
+
+    <!-- 重量 / 快捷栏镜像 -->
+    <g transform="translate(14,576)">
+      <text x="0" y="0" font-size="10" fill="#888">重量 18.4 / 50.0</text>
+      <rect x="0" y="10" width="392" height="10" fill="#001020" stroke="#444"/>
+      <rect x="0" y="10" width="145" height="10" fill="#60a060"/>
+    </g>
+
+    <g transform="translate(14,608)">
+      <text x="0" y="0" font-size="10" fill="#888">快捷栏 1-9（镜像）</text>
+      <rect x="0" y="10" width="392" height="32" fill="#0a0a18" stroke="#3a3a4a"/>
+      <g>
+        <rect x="4" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="46" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="88" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="130" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="172" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="214" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="256" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="298" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+        <rect x="340" y="14" width="38" height="24" fill="#1a1a22" stroke="#444"/>
+      </g>
+    </g>
+
+    <!-- 其他容器小结 -->
+    <g transform="translate(14,670)">
+      <rect width="392" height="130" fill="#0a0a14" stroke="#333" rx="3"/>
+      <text x="12" y="20" font-size="11" fill="#cccccc" font-weight="bold">其他容器（切 tab 查看）</text>
+      <g transform="translate(12,36)" font-size="10">
+        <text x="0" y="0" fill="#aaaa">小口袋 3×3</text>
+        <text x="120" y="0" fill="#888">丹药 / 骨币 / 龛石（MVP 用）</text>
+        <text x="0" y="20" fill="#aaaa">前挂包 3×4</text>
+        <text x="120" y="20" fill="#888">战斗常备（武器 / 替换件）</text>
+        <text x="0" y="40" fill="#888">腰包（未解锁）</text>
+        <text x="120" y="40" fill="#888">需采集 N 异兽皮自制 · TODO</text>
+        <text x="0" y="66" fill="#80ff80">→ skill_scroll 在任何容器都可拖（多容器搜索）</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- 底脚 -->
+  <g transform="translate(30,1020)">
+    <text x="0" y="0" font-size="11" fill="#aaa">约定：InspectScreen 任何 tab 右侧都挂背包（多容器 tab · 塔科夫式 5×7）· 左侧换 tab 内容，右侧不变</text>
+    <text x="0" y="20" font-size="11" fill="#ffcc40">拖拽合法性：skill_scroll → 残卷槽 ✓ · 丹方残卷 → 残卷槽 ✗（tooltip 提示"非 skill"）· 物品/丹药 → 槽 ✗</text>
+  </g>
+</svg>

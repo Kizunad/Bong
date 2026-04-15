@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" font-family="'Noto Sans CJK SC', sans-serif">
+  <defs>
+    <pattern id="mcbg" width="40" height="40" patternUnits="userSpaceOnUse">
+      <rect width="40" height="40" fill="#1a1a22"/>
+      <rect width="40" height="40" fill="#222230" opacity="0.3"/>
+      <circle cx="10" cy="10" r="0.8" fill="#333344"/>
+      <circle cx="30" cy="25" r="0.6" fill="#2a2a38"/>
+    </pattern>
+  </defs>
+  <!-- 游戏世界作底（popup 覆盖在场景上，不暗化，玩家仍能看见周围） -->
+  <rect width="1920" height="1080" fill="url(#mcbg)"/>
+
+  <!-- 场景示意（远处有一株植物，玩家蹲在旁边） -->
+  <g opacity="0.6">
+    <!-- 地面 -->
+    <rect x="0" y="720" width="1920" height="360" fill="#2a3a20"/>
+    <!-- 一株开脉草 -->
+    <g transform="translate(1100,680)">
+      <rect x="-4" y="0" width="8" height="40" fill="#4a6030"/>
+      <ellipse cx="-10" cy="8" rx="14" ry="6" fill="#60a040"/>
+      <ellipse cx="10" cy="14" rx="14" ry="6" fill="#60a040"/>
+      <ellipse cx="0" cy="-4" rx="10" ry="5" fill="#80c060"/>
+      <!-- 高亮框（被瞄准） -->
+      <rect x="-24" y="-18" width="48" height="68" fill="none" stroke="#80ff80" stroke-width="2" stroke-dasharray="4 3"/>
+    </g>
+    <!-- 玩家（背影像素块占位） -->
+    <g transform="translate(900,640)">
+      <rect x="0" y="0" width="30" height="40" fill="#6050a0"/>
+      <rect x="4" y="40" width="22" height="36" fill="#402a2a"/>
+      <rect x="-6" y="8" width="10" height="24" fill="#6050a0"/>
+      <rect x="26" y="8" width="10" height="24" fill="#6050a0"/>
+    </g>
+  </g>
+
+  <!-- HUD：左上小状态（延续 hud-combat.svg 风格，非本 UI 主体，只作现场感） -->
+  <g transform="translate(30,30)" opacity="0.85">
+    <rect width="160" height="50" fill="#0a0a12" stroke="#333" rx="3"/>
+    <rect x="6" y="8" width="70" height="6" fill="#40d0d0"/>
+    <rect x="6" y="20" width="50" height="6" fill="#60ff80"/>
+    <rect x="6" y="32" width="90" height="6" fill="#c04040"/>
+    <text x="100" y="13" font-size="9" fill="#aaaa">qi 62%</text>
+    <text x="100" y="25" font-size="9" fill="#aaaa">sta 58%</text>
+    <text x="100" y="37" font-size="9" fill="#aaaa">hp 90%</text>
+  </g>
+
+  <!-- ============ 采集小浮窗（主体） · ~460×340 ============ -->
+  <g transform="translate(730,360)">
+    <!-- 阴影 -->
+    <rect x="4" y="4" width="460" height="340" fill="#000" opacity="0.55" rx="8"/>
+    <!-- 窗体 -->
+    <rect width="460" height="340" fill="#14141f" stroke="#80c060" stroke-width="2" rx="8"/>
+    <!-- 顶栏 -->
+    <rect width="460" height="40" fill="#1a2a18" stroke="#80c060" rx="8"/>
+    <rect y="32" width="460" height="8" fill="#1a2a18"/>
+    <text x="20" y="26" font-size="15" fill="#c0e0a0" font-weight="bold">采集 · 开脉草</text>
+    <text x="440" y="26" font-size="12" fill="#888" text-anchor="end">ESC 取消</text>
+
+    <!-- 植物缩略 + 信息 -->
+    <g transform="translate(20,54)">
+      <!-- 缩略图 -->
+      <rect width="70" height="80" fill="#0a0a14" stroke="#3a4a30"/>
+      <g transform="translate(35,50)">
+        <rect x="-3" y="-20" width="6" height="30" fill="#4a6030"/>
+        <ellipse cx="-8" cy="-15" rx="10" ry="4" fill="#60a040"/>
+        <ellipse cx="8" cy="-10" rx="10" ry="4" fill="#60a040"/>
+        <ellipse cx="0" cy="-24" rx="8" ry="3" fill="#80c060"/>
+      </g>
+
+      <!-- 右侧描述 -->
+      <g transform="translate(86,0)">
+        <text x="0" y="14" font-size="12" fill="#cccccc">kai_mai_cao · 通用草本</text>
+        <text x="0" y="32" font-size="11" fill="#aaaa">此地 zone.spirit_qi = 0.56（生长线 &gt; 0.3）</text>
+        <text x="0" y="50" font-size="11" fill="#aaaa">品质估 <tspan fill="#80ff80">良</tspan> · 采后得 1 株 · 灵气流出 ~0.003</text>
+        <text x="0" y="68" font-size="10" fill="#c8a878" font-style="italic">"老散修都晓得：开脉草须晨露采。"</text>
+      </g>
+    </g>
+
+    <!-- 两个按钮 -->
+    <!-- 手动采集（可用） -->
+    <g transform="translate(20,150)">
+      <rect width="205" height="80" fill="#1a2a18" stroke="#80ff80" stroke-width="2" rx="6"/>
+      <text x="102" y="22" font-size="14" fill="#c0ff80" text-anchor="middle" font-weight="bold">手动采集</text>
+      <text x="102" y="42" font-size="11" fill="#aaaa" text-anchor="middle">2.0 秒 · 专注</text>
+      <text x="102" y="60" font-size="10" fill="#8aaa80" text-anchor="middle">移动/受击立即打断</text>
+      <text x="102" y="74" font-size="10" fill="#8aaa80" text-anchor="middle">XP +1（基础）</text>
+      <!-- 主按键提示 -->
+      <rect x="4" y="4" width="24" height="18" fill="#0a0a12" stroke="#80ff80"/>
+      <text x="16" y="17" font-size="10" fill="#80ff80" text-anchor="middle">E</text>
+    </g>
+
+    <!-- 自动采集（锁） -->
+    <g transform="translate(235,150)">
+      <rect width="205" height="80" fill="#1a1a14" stroke="#6a6050" stroke-width="2" stroke-dasharray="5 3" rx="6"/>
+      <text x="102" y="22" font-size="14" fill="#888" text-anchor="middle" font-weight="bold">自动采集</text>
+      <text x="102" y="42" font-size="11" fill="#888" text-anchor="middle">5.0 秒 · 免操作</text>
+      <text x="102" y="60" font-size="10" fill="#ffcc40" text-anchor="middle">需 采药经验 ≥ 3 级</text>
+      <text x="102" y="74" font-size="10" fill="#c0a060" text-anchor="middle">XP +3（熟练加成）</text>
+      <!-- 锁图标 -->
+      <g transform="translate(172,8)" fill="#ffcc40">
+        <rect x="2" y="8" width="14" height="10" rx="1"/>
+        <path d="M 5 8 V 4 Q 5 1 9 1 Q 13 1 13 4 V 8" fill="none" stroke="#ffcc40" stroke-width="1.5"/>
+      </g>
+      <text x="102" y="100" font-size="9" fill="#666" text-anchor="middle" visibility="hidden">—</text>
+    </g>
+
+    <!-- 进度条（点击手动采集后显示） -->
+    <g transform="translate(20,248)">
+      <text x="0" y="0" font-size="11" fill="#cccccc">采集进度</text>
+      <text x="420" y="0" font-size="11" fill="#80ff80" text-anchor="end">1.2 / 2.0s</text>
+      <rect x="0" y="8" width="420" height="14" fill="#001020" stroke="#666"/>
+      <rect x="0" y="8" width="252" height="14" fill="#80ff80"/>
+      <text x="210" y="19" font-size="9" fill="#ffffff" text-anchor="middle" font-weight="bold">60%</text>
+    </g>
+
+    <!-- 打断/风险提示 -->
+    <g transform="translate(20,290)">
+      <text x="0" y="0" font-size="10" fill="#aaaa">打断：WASD 移动 / 受击 / ESC</text>
+      <text x="0" y="18" font-size="10" fill="#ff9090">⚠ 浮窗打开期间踩到本植物有 5% 概率弄死它</text>
+    </g>
+  </g>
+
+  <!-- ============ 右侧：自动采集解锁后的状态（替代视图） ============ -->
+  <g transform="translate(1280,360)" opacity="0.85">
+    <rect x="4" y="4" width="460" height="340" fill="#000" opacity="0.55" rx="8"/>
+    <rect width="460" height="340" fill="#14141f" stroke="#80c060" stroke-width="2" rx="8"/>
+    <rect width="460" height="40" fill="#1a2a18" stroke="#80c060" rx="8"/>
+    <rect y="32" width="460" height="8" fill="#1a2a18"/>
+    <text x="20" y="26" font-size="15" fill="#c0e0a0" font-weight="bold">采集 · 灵木（区域专属）</text>
+    <text x="440" y="26" font-size="12" fill="#888" text-anchor="end">ESC 取消</text>
+    <text x="20" y="60" font-size="11" fill="#888" font-style="italic">（另一种状态：采药经验 4 级 → 自动解锁）</text>
+
+    <!-- 两按钮都可用 -->
+    <g transform="translate(20,90)">
+      <rect width="205" height="80" fill="#1a2a18" stroke="#80ff80" stroke-width="2" rx="6"/>
+      <text x="102" y="22" font-size="14" fill="#c0ff80" text-anchor="middle" font-weight="bold">手动采集</text>
+      <text x="102" y="42" font-size="11" fill="#aaaa" text-anchor="middle">3.0 秒 · 专注</text>
+      <text x="102" y="60" font-size="10" fill="#8aaa80" text-anchor="middle">XP +2</text>
+      <text x="102" y="74" font-size="10" fill="#8aaa80" text-anchor="middle">品质略高（专注加成）</text>
+      <rect x="4" y="4" width="24" height="18" fill="#0a0a12" stroke="#80ff80"/>
+      <text x="16" y="17" font-size="10" fill="#80ff80" text-anchor="middle">E</text>
+    </g>
+    <g transform="translate(235,90)">
+      <rect width="205" height="80" fill="#2a2a18" stroke="#ffcc40" stroke-width="2" rx="6"/>
+      <text x="102" y="22" font-size="14" fill="#ffcc40" text-anchor="middle" font-weight="bold">自动采集</text>
+      <text x="102" y="42" font-size="11" fill="#aaaa" text-anchor="middle">8.0 秒 · 免操作</text>
+      <text x="102" y="60" font-size="10" fill="#c0a060" text-anchor="middle">XP +6（熟练加成）</text>
+      <text x="102" y="74" font-size="10" fill="#c0a060" text-anchor="middle">品质稳定（不抖动）</text>
+      <rect x="4" y="4" width="24" height="18" fill="#0a0a12" stroke="#ffcc40"/>
+      <text x="16" y="17" font-size="10" fill="#ffcc40" text-anchor="middle">R</text>
+    </g>
+
+    <!-- 经验条 -->
+    <g transform="translate(20,190)">
+      <text x="0" y="0" font-size="11" fill="#cccccc">采药经验 · Lv.4（熟手）</text>
+      <text x="420" y="0" font-size="10" fill="#aaaa" text-anchor="end">1260 / 2000</text>
+      <rect x="0" y="8" width="420" height="10" fill="#001020" stroke="#444"/>
+      <rect x="0" y="8" width="265" height="10" fill="#c8a060"/>
+    </g>
+
+    <!-- 品质分布（灵木稀缺，显示概率） -->
+    <g transform="translate(20,230)">
+      <text x="0" y="0" font-size="11" fill="#cccccc">品质预测（自动）</text>
+      <g transform="translate(0,10)" font-size="9">
+        <rect x="0" y="0" width="84" height="14" fill="#2a2020"/>
+        <rect x="84" y="0" width="126" height="14" fill="#604020"/>
+        <rect x="210" y="0" width="168" height="14" fill="#806040"/>
+        <rect x="378" y="0" width="42" height="14" fill="#c0a060"/>
+        <text x="42" y="11" fill="#aaaa" text-anchor="middle">劣 20%</text>
+        <text x="147" y="11" fill="#e8d8a8" text-anchor="middle">普 30%</text>
+        <text x="294" y="11" fill="#ffffff" text-anchor="middle">良 40%</text>
+        <text x="399" y="11" fill="#ffffff" text-anchor="middle">极 10%</text>
+      </g>
+    </g>
+
+    <!-- 说明 -->
+    <g transform="translate(20,286)">
+      <text x="0" y="0" font-size="10" fill="#aaaa">自动采集期间可以走动（慢速）</text>
+      <text x="0" y="18" font-size="10" fill="#ff9090">⚠ 受击仍会打断 · 战斗中优先手动</text>
+    </g>
+  </g>
+
+  <!-- ============ 底脚说明 ============ -->
+  <g transform="translate(100,960)">
+    <text x="0" y="0" font-size="12" fill="#aaa" font-weight="bold">采集浮窗 · plan-botany-v1 §1.3 · 客户端 UI 层级 = A（HUD 叠加浮窗，非全屏 Screen）</text>
+    <text x="0" y="22" font-size="11" fill="#aaa">左图 = 新手默认状态（自动采集锁定 · 需采药经验 ≥ 3 级）· 右图 = 熟手状态（两选项均可 · 自动品质稳定）</text>
+    <text x="0" y="42" font-size="11" fill="#aaa">位置策略：弹窗锚在植物方块屏幕投影附近（避免遮挡目标）· 可拖拽 · 同时只能开一个 · 开着窗也能看游戏</text>
+    <text x="0" y="62" font-size="11" fill="#ffcc40">关键差异：手动 = 短时 + 须专注（战斗中可行）· 自动 = 长时 + 免操作 + XP 高 + 品质稳定（安全区用）</text>
+    <text x="0" y="82" font-size="11" fill="#888">复用 Store：<tspan fill="#80ffff">HarvestSessionStore</tspan>（session 进度）· <tspan fill="#80ffff">BotanySkillStore</tspan>（采药经验 / 解锁门槛）· 走 <tspan fill="#ffcc40">bong:botany/harvest_progress</tspan> channel</text>
+  </g>
+</svg>
