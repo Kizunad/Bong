@@ -21,7 +21,8 @@ use valence::prelude::{
 };
 
 use crate::schema::vfx_event::{
-    VfxEventPayloadV1, VfxEventV1, VFX_ANIM_PRIORITY_MAX, VFX_ANIM_PRIORITY_MIN, VFX_FADE_TICKS_MAX,
+    VfxEventPayloadV1, VfxEventV1, VFX_ANIM_PRIORITY_MAX, VFX_ANIM_PRIORITY_MIN,
+    VFX_FADE_TICKS_MAX, VFX_PARTICLE_COUNT_MAX,
 };
 
 pub const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
@@ -126,7 +127,9 @@ pub fn handle_vfx_debug_commands(
             continue;
         };
 
-        let outcome = parse_vfx_debug_command(trimmed, unique_id.0);
+        let origin = position.get();
+        let outcome =
+            parse_vfx_debug_command_with_origin(trimmed, unique_id.0, [origin.x, origin.y, origin.z]);
         match outcome {
             VfxDebugCommand::Usage(hint) => {
                 if let Ok(mut c) = clients.get_mut(*client) {
@@ -134,10 +137,15 @@ pub fn handle_vfx_debug_commands(
                 }
             }
             VfxDebugCommand::Play { payload } => {
-                let anim_id = anim_id_from_payload(&payload).to_string();
-                vfx_events.send(VfxEventRequest::new(position.get(), payload));
+                let id = anim_id_from_payload(&payload).to_string();
+                let kind = match &payload {
+                    VfxEventPayloadV1::PlayAnim { .. } => "play",
+                    VfxEventPayloadV1::StopAnim { .. } => "stop",
+                    VfxEventPayloadV1::SpawnParticle { .. } => "particle",
+                };
+                vfx_events.send(VfxEventRequest::new(origin, payload));
                 if let Ok(mut c) = clients.get_mut(*client) {
-                    c.send_chat_message(format!("/bong-vfx play dispatched: {anim_id}"));
+                    c.send_chat_message(format!("/bong-vfx {kind} dispatched: {id}"));
                 }
             }
         }
@@ -150,10 +158,32 @@ enum VfxDebugCommand {
     Usage(&'static str),
 }
 
-const USAGE_HINT: &str = "Usage: /bong-vfx play <anim_id> [priority] [fade_in_ticks]";
+const USAGE_HINT: &str = "Usage: /bong-vfx play <anim_id> [priority] [fade_in_ticks] | /bong-vfx particle <event_id> [#RRGGBB] [strength] [count]";
 const ANIM_ID_HINT: &str = "anim_id must be namespace:path (e.g. bong:sword_swing_horiz)";
+const EVENT_ID_HINT: &str = "event_id must be namespace:path (e.g. bong:sword_qi_slash)";
+const COLOR_HINT: &str = "color must be #RRGGBB (6 hex digits)";
+const STRENGTH_HINT: &str = "strength must be a number in [0.0, 1.0]";
 
+/// 默认粒子强度（plan-particle-system-v1 §4.4 颜色强度参考）。
+const DEFAULT_PARTICLE_STRENGTH: f32 = 0.8;
+/// 默认粒子 count（单发）。
+const DEFAULT_PARTICLE_COUNT: u16 = 1;
+/// 默认粒子持续 tick 数（= 20 tick / 1s）。
+const DEFAULT_PARTICLE_DURATION_TICKS: u16 = 20;
+
+/// 2-arg 便捷版：老测试用。生产路径走 [`parse_vfx_debug_command_with_origin`]。
+#[cfg(test)]
 fn parse_vfx_debug_command(message: &str, target_uuid: Uuid) -> VfxDebugCommand {
+    parse_vfx_debug_command_with_origin(message, target_uuid, [0.0, 0.0, 0.0])
+}
+
+/// 独立出这一层的原因：`particle` 子命令需要 origin（调用方的 `Position`），
+/// 而原 `play` 流程只用 `target_uuid`。测试时传 `[0.0, 0.0, 0.0]` 即可。
+fn parse_vfx_debug_command_with_origin(
+    message: &str,
+    target_uuid: Uuid,
+    origin: [f64; 3],
+) -> VfxDebugCommand {
     let mut tokens = message.split_whitespace();
     let _command = tokens.next(); // "/bong-vfx"
     let Some(sub) = tokens.next() else {
@@ -161,7 +191,57 @@ fn parse_vfx_debug_command(message: &str, target_uuid: Uuid) -> VfxDebugCommand 
     };
 
     match sub {
+        "particle" => {
+            let Some(event_id) = tokens.next() else {
+                return VfxDebugCommand::Usage(USAGE_HINT);
+            };
+            if !is_valid_anim_id_shape(event_id) {
+                return VfxDebugCommand::Usage(EVENT_ID_HINT);
+            }
+
+            // 颜色可选。提供了但不合法 → 报错（dev 想写颜色却拼错时要知情）。
+            let color = match tokens.next() {
+                Some(token) => {
+                    if is_valid_color_hex_shape(token) {
+                        Some(token.to_string())
+                    } else {
+                        return VfxDebugCommand::Usage(COLOR_HINT);
+                    }
+                }
+                None => None,
+            };
+
+            let strength = match tokens.next() {
+                Some(token) => match token.parse::<f32>() {
+                    Ok(v) if v.is_finite() && (0.0..=1.0).contains(&v) => Some(v),
+                    _ => return VfxDebugCommand::Usage(STRENGTH_HINT),
+                },
+                None => Some(DEFAULT_PARTICLE_STRENGTH),
+            };
+
+            let count = tokens
+                .next()
+                .and_then(|s| s.parse::<u16>().ok())
+                .map(|c| c.clamp(1, VFX_PARTICLE_COUNT_MAX))
+                .unwrap_or(DEFAULT_PARTICLE_COUNT);
+
+            // direction 由"玩家朝向"决定太复杂；debug 命令用固定 +X 朝向，配合 origin 足够
+            // 验证端到端链路。正式 gameplay 系统会从 player look 向量取。
+            VfxDebugCommand::Play {
+                payload: VfxEventPayloadV1::SpawnParticle {
+                    event_id: event_id.to_string(),
+                    origin,
+                    direction: Some([1.0, 0.0, 0.0]),
+                    color,
+                    strength,
+                    count: Some(count),
+                    duration_ticks: Some(DEFAULT_PARTICLE_DURATION_TICKS),
+                },
+            }
+        }
         "play" => {
+            // play 子命令不用 origin——它只广播动画；保留签名统一是为了测试对称。
+            let _ = origin;
             let Some(anim_id) = tokens.next() else {
                 return VfxDebugCommand::Usage(USAGE_HINT);
             };
@@ -201,10 +281,21 @@ fn is_valid_anim_id_shape(anim_id: &str) -> bool {
     !namespace.is_empty() && !path.is_empty()
 }
 
+/// `#RRGGBB` 形态（6 位 hex）。与 `VfxEventPayloadV1::validate_ranges` 的 `is_valid_color_hex`
+/// 一致，但那个在 schema 模块里是 private，为保持模块边界干净这里独立实现。
+fn is_valid_color_hex_shape(hex: &str) -> bool {
+    hex.len() == 7
+        && hex.starts_with('#')
+        && hex[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn anim_id_from_payload(payload: &VfxEventPayloadV1) -> &str {
     match payload {
         VfxEventPayloadV1::PlayAnim { anim_id, .. } => anim_id,
         VfxEventPayloadV1::StopAnim { anim_id, .. } => anim_id,
+        // 粒子 variant 没有 anim_id 概念；debug 命令目前只生产 Play/Stop，
+        // 保底返回 event_id 以便日志不致 panic。
+        VfxEventPayloadV1::SpawnParticle { event_id, .. } => event_id,
     }
 }
 
@@ -386,6 +477,149 @@ mod tests {
         match parse_vfx_debug_command("/bong-vfx play", test_uuid()) {
             VfxDebugCommand::Usage(_) => {}
             other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    // ========== /bong-vfx particle ==========
+
+    fn test_origin() -> [f64; 3] {
+        [42.0, 64.0, -7.0]
+    }
+
+    #[test]
+    fn parse_particle_with_defaults() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:sword_qi_slash",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Play {
+                payload: VfxEventPayloadV1::SpawnParticle {
+                    event_id,
+                    origin,
+                    color,
+                    strength,
+                    count,
+                    duration_ticks,
+                    direction,
+                },
+            } => {
+                assert_eq!(event_id, "bong:sword_qi_slash");
+                assert_eq!(origin, test_origin());
+                assert!(color.is_none(), "color not provided -> None");
+                assert_eq!(strength, Some(DEFAULT_PARTICLE_STRENGTH));
+                assert_eq!(count, Some(DEFAULT_PARTICLE_COUNT));
+                assert_eq!(duration_ticks, Some(DEFAULT_PARTICLE_DURATION_TICKS));
+                assert_eq!(direction, Some([1.0, 0.0, 0.0]));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_particle_with_color_strength_count() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:sword_qi_slash #ffaa00 0.5 3",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Play {
+                payload: VfxEventPayloadV1::SpawnParticle {
+                    color,
+                    strength,
+                    count,
+                    ..
+                },
+            } => {
+                assert_eq!(color.as_deref(), Some("#ffaa00"));
+                assert_eq!(strength, Some(0.5));
+                assert_eq!(count, Some(3));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_particle_rejects_bad_color() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:x nothex",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Usage(hint) => assert!(hint.contains("#RRGGBB")),
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_particle_rejects_strength_out_of_range() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:x #ffffff 1.5",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Usage(hint) => assert!(hint.contains("strength")),
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_particle_rejects_bad_event_id() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle sword_qi",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Usage(hint) => assert!(hint.contains("namespace:path")),
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_particle_clamps_count_above_max() {
+        match parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:x #ffffff 0.5 9999",
+            test_uuid(),
+            test_origin(),
+        ) {
+            VfxDebugCommand::Play {
+                payload: VfxEventPayloadV1::SpawnParticle { count, .. },
+            } => assert_eq!(count, Some(VFX_PARTICLE_COUNT_MAX)),
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn particle_command_builds_serializable_payload() {
+        let cmd = parse_vfx_debug_command_with_origin(
+            "/bong-vfx particle bong:sword_qi_slash #88ccff 0.8 2",
+            test_uuid(),
+            test_origin(),
+        );
+        let VfxDebugCommand::Play { payload } = cmd else {
+            panic!("expected Play, got {cmd:?}");
+        };
+        let event = VfxEventV1::new(payload);
+        let bytes = event
+            .to_json_bytes_checked()
+            .expect("particle debug payload should serialize");
+        let back: VfxEventV1 = serde_json::from_slice(&bytes).unwrap();
+        match back.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                origin,
+                color,
+                strength,
+                count,
+                ..
+            } => {
+                assert_eq!(event_id, "bong:sword_qi_slash");
+                assert_eq!(origin, test_origin());
+                assert_eq!(color.as_deref(), Some("#88ccff"));
+                assert_eq!(strength, Some(0.8));
+                assert_eq!(count, Some(2));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
         }
     }
 

@@ -173,6 +173,12 @@ describe("sample files pass schema validation", () => {
     const result = validate(VfxEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  it("vfx-event.spawn-particle.sample.json", () => {
+    const data = loadSample("vfx-event.spawn-particle.sample.json");
+    const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 });
 
 describe("negative sample files fail schema validation", () => {

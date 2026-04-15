@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "type": "spawn_particle",
+  "type": "unsupported_vfx_kind_v9",
   "target_player": "550e8400-e29b-41d4-a716-446655440000",
   "anim_id": "bong:sword_swing_horiz",
   "priority": 1000

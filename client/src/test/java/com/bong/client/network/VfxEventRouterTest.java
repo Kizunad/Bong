@@ -76,6 +76,34 @@ public class VfxEventRouterTest {
     }
 
     @Test
+    void dispatchesSpawnParticleToParticleBridge() throws IOException {
+        RecordingBridge animBridge = new RecordingBridge(true);
+        RecordingParticleBridge particleBridge = new RecordingParticleBridge(true);
+        VfxEventRouter router = new VfxEventRouter(animBridge, particleBridge);
+        String json = PayloadFixtureLoader.readText("valid-vfx-spawn-particle.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isHandled(), "result should be handled: " + result.logMessage());
+        assertEquals(0, animBridge.playCalls.size(), "animation bridge must not be touched");
+        assertEquals(1, particleBridge.calls.size());
+        VfxEventPayload.SpawnParticle dispatched = particleBridge.calls.get(0);
+        assertEquals(new Identifier("bong", "sword_qi_slash"), dispatched.eventId());
+    }
+
+    @Test
+    void spawnParticleFallsBackToBridgeMissWhenUnregistered() throws IOException {
+        VfxEventRouter router = new VfxEventRouter(new RecordingBridge(true));
+        // noop default bridge always declines; simulate unregistered event_id path
+        String json = PayloadFixtureLoader.readText("valid-vfx-spawn-particle.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isBridgeMiss());
+        assertTrue(result.logMessage().contains("spawn_particle"), result.logMessage());
+    }
+
+    @Test
     void bridgeExceptionBecomesBridgeMissNotCrash() throws IOException {
         ThrowingBridge bridge = new ThrowingBridge();
         VfxEventRouter router = new VfxEventRouter(bridge);
@@ -116,6 +144,21 @@ public class VfxEventRouterTest {
         }
 
         record StopCall(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
+        }
+    }
+
+    private static final class RecordingParticleBridge implements VfxParticleBridge {
+        final List<VfxEventPayload.SpawnParticle> calls = new ArrayList<>();
+        private final boolean returnValue;
+
+        RecordingParticleBridge(boolean returnValue) {
+            this.returnValue = returnValue;
+        }
+
+        @Override
+        public boolean spawnParticle(VfxEventPayload.SpawnParticle payload) {
+            calls.add(payload);
+            return returnValue;
         }
     }
 

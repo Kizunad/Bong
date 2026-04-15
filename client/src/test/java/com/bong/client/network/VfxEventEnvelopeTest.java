@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -118,6 +119,68 @@ public class VfxEventEnvelopeTest {
 
         assertFalse(result.isSuccess());
         assertTrue(result.errorMessage().contains("exceeds max size"));
+    }
+
+    @Test
+    void parsesSpawnParticleFixtureFull() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-vfx-spawn-particle.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+
+        assertTrue(result.isSuccess(), "spawn_particle should parse: " + result.errorMessage());
+        assertTrue(result.payload() instanceof VfxEventPayload.SpawnParticle);
+        VfxEventPayload.SpawnParticle particle = (VfxEventPayload.SpawnParticle) result.payload();
+        assertEquals(new Identifier("bong", "sword_qi_slash"), particle.eventId());
+        assertEquals(3, particle.origin().length);
+        assertEquals(128.5, particle.origin()[0]);
+        assertEquals(64.0, particle.origin()[1]);
+        assertEquals(-32.25, particle.origin()[2]);
+        assertTrue(particle.direction().isPresent());
+        assertEquals(0.7071, particle.direction().get()[0]);
+        assertTrue(particle.colorRgb().isPresent());
+        assertEquals(0x88CCFF, particle.colorRgb().getAsInt());
+        assertTrue(particle.strength().isPresent());
+        assertEquals(0.8, particle.strength().get());
+        assertEquals(OptionalInt.of(1), particle.count());
+        assertEquals(OptionalInt.of(20), particle.durationTicks());
+    }
+
+    @Test
+    void parsesSpawnParticleMinimalOmittingOptionals() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-vfx-spawn-particle-minimal.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+
+        assertTrue(result.isSuccess(), result.errorMessage());
+        VfxEventPayload.SpawnParticle particle = (VfxEventPayload.SpawnParticle) result.payload();
+        assertEquals(new Identifier("bong", "lingqi_ripple"), particle.eventId());
+        assertTrue(particle.direction().isEmpty());
+        assertTrue(particle.colorRgb().isEmpty());
+        assertTrue(particle.strength().isEmpty());
+        assertTrue(particle.count().isEmpty());
+        assertTrue(particle.durationTicks().isEmpty());
+    }
+
+    @Test
+    void rejectsSpawnParticleBadColor() throws IOException {
+        String json = PayloadFixtureLoader.readText("invalid-vfx-particle-bad-color.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("color"));
+    }
+
+    @Test
+    void rejectsSpawnParticleOriginWrongLength() throws IOException {
+        String json = PayloadFixtureLoader.readText("invalid-vfx-particle-origin-bad-length.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("origin"));
+    }
+
+    @Test
+    void rejectsSpawnParticleStrengthOutOfRange() throws IOException {
+        String json = PayloadFixtureLoader.readText("invalid-vfx-particle-strength-out-of-range.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("strength"));
     }
 
     @Test

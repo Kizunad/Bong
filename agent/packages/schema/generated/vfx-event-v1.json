@@ -73,6 +73,84 @@
           "type": "integer"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "event_id",
+        "origin"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spawn_particle",
+          "type": "string"
+        },
+        "event_id": {
+          "pattern": "^[a-z0-9_]+:[a-z0-9_]+$",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "origin": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "direction": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "color": {
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string"
+        },
+        "strength": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "count": {
+          "minimum": 1,
+          "maximum": 64,
+          "type": "integer"
+        },
+        "duration_ticks": {
+          "minimum": 1,
+          "maximum": 200,
+          "type": "integer"
+        }
+      }
     }
   ]
 }

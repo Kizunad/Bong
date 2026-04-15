@@ -6,10 +6,17 @@ import java.util.Objects;
  * `bong:vfx_event` 通道路由器：解析 → 分发。与 {@link ServerDataRouter} 平级但更简单——
  * 消费侧只是调一次 API，不产生 HUD state。
  *
+ * <p>两个 bridge：
+ * <ul>
+ *   <li>{@link VfxEventAnimationBridge}：{@code play_anim} / {@code stop_anim} → 骨骼动画</li>
+ *   <li>{@link VfxParticleBridge}：{@code spawn_particle} → 粒子引擎
+ *       （plan-particle-system-v1 §2.7 {@code VfxRegistry} 查表）</li>
+ * </ul>
+ *
  * <p>失败处理按三档：
  * <ol>
  *   <li>解析失败 → {@link RouteResult#parseError}，调用方打 error 日志</li>
- *   <li>bridge 返回 false（玩家不在线 / 动画未注册） → {@link RouteResult#bridgeMiss}，
+ *   <li>bridge 返回 false（玩家不在线 / 事件 id 未注册） → {@link RouteResult#bridgeMiss}，
  *       调用方按节流策略降级 warn</li>
  *   <li>成功 → {@link RouteResult#handled}，调用方打 info</li>
  * </ol>
@@ -18,10 +25,19 @@ import java.util.Objects;
  * 一个格式正确但运行期失败的事件不应撕裂整个网络层。
  */
 public final class VfxEventRouter {
-    private final VfxEventAnimationBridge bridge;
+    private final VfxEventAnimationBridge animationBridge;
+    private final VfxParticleBridge particleBridge;
 
-    public VfxEventRouter(VfxEventAnimationBridge bridge) {
-        this.bridge = Objects.requireNonNull(bridge, "bridge");
+    public VfxEventRouter(VfxEventAnimationBridge animationBridge) {
+        this(animationBridge, VfxParticleBridge.noop());
+    }
+
+    public VfxEventRouter(
+        VfxEventAnimationBridge animationBridge,
+        VfxParticleBridge particleBridge
+    ) {
+        this.animationBridge = Objects.requireNonNull(animationBridge, "animationBridge");
+        this.particleBridge = Objects.requireNonNull(particleBridge, "particleBridge");
     }
 
     public RouteResult route(String jsonPayload, int payloadSizeBytes) {
@@ -35,33 +51,33 @@ public final class VfxEventRouter {
     public RouteResult route(VfxEventPayload payload) {
         Objects.requireNonNull(payload, "payload");
         try {
-            // Java 17：instanceof pattern 是标准特性，switch pattern 还没出，
-            // 所以维持 if-else 形式。新 variant 加进来时编译器会提示 permits 穷举
-            // 类型检查，依然安全。
             boolean ok;
+            String missContext;
             if (payload instanceof VfxEventPayload.PlayAnim play) {
-                ok = bridge.playAnim(
+                ok = animationBridge.playAnim(
                     play.targetPlayer(),
                     play.animId(),
                     play.priority(),
                     play.fadeInTicks()
                 );
+                missContext = "bridge declined play_anim " + play.animId() + " on " + play.targetPlayer();
             } else if (payload instanceof VfxEventPayload.StopAnim stop) {
-                ok = bridge.stopAnim(
+                ok = animationBridge.stopAnim(
                     stop.targetPlayer(),
                     stop.animId(),
                     stop.fadeOutTicks()
                 );
+                missContext = "bridge declined stop_anim " + stop.animId() + " on " + stop.targetPlayer();
+            } else if (payload instanceof VfxEventPayload.SpawnParticle particle) {
+                ok = particleBridge.spawnParticle(particle);
+                missContext = "bridge declined spawn_particle " + particle.eventId();
             } else {
                 throw new IllegalStateException("Unhandled VfxEventPayload variant: " + payload.getClass().getName());
             }
             if (ok) {
                 return RouteResult.handled(payload);
             }
-            return RouteResult.bridgeMiss(
-                payload,
-                "bridge declined " + payload.type() + " for " + payload.animId() + " on " + payload.targetPlayer()
-            );
+            return RouteResult.bridgeMiss(payload, missContext);
         } catch (RuntimeException exception) {
             return RouteResult.bridgeMiss(
                 payload,
@@ -90,7 +106,7 @@ public final class VfxEventRouter {
             return new RouteResult(
                 Kind.HANDLED,
                 payload,
-                "dispatched " + payload.type() + " anim=" + payload.animId() + " target=" + payload.targetPlayer()
+                "dispatched " + payload.debugDescriptor()
             );
         }
 
