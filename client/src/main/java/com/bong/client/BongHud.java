@@ -42,6 +42,8 @@ public class BongHud {
         // Tick cast-state + defense-window expiries so they self-clear each frame.
         CastStateStore.tick(nowMillis);
         DefenseWindowStore.tick(nowMillis);
+        // Open death/terminate screens when the server activates them.
+        com.bong.client.combat.screen.CombatScreenOpener.tick();
 
         Screen currentScreen = client.currentScreen;
         ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);

@@ -90,6 +90,17 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /** 通用请求编码（combat UI 系列使用）。payload 可为 {@code null}。 */
+    public static String encodeGeneric(String type, JsonObject payload) {
+        JsonObject obj = envelope(type);
+        if (payload != null) {
+            for (String key : payload.keySet()) {
+                obj.add(key, payload.get(key));
+            }
+        }
+        return obj.toString();
+    }
+
     private static JsonObject envelope(String type) {
         JsonObject obj = new JsonObject();
         obj.addProperty("type", type);

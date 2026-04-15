@@ -22,6 +22,20 @@ public final class ServerDataRouter {
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
+        com.bong.client.combat.handler.CombatEventHandler combatEventHandler =
+            new com.bong.client.combat.handler.CombatEventHandler();
+        com.bong.client.combat.handler.StatusSnapshotHandler statusSnapshotHandler =
+            new com.bong.client.combat.handler.StatusSnapshotHandler();
+        com.bong.client.combat.handler.DerivedAttrsHandler derivedAttrsHandler =
+            new com.bong.client.combat.handler.DerivedAttrsHandler();
+        com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
+            new com.bong.client.combat.handler.DeathScreenHandler();
+        com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
+            new com.bong.client.combat.handler.TerminateScreenHandler();
+        com.bong.client.combat.handler.WoundsSnapshotHandler woundsSnapshotHandler =
+            new com.bong.client.combat.handler.WoundsSnapshotHandler();
+        com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
+            new com.bong.client.combat.handler.TribulationBroadcastHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -34,6 +48,13 @@ public final class ServerDataRouter {
         handlers.put("cultivation_detail", cultivationDetailHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
+        handlers.put("combat_event", combatEventHandler);
+        handlers.put("status_snapshot", statusSnapshotHandler);
+        handlers.put("derived_attrs_sync", derivedAttrsHandler);
+        handlers.put("death_screen", deathScreenHandler);
+        handlers.put("terminate_screen", terminateScreenHandler);
+        handlers.put("wounds_snapshot", woundsSnapshotHandler);
+        handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
         return new ServerDataRouter(handlers);
     }
 
