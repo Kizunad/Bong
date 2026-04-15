@@ -1,6 +1,8 @@
 mod biome;
+mod blocks;
 mod column;
 mod decoration;
+mod flora;
 mod mega_tree;
 mod noise;
 mod raster;
@@ -83,8 +85,10 @@ pub fn spawn_raster_world(
     let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, &biomes)
         .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
     tracing::info!(
-        "[bong][world] loaded {} terrain tiles from {}",
+        "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations from {}",
         provider.tile_count(),
+        provider.pois().len(),
+        provider.decoration_count(),
         config.manifest_path.display()
     );
 
@@ -180,6 +184,7 @@ fn ensure_chunk_generated(
     }
 
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
+    flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);

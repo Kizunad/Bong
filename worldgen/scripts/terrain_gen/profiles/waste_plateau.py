@@ -5,12 +5,66 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+WASTE_PLATEAU_DECORATIONS = (
+    DecorationSpec(
+        name="whalefall_rib_tree",
+        kind="tree",
+        blocks=("bone_block", "quartz_block", "white_concrete"),
+        size_range=(10, 18),
+        rarity=0.12,
+        notes="鲸坠肋骨树：鲸类化石肋骨被腐朽之力立起，状若白树。地标级稀有。",
+    ),
+    DecorationSpec(
+        name="dust_thorn",
+        kind="shrub",
+        blocks=("dead_bush", "sand", "sandstone"),
+        size_range=(1, 3),
+        rarity=0.70,
+        notes="尘棘：半埋沙中的枯枝，划人而无汁。遍布平原。",
+    ),
+    DecorationSpec(
+        name="null_pressure_rock",
+        kind="boulder",
+        blocks=("soul_sand", "soul_soil", "basalt"),
+        size_range=(3, 7),
+        rarity=0.30,
+        notes="虚压岩：灵魂沙与玄武岩堆成的巨石，近之有压迫感。",
+    ),
+    DecorationSpec(
+        name="ancient_ruin_fragment",
+        kind="boulder",
+        blocks=("chiseled_stone_bricks", "cracked_stone_bricks", "mossy_stone_bricks"),
+        size_range=(2, 5),
+        rarity=0.25,
+        notes="古废片：雕刻石砖的断柱残基，诉说消逝的王朝。",
+    ),
+)
 
 
 class WastePlateauGenerator(TerrainProfileGenerator):
     profile_name = "waste_plateau"
-    extra_layers = ("neg_pressure", "ruin_density")
+    extra_layers = (
+        "neg_pressure",
+        "ruin_density",
+        "qi_density",
+        "mofa_decay",
+        "flora_density",
+        "flora_variant_id",
+    )
+    ecology = EcologySpec(
+        decorations=WASTE_PLATEAU_DECORATIONS,
+        ambient_effects=("dust_storm", "bone_creak", "heavy_silence"),
+        notes="北荒生态：极度稀疏。唯尘棘遍地，鲸坠肋骨树为罕见地标，"
+              "虚压岩围绕 neg_pressure 区域，古废片是势力曾到达的证明。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -38,6 +92,10 @@ def fill_waste_plateau_tile(
             "boundary_weight",
             "neg_pressure",
             "ruin_density",
+            "qi_density",
+            "mofa_decay",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -112,6 +170,19 @@ def fill_waste_plateau_tile(
         plateau * 0.28 + neg_pressure * 0.95 + np.maximum(0.0, -fracture) * 0.4,
     )
 
+    # 北荒：死域。灵气极低（vein 无），末法极高（neg_pressure 点内趋近 1.0）
+    qi_base = float(getattr(zone, "spirit_qi", 0.05))
+    qi_density = np.clip(
+        0.01 + qi_base * 0.2 * (1.0 - plateau) - neg_pressure * 0.5,
+        0.0,
+        0.18,
+    )
+    mofa_decay = np.clip(
+        0.72 + plateau * 0.08 + neg_pressure * 0.25 + ruin_density * 0.05,
+        0.5,
+        1.0,
+    )
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -122,6 +193,36 @@ def fill_waste_plateau_tile(
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
     buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel()
     buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel()
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+
+    # --- Flora: 1 whalefall_rib_tree / 2 dust_thorn / 3 null_pressure_rock /
+    # 4 ancient_ruin_fragment ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Dust thorn ubiquitous on plateau body
+    flora_variant = np.where(plateau > 0.2, 2, flora_variant)
+    flora_density = np.where(plateau > 0.2, np.maximum(flora_density, 0.55), flora_density)
+
+    # Null-pressure rocks around neg_pressure zones
+    null_band = neg_pressure > 0.25
+    flora_variant = np.where(null_band, 3, flora_variant)
+    flora_density = np.where(null_band, np.maximum(flora_density, 0.40 + neg_pressure * 0.3), flora_density)
+
+    # Ancient ruin fragments where ruin_density significant
+    ruin_band = ruin_density > 0.45
+    flora_variant = np.where(ruin_band, 4, flora_variant)
+    flora_density = np.where(ruin_band, np.maximum(flora_density, 0.45), flora_density)
+
+    # Rare whalefall rib trees on crown center
+    whalefall_band = (crown > 0.6) & (scarp > 0.3)
+    flora_variant = np.where(whalefall_band, 1, flora_variant)
+    flora_density = np.where(whalefall_band, np.maximum(flora_density, 0.18), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

@@ -5,11 +5,59 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+SPAWN_PLAIN_DECORATIONS = (
+    DecorationSpec(
+        name="elder_oak",
+        kind="tree",
+        blocks=("oak_log", "oak_leaves", "moss_block"),
+        size_range=(5, 9),
+        rarity=0.45,
+        notes="苍灵古橡：最常见的庇护木，树根蔓生苔藓。",
+    ),
+    DecorationSpec(
+        name="memory_birch",
+        kind="tree",
+        blocks=("birch_log", "birch_leaves", "white_wool"),
+        size_range=(6, 10),
+        rarity=0.30,
+        notes="忆白桦：树皮如残碑纹路，初醒修士的路标。",
+    ),
+    DecorationSpec(
+        name="starter_shrub",
+        kind="shrub",
+        blocks=("sweet_berry_bush", "grass_block", "fern"),
+        size_range=(1, 2),
+        rarity=0.70,
+        notes="野浆灌：可采食浆果，对初入世者友好。",
+    ),
+    DecorationSpec(
+        name="wayfarer_rock",
+        kind="boulder",
+        blocks=("mossy_cobblestone", "cobblestone", "stone"),
+        size_range=(2, 4),
+        rarity=0.40,
+        notes="行者石：长满苔藓的路边巨石，曾被旅人坐过。",
+    ),
+)
 
 
 class SpawnPlainGenerator(TerrainProfileGenerator):
     profile_name = "spawn_plain"
+    extra_layers = ("qi_density", "mofa_decay", "flora_density", "flora_variant_id")
+    ecology = EcologySpec(
+        decorations=SPAWN_PLAIN_DECORATIONS,
+        ambient_effects=("morning_mist", "distant_bird_call"),
+        notes="初醒原生态：暖色温和，古橡与忆白桦点缀开阔草甸，野浆灌丛可食。"
+              "给人'世界尚可'的第一印象。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +83,10 @@ def fill_spawn_plain_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     grass_id = palette.ensure("grass_block")
@@ -91,6 +143,13 @@ def fill_spawn_plain_tile(
 
     biome_id = np.where(feature_mask > 0.12, flower_forest_biome_id, spawn_biome_id)
 
+    # 初醒原：灵气中低（0.25），末法轻度（0.22），含水塘处灵气略增（水即灵）
+    qi_base = float(getattr(zone, "spirit_qi", 0.3))
+    qi_density = 0.18 + heartland * 0.10 + inner_meadow * 0.05
+    qi_density = np.where(water_level >= 0.0, qi_density + 0.08, qi_density)
+    qi_density = np.clip(qi_density * (0.5 + qi_base), 0.0, 1.0)
+    mofa_decay = np.clip(0.28 - heartland * 0.10 + np.abs(rolling) * 0.03, 0.05, 0.55)
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -99,6 +158,21 @@ def fill_spawn_plain_tile(
     buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+
+    # Flora: meadow-wide shrubs with scattered trees on heartland, boulders on edges
+    flora_density = np.clip(heartland * 0.55 + inner_meadow * 0.15, 0.0, 1.0)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+    # Default shrub
+    flora_variant = np.where(flora_density > 0.20, 3, flora_variant)
+    # Trees on heartland
+    flora_variant = np.where((inner_meadow > 0.5) & (rolling > 0.3), 1, flora_variant)
+    flora_variant = np.where((inner_meadow > 0.5) & (rolling < -0.2), 2, flora_variant)
+    # Boulders on path-like ridges
+    flora_variant = np.where(path > 0.5, 4, flora_variant)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

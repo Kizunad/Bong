@@ -32,6 +32,25 @@ class ZoneWorldgenConfig:
 
 
 @dataclass(frozen=True)
+class PoiSpec:
+    """Narrative point-of-interest inside a zone.
+
+    POIs are first-class references for the 天道 Agent / NPC AI / HUD to anchor
+    stories on (洞府 / 碑铭 / 灵泉眼 / 血月祭坛 / 宗门废墟 ...). They are
+    serialized into the raster manifest so the Rust server can surface them to
+    downstream consumers without re-parsing the blueprint.
+    """
+
+    kind: str                           # cave_mouth | ruin | spirit_font | stele | altar | tomb | shrine | ...
+    pos_xyz: tuple[float, float, float]
+    name: str = ""
+    tags: tuple[str, ...] = ()
+    unlock: str = ""                    # free-form unlock condition text for agent
+    qi_affinity: float = 0.0            # [-1, 1] local qi bias (negative = sink)
+    danger_bias: int = 0                # delta to zone.danger_level when nearby
+
+
+@dataclass(frozen=True)
 class BlueprintZone:
     name: str
     display_name: str
@@ -41,6 +60,7 @@ class BlueprintZone:
     spirit_qi: float
     danger_level: int
     worldgen: ZoneWorldgenConfig
+    pois: tuple[PoiSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -133,6 +153,24 @@ def load_blueprint(path: Path) -> WorldBlueprint:
         )
         center_x, center_z = zone_raw.get("center_xz", [0, 0])
         size_x, size_z = zone_raw.get("size_xz", [0, 0])
+        pois: list[PoiSpec] = []
+        for poi_raw in zone_raw.get("pois", []):
+            pos = poi_raw.get("pos_xyz", [0.0, 0.0, 0.0])
+            pois.append(
+                PoiSpec(
+                    kind=str(poi_raw["kind"]),
+                    pos_xyz=(
+                        float(pos[0]),
+                        float(pos[1]) if len(pos) > 1 else 0.0,
+                        float(pos[2]) if len(pos) > 2 else 0.0,
+                    ),
+                    name=str(poi_raw.get("name", "")),
+                    tags=tuple(str(item) for item in poi_raw.get("tags", [])),
+                    unlock=str(poi_raw.get("unlock", "")),
+                    qi_affinity=float(poi_raw.get("qi_affinity", 0.0)),
+                    danger_bias=int(poi_raw.get("danger_bias", 0)),
+                )
+            )
         zones.append(
             BlueprintZone(
                 name=str(zone_raw["name"]),
@@ -143,6 +181,7 @@ def load_blueprint(path: Path) -> WorldBlueprint:
                 spirit_qi=float(zone_raw["spirit_qi"]),
                 danger_level=int(zone_raw["danger_level"]),
                 worldgen=worldgen,
+                pois=tuple(pois),
             )
         )
 

@@ -60,6 +60,47 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "entrance_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- xianxia / mofa semantic layers ---
+    # qi_density: 灵气浓度 (0~1). Baseline of mofa world is "thin qi"; zones like
+    #   spring_marsh lift it, waste_plateau flatlines it. `lerp` lets overlays
+    #   raise OR lower the base value smoothly across zone boundaries.
+    # mofa_decay: 末法腐朽度 (0~1). Conceptual dual of qi_density — a region can
+    #   have low qi but not yet decayed (pristine but silent), or be fully
+    #   decayed with residual qi (cursed land). Also `lerp` blended.
+    # qi_vein_flow: 灵脉流向强度 (0~1). Sparse linear structure; `maximum` so
+    #   overlays only add veins, never erase nearby zone's vein trails.
+    "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
+    "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
+    "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- vertical-dimension layers ---
+    # sky_island_mask: 该列上空是否存在浮岛 (0~1). profile 写入浮岛核心强度，
+    #   stitcher `maximum`+weight 让边界自然消退 → 浮岛视觉上边缘逐渐变薄。
+    # sky_island_base_y: 浮岛底面世界 y. safe_default=9999 表示"无浮岛"，
+    #   用 `minimum` blend 避免边界乘 weight 导致坐标值失真；Rust 消费时以
+    #   sky_island_mask>0.01 做 gate 判定是否真的生成浮岛块。
+    # sky_island_thickness: 浮岛厚度（沿 -Y 方向挖 thickness 深）. maximum blend.
+    # underground_tier: 0=地表，1=浅洞，2=中洞，3=深渊. uint8 maximum blend.
+    # cavern_floor_y: 最深层大空洞的地板 y. safe_default=9999, `minimum` blend.
+    "sky_island_mask":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "sky_island_base_y":    LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    "sky_island_thickness": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "underground_tier":     LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
+    "cavern_floor_y":       LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    # --- ecology layers ---
+    # flora_density: [0,1] likelihood a decoration occupies this column.
+    #   Rust consumer samples it per-chunk and rolls against per-variant rarity.
+    # flora_variant_id: uint8 index into the zone profile's EcologySpec.decorations
+    #   tuple (or into a merged palette — manifest declares both). 0 = none.
+    "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
+    # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
+    #   system spawns themed mobs / visual FX when intensity > threshold.
+    # anomaly_kind: uint8 enum —
+    #   0 none, 1 spacetime_rift, 2 qi_turbulence, 3 blood_moon_anchor,
+    #   4 cursed_echo, 5 wild_formation. Declared in manifest.anomaly_kinds.
+    "anomaly_intensity":    LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "anomaly_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
 
 

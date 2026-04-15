@@ -16,11 +16,14 @@ from .fields import (
     build_world_tiles,
 )
 from .noise import coherent_noise_2d, _tile_coords
-from .profiles import ProfileContext, get_profile_generator
+from .profiles import PROFILE_DECORATION_OFFSETS, ProfileContext, get_profile_generator
+from .profiles.abyssal_maze import fill_abyssal_maze_tile
+from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
 from .profiles.cave_network import fill_cave_network_tile
 from .profiles.spawn_plain import fill_spawn_plain_tile
 from .profiles.rift_valley import fill_rift_valley_tile
+from .profiles.sky_isle import fill_sky_isle_tile
 from .profiles.spring_marsh import fill_spring_marsh_tile
 from .profiles.waste_plateau import fill_waste_plateau_tile
 from .profiles.wilderness import build_wilderness_base_plan, fill_wilderness_tile
@@ -283,6 +286,10 @@ def _blend_tile_layers(
         blend = spec.blend_mode if spec else "maximum"
         if blend == "minimum":
             blended = np.minimum(base_arr, overlay_arr)
+        elif blend == "lerp":
+            # Smooth interpolation — overlay can raise OR lower base by `weight`.
+            # Use float ops even if arrays came in as other dtypes.
+            blended = base_arr + (overlay_arr - base_arr) * weight
         else:  # "maximum" (default for extra layers)
             blended = np.maximum(base_arr, overlay_arr * weight)
         np.round(blended, 3, out=blended)
@@ -345,25 +352,59 @@ def _zone_intersects_tile(zone: BlueprintZone, tile: WorldTile) -> bool:
     return expanded_bounds.intersects(tile.bounds)
 
 
+def _remap_flora_variant_to_global(
+    buffer: TileFieldBuffer, profile_name: str
+) -> None:
+    """Remap a profile's local flora_variant_id values to the global palette.
+
+    Profile fill_* functions write **local** variant ids (1..N) for simplicity;
+    we then shift them into the global id space so the Rust runtime can
+    dereference decorations without needing per-tile profile context.
+    """
+    if "flora_variant_id" not in buffer.layers:
+        return
+    offset = PROFILE_DECORATION_OFFSETS.get(profile_name, 0)
+    if offset <= 1:
+        return  # first profile gets offset 1 → local 1..N already = global 1..N
+    arr = buffer.layers["flora_variant_id"]
+    remapped = np.where(
+        arr > 0,
+        arr.astype(np.int32) + (offset - 1),
+        0,
+    )
+    buffer.layers["flora_variant_id"] = remapped.astype(np.uint8)
+
+
 def _build_zone_overlay_tile(
     zone: BlueprintZone,
     tile: WorldTile,
     tile_size: int,
     palette: SurfacePalette,
 ) -> TileFieldBuffer | None:
-    if zone.worldgen.terrain_profile == "spawn_plain":
-        return fill_spawn_plain_tile(zone, tile, tile_size, palette)
-    if zone.worldgen.terrain_profile == "broken_peaks":
-        return fill_broken_peaks_tile(zone, tile, tile_size, palette)
-    if zone.worldgen.terrain_profile == "spring_marsh":
-        return fill_spring_marsh_tile(zone, tile, tile_size, palette)
-    if zone.worldgen.terrain_profile == "rift_valley":
-        return fill_rift_valley_tile(zone, tile, tile_size, palette)
-    if zone.worldgen.terrain_profile == "cave_network":
-        return fill_cave_network_tile(zone, tile, tile_size, palette)
-    if zone.worldgen.terrain_profile == "waste_plateau":
-        return fill_waste_plateau_tile(zone, tile, tile_size, palette)
-    return None
+    profile = zone.worldgen.terrain_profile
+    if profile == "spawn_plain":
+        buffer = fill_spawn_plain_tile(zone, tile, tile_size, palette)
+    elif profile == "broken_peaks":
+        buffer = fill_broken_peaks_tile(zone, tile, tile_size, palette)
+    elif profile == "spring_marsh":
+        buffer = fill_spring_marsh_tile(zone, tile, tile_size, palette)
+    elif profile == "rift_valley":
+        buffer = fill_rift_valley_tile(zone, tile, tile_size, palette)
+    elif profile == "cave_network":
+        buffer = fill_cave_network_tile(zone, tile, tile_size, palette)
+    elif profile == "waste_plateau":
+        buffer = fill_waste_plateau_tile(zone, tile, tile_size, palette)
+    elif profile == "sky_isle":
+        buffer = fill_sky_isle_tile(zone, tile, tile_size, palette)
+    elif profile == "abyssal_maze":
+        buffer = fill_abyssal_maze_tile(zone, tile, tile_size, palette)
+    elif profile == "ancient_battlefield":
+        buffer = fill_ancient_battlefield_tile(zone, tile, tile_size, palette)
+    else:
+        return None
+    if buffer is not None:
+        _remap_flora_variant_to_global(buffer, profile)
+    return buffer
 
 
 def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
@@ -409,6 +450,9 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: rift_valley overlay synthesis and zone-to-wilderness blending.",
             "Implemented: cave_network surface proxy synthesis.",
             "Implemented: waste_plateau overlay synthesis.",
+            "Implemented: sky_isle overlay (sky_island_* vertical layers).",
+            "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",
+            "Implemented: ancient_battlefield overlay (anomaly_intensity/anomaly_kind).",
             "Only active tiles intersecting named zones are synthesized in this scaffold stage.",
         ),
     )

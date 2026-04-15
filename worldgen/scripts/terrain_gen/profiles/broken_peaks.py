@@ -5,11 +5,65 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+BROKEN_PEAKS_DECORATIONS = (
+    DecorationSpec(
+        name="qing_yun_pine",
+        kind="tree",
+        blocks=("spruce_log", "spruce_leaves", "mossy_cobblestone"),
+        size_range=(8, 14),
+        rarity=0.28,
+        notes="青云松：挺立山脊，松针四季不凋。曾是青云宗标志。",
+    ),
+    DecorationSpec(
+        name="frost_silver_tree",
+        kind="tree",
+        blocks=("stripped_birch_log", "packed_ice", "blue_ice"),
+        size_range=(6, 10),
+        rarity=0.22,
+        notes="霜银树：银白树干顶着冰晶树冠，仅高处雪线上下生长。",
+    ),
+    DecorationSpec(
+        name="ridge_monolith",
+        kind="boulder",
+        blocks=("deepslate", "andesite", "cobbled_deepslate"),
+        size_range=(4, 10),
+        rarity=0.38,
+        notes="断脊碑：山脊上的黑灰巨石，有些刻有残缺符文。",
+    ),
+    DecorationSpec(
+        name="ice_thorn",
+        kind="shrub",
+        blocks=("packed_ice", "snow_block", "pointed_dripstone"),
+        size_range=(2, 4),
+        rarity=0.50,
+        notes="冰棘：密集的冰刺灌丛，划手而含灵气。",
+    ),
+)
 
 
 class BrokenPeaksGenerator(TerrainProfileGenerator):
     profile_name = "broken_peaks"
+    extra_layers = (
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
+    ecology = EcologySpec(
+        decorations=BROKEN_PEAKS_DECORATIONS,
+        ambient_effects=("high_wind", "occasional_snowfall", "faint_bell"),
+        notes="青云残峰生态：低处青松遍布，山脊多断脊碑，雪线以上生霜银树与冰棘。"
+              "整体冷峻，灵气游走于林间缝隙。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +89,11 @@ def fill_broken_peaks_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
+            "qi_vein_flow",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -140,6 +199,24 @@ def fill_broken_peaks_tile(
     area = tile_size * tile_size
     biome_id = np.where(height > 300.0, frozen_peaks_biome_id, peaks_biome_id)
 
+    # 青云残峰：高处灵气较盛（上空接天），峰脊有灵脉（古修士采脉处）。
+    # 末法中等——古战痕迹在山脊间。
+    qi_base = float(getattr(zone, "spirit_qi", 0.5))
+    altitude_t = np.clip((height - 82.0) / 220.0, 0.0, 1.0)
+    ridge_vein = np.maximum(0.0, ridges) * massif
+    qi_vein_flow = np.clip(ridge_vein * altitude_t * 0.9, 0.0, 1.0)
+    qi_density = np.clip(
+        0.18 + altitude_t * 0.35 + qi_vein_flow * 0.20,
+        0.0,
+        1.0,
+    ) * (0.5 + qi_base)
+    qi_density = np.clip(qi_density, 0.0, 1.0)
+    mofa_decay = np.clip(
+        0.35 + (1.0 - altitude_t) * 0.20 + np.maximum(0.0, erosion) * 0.10 - qi_vein_flow * 0.15,
+        0.1,
+        0.7,
+    )
+
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
     buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
@@ -147,6 +224,39 @@ def fill_broken_peaks_tile(
     buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora (variant id 1..4 mirror BROKEN_PEAKS_DECORATIONS) ---
+    # 1 qing_yun_pine  — mid-altitude green slope
+    # 2 frost_silver_tree — high-altitude snow line
+    # 3 ridge_monolith — stark monoliths on ridge lines
+    # 4 ice_thorn — thickets on cold slopes
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    mid_band = (height > 100.0) & (height < 230.0) & (ridges > -0.15)
+    flora_variant = np.where(mid_band & (detail > -0.1), 1, flora_variant)
+    flora_density = np.where(mid_band, np.maximum(flora_density, 0.45 + massif * 0.15), flora_density)
+
+    high_band = height > 240.0
+    flora_variant = np.where(high_band & (detail > 0.0), 2, flora_variant)
+    flora_density = np.where(high_band, np.maximum(flora_density, 0.35), flora_density)
+
+    # Ridge monoliths: on top of sharp ridges
+    ridge_top = (ridges > 0.45) & (massif > 0.3)
+    flora_variant = np.where(ridge_top, 3, flora_variant)
+    flora_density = np.where(ridge_top, np.maximum(flora_density, 0.50), flora_density)
+
+    # Ice thorn scatter near frozen peaks
+    frozen = (height > 270.0) & (flora_variant == 0)
+    flora_variant = np.where(frozen, 4, flora_variant)
+    flora_density = np.where(frozen, np.maximum(flora_density, 0.45), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer
