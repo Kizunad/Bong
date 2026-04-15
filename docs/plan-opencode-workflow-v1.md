@@ -98,8 +98,8 @@
 opencode.json                                 # opencode 根配置：plugin=oh-my-opencode, model=openai/gpt-5.4
 .opencode/oh-my-opencode.json                 # omo 配置：agent 模型覆盖、disabled_hooks、categories
 .opencode/prompts/auto-consume.md             # 四阶段启动 prompt（{{PLAN_NAME}} 由 bong-plan-auto.sh 渲染）
-.opencode/command/consume-plan.md             # opencode 内快捷入口 /consume-plan <name>
-.opencode/command/plan-list.md                # /plan-list 列活跃 plan
+.opencode/commands/consume-plan.md            # opencode 内快捷入口 /consume-plan <name>
+.opencode/commands/plan-list.md               # /plan-list 列活跃 plan
 AGENTS.md                                     # agent 行为硬约束（directory-agents-injector 自动注入）
 scripts/bong-plan-auto.sh                     # 全自动宿主入口
 scripts/plan-finish.sh                        # Atlas 调用归档 docs/plan-*.md → finished_plans/
