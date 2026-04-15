@@ -16,7 +16,13 @@
 # 依赖：
 #   - opencode CLI（https://opencode.ai）
 #   - oh-my-opencode 插件（opencode.json 已声明）
+#   - bunx 或 npx（用于调 `bunx oh-my-opencode run --enforce-completion`）
+#     若都不可用，会回退到 `opencode run`（无 --enforce-completion，靠 prompt 里的
+#     "ultrawork high accuracy" 关键词触发 keyword-detector + ralph-loop 做持久化兜底）
 #   - OPENAI_API_KEY 或其它 gpt-5.4 provider 凭据
+#
+# 环境变量（可选）：
+#   BONG_PLAN_TIMEOUT  —— omo run 的超时秒数，默认 7200（2 小时）
 #
 # 运行态产出：
 #   .worktrees/plan-<name>/                    （独立 worktree，gitignored）
@@ -107,7 +113,18 @@ sed "s|{{PLAN_NAME}}|$PLAN_NAME|g" "$PROMPT_TEMPLATE" > "$RENDERED_PROMPT"
 
 # ──────────────────────────────────────────────────────────────────
 # 启动 opencode（non-interactive，在 worktree 内）
-# 用 /ulw-loop 包裹，omo 自己循环直到 <promise>DONE|BLOCKED</promise>
+#
+# 首选：bunx oh-my-opencode run --enforce-completion
+#   omo 的 run 包装，--enforce-completion 保证 session 活到所有 TODO 完成
+#   --timeout 给兜底上限（默认 7200s = 2h，可用 BONG_PLAN_TIMEOUT 覆盖）
+#
+# 次选：npx oh-my-opencode run --enforce-completion（bunx 不可用时）
+#
+# 兜底：opencode run "<prompt>"
+#   base opencode CLI；无 --enforce-completion，靠 prompt 里的 "ultrawork high accuracy"
+#   关键词激活 keyword-detector + ralph-loop 做持久化。功能差一点但能跑。
+#
+# opencode CLI：`opencode run [message..]` —— prompt 是位置参数，不走 stdin
 # ──────────────────────────────────────────────────────────────────
 
 cd "$WORKTREE_DIR"
@@ -116,10 +133,27 @@ echo "[info] 启动 opencode（主模型 gpt-5.4，非交互，worktree=$WORKTRE
 echo "[info] 流水线：Prometheus → Metis → Momus → Atlas"
 echo "──────────────────────────────────────────────────────────────"
 
-# opencode run 非交互执行；stdin 传入启动 prompt。
-# 若你的 opencode 版本 CLI flag 名不同，调整这里即可（opencode --help 查）。
+PROMPT_BODY="$(cat "$RENDERED_PROMPT")"
+TIMEOUT_SEC="${BONG_PLAN_TIMEOUT:-7200}"
 OPENCODE_EXIT=0
-cat "$RENDERED_PROMPT" | opencode run --prompt-stdin || OPENCODE_EXIT=$?
+
+if command -v bunx >/dev/null 2>&1; then
+  echo "[info] 使用 bunx oh-my-opencode run --enforce-completion --timeout $TIMEOUT_SEC"
+  bunx oh-my-opencode run \
+    --enforce-completion \
+    --timeout "$TIMEOUT_SEC" \
+    "$PROMPT_BODY" || OPENCODE_EXIT=$?
+elif command -v npx >/dev/null 2>&1; then
+  echo "[info] 使用 npx oh-my-opencode run --enforce-completion --timeout $TIMEOUT_SEC"
+  npx --yes oh-my-opencode run \
+    --enforce-completion \
+    --timeout "$TIMEOUT_SEC" \
+    "$PROMPT_BODY" || OPENCODE_EXIT=$?
+else
+  echo "[warn] 未找到 bunx/npx，回退到 base opencode run（无 --enforce-completion）"
+  echo "[warn] 持久化依赖 prompt 里的 ultrawork 关键词 + ralph-loop hook"
+  opencode run "$PROMPT_BODY" || OPENCODE_EXIT=$?
+fi
 
 echo "──────────────────────────────────────────────────────────────"
 echo "[info] opencode 退出码: $OPENCODE_EXIT"

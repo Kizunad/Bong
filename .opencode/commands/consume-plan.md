@@ -32,4 +32,12 @@ ultrawork high accuracy.
 3. Momus 审核（high-accuracy）→ 通过才继续
 4. `/start-work $ARGUMENTS` → Atlas 执行到 `<promise>DONE</promise>` 或 `<promise>BLOCKED: ...</promise>`
 
-**提示**：如果你是在宿主 `scripts/bong-plan-auto.sh` 脚本启动的 worktree 内，worktree 已就绪，直接开干。如果你是在人工 opencode 会话里被调起的，注意**不要在主工作区直接改代码** —— 先让用户确认是否需要先 `bash scripts/bong-plan-auto.sh $ARGUMENTS` 在 worktree 里跑。
+**Worktree 检测**：
+
+执行前先判断当前目录是否在 `.worktrees/plan-*/` 内（例如用 `pwd` 检查路径是否含 `.worktrees/plan-`）。
+
+- **在 worktree 内** → 直接开干，worktree 已就绪。
+- **不在 worktree 内**（即在仓库主工作区）→ **不阻塞**，但先打印一行 warning：
+  > `[warn] 未检测到 .worktrees/plan-* 路径；本次消费将在主工作区进行，可能与你手写的改动冲突。推荐用 'bash scripts/bong-plan-auto.sh $ARGUMENTS' 走全自动 worktree 流程。`
+
+  然后继续执行。**不**向用户发问、**不**等待确认 —— slash command 由用户主动触发，视为已授权。

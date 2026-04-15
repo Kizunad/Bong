@@ -11,7 +11,7 @@
     "Atlas":                   { "model": "openai/gpt-5.4" },
     "Prometheus (Planner)":    { "model": "openai/gpt-5.4" },
     "Metis (Plan Consultant)": { "model": "openai/gpt-5.4" },
-    "Momus":                   { "model": "openai/gpt-5.4" }
+    "Momus (Plan Reviewer)":   { "model": "openai/gpt-5.4" }
   },
 
   "categories": {
@@ -44,12 +44,14 @@
   },
 
   // 云端无桌面环境 / CI 稳定性 → 关掉交互式/通知类 hook
-  // 保留 rules-injector（吃 .claude/rules/bong-plan-consumer.md）、
-  //     directory-agents-injector（吃 CLAUDE.md）、
-  //     keyword-detector（认 ulw / high accuracy）、
-  //     auto-slash-command（串 @plan → /start-work）、
-  //     ralph-loop / session-recovery（无人值守核心）、
-  //     claude-code-hooks（继续跑 Bong 现有 ruff PostToolUse）
+  // 保留：
+  //   directory-agents-injector  —— 从文件向上游走注入 AGENTS.md（本仓库根目录那份）
+  //   keyword-detector           —— 认 "ulw" / "high accuracy" 激活 ultrawork + Momus
+  //   auto-slash-command         —— prompt 里 /start-work 自动执行
+  //   ralph-loop / session-recovery —— 无人值守兜底
+  //   claude-code-hooks          —— 继续跑 Bong 现有 .claude/settings.local.json 的 ruff PostToolUse
+  //   prometheus-md-only         —— 强制 Prometheus 只能写 .sisyphus/
+  //   rules-injector             —— 保留，但本流水线主要靠 AGENTS.md 注入规则
   "disabled_hooks": [
     "startup-toast",
     "auto-update-checker",
