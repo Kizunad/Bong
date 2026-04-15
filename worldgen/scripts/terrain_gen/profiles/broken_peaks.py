@@ -51,7 +51,13 @@ BROKEN_PEAKS_DECORATIONS = (
 
 class BrokenPeaksGenerator(TerrainProfileGenerator):
     profile_name = "broken_peaks"
-    extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
+    extra_layers = (
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
     ecology = EcologySpec(
         decorations=BROKEN_PEAKS_DECORATIONS,
         ambient_effects=("high_wind", "occasional_snowfall", "faint_bell"),
@@ -86,6 +92,8 @@ def fill_broken_peaks_tile(
             "qi_density",
             "mofa_decay",
             "qi_vein_flow",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -219,6 +227,36 @@ def fill_broken_peaks_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora (variant id 1..4 mirror BROKEN_PEAKS_DECORATIONS) ---
+    # 1 qing_yun_pine  — mid-altitude green slope
+    # 2 frost_silver_tree — high-altitude snow line
+    # 3 ridge_monolith — stark monoliths on ridge lines
+    # 4 ice_thorn — thickets on cold slopes
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    mid_band = (height > 100.0) & (height < 230.0) & (ridges > -0.15)
+    flora_variant = np.where(mid_band & (detail > -0.1), 1, flora_variant)
+    flora_density = np.where(mid_band, np.maximum(flora_density, 0.45 + massif * 0.15), flora_density)
+
+    high_band = height > 240.0
+    flora_variant = np.where(high_band & (detail > 0.0), 2, flora_variant)
+    flora_density = np.where(high_band, np.maximum(flora_density, 0.35), flora_density)
+
+    # Ridge monoliths: on top of sharp ridges
+    ridge_top = (ridges > 0.45) & (massif > 0.3)
+    flora_variant = np.where(ridge_top, 3, flora_variant)
+    flora_density = np.where(ridge_top, np.maximum(flora_density, 0.50), flora_density)
+
+    # Ice thorn scatter near frozen peaks
+    frozen = (height > 270.0) & (flora_variant == 0)
+    flora_variant = np.where(frozen, 4, flora_variant)
+    flora_density = np.where(frozen, np.maximum(flora_density, 0.45), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

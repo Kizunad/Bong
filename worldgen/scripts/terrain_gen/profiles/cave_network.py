@@ -58,6 +58,8 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
     )
     ecology = EcologySpec(
         decorations=CAVE_NETWORK_DECORATIONS,
@@ -84,7 +86,8 @@ def fill_cave_network_tile(
         ("height", "surface_id", "subsurface_id", "water_level",
          "biome_id", "feature_mask", "boundary_weight",
          "cave_mask", "ceiling_height", "entrance_mask",
-         "qi_density", "mofa_decay", "qi_vein_flow"),
+         "qi_density", "mofa_decay", "qi_vein_flow",
+         "flora_density", "flora_variant_id"),
     )
     stone_id = palette.ensure("stone")
     coarse_dirt_id = palette.ensure("coarse_dirt")
@@ -163,6 +166,35 @@ def fill_cave_network_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 glow_lichen_column / 2 red_vine_curtain / 3 sinkhole_boulder /
+    # 4 forbidden_pillar ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Entrances draped with red vines
+    entrance_band = entrance_mask > 0.35
+    flora_variant = np.where(entrance_band, 2, flora_variant)
+    flora_density = np.where(entrance_band, np.maximum(flora_density, 0.55), flora_density)
+
+    # Interior: glow_lichen columns (common)
+    interior = cave_mask > 0.40
+    flora_variant = np.where(interior & (flora_variant == 0), 1, flora_variant)
+    flora_density = np.where(interior, np.maximum(flora_density, 0.55 + cave_mask * 0.20), flora_density)
+
+    # Boulders near sinkholes
+    boulder_band = (sinkhole < -0.25) & (flora_variant == 0)
+    flora_variant = np.where(boulder_band, 3, flora_variant)
+    flora_density = np.where(boulder_band, np.maximum(flora_density, 0.45), flora_density)
+
+    # Rare forbidden pillars where deep qi-vein concentrates
+    pillar_band = (qi_vein_flow > 0.6) & (cave_mask > 0.55)
+    flora_variant = np.where(pillar_band, 4, flora_variant)
+    flora_density = np.where(pillar_band, np.maximum(flora_density, 0.30), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

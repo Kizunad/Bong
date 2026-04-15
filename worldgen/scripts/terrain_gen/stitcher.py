@@ -18,6 +18,7 @@ from .fields import (
 from .noise import coherent_noise_2d, _tile_coords
 from .profiles import ProfileContext, get_profile_generator
 from .profiles.abyssal_maze import fill_abyssal_maze_tile
+from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
 from .profiles.cave_network import fill_cave_network_tile
 from .profiles.spawn_plain import fill_spawn_plain_tile
@@ -373,6 +374,8 @@ def _build_zone_overlay_tile(
         return fill_sky_isle_tile(zone, tile, tile_size, palette)
     if zone.worldgen.terrain_profile == "abyssal_maze":
         return fill_abyssal_maze_tile(zone, tile, tile_size, palette)
+    if zone.worldgen.terrain_profile == "ancient_battlefield":
+        return fill_ancient_battlefield_tile(zone, tile, tile_size, palette)
     return None
 
 
@@ -421,6 +424,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: waste_plateau overlay synthesis.",
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",
+            "Implemented: ancient_battlefield overlay (anomaly_intensity/anomaly_kind).",
             "Only active tiles intersecting named zones are synthesized in this scaffold stage.",
         ),
     )

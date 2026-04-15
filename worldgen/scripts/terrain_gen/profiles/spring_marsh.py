@@ -59,7 +59,13 @@ SPRING_MARSH_DECORATIONS = (
 
 class SpringMarshGenerator(TerrainProfileGenerator):
     profile_name = "spring_marsh"
-    extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
+    extra_layers = (
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
     ecology = EcologySpec(
         decorations=SPRING_MARSH_DECORATIONS,
         ambient_effects=("water_droplets", "frog_call", "gentle_qi_shimmer"),
@@ -94,6 +100,8 @@ def fill_spring_marsh_tile(
             "qi_density",
             "mofa_decay",
             "qi_vein_flow",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     mud_id = palette.ensure("mud")
@@ -215,6 +223,36 @@ def fill_spring_marsh_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 ling_yun_mangrove / 2 spirit_willow / 3 lotus_cluster /
+    # 4 reed_thicket / 5 jade_moss_rock ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Water surface: lotus + reeds
+    on_water = waterline >= 0
+    flora_variant = np.where(on_water & (channels > 0.0), 3, flora_variant)
+    flora_variant = np.where(on_water & (channels <= 0.0), 4, flora_variant)
+    flora_density = np.where(on_water, np.maximum(flora_density, 0.55 + basin * 0.15), flora_density)
+
+    # Shoreline band: mangrove
+    shoreline_band = shoreline | ((waterline >= 0) & (height >= waterline) & (height < waterline + 2.5))
+    flora_variant = np.where(shoreline_band, 1, flora_variant)
+    flora_density = np.where(shoreline_band, np.maximum(flora_density, 0.60), flora_density)
+
+    # Island interior: willows around spring eyes
+    island_core = island_high & (spring_eye > 0.2)
+    flora_variant = np.where(island_core, 2, flora_variant)
+    flora_density = np.where(island_core, np.maximum(flora_density, 0.55), flora_density)
+
+    # Moss rocks: scattered on rim
+    rim_rock = (basin_blend < 0.5) & (rim > 0.35)
+    flora_variant = np.where(rim_rock & (flora_variant == 0), 5, flora_variant)
+    flora_density = np.where(rim_rock, np.maximum(flora_density, 0.40), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

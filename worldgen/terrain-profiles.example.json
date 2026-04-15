@@ -56,6 +56,13 @@
       "surface": ["stone", "deepslate", "gravel", "coarse_dirt"],
       "water": { "level": "very_low", "coverage": 0.02 },
       "passability": "tiered_deep_requires_descent"
+    },
+    "ancient_battlefield": {
+      "height": { "base": [72, 82], "crater_depth": 12 },
+      "boundary": { "mode": "semi_hard", "width": 128 },
+      "surface": ["podzol", "coarse_dirt", "blackstone", "bone_block", "gravel"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "medium_high_with_anomaly_hazard"
     }
   }
 }

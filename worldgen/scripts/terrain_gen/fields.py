@@ -93,6 +93,14 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   tuple (or into a merged palette — manifest declares both). 0 = none.
     "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
+    # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
+    #   system spawns themed mobs / visual FX when intensity > threshold.
+    # anomaly_kind: uint8 enum —
+    #   0 none, 1 spacetime_rift, 2 qi_turbulence, 3 blood_moon_anchor,
+    #   4 cursed_echo, 5 wild_formation. Declared in manifest.anomaly_kinds.
+    "anomaly_intensity":    LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "anomaly_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
 
 

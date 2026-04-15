@@ -51,7 +51,14 @@ WASTE_PLATEAU_DECORATIONS = (
 
 class WastePlateauGenerator(TerrainProfileGenerator):
     profile_name = "waste_plateau"
-    extra_layers = ("neg_pressure", "ruin_density", "qi_density", "mofa_decay")
+    extra_layers = (
+        "neg_pressure",
+        "ruin_density",
+        "qi_density",
+        "mofa_decay",
+        "flora_density",
+        "flora_variant_id",
+    )
     ecology = EcologySpec(
         decorations=WASTE_PLATEAU_DECORATIONS,
         ambient_effects=("dust_storm", "bone_creak", "heavy_silence"),
@@ -87,6 +94,8 @@ def fill_waste_plateau_tile(
             "ruin_density",
             "qi_density",
             "mofa_decay",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -186,6 +195,34 @@ def fill_waste_plateau_tile(
     buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel()
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+
+    # --- Flora: 1 whalefall_rib_tree / 2 dust_thorn / 3 null_pressure_rock /
+    # 4 ancient_ruin_fragment ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Dust thorn ubiquitous on plateau body
+    flora_variant = np.where(plateau > 0.2, 2, flora_variant)
+    flora_density = np.where(plateau > 0.2, np.maximum(flora_density, 0.55), flora_density)
+
+    # Null-pressure rocks around neg_pressure zones
+    null_band = neg_pressure > 0.25
+    flora_variant = np.where(null_band, 3, flora_variant)
+    flora_density = np.where(null_band, np.maximum(flora_density, 0.40 + neg_pressure * 0.3), flora_density)
+
+    # Ancient ruin fragments where ruin_density significant
+    ruin_band = ruin_density > 0.45
+    flora_variant = np.where(ruin_band, 4, flora_variant)
+    flora_density = np.where(ruin_band, np.maximum(flora_density, 0.45), flora_density)
+
+    # Rare whalefall rib trees on crown center
+    whalefall_band = (crown > 0.6) & (scarp > 0.3)
+    flora_variant = np.where(whalefall_band, 1, flora_variant)
+    flora_density = np.where(whalefall_band, np.maximum(flora_density, 0.18), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

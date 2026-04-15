@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .abyssal_maze import AbyssalMazeGenerator
+from .ancient_battlefield import AncientBattlefieldGenerator
 from .base import ProfileContext, TerrainProfileGenerator
 from .broken_peaks import BrokenPeaksGenerator
 from .cave_network import CaveNetworkGenerator
@@ -21,6 +22,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         WastePlateauGenerator(),
         SkyIsleGenerator(),
         AbyssalMazeGenerator(),
+        AncientBattlefieldGenerator(),
     )
 }
 

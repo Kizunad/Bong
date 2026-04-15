@@ -10,6 +10,7 @@ Catches known data integrity issues before they reach the Rust server:
 - sky_island_base_y outside [200, 400] when mask > 0
 - underground_tier outside {0,1,2,3}
 - cavern_floor_y outside [-64, 64] when tier > 0
+- anomaly_kind outside {0..5} or present without anomaly_intensity
 """
 
 from __future__ import annotations
@@ -113,6 +114,27 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                             f"[-64,64] while tier={t} (zones={zones})"
                         )
                         break
+
+        # Anomaly integrity: kind must be 0..5 and non-zero only when
+        # intensity > 0 (otherwise event systems will query a ghost event).
+        anomaly_kind_file = tile_dir / "anomaly_kind.bin"
+        anomaly_int_file = tile_dir / "anomaly_intensity.bin"
+        if anomaly_kind_file.exists():
+            raw = anomaly_kind_file.read_bytes()
+            if len(raw) == area and max(raw) > 5:
+                errors.append(
+                    f"{tile_id}: anomaly_kind max={max(raw)} > 5 (zones={zones})"
+                )
+            if anomaly_int_file.exists() and len(raw) == area:
+                int_vals = _read_float_layer(anomaly_int_file, area)
+                if int_vals is not None:
+                    for k, i in zip(raw, int_vals):
+                        if k > 0 and i <= 0.0:
+                            warnings.append(
+                                f"{tile_id}: anomaly_kind={k} present without "
+                                f"intensity (zones={zones})"
+                            )
+                            break
 
         # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
         # qi_vein_flow likewise. These are narrative-facing so out-of-range

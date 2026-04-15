@@ -443,6 +443,90 @@
       ]
     },
     {
+      "name": "zhanhun_plain",
+      "display_name": "战魂平野",
+      "aabb": {
+        "min": [1500.0, -64.0, -4800.0],
+        "max": [3500.0, 200.0, -3200.0]
+      },
+      "center_xz": [2500.0, -4000.0],
+      "size_xz": [2000.0, 1600.0],
+      "spirit_qi": 0.4,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [1900.0, 78.0, -4500.0],
+        [2500.0, 80.0, -4000.0],
+        [3100.0, 76.0, -3500.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "ancient_battlefield",
+        "shape": "ellipse",
+        "boundary": { "mode": "semi_hard", "width": 128 },
+        "height_model": { "base": [72, 82], "crater_depth": 12 },
+        "surface_palette": ["podzol", "coarse_dirt", "blackstone", "bone_block", "gravel"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling"],
+        "landmarks": ["shattered_formation", "banner_ridge", "crater_field", "cursed_circle"],
+        "notes": "上古大战遗址：弹坑遍地、断矛林立，蕴含血月共鸣与时空裂缝异常点。"
+      },
+      "pois": [
+        {
+          "kind": "altar",
+          "name": "血月召引阵",
+          "pos_xyz": [2500.0, 76.0, -4000.0],
+          "tags": ["blood_moon", "event_anchor", "ritual", "high_tier"],
+          "unlock": "血月之夜自动激活；携血月令牌可提前触发",
+          "qi_affinity": -0.1,
+          "danger_bias": 3
+        },
+        {
+          "kind": "formation",
+          "name": "破碎阵眼",
+          "pos_xyz": [2100.0, 78.0, -4300.0],
+          "tags": ["wild_formation", "anomaly", "event_anchor"],
+          "unlock": "靠近触发灵气紊乱；破解可获阵核",
+          "qi_affinity": 0.4,
+          "danger_bias": 2
+        },
+        {
+          "kind": "gate",
+          "name": "裂隙之痕",
+          "pos_xyz": [2900.0, 76.0, -3700.0],
+          "tags": ["spacetime_rift", "portal", "anomaly"],
+          "unlock": "持破界符可短暂稳定",
+          "qi_affinity": 0.3,
+          "danger_bias": 4
+        },
+        {
+          "kind": "stele",
+          "name": "无名将军碑",
+          "pos_xyz": [2300.0, 82.0, -3800.0],
+          "tags": ["lore", "history", "battlefield"],
+          "unlock": "读碑可解阵营背景",
+          "qi_affinity": 0.0
+        },
+        {
+          "kind": "tomb",
+          "name": "万骨冢",
+          "pos_xyz": [2700.0, 74.0, -4200.0],
+          "tags": ["battlefield", "loot", "cursed"],
+          "unlock": "掘地三尺得骨粉/残甲",
+          "qi_affinity": -0.15,
+          "danger_bias": 2
+        },
+        {
+          "kind": "shrine",
+          "name": "残旗祭台",
+          "pos_xyz": [2200.0, 80.0, -3600.0],
+          "tags": ["cursed_echo", "offering"],
+          "unlock": "供奉武器可得亡灵记忆",
+          "qi_affinity": 0.1,
+          "danger_bias": 1
+        }
+      ]
+    },
+    {
       "name": "wuxing_abyss",
       "display_name": "无垠深渊",
       "aabb": {
@@ -557,6 +641,18 @@
       "from": "youan_depths",
       "to": "wuxing_abyss",
       "kind": "deep_cavern_passage",
+      "approx_distance": 3500
+    },
+    {
+      "from": "blood_valley",
+      "to": "zhanhun_plain",
+      "kind": "war_road",
+      "approx_distance": 2200
+    },
+    {
+      "from": "zhanhun_plain",
+      "to": "north_wastes",
+      "kind": "desolate_march",
       "approx_distance": 3500
     }
   ]

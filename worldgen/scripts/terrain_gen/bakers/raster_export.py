@@ -126,6 +126,14 @@ def export_rasters(
             if name in LAYER_REGISTRY
         ],
         "abyssal_tier_floor_y": {"1": 28.0, "2": -4.0, "3": -36.0},
+        "anomaly_kinds": {
+            "0": "none",
+            "1": "spacetime_rift",
+            "2": "qi_turbulence",
+            "3": "blood_moon_anchor",
+            "4": "cursed_echo",
+            "5": "wild_formation",
+        },
         "profiles_ecology": ecology_payload,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
@@ -136,6 +144,8 @@ def export_rasters(
             "  (tier 1/2/3 floors per abyssal_tier_floor_y). Sentinel 9999 = 'no isle/cavern here'.",
             "Ecology: flora_density (0..1) + flora_variant_id (uint8 index into ",
             "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
+            "Anomaly: anomaly_intensity (0..1) + anomaly_kind (uint8 from anomaly_kinds map).",
+            "  Event systems trigger themed spawns / FX when intensity > 0.3.",
             "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
         ],
     }

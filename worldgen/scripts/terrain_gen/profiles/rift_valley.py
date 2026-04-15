@@ -60,6 +60,8 @@ class RiftValleyGenerator(TerrainProfileGenerator):
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
     )
     ecology = EcologySpec(
         decorations=RIFT_VALLEY_DECORATIONS,
@@ -95,6 +97,8 @@ def fill_rift_valley_tile(
         "qi_density",
         "mofa_decay",
         "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
     )
     buffer = TileFieldBuffer.create(tile, tile_size, layer_names)
     blackstone_id = palette.ensure("blackstone")
@@ -224,6 +228,31 @@ def fill_rift_valley_tile(
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 scarlet_bone_tree / 2 fire_vein_cactus / 3 blood_stele /
+    # 4 nether_nylium_patch ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    bone_tree_band = (qi_vein_flow > 0.25) & (valley_strength > 0.3)
+    flora_variant = np.where(bone_tree_band, 1, flora_variant)
+    flora_density = np.where(bone_tree_band, np.maximum(flora_density, 0.45), flora_density)
+
+    cactus_band = (fracture_mask > 0.35) & (valley_strength > 0.2)
+    flora_variant = np.where(cactus_band, 2, flora_variant)
+    flora_density = np.where(cactus_band, np.maximum(flora_density, 0.55), flora_density)
+
+    stele_band = rim_edge_mask > 0.6
+    flora_variant = np.where(stele_band, 3, flora_variant)
+    flora_density = np.where(stele_band, np.maximum(flora_density, 0.40), flora_density)
+
+    nylium_band = (valley_strength > 0.5) & (flora_variant == 0)
+    flora_variant = np.where(nylium_band, 4, flora_variant)
+    flora_density = np.where(nylium_band, np.maximum(flora_density, 0.50), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer
