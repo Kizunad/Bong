@@ -18,7 +18,7 @@ use crate::npc::spawn::{
 };
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use crate::{
-    combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds},
+    combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds},
     cultivation::components::{Contamination, Cultivation, MeridianSystem},
 };
 
@@ -155,6 +155,7 @@ fn process_pending_scenarios(
             Wounds::default(),
             Stamina::default(),
             CombatState::default(),
+            StatusEffects::default(),
             DerivedAttrs::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
@@ -241,7 +242,7 @@ fn scenario_combat_loadout(scenario: &ScenarioType, index: usize) -> NpcCombatLo
 mod tests {
     use super::*;
 
-    use crate::combat::components::{Lifecycle, Stamina, Wounds};
+    use crate::combat::components::{Lifecycle, Stamina, StatusEffects, Wounds};
     use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
     use valence::prelude::{Entity, Update, With};
@@ -291,6 +292,10 @@ mod tests {
             assert!(
                 entity_ref.get::<Stamina>().is_some(),
                 "scenario NPC should include Stamina for shared resolver"
+            );
+            assert!(
+                entity_ref.get::<StatusEffects>().is_some(),
+                "scenario NPC should include StatusEffects for shared resolver"
             );
             let lifecycle = entity_ref
                 .get::<Lifecycle>()
