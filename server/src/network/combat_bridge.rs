@@ -1,24 +1,27 @@
 use std::collections::HashMap;
 
-use valence::prelude::{
-    Entity, EventReader, Query, Res, ResMut, Resource, Username, With,
-};
+use valence::prelude::{Entity, EventReader, Query, Res, ResMut, Resource, Username, With};
 
-use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use crate::combat::components::Lifecycle;
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
-use crate::schema::combat_event::{CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1};
+use crate::schema::combat_event::{
+    CombatBodyPartV1, CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
+    CombatWoundKindV1,
+};
 
 #[derive(Debug, Default)]
 pub struct CombatSummaryAccumulator {
     pub window_start_tick: Option<u64>,
     pub combat_event_count: u64,
     pub death_event_count: u64,
+    pub damage_total: f32,
+    pub contam_delta_total: f64,
 }
 
 impl Resource for CombatSummaryAccumulator {}
@@ -37,6 +40,8 @@ pub fn publish_combat_realtime_events(
     for ev in combat_reader.read() {
         summary.window_start_tick.get_or_insert(ev.resolved_at_tick);
         summary.combat_event_count = summary.combat_event_count.saturating_add(1);
+        summary.damage_total += ev.damage;
+        summary.contam_delta_total += ev.contam_delta;
 
         let Some(target_id) = resolve_canonical_id(
             ev.target,
@@ -61,11 +66,17 @@ pub fn publish_combat_realtime_events(
             tick: ev.resolved_at_tick,
             target_id,
             attacker_id,
+            body_part: Some(map_body_part(ev.body_part)),
+            wound_kind: Some(map_wound_kind(ev.wound_kind)),
+            damage: Some(ev.damage),
+            contam_delta: Some(ev.contam_delta),
             description: Some(ev.description.clone()),
             cause: None,
         };
 
-        let _ = redis.tx_outbound.send(RedisOutbound::CombatRealtime(payload));
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::CombatRealtime(payload));
     }
 
     for ev in death_reader.read() {
@@ -88,11 +99,17 @@ pub fn publish_combat_realtime_events(
             tick: ev.at_tick,
             target_id,
             attacker_id: attacker_id_from_cause(ev.cause.as_str()),
+            body_part: None,
+            wound_kind: None,
+            damage: None,
+            contam_delta: None,
             description: None,
             cause: Some(ev.cause.clone()),
         };
 
-        let _ = redis.tx_outbound.send(RedisOutbound::CombatRealtime(payload));
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::CombatRealtime(payload));
     }
 }
 
@@ -128,6 +145,8 @@ fn publish_combat_summary_from_parts(
         .saturating_sub(interval_ticks)
         .saturating_add(1);
     let window_start_tick = summary.window_start_tick.unwrap_or(default_start_tick);
+    let damage_total = round_f32(summary.damage_total);
+    let contam_delta_total = round_f64(summary.contam_delta_total);
 
     let payload = CombatSummaryV1 {
         v: 1,
@@ -135,12 +154,26 @@ fn publish_combat_summary_from_parts(
         window_end_tick,
         combat_event_count: summary.combat_event_count,
         death_event_count: summary.death_event_count,
+        damage_total,
+        contam_delta_total,
     };
-    let _ = redis.tx_outbound.send(RedisOutbound::CombatSummary(payload));
+    let _ = redis
+        .tx_outbound
+        .send(RedisOutbound::CombatSummary(payload));
 
     summary.window_start_tick = Some(window_end_tick.saturating_add(1));
     summary.combat_event_count = 0;
     summary.death_event_count = 0;
+    summary.damage_total = 0.0;
+    summary.contam_delta_total = 0.0;
+}
+
+fn round_f32(value: f32) -> f32 {
+    (value * 1000.0).round() / 1000.0
+}
+
+fn round_f64(value: f64) -> f64 {
+    (value * 1000.0).round() / 1000.0
 }
 
 fn resolve_canonical_id(
@@ -172,16 +205,36 @@ fn resolve_canonical_id(
 }
 
 fn attacker_id_from_cause(cause: &str) -> Option<String> {
-    cause
-        .split_once(':')
-        .and_then(|(_, maybe_id)| {
-            let trimmed = maybe_id.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
+    cause.split_once(':').and_then(|(_, maybe_id)| {
+        let trimmed = maybe_id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn map_body_part(body_part: crate::combat::components::BodyPart) -> CombatBodyPartV1 {
+    match body_part {
+        crate::combat::components::BodyPart::Head => CombatBodyPartV1::Head,
+        crate::combat::components::BodyPart::Chest => CombatBodyPartV1::Chest,
+        crate::combat::components::BodyPart::Abdomen => CombatBodyPartV1::Abdomen,
+        crate::combat::components::BodyPart::ArmL => CombatBodyPartV1::ArmL,
+        crate::combat::components::BodyPart::ArmR => CombatBodyPartV1::ArmR,
+        crate::combat::components::BodyPart::LegL => CombatBodyPartV1::LegL,
+        crate::combat::components::BodyPart::LegR => CombatBodyPartV1::LegR,
+    }
+}
+
+fn map_wound_kind(wound_kind: crate::combat::components::WoundKind) -> CombatWoundKindV1 {
+    match wound_kind {
+        crate::combat::components::WoundKind::Cut => CombatWoundKindV1::Cut,
+        crate::combat::components::WoundKind::Blunt => CombatWoundKindV1::Blunt,
+        crate::combat::components::WoundKind::Pierce => CombatWoundKindV1::Pierce,
+        crate::combat::components::WoundKind::Burn => CombatWoundKindV1::Burn,
+        crate::combat::components::WoundKind::Concussion => CombatWoundKindV1::Concussion,
+    }
 }
 
 #[cfg(test)]
@@ -213,20 +266,30 @@ mod tests {
         let (mut app, rx_outbound) = setup_app();
         app.add_systems(Update, publish_combat_realtime_events);
 
-        let attacker = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:AttackerCanonical".to_string(),
-            ..Default::default()
-        }).id();
-        let target = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:TargetCanonical".to_string(),
-            ..Default::default()
-        }).id();
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:AttackerCanonical".to_string(),
+                ..Default::default()
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:TargetCanonical".to_string(),
+                ..Default::default()
+            })
+            .id();
 
         app.world_mut().send_event(CombatEvent {
             attacker,
             target,
             resolved_at_tick: 33,
-            description: "shared path hit".to_string(),
+            body_part: crate::combat::components::BodyPart::Chest,
+            wound_kind: crate::combat::components::WoundKind::Blunt,
+            damage: 20.0,
+            contam_delta: 5.0,
+            description: "attack_intent offline:AttackerCanonical -> offline:TargetCanonical hit Chest with Blunt for 20.0 damage at 0.90 reach decay".to_string(),
         });
         app.world_mut().send_event(DeathEvent {
             target,
@@ -249,8 +312,18 @@ mod tests {
                 assert_eq!(payload.kind, CombatRealtimeKindV1::CombatEvent);
                 assert_eq!(payload.tick, 33);
                 assert_eq!(payload.target_id, "offline:TargetCanonical");
-                assert_eq!(payload.attacker_id.as_deref(), Some("offline:AttackerCanonical"));
-                assert_eq!(payload.description.as_deref(), Some("shared path hit"));
+                assert_eq!(
+                    payload.attacker_id.as_deref(),
+                    Some("offline:AttackerCanonical")
+                );
+                assert_eq!(payload.body_part, Some(CombatBodyPartV1::Chest));
+                assert_eq!(payload.wound_kind, Some(CombatWoundKindV1::Blunt));
+                assert_eq!(payload.damage, Some(20.0));
+                assert_eq!(payload.contam_delta, Some(5.0));
+                assert_eq!(
+                    payload.description.as_deref(),
+                    Some("attack_intent offline:AttackerCanonical -> offline:TargetCanonical hit Chest with Blunt for 20.0 damage at 0.90 reach decay")
+                );
                 assert!(payload.cause.is_none());
             }
             other => panic!("expected CombatRealtime outbound, got {other:?}"),
@@ -263,6 +336,10 @@ mod tests {
                 assert_eq!(payload.tick, 34);
                 assert_eq!(payload.target_id, "offline:TargetCanonical");
                 assert_eq!(payload.attacker_id.as_deref(), Some("offline:Azure"));
+                assert!(payload.body_part.is_none());
+                assert!(payload.wound_kind.is_none());
+                assert!(payload.damage.is_none());
+                assert!(payload.contam_delta.is_none());
                 assert!(payload.description.is_none());
                 assert_eq!(
                     payload.cause.as_deref(),
@@ -276,6 +353,8 @@ mod tests {
         assert_eq!(summary.window_start_tick, Some(33));
         assert_eq!(summary.combat_event_count, 1);
         assert_eq!(summary.death_event_count, 1);
+        assert_eq!(summary.damage_total, 20.0);
+        assert_eq!(summary.contam_delta_total, 5.0);
     }
 
     #[test]
@@ -298,19 +377,29 @@ mod tests {
             ),
         );
 
-        let attacker = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:Attacker".to_string(),
-            ..Default::default()
-        }).id();
-        let target = app.world_mut().spawn(Lifecycle {
-            character_id: "offline:Target".to_string(),
-            ..Default::default()
-        }).id();
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Attacker".to_string(),
+                ..Default::default()
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Target".to_string(),
+                ..Default::default()
+            })
+            .id();
 
         app.world_mut().send_event(CombatEvent {
             attacker,
             target,
             resolved_at_tick: 190,
+            body_part: crate::combat::components::BodyPart::Chest,
+            wound_kind: crate::combat::components::WoundKind::Pierce,
+            damage: 12.0,
+            contam_delta: 3.0,
             description: "hit".to_string(),
         });
         app.world_mut().send_event(DeathEvent {
@@ -320,14 +409,18 @@ mod tests {
         });
 
         {
-            let mut timer = app.world_mut().resource_mut::<crate::network::WorldStateTimer>();
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
             timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS - 1;
         }
 
         app.update();
 
         {
-            let mut timer = app.world_mut().resource_mut::<crate::network::WorldStateTimer>();
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
             timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS;
         }
 
@@ -340,7 +433,8 @@ mod tests {
             }
         }
 
-        let summary_payload = summary_payload.expect("summary publish should exist on 200-tick cadence");
+        let summary_payload =
+            summary_payload.expect("summary publish should exist on 200-tick cadence");
         assert_eq!(summary_payload.v, 1);
         assert_eq!(summary_payload.window_start_tick, 190);
         assert_eq!(
@@ -349,10 +443,93 @@ mod tests {
         );
         assert_eq!(summary_payload.combat_event_count, 1);
         assert_eq!(summary_payload.death_event_count, 1);
+        assert_eq!(summary_payload.damage_total, 12.0);
+        assert_eq!(summary_payload.contam_delta_total, 3.0);
 
         let summary = app.world().resource::<CombatSummaryAccumulator>();
         assert_eq!(summary.combat_event_count, 0);
         assert_eq!(summary.death_event_count, 0);
-        assert_eq!(summary.window_start_tick, Some(TEST_WORLD_STATE_INTERVAL_TICKS + 1));
+        assert_eq!(summary.damage_total, 0.0);
+        assert_eq!(summary.contam_delta_total, 0.0);
+        assert_eq!(
+            summary.window_start_tick,
+            Some(TEST_WORLD_STATE_INTERVAL_TICKS + 1)
+        );
+    }
+
+    #[test]
+    fn summary_rounds_float_totals_to_stable_millis() {
+        let (mut app, rx_outbound) = setup_app();
+        app.add_systems(
+            Update,
+            (
+                publish_combat_realtime_events,
+                |redis: Res<crate::network::RedisBridgeResource>,
+                 mut summary: ResMut<CombatSummaryAccumulator>,
+                 timer: Res<crate::network::WorldStateTimer>| {
+                    publish_combat_summary_from_parts(
+                        redis.as_ref(),
+                        summary.as_mut(),
+                        timer.as_ref(),
+                        TEST_WORLD_STATE_INTERVAL_TICKS,
+                    );
+                },
+            ),
+        );
+
+        let attacker = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Attacker".to_string(),
+                ..Default::default()
+            })
+            .id();
+        let target = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "offline:Target".to_string(),
+                ..Default::default()
+            })
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 1,
+            body_part: crate::combat::components::BodyPart::Chest,
+            wound_kind: crate::combat::components::WoundKind::Cut,
+            damage: 0.1 + 0.2,
+            contam_delta: 0.1 + 0.2,
+            description: "rounded hit".to_string(),
+        });
+
+        {
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
+            timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS - 1;
+        }
+
+        app.update();
+
+        {
+            let mut timer = app
+                .world_mut()
+                .resource_mut::<crate::network::WorldStateTimer>();
+            timer.ticks = TEST_WORLD_STATE_INTERVAL_TICKS;
+        }
+
+        app.update();
+
+        let mut summary_payload: Option<CombatSummaryV1> = None;
+        while let Ok(message) = rx_outbound.try_recv() {
+            if let RedisOutbound::CombatSummary(payload) = message {
+                summary_payload = Some(payload);
+            }
+        }
+
+        let summary_payload = summary_payload.expect("rounded summary publish should exist");
+        assert_eq!(summary_payload.damage_total, 0.3);
+        assert_eq!(summary_payload.contam_delta_total, 0.3);
     }
 }

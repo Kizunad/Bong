@@ -6,7 +6,9 @@
     "window_start_tick",
     "window_end_tick",
     "combat_event_count",
-    "death_event_count"
+    "death_event_count",
+    "damage_total",
+    "contam_delta_total"
   ],
   "properties": {
     "v": {
@@ -28,6 +30,14 @@
     "death_event_count": {
       "minimum": 0,
       "type": "integer"
+    },
+    "damage_total": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "contam_delta_total": {
+      "minimum": 0,
+      "type": "number"
     }
   }
 }

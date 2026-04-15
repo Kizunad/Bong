@@ -967,7 +967,14 @@ mod redis_bridge_tests {
                 tick: 44,
                 target_id: "offline:Crimson".to_string(),
                 attacker_id: Some("offline:Azure".to_string()),
-                description: Some("shared path hit".to_string()),
+                body_part: Some(crate::schema::combat_event::CombatBodyPartV1::Chest),
+                wound_kind: Some(crate::schema::combat_event::CombatWoundKindV1::Blunt),
+                damage: Some(20.0),
+                contam_delta: None,
+                description: Some(
+                    "attack_intent offline:Azure -> offline:Crimson hit Chest with Blunt for 20.0 damage at 0.90 reach decay"
+                        .to_string(),
+                ),
                 cause: None,
             },
         ))
@@ -981,7 +988,13 @@ mod redis_bridge_tests {
                 assert_eq!(v["tick"], 44);
                 assert_eq!(v["target_id"], "offline:Crimson");
                 assert_eq!(v["attacker_id"], "offline:Azure");
-                assert_eq!(v["description"], "shared path hit");
+                assert_eq!(v["body_part"], "chest");
+                assert_eq!(v["wound_kind"], "blunt");
+                assert_eq!(v["damage"], 20.0);
+                assert_eq!(
+                    v["description"],
+                    "attack_intent offline:Azure -> offline:Crimson hit Chest with Blunt for 20.0 damage at 0.90 reach decay"
+                );
             }
             other => panic!("expected publish, got {other:?}"),
         }
@@ -992,6 +1005,8 @@ mod redis_bridge_tests {
             window_end_tick: 400,
             combat_event_count: 9,
             death_event_count: 2,
+            damage_total: 88.0,
+            contam_delta_total: 16.0,
         }))
         .expect("combat summary payload should serialize");
         match summary {
@@ -1003,6 +1018,8 @@ mod redis_bridge_tests {
                 assert_eq!(v["window_end_tick"], 400);
                 assert_eq!(v["combat_event_count"], 9);
                 assert_eq!(v["death_event_count"], 2);
+                assert_eq!(v["damage_total"], 88.0);
+                assert_eq!(v["contam_delta_total"], 16.0);
             }
             other => panic!("expected publish, got {other:?}"),
         }

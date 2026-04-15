@@ -36,6 +36,70 @@
       "minLength": 1,
       "type": "string"
     },
+    "body_part": {
+      "anyOf": [
+        {
+          "const": "head",
+          "type": "string"
+        },
+        {
+          "const": "chest",
+          "type": "string"
+        },
+        {
+          "const": "abdomen",
+          "type": "string"
+        },
+        {
+          "const": "arm_l",
+          "type": "string"
+        },
+        {
+          "const": "arm_r",
+          "type": "string"
+        },
+        {
+          "const": "leg_l",
+          "type": "string"
+        },
+        {
+          "const": "leg_r",
+          "type": "string"
+        }
+      ]
+    },
+    "wound_kind": {
+      "anyOf": [
+        {
+          "const": "cut",
+          "type": "string"
+        },
+        {
+          "const": "blunt",
+          "type": "string"
+        },
+        {
+          "const": "pierce",
+          "type": "string"
+        },
+        {
+          "const": "burn",
+          "type": "string"
+        },
+        {
+          "const": "concussion",
+          "type": "string"
+        }
+      ]
+    },
+    "damage": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "contam_delta": {
+      "minimum": 0,
+      "type": "number"
+    },
     "description": {
       "minLength": 1,
       "type": "string"
