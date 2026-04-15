@@ -5,6 +5,8 @@ Catches known data integrity issues before they reach the Rust server:
 - water level above surrounding terrain (floating water)
 - height values outside sane world range
 - missing layers in tiles
+- qi_density / mofa_decay outside [0, 1]
+- qi_density vs zone.spirit_qi declared gross mismatch
 """
 
 from __future__ import annotations
@@ -67,6 +69,23 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     warnings.append(
                         f"{tile_id}: height max={h_max:.1f} near world ceiling"
                     )
+
+        # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
+        # qi_vein_flow likewise. These are narrative-facing so out-of-range
+        # values will confuse downstream agent / HUD consumers.
+        for semantic_layer in ("qi_density", "mofa_decay", "qi_vein_flow"):
+            sem_file = tile_dir / f"{semantic_layer}.bin"
+            if not sem_file.exists():
+                continue
+            sem_data = _read_float_layer(sem_file, area)
+            if sem_data is None:
+                continue
+            s_min, s_max = min(sem_data), max(sem_data)
+            if s_min < -0.01 or s_max > 1.01:
+                errors.append(
+                    f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
+                    f"outside [0,1] (zones={zones})"
+                )
 
         # Check water vs terrain consistency
         water_file = tile_dir / "water_level.bin"

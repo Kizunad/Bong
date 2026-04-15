@@ -40,7 +40,33 @@
         "biome_mix": ["mofa:spawn_haven", "mofa:kui_zeng"],
         "landmarks": ["starter_ruin", "broken_road", "hidden_shelter"],
         "notes": "Low rolling plain, sparse vegetation, safe-ish first foothold."
-      }
+      },
+      "pois": [
+        {
+          "kind": "shrine",
+          "name": "断碑观星台",
+          "pos_xyz": [-180.0, 72.0, -240.0],
+          "tags": ["meditation", "starter_landmark"],
+          "unlock": "初次到达即可感知灵气涌动",
+          "qi_affinity": 0.15
+        },
+        {
+          "kind": "ruin",
+          "name": "残破村落",
+          "pos_xyz": [320.0, 70.0, 180.0],
+          "tags": ["loot", "starter_landmark"],
+          "qi_affinity": -0.05,
+          "danger_bias": 1
+        },
+        {
+          "kind": "cave_mouth",
+          "name": "泥泞避难洞",
+          "pos_xyz": [-50.0, 66.0, 420.0],
+          "tags": ["shelter", "hidden"],
+          "unlock": "日落后可见微光",
+          "qi_affinity": 0.05
+        }
+      ]
     },
     {
       "name": "qingyun_peaks",
@@ -69,7 +95,34 @@
         "biome_mix": ["mofa:kui_zeng", "mofa:si_yu"],
         "landmarks": ["ridge_path", "needle_rocks", "abandoned_watchpost"],
         "notes": "Raised mountain basin with bare stone ribs, narrow routes, and mining ledges."
-      }
+      },
+      "pois": [
+        {
+          "kind": "ruin",
+          "name": "青云宗废殿",
+          "pos_xyz": [-3000.0, 180.0, -2000.0],
+          "tags": ["sect_ruin", "qingyun"],
+          "unlock": "登顶主峰可见殿门",
+          "qi_affinity": 0.3,
+          "danger_bias": 1
+        },
+        {
+          "kind": "cave_mouth",
+          "name": "采脉矿洞",
+          "pos_xyz": [-2820.0, 140.0, -1780.0],
+          "tags": ["mining", "old_sect"],
+          "qi_affinity": 0.2
+        },
+        {
+          "kind": "tomb",
+          "name": "无名剑冢",
+          "pos_xyz": [-3400.0, 160.0, -2420.0],
+          "tags": ["relic", "legacy"],
+          "unlock": "佩剑或持灵铁器者感应",
+          "qi_affinity": 0.1,
+          "danger_bias": 2
+        }
+      ]
     },
     {
       "name": "lingquan_marsh",
@@ -99,7 +152,41 @@
         "biome_mix": ["mofa:kui_zeng_rich", "mofa:kui_zeng"],
         "landmarks": ["spring_eye", "reed_channels", "soft_islets"],
         "notes": "Low wet basin with shallow water, dense herbs, and a few exposed meditation spots."
-      }
+      },
+      "pois": [
+        {
+          "kind": "spirit_font",
+          "name": "主灵泉眼",
+          "pos_xyz": [-2500.0, 46.0, 2500.0],
+          "tags": ["cultivation_site", "water"],
+          "unlock": "水下静坐可调息",
+          "qi_affinity": 0.6
+        },
+        {
+          "kind": "shrine",
+          "name": "苇渡神龛",
+          "pos_xyz": [-2760.0, 52.0, 2320.0],
+          "tags": ["offering", "blessing"],
+          "qi_affinity": 0.25
+        },
+        {
+          "kind": "herb_patch",
+          "name": "灵草甸",
+          "pos_xyz": [-2240.0, 54.0, 2760.0],
+          "tags": ["gather", "alchemy"],
+          "unlock": "识药者可采集",
+          "qi_affinity": 0.3
+        },
+        {
+          "kind": "tomb",
+          "name": "隐修遗冢",
+          "pos_xyz": [-2080.0, 56.0, 2900.0],
+          "tags": ["hidden", "legacy"],
+          "unlock": "夜间月光强时显现",
+          "qi_affinity": 0.2,
+          "danger_bias": 1
+        }
+      ]
     },
     {
       "name": "blood_valley",
@@ -129,7 +216,43 @@
         "biome_mix": ["mofa:si_yu", "mofa:kui_zeng", "mofa:fu_ling"],
         "landmarks": ["rift_gate", "scarlet_gully", "bone_mesa", "broken_abyss"],
         "notes": "Long cracked valley trending northwest to southeast with exposed red stone and mine shelves."
-      }
+      },
+      "pois": [
+        {
+          "kind": "altar",
+          "name": "血月祭坛",
+          "pos_xyz": [3000.0, 48.0, -2500.0],
+          "tags": ["blood_moon", "event_anchor", "ritual"],
+          "unlock": "血月之夜激活",
+          "qi_affinity": -0.2,
+          "danger_bias": 2
+        },
+        {
+          "kind": "ruin",
+          "name": "骨冢台地",
+          "pos_xyz": [3180.0, 62.0, -1980.0],
+          "tags": ["battlefield", "loot"],
+          "qi_affinity": -0.1,
+          "danger_bias": 1
+        },
+        {
+          "kind": "gate",
+          "name": "裂隙之门",
+          "pos_xyz": [2720.0, 55.0, -3080.0],
+          "tags": ["portal", "rift"],
+          "unlock": "需残破令牌",
+          "qi_affinity": 0.15,
+          "danger_bias": 3
+        },
+        {
+          "kind": "stele",
+          "name": "残缺战纪碑",
+          "pos_xyz": [3280.0, 80.0, -2300.0],
+          "tags": ["lore", "history"],
+          "unlock": "识古文者可读",
+          "qi_affinity": 0.0
+        }
+      ]
     },
     {
       "name": "youan_depths",
@@ -159,7 +282,42 @@
         "biome_mix": ["mofa:kui_zeng", "mofa:fu_ling"],
         "landmarks": ["sinkhole_gate", "forbidden_halls", "red_vines", "sealed_relic_room"],
         "notes": "Surface entrance cluster over a broad underground cave network with pockets of high and low qi."
-      }
+      },
+      "pois": [
+        {
+          "kind": "cave_mouth",
+          "name": "陷穴主门",
+          "pos_xyz": [2000.0, 60.0, 3000.0],
+          "tags": ["entrance", "main"],
+          "qi_affinity": 0.1
+        },
+        {
+          "kind": "forbidden_hall",
+          "name": "封禁厅",
+          "pos_xyz": [2120.0, 20.0, 3080.0],
+          "tags": ["secret_realm", "locked"],
+          "unlock": "破除三层封禁阵",
+          "qi_affinity": 0.45,
+          "danger_bias": 2
+        },
+        {
+          "kind": "spirit_font",
+          "name": "暗河灵泉",
+          "pos_xyz": [1820.0, 8.0, 3160.0],
+          "tags": ["hidden", "water", "cultivation_site"],
+          "unlock": "潜入暗河尽头",
+          "qi_affinity": 0.55
+        },
+        {
+          "kind": "altar",
+          "name": "镇邪古坛",
+          "pos_xyz": [2420.0, 16.0, 3400.0],
+          "tags": ["ward", "ancient"],
+          "unlock": "持净灵玉近前",
+          "qi_affinity": 0.2,
+          "danger_bias": 2
+        }
+      ]
     },
     {
       "name": "north_wastes",
@@ -192,7 +350,43 @@
           { "center_xz": [580.0, -6710.0], "radius": 340.0, "strength": -0.55 }
         ],
         "notes": "Sparse dead plateau with embedded null-pressure scars and a few high-risk ruin pockets."
-      }
+      },
+      "pois": [
+        {
+          "kind": "ruin",
+          "name": "沉寂仙宫碎片",
+          "pos_xyz": [0.0, 90.0, -7000.0],
+          "tags": ["sunken_palace", "relic", "high_tier"],
+          "unlock": "携带仙宫残符者显现",
+          "qi_affinity": 0.3,
+          "danger_bias": 3
+        },
+        {
+          "kind": "tomb",
+          "name": "鲸坠骸骨",
+          "pos_xyz": [-620.0, 76.0, -7440.0],
+          "tags": ["fossil", "lore"],
+          "qi_affinity": -0.15,
+          "danger_bias": 1
+        },
+        {
+          "kind": "anomaly",
+          "name": "虚压涡",
+          "pos_xyz": [580.0, 70.0, -6710.0],
+          "tags": ["null_pressure", "hazard"],
+          "unlock": "持护身灵玉可近",
+          "qi_affinity": -0.6,
+          "danger_bias": 3
+        },
+        {
+          "kind": "stele",
+          "name": "末法纪年碑",
+          "pos_xyz": [940.0, 82.0, -6360.0],
+          "tags": ["lore", "history"],
+          "unlock": "识古文且灵识清明者可读",
+          "qi_affinity": 0.0
+        }
+      ]
     }
   ],
   "paths": [

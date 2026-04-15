@@ -10,6 +10,7 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class SpawnPlainGenerator(TerrainProfileGenerator):
     profile_name = "spawn_plain"
+    extra_layers = ("qi_density", "mofa_decay")
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +36,8 @@ def fill_spawn_plain_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
         ),
     )
     grass_id = palette.ensure("grass_block")
@@ -91,6 +94,13 @@ def fill_spawn_plain_tile(
 
     biome_id = np.where(feature_mask > 0.12, flower_forest_biome_id, spawn_biome_id)
 
+    # 初醒原：灵气中低（0.25），末法轻度（0.22），含水塘处灵气略增（水即灵）
+    qi_base = float(getattr(zone, "spirit_qi", 0.3))
+    qi_density = 0.18 + heartland * 0.10 + inner_meadow * 0.05
+    qi_density = np.where(water_level >= 0.0, qi_density + 0.08, qi_density)
+    qi_density = np.clip(qi_density * (0.5 + qi_base), 0.0, 1.0)
+    mofa_decay = np.clip(0.28 - heartland * 0.10 + np.abs(rolling) * 0.03, 0.05, 0.55)
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -99,6 +109,8 @@ def fill_spawn_plain_tile(
     buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

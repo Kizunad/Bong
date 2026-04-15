@@ -10,6 +10,7 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class SpringMarshGenerator(TerrainProfileGenerator):
     profile_name = "spring_marsh"
+    extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +36,9 @@ def fill_spring_marsh_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
+            "qi_vein_flow",
         ),
     )
     mud_id = palette.ensure("mud")
@@ -136,6 +140,16 @@ def fill_spring_marsh_tile(
     shallow_water = (waterline >= 0) & (height >= waterline - 1.2)
     biome_id = np.where(shallow_water | island_low, mangrove_biome_id, marsh_biome_id)
 
+    # 灵泉湿地：灵气富集之地。灵脉汇入水体（灵泉眼），末法极低。
+    # 水体/池塘处 qi 最高，中心盆地有一条 "灵脉线" 沿 channels 方向。
+    qi_base = float(getattr(zone, "spirit_qi", 0.7))
+    spring_eye = np.maximum(0.0, pools - 0.25) * 2.0  # 灵泉眼
+    qi_vein_flow = np.clip(spring_eye * basin * 0.9, 0.0, 1.0)
+    qi_density = 0.25 + basin * 0.35 + spring_eye * 0.30
+    qi_density = np.where(waterline >= 0, qi_density + 0.12, qi_density)
+    qi_density = np.clip(qi_density * (0.4 + qi_base), 0.0, 1.0)
+    mofa_decay = np.clip(0.18 - basin * 0.08 - spring_eye * 0.10, 0.02, 0.35)
+
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
     buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
@@ -143,6 +157,9 @@ def fill_spring_marsh_tile(
     buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

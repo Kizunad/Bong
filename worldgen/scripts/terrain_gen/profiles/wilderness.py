@@ -12,7 +12,7 @@ from ..fields import (
     WildernessFieldPlan,
     WorldTile,
 )
-from ..noise import _tile_coords
+from ..noise import _tile_coords, fbm_2d
 
 
 def build_wilderness_base_plan(bounds_xz: Bounds2D) -> WildernessFieldPlan:
@@ -157,5 +157,23 @@ def fill_wilderness_tile(
     # Zone-specific layers (rift_axis_sdf, cave_mask, etc.) are already
     # initialized to their safe defaults by TileFieldBuffer.create() via
     # LAYER_REGISTRY — no per-layer patching needed here.
+
+    # --- xianxia semantic baseline -------------------------------------
+    # 末法残土 = 灵气普遍稀薄且大地普遍腐朽。用低频噪声做宏观"灵气云图"，
+    # 让荒野自带起伏（避免全世界是一张死板的常量灵气图），zone overlay
+    # 再在其上 lerp/maximum 叠加。
+    if "qi_density" in buffer.layers:
+        qi_cloud = fbm_2d(wx, wz, scale=2200.0, octaves=3, seed=901)  # [-1, 1]
+        qi_density = np.clip(0.12 + qi_cloud * 0.08, 0.0, 1.0)
+        buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+
+    if "mofa_decay" in buffer.layers:
+        decay_cloud = fbm_2d(wx, wz, scale=2600.0, octaves=3, seed=902)
+        # 末法基线 ≈ 0.4，南北/东西方向有轻微梯度（北更腐朽）
+        lat_gradient = np.clip(-wz / 12000.0, -0.25, 0.25)
+        mofa_decay = np.clip(0.40 + decay_cloud * 0.12 + lat_gradient, 0.0, 1.0)
+        buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+
+    # qi_vein_flow 默认 0，荒野无灵脉，由 zone profile 显式生成。
 
     return buffer

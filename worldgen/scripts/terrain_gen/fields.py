@@ -60,6 +60,18 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "entrance_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- xianxia / mofa semantic layers ---
+    # qi_density: 灵气浓度 (0~1). Baseline of mofa world is "thin qi"; zones like
+    #   spring_marsh lift it, waste_plateau flatlines it. `lerp` lets overlays
+    #   raise OR lower the base value smoothly across zone boundaries.
+    # mofa_decay: 末法腐朽度 (0~1). Conceptual dual of qi_density — a region can
+    #   have low qi but not yet decayed (pristine but silent), or be fully
+    #   decayed with residual qi (cursed land). Also `lerp` blended.
+    # qi_vein_flow: 灵脉流向强度 (0~1). Sparse linear structure; `maximum` so
+    #   overlays only add veins, never erase nearby zone's vein trails.
+    "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
+    "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
+    "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
 }
 
 

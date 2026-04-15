@@ -283,6 +283,10 @@ def _blend_tile_layers(
         blend = spec.blend_mode if spec else "maximum"
         if blend == "minimum":
             blended = np.minimum(base_arr, overlay_arr)
+        elif blend == "lerp":
+            # Smooth interpolation — overlay can raise OR lower base by `weight`.
+            # Use float ops even if arrays came in as other dtypes.
+            blended = base_arr + (overlay_arr - base_arr) * weight
         else:  # "maximum" (default for extra layers)
             blended = np.maximum(base_arr, overlay_arr * weight)
         np.round(blended, 3, out=blended)

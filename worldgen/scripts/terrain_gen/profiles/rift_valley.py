@@ -12,7 +12,14 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class RiftValleyGenerator(TerrainProfileGenerator):
     profile_name = "rift_valley"
-    extra_layers = ("rift_axis_sdf", "rim_edge_mask", "fracture_mask")
+    extra_layers = (
+        "rift_axis_sdf",
+        "rim_edge_mask",
+        "fracture_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -38,6 +45,9 @@ def fill_rift_valley_tile(
         "rift_axis_sdf",
         "rim_edge_mask",
         "fracture_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
     )
     buffer = TileFieldBuffer.create(tile, tile_size, layer_names)
     blackstone_id = palette.ensure("blackstone")
@@ -133,6 +143,26 @@ def fill_rift_valley_tile(
     )
     feature_mask = np.maximum(valley_strength, rim_edge_mask * 0.72)
 
+    # 血谷：末法重（0.7），灵气稀薄但沿裂隙轴线有一条灵脉（古战场残余灵压）。
+    # qi_vein_flow 集中在 axis 附近（normalized_cross 接近 0），随 branch 扩散。
+    qi_base = float(getattr(zone, "spirit_qi", 0.3))
+    axis_core = np.maximum(0.0, 1.0 - normalized_cross * 2.4) * axial_profile
+    vein_wiggle = 0.5 + fbm_2d(wx, wz, scale=180.0, octaves=3, seed=360) * 0.5
+    qi_vein_flow = np.clip(axis_core * vein_wiggle, 0.0, 1.0)
+    # 灵气：谷底贴着灵脉略高，谷壁和裂隙更低（断裂吸散灵气）
+    qi_density = np.clip(
+        0.06 + qi_vein_flow * (0.45 * qi_base / max(qi_base, 0.3))
+        - fracture_mask * 0.08,
+        0.0,
+        1.0,
+    )
+    # 末法：整体高，fracture 越深越腐朽（骨尘堆积）
+    mofa_decay = np.clip(
+        0.55 + valley_strength * 0.15 + fracture_mask * 0.15 - qi_vein_flow * 0.20,
+        0.1,
+        0.95,
+    )
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -144,6 +174,9 @@ def fill_rift_valley_tile(
     buffer.layers["rift_axis_sdf"] = np.round(normalized_cross, 3).ravel()
     buffer.layers["rim_edge_mask"] = np.round(rim_edge_mask, 3).ravel()
     buffer.layers["fracture_mask"] = np.round(fracture_mask, 3).ravel()
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

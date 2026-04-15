@@ -10,6 +10,7 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class BrokenPeaksGenerator(TerrainProfileGenerator):
     profile_name = "broken_peaks"
+    extra_layers = ("qi_density", "mofa_decay", "qi_vein_flow")
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +36,9 @@ def fill_broken_peaks_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
+            "qi_vein_flow",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -140,6 +144,24 @@ def fill_broken_peaks_tile(
     area = tile_size * tile_size
     biome_id = np.where(height > 300.0, frozen_peaks_biome_id, peaks_biome_id)
 
+    # 青云残峰：高处灵气较盛（上空接天），峰脊有灵脉（古修士采脉处）。
+    # 末法中等——古战痕迹在山脊间。
+    qi_base = float(getattr(zone, "spirit_qi", 0.5))
+    altitude_t = np.clip((height - 82.0) / 220.0, 0.0, 1.0)
+    ridge_vein = np.maximum(0.0, ridges) * massif
+    qi_vein_flow = np.clip(ridge_vein * altitude_t * 0.9, 0.0, 1.0)
+    qi_density = np.clip(
+        0.18 + altitude_t * 0.35 + qi_vein_flow * 0.20,
+        0.0,
+        1.0,
+    ) * (0.5 + qi_base)
+    qi_density = np.clip(qi_density, 0.0, 1.0)
+    mofa_decay = np.clip(
+        0.35 + (1.0 - altitude_t) * 0.20 + np.maximum(0.0, erosion) * 0.10 - qi_vein_flow * 0.15,
+        0.1,
+        0.7,
+    )
+
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
     buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
@@ -147,6 +169,9 @@ def fill_broken_peaks_tile(
     buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
     buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

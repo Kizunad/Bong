@@ -10,7 +10,14 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class CaveNetworkGenerator(TerrainProfileGenerator):
     profile_name = "cave_network"
-    extra_layers = ("cave_mask", "ceiling_height", "entrance_mask")
+    extra_layers = (
+        "cave_mask",
+        "ceiling_height",
+        "entrance_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -29,7 +36,8 @@ def fill_cave_network_tile(
         tile, tile_size,
         ("height", "surface_id", "subsurface_id", "water_level",
          "biome_id", "feature_mask", "boundary_weight",
-         "cave_mask", "ceiling_height", "entrance_mask"),
+         "cave_mask", "ceiling_height", "entrance_mask",
+         "qi_density", "mofa_decay", "qi_vein_flow"),
     )
     stone_id = palette.ensure("stone")
     coarse_dirt_id = palette.ensure("coarse_dirt")
@@ -88,6 +96,26 @@ def fill_cave_network_tile(
     buffer.layers["cave_mask"] = np.round(cave_mask, 3).ravel()
     buffer.layers["ceiling_height"] = np.round(ceiling_height, 3).ravel()
     buffer.layers["entrance_mask"] = np.round(entrance_mask, 3).ravel()
+
+    # 幽暗地穴：地下灵脉汇聚。深洞处 qi 显著高（灵压被岩壁闭合），入口处 qi 外溢。
+    # 末法中等——地下封闭易积腐朽秽气。
+    qi_base = float(getattr(zone, "spirit_qi", 0.4))
+    deep_cave = np.maximum(0.0, cave_mask - 0.4) * 1.6
+    qi_vein_flow = np.clip(deep_cave * cluster * (0.5 + qi_base), 0.0, 1.0)
+    qi_density = np.clip(
+        0.12 + deep_cave * 0.35 + entrance_mask * 0.10,
+        0.0,
+        1.0,
+    ) * (0.5 + qi_base)
+    qi_density = np.clip(qi_density, 0.0, 1.0)
+    mofa_decay = np.clip(
+        0.45 + cave_mask * 0.15 - qi_vein_flow * 0.20,
+        0.1,
+        0.8,
+    )
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

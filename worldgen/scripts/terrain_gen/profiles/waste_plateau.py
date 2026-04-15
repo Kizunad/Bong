@@ -10,7 +10,7 @@ from .base import ProfileContext, TerrainProfileGenerator
 
 class WastePlateauGenerator(TerrainProfileGenerator):
     profile_name = "waste_plateau"
-    extra_layers = ("neg_pressure", "ruin_density")
+    extra_layers = ("neg_pressure", "ruin_density", "qi_density", "mofa_decay")
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -38,6 +38,8 @@ def fill_waste_plateau_tile(
             "boundary_weight",
             "neg_pressure",
             "ruin_density",
+            "qi_density",
+            "mofa_decay",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -112,6 +114,19 @@ def fill_waste_plateau_tile(
         plateau * 0.28 + neg_pressure * 0.95 + np.maximum(0.0, -fracture) * 0.4,
     )
 
+    # 北荒：死域。灵气极低（vein 无），末法极高（neg_pressure 点内趋近 1.0）
+    qi_base = float(getattr(zone, "spirit_qi", 0.05))
+    qi_density = np.clip(
+        0.01 + qi_base * 0.2 * (1.0 - plateau) - neg_pressure * 0.5,
+        0.0,
+        0.18,
+    )
+    mofa_decay = np.clip(
+        0.72 + plateau * 0.08 + neg_pressure * 0.25 + ruin_density * 0.05,
+        0.5,
+        1.0,
+    )
+
     area = tile_size * tile_size
     buffer.layers["height"] = np.round(height, 3).ravel()
     buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
@@ -122,6 +137,8 @@ def fill_waste_plateau_tile(
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
     buffer.layers["neg_pressure"] = np.round(neg_pressure, 3).ravel()
     buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel()
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

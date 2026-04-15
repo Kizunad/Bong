@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
 
 BIOME_PALETTE = (
@@ -86,6 +87,8 @@ def export_rasters(
             }
         )
 
+    pois_payload = _collect_poi_payload(plan.blueprint_zones)
+
     manifest = {
         "version": 1,
         "backend": "raster",
@@ -100,9 +103,17 @@ def export_rasters(
         "surface_palette": list(fields.surface_palette.names),
         "biome_palette": list(BIOME_PALETTE),
         "tiles": manifest_tiles,
+        "pois": pois_payload,
+        "semantic_layers": [
+            name
+            for name in ("qi_density", "mofa_decay", "qi_vein_flow")
+            if name in LAYER_REGISTRY
+        ],
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
+            "Semantic layers (qi_density / mofa_decay / qi_vein_flow) carry the xianxia world model.",
+            "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
         ],
     }
 
@@ -115,6 +126,27 @@ def export_rasters(
         "manifest": manifest_path,
         "raster_dir": output_dir,
     }
+
+
+def _poi_dict(zone_name: str, poi: PoiSpec) -> dict[str, object]:
+    return {
+        "zone": zone_name,
+        "kind": poi.kind,
+        "name": poi.name,
+        "pos_xyz": [poi.pos_xyz[0], poi.pos_xyz[1], poi.pos_xyz[2]],
+        "tags": list(poi.tags),
+        "unlock": poi.unlock,
+        "qi_affinity": poi.qi_affinity,
+        "danger_bias": poi.danger_bias,
+    }
+
+
+def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        for poi in zone.pois:
+            payload.append(_poi_dict(zone.name, poi))
+    return payload
 
 
 def build_raster_bake_plan(plan: TerrainGenerationPlan, output_root: Path) -> BakePlan:
