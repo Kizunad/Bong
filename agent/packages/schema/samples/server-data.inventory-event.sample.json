@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "inventory_event",
+  "kind": "stack_changed",
+  "revision": 13,
+  "instance_id": 1004,
+  "stack_count": 1
+}

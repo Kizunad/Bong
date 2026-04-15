@@ -1,10 +1,11 @@
 pub mod agent_bridge;
 pub mod chat_collector;
+pub mod client_request_handler;
 pub mod combat_bridge;
 pub mod command_executor;
-pub mod client_request_handler;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
+pub mod inventory_snapshot_emit;
 pub mod redis_bridge;
 pub mod vfx_event_emit;
 
@@ -153,6 +154,8 @@ pub fn register(app: &mut App) {
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
                 .after(crate::player::gameplay::apply_queued_gameplay_actions),
+            inventory_snapshot_emit::emit_join_inventory_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
@@ -1038,7 +1041,7 @@ fn process_bridge_messages(bridge: Res<NetworkBridgeResource>, mut clients: Quer
     });
 }
 
-fn send_server_data_payload(client: &mut Client, payload: &[u8]) {
+pub(crate) fn send_server_data_payload(client: &mut Client, payload: &[u8]) {
     client.send_custom_payload(ident!("bong:server_data"), payload);
 }
 
@@ -1058,7 +1061,7 @@ fn drain_bridge_commands(bridge: &NetworkBridgeResource, mut on_heartbeat: impl 
     drained_messages
 }
 
-fn log_payload_build_error(payload_type: &str, error: &PayloadBuildError) {
+pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildError) {
     match error {
         PayloadBuildError::Json(json_error) => tracing::error!(
             "[bong][network] failed to serialize {payload_type} payload for {}: {json_error}",
@@ -2277,8 +2280,7 @@ mod tests {
                         .after(crate::combat::status::status_effect_apply_tick),
                     crate::combat::resolve::resolve_attack_intents
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
-                    emit_gameplay_narrations
-                        .after(crate::combat::resolve::resolve_attack_intents),
+                    emit_gameplay_narrations.after(crate::combat::resolve::resolve_attack_intents),
                     emit_player_state_payloads
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     publish_world_state_to_redis
@@ -2480,16 +2482,24 @@ mod tests {
 
             let combat_events = app.world().resource::<Events<CombatEvent>>();
             let death_events = app.world().resource::<Events<DeathEvent>>();
-            assert!(!combat_events.is_empty(), "combat should emit CombatEvent via resolver");
-            assert!(!death_events.is_empty(), "lethal debug combat should emit DeathEvent");
+            assert!(
+                !combat_events.is_empty(),
+                "combat should emit CombatEvent via resolver"
+            );
+            assert!(
+                !death_events.is_empty(),
+                "lethal debug combat should emit DeathEvent"
+            );
 
             let attacker_state = app
                 .world()
                 .entity(attacker)
                 .get::<PlayerState>()
                 .expect("attacker player state should remain attached");
-            assert_eq!(attacker_state.spirit_qi, 70.0, "attacker PlayerState should not be fake-mutated");
-
+            assert_eq!(
+                attacker_state.spirit_qi, 70.0,
+                "attacker PlayerState should not be fake-mutated"
+            );
             let attacker_cultivation = app
                 .world()
                 .entity(attacker)

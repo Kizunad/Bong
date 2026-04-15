@@ -1,0 +1,47 @@
+max_weight = 45.0
+bone_coins = 57
+
+[[containers]]
+id = "main_pack"
+name = "主背包"
+rows = 5
+cols = 7
+
+  [[containers.items]]
+  row = 0
+  col = 0
+  template_id = "starter_talisman"
+  stack_count = 1
+
+  [[containers.items]]
+  row = 0
+  col = 1
+  template_id = "guyuan_pill"
+  stack_count = 2
+
+[[containers]]
+id = "small_pouch"
+name = "小口袋"
+rows = 3
+cols = 3
+
+  [[containers.items]]
+  row = 0
+  col = 0
+  template_id = "healing_herb_bundle"
+  stack_count = 3
+
+[[containers]]
+id = "front_satchel"
+name = "前挂包"
+rows = 3
+cols = 4
+
+[[equip]]
+slot = "main_hand"
+template_id = "rusted_blade"
+durability = 0.85
+
+[[hotbar]]
+index = 0
+template_id = "starter_talisman"

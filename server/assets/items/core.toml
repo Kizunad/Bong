@@ -1,0 +1,32 @@
+[[item]]
+id = "starter_talisman"
+name = "启程护符"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "初入末法残土时由宗门发放的护身符。"
+
+[[item]]
+id = "healing_herb_bundle"
+name = "止创草束"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.9
+description = "可用于外敷经脉的常见草药。"
+
+[[item]]
+id = "rusted_blade"
+name = "旧铁短刃"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "common"
+spirit_quality_initial = 0.8
+description = "边境散修常见的防身短刃。"

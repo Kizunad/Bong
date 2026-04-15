@@ -1,0 +1,15 @@
+{
+  "kind": "moved",
+  "revision": 13,
+  "instance_id": 1001,
+  "from": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 0,
+    "col": 0
+  },
+  "to": {
+    "kind": "hotbar",
+    "index": 1
+  }
+}

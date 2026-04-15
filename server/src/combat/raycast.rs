@@ -106,7 +106,6 @@ pub fn raycast_humanoid(
         body_part: classify_body_part(hit.point, target_feet_position, origin),
     })
 }
-
 pub fn raycast_aabb(
     origin: DVec3,
     direction: DVec3,

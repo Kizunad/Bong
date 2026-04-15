@@ -5,11 +5,73 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+SPRING_MARSH_DECORATIONS = (
+    DecorationSpec(
+        name="ling_yun_mangrove",
+        kind="tree",
+        blocks=("mangrove_log", "mangrove_leaves", "mangrove_roots", "muddy_mangrove_roots"),
+        size_range=(7, 11),
+        rarity=0.40,
+        notes="灵云红树：盘根错节立于浅水，根部聚灵气。水乡地标。",
+    ),
+    DecorationSpec(
+        name="spirit_willow",
+        kind="tree",
+        blocks=("jungle_log", "moss_block", "azalea_leaves", "flowering_azalea_leaves"),
+        size_range=(8, 13),
+        rarity=0.25,
+        notes="灵垂柳：绿意浓密的长枝柳，花叶茂盛于灵泉眼周边。",
+    ),
+    DecorationSpec(
+        name="lotus_cluster",
+        kind="flower",
+        blocks=("lily_pad", "pink_tulip", "peony"),
+        size_range=(1, 1),
+        rarity=0.65,
+        notes="灵莲丛：水面浮满莲叶与粉花，修士静坐处。",
+    ),
+    DecorationSpec(
+        name="reed_thicket",
+        kind="shrub",
+        blocks=("sugar_cane", "tall_grass", "fern"),
+        size_range=(2, 4),
+        rarity=0.70,
+        notes="灵苇：成片高苇将水道分隔成迷宫，藏鱼与小灵兽。",
+    ),
+    DecorationSpec(
+        name="jade_moss_rock",
+        kind="boulder",
+        blocks=("moss_block", "mossy_cobblestone", "prismarine"),
+        size_range=(2, 4),
+        rarity=0.35,
+        notes="翠苔石：水边苔石，偶含微弱夜光。",
+    ),
+)
 
 
 class SpringMarshGenerator(TerrainProfileGenerator):
     profile_name = "spring_marsh"
+    extra_layers = (
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
+    ecology = EcologySpec(
+        decorations=SPRING_MARSH_DECORATIONS,
+        ambient_effects=("water_droplets", "frog_call", "gentle_qi_shimmer"),
+        notes="灵泉湿地生态：红树与垂柳环抱水眼，莲丛与苇草铺满浅滩，翠苔石点缀岛岸。"
+              "每一种植被都透着灵气，天然修行胜地。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -35,6 +97,11 @@ def fill_spring_marsh_tile(
             "biome_id",
             "feature_mask",
             "boundary_weight",
+            "qi_density",
+            "mofa_decay",
+            "qi_vein_flow",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
     mud_id = palette.ensure("mud")
@@ -136,13 +203,56 @@ def fill_spring_marsh_tile(
     shallow_water = (waterline >= 0) & (height >= waterline - 1.2)
     biome_id = np.where(shallow_water | island_low, mangrove_biome_id, marsh_biome_id)
 
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = np.round(waterline, 3).ravel().tolist()
-    buffer.layers["biome_id"] = biome_id.ravel().tolist()
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
+    # 灵泉湿地：灵气富集之地。灵脉汇入水体（灵泉眼），末法极低。
+    # 水体/池塘处 qi 最高，中心盆地有一条 "灵脉线" 沿 channels 方向。
+    qi_base = float(getattr(zone, "spirit_qi", 0.7))
+    spring_eye = np.maximum(0.0, pools - 0.25) * 2.0  # 灵泉眼
+    qi_vein_flow = np.clip(spring_eye * basin * 0.9, 0.0, 1.0)
+    qi_density = 0.25 + basin * 0.35 + spring_eye * 0.30
+    qi_density = np.where(waterline >= 0, qi_density + 0.12, qi_density)
+    qi_density = np.clip(qi_density * (0.4 + qi_base), 0.0, 1.0)
+    mofa_decay = np.clip(0.18 - basin * 0.08 - spring_eye * 0.10, 0.02, 0.35)
+
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.round(waterline, 3).ravel()
+    buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 ling_yun_mangrove / 2 spirit_willow / 3 lotus_cluster /
+    # 4 reed_thicket / 5 jade_moss_rock ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Water surface: lotus + reeds
+    on_water = waterline >= 0
+    flora_variant = np.where(on_water & (channels > 0.0), 3, flora_variant)
+    flora_variant = np.where(on_water & (channels <= 0.0), 4, flora_variant)
+    flora_density = np.where(on_water, np.maximum(flora_density, 0.55 + basin * 0.15), flora_density)
+
+    # Shoreline band: mangrove
+    shoreline_band = shoreline | ((waterline >= 0) & (height >= waterline) & (height < waterline + 2.5))
+    flora_variant = np.where(shoreline_band, 1, flora_variant)
+    flora_density = np.where(shoreline_band, np.maximum(flora_density, 0.60), flora_density)
+
+    # Island interior: willows around spring eyes
+    island_core = island_high & (spring_eye > 0.2)
+    flora_variant = np.where(island_core, 2, flora_variant)
+    flora_density = np.where(island_core, np.maximum(flora_density, 0.55), flora_density)
+
+    # Moss rocks: scattered on rim
+    rim_rock = (basin_blend < 0.5) & (rim > 0.35)
+    flora_variant = np.where(rim_rock & (flora_variant == 0), 5, flora_variant)
+    flora_density = np.where(rim_rock, np.maximum(flora_density, 0.40), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

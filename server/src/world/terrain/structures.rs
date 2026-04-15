@@ -2086,9 +2086,9 @@ fn shaft_block(seed: u64, dx: i32, dz: i32, y_offset: i32) -> BlockState {
 
 fn base_block(seed: u64, dx: i32, dz: i32, ring: i32) -> BlockState {
     let hash = hash_coords(dx + ring, dz - ring, seed.rotate_left(5));
-    if ring == 0 && hash % 5 == 0 {
+    if ring == 0 && hash.is_multiple_of(5) {
         CHISELED_STONE_BRICKS
-    } else if hash % 4 == 0 {
+    } else if hash.is_multiple_of(4) {
         BlockState::MOSSY_COBBLESTONE
     } else {
         rubble_block(hash)
@@ -2097,9 +2097,9 @@ fn base_block(seed: u64, dx: i32, dz: i32, ring: i32) -> BlockState {
 
 fn parapet_block(seed: u64, dx: i32, dz: i32) -> BlockState {
     let hash = hash_coords(dx, dz, seed.rotate_left(9));
-    if hash % 5 == 0 {
+    if hash.is_multiple_of(5) {
         COBBLESTONE_WALL
-    } else if hash % 3 == 0 {
+    } else if hash.is_multiple_of(3) {
         BlockState::MOSSY_COBBLESTONE
     } else {
         BlockState::STONE_BRICKS
@@ -2108,7 +2108,7 @@ fn parapet_block(seed: u64, dx: i32, dz: i32) -> BlockState {
 
 fn crown_block(seed: u64, dx: i32, dz: i32, layer: i32) -> BlockState {
     let hash = hash_coords(dx + layer, dz - layer, seed.rotate_left(15));
-    if layer == 0 && hash % 4 == 0 {
+    if layer == 0 && hash.is_multiple_of(4) {
         BlockState::STONE_BRICK_SLAB.set(PropName::Type, PropValue::Bottom)
     } else {
         shaft_block(seed.rotate_left(21), dx, dz, layer)
@@ -2153,9 +2153,9 @@ fn altar_floor_block(seed: u64, dx: i32, dz: i32) -> BlockState {
 
 fn altar_dais_block(seed: u64, dx: i32, dz: i32) -> BlockState {
     let hash = hash_coords(dx, dz, seed.rotate_left(13));
-    if hash % 5 == 0 {
+    if hash.is_multiple_of(5) {
         BlockState::CHISELED_POLISHED_BLACKSTONE
-    } else if hash % 3 == 0 {
+    } else if hash.is_multiple_of(3) {
         BlockState::CRACKED_POLISHED_BLACKSTONE_BRICKS
     } else {
         BlockState::POLISHED_BLACKSTONE_BRICKS

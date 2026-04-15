@@ -22,7 +22,7 @@ export const MAX_COMMANDS_PER_TICK = 5;
 export const MAX_NARRATION_LENGTH = 500;
 
 /** 单条 payload 最大字节数 (CustomPayload S2C) */
-export const MAX_PAYLOAD_BYTES = 1024;
+export const MAX_PAYLOAD_BYTES = 8192;
 
 // ─── 共享枚举 ───────────────────────────────────────────
 

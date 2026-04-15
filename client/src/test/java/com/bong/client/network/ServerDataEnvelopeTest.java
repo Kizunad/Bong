@@ -124,13 +124,48 @@ public class ServerDataEnvelopeTest {
     }
 
     @Test
-    void oversizePayloadReturnsError() throws IOException {
-        String json = PayloadFixtureLoader.readText("oversize-ui-open.json");
+    void oversizePayloadReturnsError() {
+        String json = buildWelcomePayloadOfSize(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1);
         int payloadSizeBytes = json.getBytes(StandardCharsets.UTF_8).length;
         ServerPayloadParseResult result = ServerDataEnvelope.parse(json, payloadSizeBytes);
 
-        assertTrue(payloadSizeBytes > ServerDataEnvelope.MAX_PAYLOAD_BYTES);
+        assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1, payloadSizeBytes);
         assertFalse(result.isSuccess());
-        assertTrue(result.errorMessage().contains("Payload exceeds max size"));
+        assertTrue(result.errorMessage().contains("Payload exceeds max size of 8192 bytes"));
+    }
+
+    @Test
+    void acceptsPayloadExactlyAtClientBudget() {
+        String json = buildWelcomePayloadOfSize(ServerDataEnvelope.MAX_PAYLOAD_BYTES);
+        int payloadSizeBytes = json.getBytes(StandardCharsets.UTF_8).length;
+
+        ServerPayloadParseResult result = ServerDataEnvelope.parse(json, payloadSizeBytes);
+
+        assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES, payloadSizeBytes);
+        assertTrue(result.isSuccess(), "payload at the shared 8192-byte budget should parse successfully");
+        assertEquals("welcome", result.envelope().type());
+    }
+
+    @Test
+    void rejectsPayloadAboveClientBudget() {
+        String json = buildWelcomePayloadOfSize(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1);
+        int payloadSizeBytes = json.getBytes(StandardCharsets.UTF_8).length;
+
+        ServerPayloadParseResult result = ServerDataEnvelope.parse(json, payloadSizeBytes);
+
+        assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1, payloadSizeBytes);
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("Payload exceeds max size of 8192 bytes"));
+    }
+
+    private static String buildWelcomePayloadOfSize(int targetSizeBytes) {
+        String prefix = "{\"v\":1,\"type\":\"welcome\",\"message\":\"";
+        String suffix = "\"}";
+        int messageLength = targetSizeBytes - prefix.length() - suffix.length();
+        if (messageLength < 0) {
+            throw new IllegalArgumentException("target size too small: " + targetSizeBytes);
+        }
+
+        return prefix + "a".repeat(messageLength) + suffix;
     }
 }

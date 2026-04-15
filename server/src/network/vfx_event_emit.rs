@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn emit_drops_oversize_payload_without_crashing() {
-        // 单独伪造一个 oversize 的 anim_id 触发 to_json_bytes_checked 里的 Oversize 分支。
+        // 单独伪造一个超过 MAX_PAYLOAD_BYTES 的 anim_id，触发 to_json_bytes_checked 里的 Oversize 分支。
         let mut app = setup_vfx_emit_app();
         let mut helper = spawn_mock_client_at(&mut app, "Near", [10.0, 64.0, 10.0]);
 
@@ -516,7 +516,10 @@ mod tests {
             DVec3::new(10.0, 64.0, 10.0),
             VfxEventPayloadV1::PlayAnim {
                 target_player: TEST_UUID.to_string(),
-                anim_id: format!("bong:{}", "a".repeat(2048)),
+                anim_id: format!(
+                    "bong:{}",
+                    "a".repeat(crate::schema::common::MAX_PAYLOAD_BYTES * 2)
+                ),
                 priority: 1000,
                 fade_in_ticks: Some(3),
             },

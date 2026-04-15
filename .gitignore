@@ -67,3 +67,9 @@ worldgen/worldgen-mofa/server/
 
 # Vendored third-party mods (reference-only, not compiled in)
 third_party/
+
+# oh-my-opencode / Sisyphus 编排运行态
+# Prometheus 规整产物、Atlas boulder.json、plan 快照等均为一次性
+.sisyphus/
+# 全自动 plan 消费脚本（scripts/bong-plan-auto.sh）生成的 worktrees
+.worktrees/

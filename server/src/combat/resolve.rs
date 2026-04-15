@@ -87,7 +87,6 @@ pub fn apply_defense_intents(
         });
     }
 }
-
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_intents(
     clock: Res<CombatClock>,

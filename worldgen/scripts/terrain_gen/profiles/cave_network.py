@@ -5,12 +5,68 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+CAVE_NETWORK_DECORATIONS = (
+    DecorationSpec(
+        name="glow_lichen_column",
+        kind="shrub",
+        blocks=("glow_lichen", "dripstone_block", "pointed_dripstone"),
+        size_range=(3, 6),
+        rarity=0.60,
+        notes="光苔钟柱：洞顶垂下的钟乳石群，表面覆夜光苔藓。",
+    ),
+    DecorationSpec(
+        name="red_vine_curtain",
+        kind="shrub",
+        blocks=("weeping_vines", "crimson_roots"),
+        size_range=(4, 8),
+        rarity=0.50,
+        notes="血藤帘：从入口垂下的红藤，遮盖洞口不可轻入。",
+    ),
+    DecorationSpec(
+        name="sinkhole_boulder",
+        kind="boulder",
+        blocks=("deepslate", "tuff", "cobbled_deepslate"),
+        size_range=(3, 5),
+        rarity=0.45,
+        notes="陷穴石：陷落井周边堆积的深板岩块。",
+    ),
+    DecorationSpec(
+        name="forbidden_pillar",
+        kind="crystal",
+        blocks=("chiseled_deepslate", "amethyst_cluster", "soul_lantern"),
+        size_range=(5, 8),
+        rarity=0.18,
+        notes="禁制柱：古修士封印时立下的石柱，表面镌刻符纹。",
+    ),
+)
 
 
 class CaveNetworkGenerator(TerrainProfileGenerator):
     profile_name = "cave_network"
-    extra_layers = ("cave_mask", "ceiling_height", "entrance_mask")
+    extra_layers = (
+        "cave_mask",
+        "ceiling_height",
+        "entrance_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
+    ecology = EcologySpec(
+        decorations=CAVE_NETWORK_DECORATIONS,
+        ambient_effects=("dripstone_drip", "cool_cave_echo"),
+        notes="幽暗地穴生态：入口处血藤成帘，内部光苔钟柱遍布提供照明，"
+              "深处偶立禁制柱（古修士封印）。陷穴石铺满侧道。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -29,7 +85,9 @@ def fill_cave_network_tile(
         tile, tile_size,
         ("height", "surface_id", "subsurface_id", "water_level",
          "biome_id", "feature_mask", "boundary_weight",
-         "cave_mask", "ceiling_height", "entrance_mask"),
+         "cave_mask", "ceiling_height", "entrance_mask",
+         "qi_density", "mofa_decay", "qi_vein_flow",
+         "flora_density", "flora_variant_id"),
     )
     stone_id = palette.ensure("stone")
     coarse_dirt_id = palette.ensure("coarse_dirt")
@@ -78,16 +136,65 @@ def fill_cave_network_tile(
     feature_mask = np.minimum(1.0, cave_mask * 0.8 + entrance_mask * 0.35)
 
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [deepslate_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [cave_biome_id] * area
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
-    buffer.layers["cave_mask"] = np.round(cave_mask, 3).ravel().tolist()
-    buffer.layers["ceiling_height"] = np.round(ceiling_height, 3).ravel().tolist()
-    buffer.layers["entrance_mask"] = np.round(entrance_mask, 3).ravel().tolist()
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, deepslate_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = np.full(area, cave_biome_id, dtype=np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["cave_mask"] = np.round(cave_mask, 3).ravel()
+    buffer.layers["ceiling_height"] = np.round(ceiling_height, 3).ravel()
+    buffer.layers["entrance_mask"] = np.round(entrance_mask, 3).ravel()
+
+    # 幽暗地穴：地下灵脉汇聚。深洞处 qi 显著高（灵压被岩壁闭合），入口处 qi 外溢。
+    # 末法中等——地下封闭易积腐朽秽气。
+    qi_base = float(getattr(zone, "spirit_qi", 0.4))
+    deep_cave = np.maximum(0.0, cave_mask - 0.4) * 1.6
+    qi_vein_flow = np.clip(deep_cave * cluster * (0.5 + qi_base), 0.0, 1.0)
+    qi_density = np.clip(
+        0.12 + deep_cave * 0.35 + entrance_mask * 0.10,
+        0.0,
+        1.0,
+    ) * (0.5 + qi_base)
+    qi_density = np.clip(qi_density, 0.0, 1.0)
+    mofa_decay = np.clip(
+        0.45 + cave_mask * 0.15 - qi_vein_flow * 0.20,
+        0.1,
+        0.8,
+    )
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 glow_lichen_column / 2 red_vine_curtain / 3 sinkhole_boulder /
+    # 4 forbidden_pillar ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Entrances draped with red vines
+    entrance_band = entrance_mask > 0.35
+    flora_variant = np.where(entrance_band, 2, flora_variant)
+    flora_density = np.where(entrance_band, np.maximum(flora_density, 0.55), flora_density)
+
+    # Interior: glow_lichen columns (common)
+    interior = cave_mask > 0.40
+    flora_variant = np.where(interior & (flora_variant == 0), 1, flora_variant)
+    flora_density = np.where(interior, np.maximum(flora_density, 0.55 + cave_mask * 0.20), flora_density)
+
+    # Boulders near sinkholes
+    boulder_band = (sinkhole < -0.25) & (flora_variant == 0)
+    flora_variant = np.where(boulder_band, 3, flora_variant)
+    flora_density = np.where(boulder_band, np.maximum(flora_density, 0.45), flora_density)
+
+    # Rare forbidden pillars where deep qi-vein concentrates
+    pillar_band = (qi_vein_flow > 0.6) & (cave_mask > 0.55)
+    flora_variant = np.where(pillar_band, 4, flora_variant)
+    flora_density = np.where(pillar_band, np.maximum(flora_density, 0.30), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

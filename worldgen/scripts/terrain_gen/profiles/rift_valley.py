@@ -7,12 +7,68 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
-from .base import ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    EcologySpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+)
+
+
+RIFT_VALLEY_DECORATIONS = (
+    DecorationSpec(
+        name="scarlet_bone_tree",
+        kind="tree",
+        blocks=("crimson_stem", "bone_block", "nether_wart_block"),
+        size_range=(5, 10),
+        rarity=0.30,
+        notes="赤骨树：绯红菌柄与骨块穿插，树冠如凝血。血谷独有。",
+    ),
+    DecorationSpec(
+        name="fire_vein_cactus",
+        kind="shrub",
+        blocks=("magma_block", "blackstone", "red_concrete"),
+        size_range=(2, 4),
+        rarity=0.55,
+        notes="火脉仙人掌：裂隙旁丛生，通体发烫，吸附裂缝火气。",
+    ),
+    DecorationSpec(
+        name="blood_stele",
+        kind="boulder",
+        blocks=("red_sandstone", "chiseled_red_sandstone", "terracotta"),
+        size_range=(3, 6),
+        rarity=0.40,
+        notes="血碑：独立矗立的红砂岩碑，表面似被血染。古战纪录。",
+    ),
+    DecorationSpec(
+        name="nether_nylium_patch",
+        kind="shrub",
+        blocks=("crimson_nylium", "crimson_roots", "weeping_vines"),
+        size_range=(1, 2),
+        rarity=0.65,
+        notes="绯血苔藓：成片覆盖石缝，根须下探灵脉。",
+    ),
+)
 
 
 class RiftValleyGenerator(TerrainProfileGenerator):
     profile_name = "rift_valley"
-    extra_layers = ("rift_axis_sdf", "rim_edge_mask", "fracture_mask")
+    extra_layers = (
+        "rift_axis_sdf",
+        "rim_edge_mask",
+        "fracture_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
+    )
+    ecology = EcologySpec(
+        decorations=RIFT_VALLEY_DECORATIONS,
+        ambient_effects=("sulfur_puff", "distant_roar", "blood_moon_haze"),
+        notes="血谷生态：赤骨树沿裂隙生长，火脉仙人掌在断层边吐热气，"
+              "血碑散布谷底。绯血苔藓铺地，红黑主调。",
+    )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
         return (
@@ -38,6 +94,11 @@ def fill_rift_valley_tile(
         "rift_axis_sdf",
         "rim_edge_mask",
         "fracture_mask",
+        "qi_density",
+        "mofa_decay",
+        "qi_vein_flow",
+        "flora_density",
+        "flora_variant_id",
     )
     buffer = TileFieldBuffer.create(tile, tile_size, layer_names)
     blackstone_id = palette.ensure("blackstone")
@@ -133,17 +194,65 @@ def fill_rift_valley_tile(
     )
     feature_mask = np.maximum(valley_strength, rim_edge_mask * 0.72)
 
+    # 血谷：末法重（0.7），灵气稀薄但沿裂隙轴线有一条灵脉（古战场残余灵压）。
+    # qi_vein_flow 集中在 axis 附近（normalized_cross 接近 0），随 branch 扩散。
+    qi_base = float(getattr(zone, "spirit_qi", 0.3))
+    axis_core = np.maximum(0.0, 1.0 - normalized_cross * 2.4) * axial_profile
+    vein_wiggle = 0.5 + fbm_2d(wx, wz, scale=180.0, octaves=3, seed=360) * 0.5
+    qi_vein_flow = np.clip(axis_core * vein_wiggle, 0.0, 1.0)
+    # 灵气：谷底贴着灵脉略高，谷壁和裂隙更低（断裂吸散灵气）
+    qi_density = np.clip(
+        0.06 + qi_vein_flow * (0.45 * qi_base / max(qi_base, 0.3))
+        - fracture_mask * 0.08,
+        0.0,
+        1.0,
+    )
+    # 末法：整体高，fracture 越深越腐朽（骨尘堆积）
+    mofa_decay = np.clip(
+        0.55 + valley_strength * 0.15 + fracture_mask * 0.15 - qi_vein_flow * 0.20,
+        0.1,
+        0.95,
+    )
+
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [rift_biome_id] * area
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
-    buffer.layers["rift_axis_sdf"] = np.round(normalized_cross, 3).ravel().tolist()
-    buffer.layers["rim_edge_mask"] = np.round(rim_edge_mask, 3).ravel().tolist()
-    buffer.layers["fracture_mask"] = np.round(fracture_mask, 3).ravel().tolist()
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = np.full(area, rift_biome_id, dtype=np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["rift_axis_sdf"] = np.round(normalized_cross, 3).ravel()
+    buffer.layers["rim_edge_mask"] = np.round(rim_edge_mask, 3).ravel()
+    buffer.layers["fracture_mask"] = np.round(fracture_mask, 3).ravel()
+    buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
+    buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["qi_vein_flow"] = np.round(qi_vein_flow, 3).ravel()
+
+    # --- Flora: 1 scarlet_bone_tree / 2 fire_vein_cactus / 3 blood_stele /
+    # 4 nether_nylium_patch ---
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    bone_tree_band = (qi_vein_flow > 0.25) & (valley_strength > 0.3)
+    flora_variant = np.where(bone_tree_band, 1, flora_variant)
+    flora_density = np.where(bone_tree_band, np.maximum(flora_density, 0.45), flora_density)
+
+    cactus_band = (fracture_mask > 0.35) & (valley_strength > 0.2)
+    flora_variant = np.where(cactus_band, 2, flora_variant)
+    flora_density = np.where(cactus_band, np.maximum(flora_density, 0.55), flora_density)
+
+    stele_band = rim_edge_mask > 0.6
+    flora_variant = np.where(stele_band, 3, flora_variant)
+    flora_density = np.where(stele_band, np.maximum(flora_density, 0.40), flora_density)
+
+    nylium_band = (valley_strength > 0.5) & (flora_variant == 0)
+    flora_variant = np.where(nylium_band, 4, flora_variant)
+    flora_density = np.where(nylium_band, np.maximum(flora_density, 0.50), flora_density)
+
+    flora_density = np.clip(flora_density, 0.0, 1.0)
+    buffer.layers["flora_density"] = np.round(flora_density, 3).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

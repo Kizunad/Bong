@@ -6,7 +6,15 @@ from pathlib import Path
 
 import numpy as np
 
+from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
+from ..profiles import (
+    GLOBAL_DECORATION_PALETTE,
+    PROFILE_DECORATION_OFFSETS,
+    get_profile_generator,
+    list_profile_generators,
+)
+from ..profiles.base import DecorationSpec, EcologySpec
 
 BIOME_PALETTE = (
     "minecraft:plains",
@@ -36,13 +44,13 @@ def _layer_file_name(layer_name: str) -> str:
     return f"{layer_name}.bin"
 
 
-def _write_float_layer(path: Path, values: list[float | int]) -> None:
-    arr = np.array(values, dtype=np.float32)
+def _write_float_layer(path: Path, values: np.ndarray) -> None:
+    arr = np.ascontiguousarray(values, dtype=np.float32)
     path.write_bytes(arr.tobytes())
 
 
-def _write_u8_layer(path: Path, values: list[float | int]) -> None:
-    arr = np.array(values, dtype=np.uint8)
+def _write_u8_layer(path: Path, values: np.ndarray) -> None:
+    arr = np.ascontiguousarray(values, dtype=np.uint8)
     path.write_bytes(arr.tobytes())
 
 
@@ -86,6 +94,10 @@ def export_rasters(
             }
         )
 
+    pois_payload = _collect_poi_payload(plan.blueprint_zones)
+    ecology_payload = _collect_profile_ecology()
+    global_decoration_palette = _collect_global_decoration_palette()
+
     manifest = {
         "version": 1,
         "backend": "raster",
@@ -100,9 +112,47 @@ def export_rasters(
         "surface_palette": list(fields.surface_palette.names),
         "biome_palette": list(BIOME_PALETTE),
         "tiles": manifest_tiles,
+        "pois": pois_payload,
+        "semantic_layers": [
+            name
+            for name in ("qi_density", "mofa_decay", "qi_vein_flow")
+            if name in LAYER_REGISTRY
+        ],
+        "vertical_layers": [
+            name
+            for name in (
+                "sky_island_mask",
+                "sky_island_base_y",
+                "sky_island_thickness",
+                "underground_tier",
+                "cavern_floor_y",
+                "ceiling_height",
+            )
+            if name in LAYER_REGISTRY
+        ],
+        "abyssal_tier_floor_y": {"1": 28.0, "2": -4.0, "3": -36.0},
+        "anomaly_kinds": {
+            "0": "none",
+            "1": "spacetime_rift",
+            "2": "qi_turbulence",
+            "3": "blood_moon_anchor",
+            "4": "cursed_echo",
+            "5": "wild_formation",
+        },
+        "profiles_ecology": ecology_payload,
+        "global_decoration_palette": global_decoration_palette,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
+            "Semantic layers (qi_density / mofa_decay / qi_vein_flow) carry the xianxia world model.",
+            "Vertical layers encode 3D world from 2D rasters: sky_island_* for floating isles above",
+            "  (Rust should gate on mask>=0.2), underground_tier+cavern_floor_y for stacked caves below",
+            "  (tier 1/2/3 floors per abyssal_tier_floor_y). Sentinel 9999 = 'no isle/cavern here'.",
+            "Ecology: flora_density (0..1) + flora_variant_id (uint8 index into ",
+            "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
+            "Anomaly: anomaly_intensity (0..1) + anomaly_kind (uint8 from anomaly_kinds map).",
+            "  Event systems trigger themed spawns / FX when intensity > 0.3.",
+            "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
         ],
     }
 
@@ -115,6 +165,75 @@ def export_rasters(
         "manifest": manifest_path,
         "raster_dir": output_dir,
     }
+
+
+def _poi_dict(zone_name: str, poi: PoiSpec) -> dict[str, object]:
+    return {
+        "zone": zone_name,
+        "kind": poi.kind,
+        "name": poi.name,
+        "pos_xyz": [poi.pos_xyz[0], poi.pos_xyz[1], poi.pos_xyz[2]],
+        "tags": list(poi.tags),
+        "unlock": poi.unlock,
+        "qi_affinity": poi.qi_affinity,
+        "danger_bias": poi.danger_bias,
+    }
+
+
+def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        for poi in zone.pois:
+            payload.append(_poi_dict(zone.name, poi))
+    return payload
+
+
+def _decoration_dict(
+    profile_name: str, local_idx: int, deco: DecorationSpec
+) -> dict[str, object]:
+    """Per-profile decoration view that carries both local and global ids."""
+    local_id = local_idx + 1
+    offset = PROFILE_DECORATION_OFFSETS.get(profile_name, 0)
+    global_id = offset + local_idx if offset > 0 else 0
+    return {
+        "local_id": local_id,
+        "global_id": global_id,
+        "name": deco.name,
+        "kind": deco.kind,
+        "blocks": list(deco.blocks),
+        "size_range": list(deco.size_range),
+        "rarity": deco.rarity,
+        "notes": deco.notes,
+    }
+
+
+def _ecology_dict(profile_name: str, spec: EcologySpec) -> dict[str, object]:
+    # variant_id 0 is reserved for "no flora"; actual palette starts at 1.
+    return {
+        "decorations": [
+            _decoration_dict(profile_name, i, d)
+            for i, d in enumerate(spec.decorations)
+        ],
+        "ambient_effects": list(spec.ambient_effects),
+        "notes": spec.notes,
+    }
+
+
+def _collect_profile_ecology() -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for profile_name in list_profile_generators():
+        gen = get_profile_generator(profile_name)
+        payload[profile_name] = _ecology_dict(profile_name, gen.ecology)
+    return payload
+
+
+def _collect_global_decoration_palette() -> list[dict[str, object]]:
+    """Return the flat global palette for the raster manifest.
+
+    flora_variant_id rasters are written in global-id space (see stitcher
+    _remap_flora_variant_to_global). Consumers index this list directly.
+    """
+    return [dict(entry) for entry in GLOBAL_DECORATION_PALETTE]
 
 
 def build_raster_bake_plan(plan: TerrainGenerationPlan, output_root: Path) -> BakePlan:

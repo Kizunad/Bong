@@ -145,7 +145,7 @@ impl VfxEventV1 {
         self.payload.payload_type()
     }
 
-    /// 先做区间校验，再序列化 + 检查 MAX_PAYLOAD_BYTES（1024 字节，和 server_data 一致）。
+    /// 先做区间校验，再序列化 + 检查 MAX_PAYLOAD_BYTES（当前与 server_data 共用上限）。
     pub fn to_json_bytes_checked(&self) -> Result<Vec<u8>, VfxEventBuildError> {
         self.payload.validate_ranges()?;
         let bytes = serde_json::to_vec(self).map_err(VfxEventBuildError::Json)?;

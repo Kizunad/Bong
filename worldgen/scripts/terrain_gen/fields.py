@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .blueprint import BlueprintZone
 
@@ -58,7 +60,64 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "entrance_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- xianxia / mofa semantic layers ---
+    # qi_density: 灵气浓度 (0~1). Baseline of mofa world is "thin qi"; zones like
+    #   spring_marsh lift it, waste_plateau flatlines it. `lerp` lets overlays
+    #   raise OR lower the base value smoothly across zone boundaries.
+    # mofa_decay: 末法腐朽度 (0~1). Conceptual dual of qi_density — a region can
+    #   have low qi but not yet decayed (pristine but silent), or be fully
+    #   decayed with residual qi (cursed land). Also `lerp` blended.
+    # qi_vein_flow: 灵脉流向强度 (0~1). Sparse linear structure; `maximum` so
+    #   overlays only add veins, never erase nearby zone's vein trails.
+    "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
+    "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
+    "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # --- vertical-dimension layers ---
+    # sky_island_mask: 该列上空是否存在浮岛 (0~1). profile 写入浮岛核心强度，
+    #   stitcher `maximum`+weight 让边界自然消退 → 浮岛视觉上边缘逐渐变薄。
+    # sky_island_base_y: 浮岛底面世界 y. safe_default=9999 表示"无浮岛"，
+    #   用 `minimum` blend 避免边界乘 weight 导致坐标值失真；Rust 消费时以
+    #   sky_island_mask>0.01 做 gate 判定是否真的生成浮岛块。
+    # sky_island_thickness: 浮岛厚度（沿 -Y 方向挖 thickness 深）. maximum blend.
+    # underground_tier: 0=地表，1=浅洞，2=中洞，3=深渊. uint8 maximum blend.
+    # cavern_floor_y: 最深层大空洞的地板 y. safe_default=9999, `minimum` blend.
+    "sky_island_mask":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "sky_island_base_y":    LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    "sky_island_thickness": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "underground_tier":     LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
+    "cavern_floor_y":       LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
+    # --- ecology layers ---
+    # flora_density: [0,1] likelihood a decoration occupies this column.
+    #   Rust consumer samples it per-chunk and rolls against per-variant rarity.
+    # flora_variant_id: uint8 index into the zone profile's EcologySpec.decorations
+    #   tuple (or into a merged palette — manifest declares both). 0 = none.
+    "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
+    # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
+    #   system spawns themed mobs / visual FX when intensity > threshold.
+    # anomaly_kind: uint8 enum —
+    #   0 none, 1 spacetime_rift, 2 qi_turbulence, 3 blood_moon_anchor,
+    #   4 cursed_echo, 5 wild_formation. Declared in manifest.anomaly_kinds.
+    "anomaly_intensity":    LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "anomaly_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
+
+
+def layer_storage_dtype(layer_name: str) -> np.dtype:
+    """Internal storage dtype for a layer.
+
+    Discrete-id layers (export_type == "uint8") live in memory as uint8 so they
+    survive np.where / blending without silent up-casts to int32/64.  Continuous
+    layers stay in float64 to preserve mid-pipeline precision; the raster baker
+    downcasts to float32 only at the final write boundary.
+    """
+    spec = LAYER_REGISTRY.get(layer_name)
+    if spec is None:
+        return np.dtype(np.float64)
+    if spec.export_type == "uint8":
+        return np.dtype(np.uint8)
+    return np.dtype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -218,7 +277,7 @@ class SurfacePalette:
 class TileFieldBuffer:
     tile: WorldTile
     tile_size: int
-    layers: dict[str, list[float | int]]
+    layers: dict[str, np.ndarray]
     contributing_zones: list[str] = field(default_factory=list)
 
     @classmethod
@@ -226,10 +285,11 @@ class TileFieldBuffer:
         cls, tile: WorldTile, tile_size: int, layer_names: Iterable[str]
     ) -> "TileFieldBuffer":
         area = tile_size * tile_size
-        layers = {
-            name: [LAYER_REGISTRY[name].safe_default if name in LAYER_REGISTRY else 0.0] * area
-            for name in layer_names
-        }
+        layers: dict[str, np.ndarray] = {}
+        for name in layer_names:
+            spec = LAYER_REGISTRY.get(name)
+            default = spec.safe_default if spec is not None else 0.0
+            layers[name] = np.full(area, default, dtype=layer_storage_dtype(name))
         return cls(tile=tile, tile_size=tile_size, layers=layers)
 
     def index(self, local_x: int, local_z: int) -> int:
@@ -241,17 +301,19 @@ class TileFieldBuffer:
         self.layers[layer_name][self.index(local_x, local_z)] = value
 
     def get_value(self, layer_name: str, local_x: int, local_z: int) -> float | int:
-        return self.layers[layer_name][self.index(local_x, local_z)]
+        return self.layers[layer_name][self.index(local_x, local_z)].item()
 
     def set_index_value(self, layer_name: str, index: int, value: float | int) -> None:
         self.layers[layer_name][index] = value
 
     def get_index_value(self, layer_name: str, index: int) -> float | int:
-        return self.layers[layer_name][index]
+        return self.layers[layer_name][index].item()
 
     def layer_stats(self, layer_name: str) -> tuple[float | int, float | int]:
-        values = self.layers[layer_name]
-        return min(values), max(values)
+        arr = self.layers[layer_name]
+        if arr.size == 0:
+            return 0, 0
+        return arr.min().item(), arr.max().item()
 
 
 @dataclass(frozen=True)

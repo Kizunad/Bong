@@ -39,6 +39,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PlayerState => "player_state",
         ServerDataType::UiOpen => "ui_open",
         ServerDataType::CultivationDetail => "cultivation_detail",
+        ServerDataType::InventorySnapshot => "inventory_snapshot",
+        ServerDataType::InventoryEvent => "inventory_event",
     }
 }
 
@@ -179,6 +181,11 @@ fn strip_offline_alias_prefix(value: &str) -> &str {
 mod server_data_tests {
     use super::*;
     use crate::schema::common::{EventKind, NarrationScope, NarrationStyle, MAX_PAYLOAD_BYTES};
+    use crate::schema::inventory::{
+        ContainerIdV1, ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryEventV1,
+        InventoryItemViewV1, InventorySnapshotV1, InventoryWeightV1, ItemRarityV1,
+        PlacedInventoryItemV1,
+    };
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
         ServerDataPayloadV1, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION, WELCOME_MESSAGE,
@@ -194,6 +201,103 @@ mod server_data_tests {
             social: 0.65,
             karma: 0.2,
             territory: 0.1,
+        }
+    }
+
+    fn sample_inventory_item(
+        instance_id: u64,
+        item_id: &str,
+        display_name: &str,
+        rarity: ItemRarityV1,
+    ) -> InventoryItemViewV1 {
+        InventoryItemViewV1 {
+            instance_id,
+            item_id: item_id.to_string(),
+            display_name: display_name.to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            weight: 0.2,
+            rarity,
+            description: "inventory mirror test fixture".to_string(),
+            stack_count: 1,
+            spirit_quality: 0.5,
+            durability: 0.9,
+        }
+    }
+
+    fn sample_inventory_snapshot() -> InventorySnapshotV1 {
+        InventorySnapshotV1 {
+            revision: 12,
+            containers: vec![
+                ContainerSnapshotV1 {
+                    id: ContainerIdV1::MainPack,
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                },
+                ContainerSnapshotV1 {
+                    id: ContainerIdV1::SmallPouch,
+                    name: "小口袋".to_string(),
+                    rows: 3,
+                    cols: 3,
+                },
+                ContainerSnapshotV1 {
+                    id: ContainerIdV1::FrontSatchel,
+                    name: "前挂包".to_string(),
+                    rows: 3,
+                    cols: 4,
+                },
+            ],
+            placed_items: vec![PlacedInventoryItemV1 {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+                item: sample_inventory_item(
+                    1001,
+                    "starter_talisman",
+                    "启程护符",
+                    ItemRarityV1::Uncommon,
+                ),
+            }],
+            equipped: EquippedInventorySnapshotV1 {
+                head: None,
+                chest: None,
+                legs: None,
+                feet: None,
+                main_hand: Some(sample_inventory_item(
+                    1003,
+                    "training_blade",
+                    "训练短刃",
+                    ItemRarityV1::Common,
+                )),
+                off_hand: None,
+                two_hand: None,
+            },
+            hotbar: vec![
+                Some(sample_inventory_item(
+                    1004,
+                    "healing_draught",
+                    "疗伤药剂",
+                    ItemRarityV1::Uncommon,
+                )),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            bone_coins: 57,
+            weight: InventoryWeightV1 {
+                current: 3.5,
+                max: 50.0,
+            },
+            realm: "qi_refining_1".to_string(),
+            qi_current: 24.0,
+            qi_max: 100.0,
+            body_level: 0.18,
         }
     }
 
@@ -416,5 +520,54 @@ mod server_data_tests {
                 panic!("unexpected json error while testing oversize rejection: {err}");
             }
         }
+    }
+
+    #[test]
+    fn labels_inventory_payload_types() {
+        assert_eq!(
+            payload_type_label(ServerDataType::InventorySnapshot),
+            "inventory_snapshot"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::InventoryEvent),
+            "inventory_event"
+        );
+    }
+
+    #[test]
+    fn serializes_inventory_payloads() {
+        let snapshot_payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(
+            sample_inventory_snapshot(),
+        )));
+        let snapshot_bytes = serialize_server_data_payload(&snapshot_payload)
+            .expect("inventory snapshot payload should serialize");
+        let snapshot_json: serde_json::Value = serde_json::from_slice(&snapshot_bytes)
+            .expect("serialized inventory snapshot should decode as JSON");
+
+        assert_eq!(
+            snapshot_json.get("type"),
+            Some(&json!(payload_type_label(snapshot_payload.payload_type())))
+        );
+        assert_eq!(snapshot_json.get("revision"), Some(&json!(12)));
+        assert_eq!(snapshot_json.get("bone_coins"), Some(&json!(57)));
+
+        let event_payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+            InventoryEventV1::StackChanged {
+                revision: 13,
+                instance_id: 1004,
+                stack_count: 1,
+            },
+        ));
+        let event_bytes = serialize_server_data_payload(&event_payload)
+            .expect("inventory event payload should serialize");
+        let event_json: serde_json::Value = serde_json::from_slice(&event_bytes)
+            .expect("serialized inventory event should decode as JSON");
+
+        assert_eq!(
+            event_json.get("type"),
+            Some(&json!(payload_type_label(event_payload.payload_type())))
+        );
+        assert_eq!(event_json.get("kind"), Some(&json!("stack_changed")));
+        assert_eq!(event_json.get("instance_id"), Some(&json!(1004)));
     }
 }

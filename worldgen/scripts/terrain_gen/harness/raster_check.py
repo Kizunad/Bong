@@ -5,6 +5,12 @@ Catches known data integrity issues before they reach the Rust server:
 - water level above surrounding terrain (floating water)
 - height values outside sane world range
 - missing layers in tiles
+- qi_density / mofa_decay outside [0, 1]
+- qi_density vs zone.spirit_qi declared gross mismatch
+- sky_island_base_y outside [200, 400] when mask > 0
+- underground_tier outside {0,1,2,3}
+- cavern_floor_y outside [-64, 64] when tier > 0
+- anomaly_kind outside {0..5} or present without anomaly_intensity
 """
 
 from __future__ import annotations
@@ -67,6 +73,85 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     warnings.append(
                         f"{tile_id}: height max={h_max:.1f} near world ceiling"
                     )
+
+        # Validate vertical layers: sky_island_base_y / cavern_floor_y use
+        # sentinel 9999 for "no isle/cavern here", so presence must correlate
+        # with the companion mask/tier layer.
+        sky_mask_file = tile_dir / "sky_island_mask.bin"
+        sky_base_file = tile_dir / "sky_island_base_y.bin"
+        if sky_mask_file.exists() and sky_base_file.exists():
+            mask_vals = _read_float_layer(sky_mask_file, area)
+            base_vals = _read_float_layer(sky_base_file, area)
+            if mask_vals is not None and base_vals is not None:
+                for m, b in zip(mask_vals, base_vals):
+                    if m > 0.05 and (b < 200.0 or b > 400.0):
+                        warnings.append(
+                            f"{tile_id}: sky_island_base_y={b:.1f} out of "
+                            f"[200,400] while mask={m:.2f} (zones={zones})"
+                        )
+                        break
+
+        # underground_tier must be {0,1,2,3}. It's uint8 so just spot-check range.
+        tier_file = tile_dir / "underground_tier.bin"
+        if tier_file.exists():
+            raw = tier_file.read_bytes()
+            if len(raw) == area:
+                t_max = max(raw)
+                if t_max > 3:
+                    errors.append(
+                        f"{tile_id}: underground_tier max={t_max} > 3 (zones={zones})"
+                    )
+
+        floor_file = tile_dir / "cavern_floor_y.bin"
+        if floor_file.exists() and tier_file.exists():
+            floor_vals = _read_float_layer(floor_file, area)
+            tier_raw = tier_file.read_bytes()
+            if floor_vals is not None and len(tier_raw) == area:
+                for t, f in zip(tier_raw, floor_vals):
+                    if t > 0 and (f < -64.0 or f > 64.0):
+                        warnings.append(
+                            f"{tile_id}: cavern_floor_y={f:.1f} out of "
+                            f"[-64,64] while tier={t} (zones={zones})"
+                        )
+                        break
+
+        # Anomaly integrity: kind must be 0..5 and non-zero only when
+        # intensity > 0 (otherwise event systems will query a ghost event).
+        anomaly_kind_file = tile_dir / "anomaly_kind.bin"
+        anomaly_int_file = tile_dir / "anomaly_intensity.bin"
+        if anomaly_kind_file.exists():
+            raw = anomaly_kind_file.read_bytes()
+            if len(raw) == area and max(raw) > 5:
+                errors.append(
+                    f"{tile_id}: anomaly_kind max={max(raw)} > 5 (zones={zones})"
+                )
+            if anomaly_int_file.exists() and len(raw) == area:
+                int_vals = _read_float_layer(anomaly_int_file, area)
+                if int_vals is not None:
+                    for k, i in zip(raw, int_vals):
+                        if k > 0 and i <= 0.0:
+                            warnings.append(
+                                f"{tile_id}: anomaly_kind={k} present without "
+                                f"intensity (zones={zones})"
+                            )
+                            break
+
+        # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
+        # qi_vein_flow likewise. These are narrative-facing so out-of-range
+        # values will confuse downstream agent / HUD consumers.
+        for semantic_layer in ("qi_density", "mofa_decay", "qi_vein_flow"):
+            sem_file = tile_dir / f"{semantic_layer}.bin"
+            if not sem_file.exists():
+                continue
+            sem_data = _read_float_layer(sem_file, area)
+            if sem_data is None:
+                continue
+            s_min, s_max = min(sem_data), max(sem_data)
+            if s_min < -0.01 or s_max > 1.01:
+                errors.append(
+                    f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
+                    f"outside [0,1] (zones={zones})"
+                )
 
         # Check water vs terrain consistency
         water_file = tile_dir / "water_level.bin"

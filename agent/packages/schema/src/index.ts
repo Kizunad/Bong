@@ -11,6 +11,9 @@ export * from "./chat-message.js";
 export * from "./client-payload.js";
 export * from "./client-request.js";
 export * from "./combat-event.js";
+export * from "./inventory.js";
+export * from "./narration.js";
+export * from "./server-data.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
 export * from "./world-state.js";
@@ -26,5 +29,3 @@ export * from "./cultivation.js";
 export * from "./forge-event.js";
 export * from "./insight-offer.js";
 export * from "./insight-request.js";
-export * from "./narration.js";
-export * from "./server-data.js";

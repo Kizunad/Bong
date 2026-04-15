@@ -468,7 +468,10 @@ fn place_marsh_tree(
     for dy in -2..0 {
         let root_y = trunk_base_y + dy;
         for (rdx, rdz) in [(1_i32, 0_i32), (-1, 0), (0, 1), (0, -1)] {
-            if hash.wrapping_mul((rdx.wrapping_add(7)) as u32) % 3 == 0 {
+            if hash
+                .wrapping_mul((rdx.wrapping_add(7)) as u32)
+                .is_multiple_of(3)
+            {
                 continue;
             }
             let rx = local_x as i32 + rdx;
@@ -847,23 +850,15 @@ fn cave_vine_tip(hash: u32) -> BlockState {
         24 => PropValue::_24,
         _ => PropValue::_25,
     };
-    let berries = if hash % 5 == 0 {
-        PropValue::True
-    } else {
-        PropValue::False
-    };
+    let berries = hash.is_multiple_of(5);
     BlockState::CAVE_VINES
         .set(PropName::Age, age_value)
-        .set(PropName::Berries, berries)
+        .set(PropName::Berries, berries.into())
 }
 
 fn cave_vine_body(hash: u32) -> BlockState {
-    let berries = if hash % 7 == 0 {
-        PropValue::True
-    } else {
-        PropValue::False
-    };
-    BlockState::CAVE_VINES_PLANT.set(PropName::Berries, berries)
+    let berries = hash.is_multiple_of(7);
+    BlockState::CAVE_VINES_PLANT.set(PropName::Berries, berries.into())
 }
 
 #[allow(dead_code)]

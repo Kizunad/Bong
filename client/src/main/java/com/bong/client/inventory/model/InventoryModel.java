@@ -11,20 +11,29 @@ public final class InventoryModel {
     public static final int GRID_ROWS = 5;
     public static final int GRID_COLS = 7;
     public static final int HOTBAR_SIZE = 9;
+    public static final String PRIMARY_CONTAINER_ID = "main_pack";
+    public static final String SMALL_POUCH_CONTAINER_ID = "small_pouch";
+    public static final String FRONT_SATCHEL_CONTAINER_ID = "front_satchel";
 
-    /** Container definition — name + grid dimensions. */
-    public record ContainerDef(String name, int rows, int cols) {
+    /** Container definition — stable id + display name + grid dimensions. */
+    public record ContainerDef(String id, String name, int rows, int cols) {
         public ContainerDef {
+            Objects.requireNonNull(id, "id");
             Objects.requireNonNull(name, "name");
+            if (id.isBlank()) throw new IllegalArgumentException("id must not be blank");
             if (rows <= 0 || cols <= 0) throw new IllegalArgumentException("invalid container size");
+        }
+
+        public ContainerDef(String name, int rows, int cols) {
+            this(PRIMARY_CONTAINER_ID, name, rows, cols);
         }
     }
 
     /** Default container layout — server can override via builder. */
     public static final List<ContainerDef> DEFAULT_CONTAINERS = List.of(
-        new ContainerDef("主背包", 5, 7),
-        new ContainerDef("小口袋", 3, 3),
-        new ContainerDef("前挂包", 3, 4)
+        new ContainerDef(PRIMARY_CONTAINER_ID, "主背包", 5, 7),
+        new ContainerDef(SMALL_POUCH_CONTAINER_ID, "小口袋", 3, 3),
+        new ContainerDef(FRONT_SATCHEL_CONTAINER_ID, "前挂包", 3, 4)
     );
 
     private final List<ContainerDef> containers;
@@ -133,14 +142,30 @@ public final class InventoryModel {
     }
 
     public boolean isEmpty() {
-        return realm.isEmpty();
+        if (!gridItems.isEmpty() || !equipped.isEmpty() || !realm.isEmpty()) {
+            return false;
+        }
+
+        for (InventoryItem item : hotbar) {
+            if (item != null && !item.isEmpty()) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
-    public record GridEntry(InventoryItem item, int row, int col) {
+    public record GridEntry(InventoryItem item, String containerId, int row, int col) {
         public GridEntry {
             Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(containerId, "containerId");
+            if (containerId.isBlank()) throw new IllegalArgumentException("containerId must not be blank");
             if (row < 0) throw new IllegalArgumentException("row must be >= 0: " + row);
             if (col < 0) throw new IllegalArgumentException("col must be >= 0: " + col);
+        }
+
+        public GridEntry(InventoryItem item, int row, int col) {
+            this(item, PRIMARY_CONTAINER_ID, row, col);
         }
     }
 
@@ -156,18 +181,28 @@ public final class InventoryModel {
         private double qiCurrent = 0.0;
         private double qiMax = 100.0;
         private double bodyLevel = 0.0;
+        private String primaryContainerId = DEFAULT_CONTAINERS.get(0).id();
 
         private Builder() {}
 
         /** Override default containers (e.g. from server data). */
         public Builder containers(List<ContainerDef> defs) {
-            this.containers = new ArrayList<>(defs);
+            this.containers = defs == null || defs.isEmpty()
+                ? new ArrayList<>(DEFAULT_CONTAINERS)
+                : new ArrayList<>(defs);
+            this.primaryContainerId = defs == null || defs.isEmpty()
+                ? PRIMARY_CONTAINER_ID
+                : defs.get(0).id();
+            return this;
+        }
+
+        public Builder gridItem(InventoryItem item, String containerId, int row, int col) {
+            gridItems.add(new GridEntry(item, containerId, row, col));
             return this;
         }
 
         public Builder gridItem(InventoryItem item, int row, int col) {
-            gridItems.add(new GridEntry(item, row, col));
-            return this;
+            return gridItem(item, primaryContainerId, row, col);
         }
 
         public Builder equip(EquipSlotType slot, InventoryItem item) {
