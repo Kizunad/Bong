@@ -91,7 +91,8 @@ mod tests {
 
     #[test]
     fn insight_decision_chosen_roundtrip() {
-        let json = r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":2}"#;
+        let json =
+            r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":2}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::InsightDecision {
@@ -109,7 +110,8 @@ mod tests {
 
     #[test]
     fn insight_decision_declined_roundtrip() {
-        let json = r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":null}"#;
+        let json =
+            r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":null}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(
             req,

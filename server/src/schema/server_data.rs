@@ -171,7 +171,9 @@ mod tests {
         );
         let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
         match back.payload {
-            ServerDataPayloadV1::CultivationDetail { opened, flow_rate, .. } => {
+            ServerDataPayloadV1::CultivationDetail {
+                opened, flow_rate, ..
+            } => {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
