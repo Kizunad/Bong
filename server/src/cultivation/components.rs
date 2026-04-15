@@ -396,7 +396,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&source).expect("contam source should serialize");
-        let decoded: ContamSource = serde_json::from_str(&json).expect("contam source should deserialize");
+        let decoded: ContamSource =
+            serde_json::from_str(&json).expect("contam source should deserialize");
 
         assert_eq!(decoded.attacker_id.as_deref(), Some("offline:Alice"));
         assert_eq!(decoded.introduced_at, 77);

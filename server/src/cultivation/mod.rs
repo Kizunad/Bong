@@ -83,6 +83,7 @@ use self::tribulation::{
     InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed, TribulationWaveCleared,
 };
 use crate::player::state::canonical_player_id;
+use crate::player::state::PlayerState;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -111,7 +112,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_cultivation_to_joined_clients,
+            attach_cultivation_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients),
             // 核心 tick：回气/扣 zone → 打通 → 事务
             qi_regen_and_zone_drain_tick,
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
@@ -155,11 +157,17 @@ type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
 
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<(Entity, &Username), CultivationAttachFilter>,
+    joined_clients: Query<(Entity, &Username, Option<&PlayerState>), CultivationAttachFilter>,
 ) {
-    for (entity, username) in &joined_clients {
+    for (entity, username, player_state) in &joined_clients {
+        let mut cultivation = Cultivation::default();
+        if let Some(player_state) = player_state {
+            cultivation.qi_current = player_state.spirit_qi;
+            cultivation.qi_max = player_state.spirit_qi_max.max(1.0);
+        }
+
         commands.entity(entity).insert((
-            Cultivation::default(),
+            cultivation,
             MeridianSystem::default(),
             QiColor::default(),
             Karma::default(),

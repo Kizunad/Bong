@@ -6,7 +6,8 @@ use valence::prelude::{
     EntityLayerId, IntoSystemConfigs, Position, PostStartup, Query, With,
 };
 
-use crate::combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds};
+use crate::combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, WoundKind, Wounds};
+use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
 use crate::npc::brain::{canonical_npc_id, FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
@@ -38,6 +39,114 @@ impl Default for NpcBlackboard {
             target_position: None,
             last_melee_tick: 0,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Component)]
+pub enum NpcMeleeArchetype {
+    Brawler,
+    Sword,
+    Spear,
+}
+
+impl NpcMeleeArchetype {
+    pub const fn profile(self) -> NpcMeleeProfile {
+        match self {
+            Self::Brawler => NpcMeleeProfile::fist(),
+            Self::Sword => NpcMeleeProfile::sword(),
+            Self::Spear => NpcMeleeProfile::spear(),
+        }
+    }
+}
+
+impl Default for NpcMeleeArchetype {
+    fn default() -> Self {
+        Self::Brawler
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Component)]
+pub struct NpcMeleeProfile {
+    pub reach: AttackReach,
+    pub wound_kind: WoundKind,
+    pub preferred_distance: f32,
+    pub disengage_distance: f32,
+}
+
+impl NpcMeleeProfile {
+    pub const fn from_reach(reach: AttackReach, wound_kind: WoundKind) -> Self {
+        Self {
+            reach,
+            wound_kind,
+            preferred_distance: reach.base,
+            disengage_distance: reach.max * 1.5,
+        }
+    }
+
+    pub const fn fist() -> Self {
+        Self::from_reach(FIST_REACH, WoundKind::Blunt)
+    }
+
+    pub const fn sword() -> Self {
+        Self::from_reach(SWORD_REACH, WoundKind::Cut)
+    }
+
+    pub const fn spear() -> Self {
+        Self::from_reach(SPEAR_REACH, WoundKind::Pierce)
+    }
+}
+
+impl Default for NpcMeleeProfile {
+    fn default() -> Self {
+        NpcMeleeArchetype::default().profile()
+    }
+}
+
+#[derive(Clone, Debug, Component)]
+pub struct NpcCombatLoadout {
+    pub melee_archetype: NpcMeleeArchetype,
+    pub movement_capabilities: MovementCapabilities,
+}
+
+impl NpcCombatLoadout {
+    pub const fn new(
+        melee_archetype: NpcMeleeArchetype,
+        movement_capabilities: MovementCapabilities,
+    ) -> Self {
+        Self {
+            melee_archetype,
+            movement_capabilities,
+        }
+    }
+
+    pub const fn civilian() -> Self {
+        Self::new(
+            NpcMeleeArchetype::Brawler,
+            MovementCapabilities {
+                can_sprint: true,
+                can_dash: false,
+            },
+        )
+    }
+
+    pub const fn fighter(melee_archetype: NpcMeleeArchetype) -> Self {
+        Self::new(
+            melee_archetype,
+            MovementCapabilities {
+                can_sprint: true,
+                can_dash: true,
+            },
+        )
+    }
+
+    pub const fn melee_profile(&self) -> NpcMeleeProfile {
+        self.melee_archetype.profile()
+    }
+}
+
+impl Default for NpcCombatLoadout {
+    fn default() -> Self {
+        Self::civilian()
     }
 }
 
@@ -89,9 +198,12 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             GlobalTransform::default(),
             NpcMarker,
             NpcBlackboard::default(),
+            NpcCombatLoadout::default(),
+            NpcCombatLoadout::default().melee_archetype,
+            NpcCombatLoadout::default().melee_profile(),
             Navigator::new(),
             MovementController::new(),
-            MovementCapabilities::default(),
+            NpcCombatLoadout::default().movement_capabilities,
             MovementCooldowns::default(),
             NpcPatrol::new(
                 DEFAULT_SPAWN_ZONE_NAME,
@@ -217,6 +329,46 @@ mod tests {
         assert!(
             blackboard.player_distance.is_infinite(),
             "NpcBlackboard.player_distance should default to infinity"
+        );
+
+        let archetype = app
+            .world()
+            .get::<NpcMeleeArchetype>(npc_entity)
+            .expect("NPC should have NpcMeleeArchetype component");
+        let loadout = app
+            .world()
+            .get::<NpcCombatLoadout>(npc_entity)
+            .expect("NPC should have NpcCombatLoadout component");
+        let profile = app
+            .world()
+            .get::<NpcMeleeProfile>(npc_entity)
+            .expect("NPC should have NpcMeleeProfile component");
+        let capabilities = app
+            .world()
+            .get::<MovementCapabilities>(npc_entity)
+            .expect("NPC should have MovementCapabilities component");
+        assert_eq!(
+            loadout.melee_archetype,
+            NpcCombatLoadout::default().melee_archetype
+        );
+        assert_eq!(
+            loadout.movement_capabilities.can_sprint,
+            NpcCombatLoadout::default().movement_capabilities.can_sprint
+        );
+        assert_eq!(
+            loadout.movement_capabilities.can_dash,
+            NpcCombatLoadout::default().movement_capabilities.can_dash
+        );
+        assert_eq!(*archetype, NpcMeleeArchetype::Brawler);
+        assert_eq!(*profile, NpcMeleeArchetype::Brawler.profile());
+        assert_eq!(profile.wound_kind, WoundKind::Blunt);
+        assert_eq!(
+            capabilities.can_sprint,
+            NpcCombatLoadout::default().movement_capabilities.can_sprint
+        );
+        assert_eq!(
+            capabilities.can_dash,
+            NpcCombatLoadout::default().movement_capabilities.can_dash
         );
 
         let patrol = app

@@ -184,17 +184,20 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_systems(valence::prelude::Update, on_player_revived);
 
-        let entity = app.world_mut().spawn((
-            Cultivation {
-                realm: Realm::Induce,
-                qi_current: 8.0,
-                composure: 0.9,
-                ..Default::default()
-            },
-            MeridianSystem::default(),
-            Contamination::default(),
-            LifeRecord::new(canonical_player_id("Alice")),
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 8.0,
+                    composure: 0.9,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new(canonical_player_id("Alice")),
+            ))
+            .id();
 
         app.world_mut().send_event(PlayerRevived { entity });
         app.update();
@@ -205,6 +208,9 @@ mod tests {
             .expect("life record should remain attached after revive");
 
         assert_eq!(life.character_id, canonical_player_id("Alice"));
-        assert!(matches!(life.biography.last(), Some(BiographyEntry::Rebirth { tick: 42, .. })));
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::Rebirth { tick: 42, .. })
+        ));
     }
 }

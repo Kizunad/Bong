@@ -1,8 +1,10 @@
 pub mod components;
 pub mod debug;
 pub mod events;
+pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
+pub mod status;
 
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, IntoSystemConfigs, IntoSystemSetConfigs, Query,
@@ -13,15 +15,15 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 
-use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds};
-use self::events::{AttackIntent, CombatEvent, DeathEvent};
+use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
+use self::events::{ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DefenseIntent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub enum CombatSystemSet {
-    IntentSet,
-    PhysicsSet,
-    ResolveSet,
-    EmitSet,
+    Intent,
+    Physics,
+    Resolve,
+    Emit,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,13 +38,17 @@ type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
 
 fn attach_combat_bundle_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<JoinedClientsWithoutCombatBundle<'_>, JoinedClientsWithoutCombatBundleFilter>,
+    joined_clients: Query<
+        JoinedClientsWithoutCombatBundle<'_>,
+        JoinedClientsWithoutCombatBundleFilter,
+    >,
 ) {
     for (entity, username) in &joined_clients {
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
             CombatState::default(),
+            StatusEffects::default(),
             DerivedAttrs::default(),
             Lifecycle {
                 character_id: canonical_player_id(username.0.as_str()),
@@ -64,6 +70,7 @@ fn attach_combat_bundle_to_joined_npcs(
             Wounds::default(),
             Stamina::default(),
             CombatState::default(),
+            StatusEffects::default(),
             DerivedAttrs::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
@@ -78,16 +85,18 @@ pub fn register(app: &mut App) {
 
     app.insert_resource(CombatClock::default());
     app.add_event::<AttackIntent>();
+    app.add_event::<DefenseIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
 
     app.configure_sets(
         Update,
         (
-            CombatSystemSet::IntentSet,
-            CombatSystemSet::PhysicsSet,
-            CombatSystemSet::ResolveSet,
-            CombatSystemSet::EmitSet,
+            CombatSystemSet::Intent,
+            CombatSystemSet::Physics,
+            CombatSystemSet::Resolve,
+            CombatSystemSet::Emit,
         )
             .chain(),
     );
@@ -95,12 +104,28 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::IntentSet),
-            attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::IntentSet),
-            debug::tick_combat_clock.in_set(CombatSystemSet::IntentSet),
-            resolve::resolve_attack_intents.in_set(CombatSystemSet::ResolveSet),
+            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::Intent),
+            attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
+            debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
+            resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
+            status::status_effect_apply_tick.in_set(CombatSystemSet::Intent),
+            lifecycle::wound_bleed_tick.in_set(CombatSystemSet::Physics),
+            lifecycle::stamina_tick.in_set(CombatSystemSet::Physics),
+            lifecycle::combat_state_tick.in_set(CombatSystemSet::Physics),
+            status::status_effect_tick.in_set(CombatSystemSet::Physics),
+            status::attribute_aggregate_tick.in_set(CombatSystemSet::Physics),
+            resolve::resolve_attack_intents.in_set(CombatSystemSet::Resolve),
+            lifecycle::sync_combat_state_from_events
+                .in_set(CombatSystemSet::Resolve)
+                .after(resolve::resolve_attack_intents),
+            lifecycle::death_arbiter_tick
+                .in_set(CombatSystemSet::Resolve)
+                .after(resolve::resolve_attack_intents),
+            lifecycle::near_death_tick
+                .in_set(CombatSystemSet::Resolve)
+                .after(lifecycle::death_arbiter_tick),
             debug::drain_combat_events_for_debug
-                .in_set(CombatSystemSet::EmitSet)
+                .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
         ),
     );

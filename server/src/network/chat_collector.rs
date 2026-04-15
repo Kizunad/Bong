@@ -174,10 +174,10 @@ fn parse_gameplay_action(message: &str) -> Option<GameplayAction> {
         tokens.next(),
         tokens.next(),
     ) {
-        (Some("/bong"), Some("combat"), Some(target), Some(target_health), None) => {
+        (Some("/bong"), Some("combat"), Some(target), Some(qi_invest), None) => {
             Some(GameplayAction::Combat(CombatAction {
                 target: target.to_string(),
-                target_health: target_health.parse::<f64>().ok()?,
+                qi_invest: qi_invest.parse::<f64>().ok()?,
             }))
         }
         (Some("/bong"), Some("gather"), Some(resource), None, None) => {
@@ -546,7 +546,7 @@ mod chat_collector_tests {
                     player: "offline:Alice".to_string(),
                     action: GameplayAction::Combat(CombatAction {
                         target: "Crimson".to_string(),
-                        target_health: 40.0,
+                        qi_invest: 40.0,
                     }),
                 },
                 QueuedGameplayAction {
@@ -560,6 +560,19 @@ mod chat_collector_tests {
                     action: GameplayAction::AttemptBreakthrough,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn bong_combat_argument_is_qi_invest_not_health_hint() {
+        let action = parse_gameplay_action("/bong combat Crimson 12.5");
+
+        assert_eq!(
+            action,
+            Some(GameplayAction::Combat(CombatAction {
+                target: "Crimson".to_string(),
+                qi_invest: 12.5,
+            }))
         );
     }
 }

@@ -8,7 +8,11 @@ use valence::prelude::{
 };
 
 use super::state::{canonical_player_id, PlayerState};
-use crate::combat::{debug::enqueue_debug_attack_intent, events::AttackIntent};
+use crate::combat::{
+    components::WoundKind,
+    debug::enqueue_debug_attack_intent,
+    events::{AttackIntent, FIST_REACH},
+};
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
@@ -19,8 +23,6 @@ const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
 const GATHER_EXPERIENCE_REWARD: u64 = 90;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
-const DEBUG_COMBAT_REACH: f32 = 3.5;
-
 const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
     BreakthroughRule {
         current_realm: "mortal",
@@ -52,7 +54,7 @@ const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CombatAction {
     pub target: String,
-    pub target_health: f64,
+    pub qi_invest: f64,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -274,7 +276,9 @@ fn bridge_debug_combat_action(
             attacker,
             target: None,
             issued_at_tick: event_tick,
-            reach: DEBUG_COMBAT_REACH,
+            reach: FIST_REACH,
+            qi_invest: action.qi_invest.max(0.0) as f32,
+            wound_kind: WoundKind::Blunt,
             debug_command: Some(action),
         },
     );
@@ -460,13 +464,8 @@ mod tests {
     use valence::prelude::{App, EventReader, Position, ResMut, Update};
     use valence::testing::create_mock_client;
 
+    #[derive(Default)]
     struct CapturedAttackIntents(Vec<AttackIntent>);
-
-    impl Default for CapturedAttackIntents {
-        fn default() -> Self {
-            Self(Vec::new())
-        }
-    }
 
     impl valence::prelude::Resource for CapturedAttackIntents {}
 
@@ -504,29 +503,39 @@ mod tests {
         };
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
-        let entity = app.world_mut().spawn((client_bundle, initial_state.clone())).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, initial_state.clone()))
+            .id();
 
-        app.world_mut().resource_mut::<GameplayActionQueue>().enqueue(
-            "offline:Azure",
-            GameplayAction::Combat(CombatAction {
-                target: "Crimson".to_string(),
-                target_health: 18.0,
-            }),
-        );
+        app.world_mut()
+            .resource_mut::<GameplayActionQueue>()
+            .enqueue(
+                "offline:Azure",
+                GameplayAction::Combat(CombatAction {
+                    target: "Crimson".to_string(),
+                    qi_invest: 18.0,
+                }),
+            );
 
         app.update();
 
         let captured = &app.world().resource::<CapturedAttackIntents>().0;
-        assert_eq!(captured.len(), 1, "combat queue should bridge into AttackIntent");
+        assert_eq!(
+            captured.len(),
+            1,
+            "combat queue should bridge into AttackIntent"
+        );
         assert_eq!(captured[0].attacker, entity);
         assert_eq!(captured[0].target, None);
         assert_eq!(captured[0].issued_at_tick, 1);
-        assert!((captured[0].reach - DEBUG_COMBAT_REACH).abs() < f32::EPSILON);
+        assert_eq!(captured[0].reach, FIST_REACH);
+        assert_eq!(captured[0].qi_invest, 18.0);
         assert_eq!(
             captured[0].debug_command,
             Some(CombatAction {
                 target: "Crimson".to_string(),
-                target_health: 18.0,
+                qi_invest: 18.0,
             })
         );
 

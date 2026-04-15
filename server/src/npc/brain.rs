@@ -4,8 +4,8 @@ use big_brain::prelude::{
 use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventReader, EventWriter,
-    IntoSystemConfigs, Position, PreUpdate, Query, Res, Resource, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
+    Position, PreUpdate, Query, Res, Resource, With, Without,
 };
 
 use crate::combat::events::AttackIntent;
@@ -15,7 +15,7 @@ use crate::npc::movement::{
 };
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker};
+use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker, NpcMeleeProfile};
 use crate::world::zone::ZoneRegistry;
 
 pub const DEFAULT_FLEE_THRESHOLD: f32 = 0.6;
@@ -24,8 +24,6 @@ const FLEE_SUCCESS_DISTANCE: f64 = 16.0;
 const FLEE_SPEED_FACTOR: f64 = 1.2;
 const CHASE_RANGE: f32 = 32.0;
 const CHASE_SPEED_FACTOR: f64 = 1.0;
-const CHASE_ARRIVE_DISTANCE: f32 = 3.0;
-const MELEE_RANGE: f32 = 3.5;
 /// How far ahead of the NPC to place the flee waypoint.
 const FLEE_WAYPOINT_DISTANCE: f64 = 8.0;
 
@@ -117,9 +115,16 @@ type NpcGoalQueryItem<'a> = (
     &'a Position,
     &'a NpcBlackboard,
     &'a NpcPatrol,
+    &'a NpcMeleeProfile,
     &'a mut Navigator,
 );
 type NpcGoalQueryFilter = (With<NpcMarker>, With<EntityKind>, Without<ClientMarker>);
+type NpcFleeQueryItem<'a> = (
+    &'a Position,
+    &'a NpcBlackboard,
+    &'a NpcPatrol,
+    &'a mut Navigator,
+);
 
 impl ScorerBuilder for PlayerProximityScorer {
     fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
@@ -304,7 +309,7 @@ fn score_for_flee_threshold(score: f32, flee_threshold: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 fn flee_action_system(
-    mut npcs: Query<NpcGoalQueryItem<'_>, NpcGoalQueryFilter>,
+    mut npcs: Query<NpcFleeQueryItem<'_>, NpcGoalQueryFilter>,
     mut actions: Query<(&Actor, &mut ActionState), With<FleeAction>>,
     zone_registry: Option<Res<ZoneRegistry>>,
 ) {
@@ -396,12 +401,12 @@ fn should_flee_from_score(score: f32) -> bool {
 // ---------------------------------------------------------------------------
 
 fn chase_target_scorer_system(
-    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<ChaseTargetScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok(bb) = npcs.get(*actor) {
-            chase_score(bb.player_distance)
+        let value = if let Ok((bb, profile)) = npcs.get(*actor) {
+            chase_score(bb.player_distance, profile)
         } else {
             0.0
         };
@@ -409,8 +414,11 @@ fn chase_target_scorer_system(
     }
 }
 
-fn chase_score(distance: f32) -> f32 {
+fn chase_score(distance: f32, profile: &NpcMeleeProfile) -> f32 {
     if !distance.is_finite() || distance > CHASE_RANGE {
+        return 0.0;
+    }
+    if distance <= profile.preferred_distance {
         return 0.0;
     }
     ((CHASE_RANGE - distance) / CHASE_RANGE).clamp(0.0, 1.0)
@@ -432,7 +440,9 @@ fn chase_action_system(
     let tick = game_tick.map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((_npc_position, blackboard, _patrol, mut navigator)) = npcs.get_mut(*actor) else {
+        let Ok((_npc_position, blackboard, _patrol, melee_profile, mut navigator)) =
+            npcs.get_mut(*actor)
+        else {
             *state = ActionState::Failure;
             continue;
         };
@@ -442,7 +452,7 @@ fn chase_action_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                if blackboard.player_distance <= CHASE_ARRIVE_DISTANCE {
+                if blackboard.player_distance <= melee_profile.preferred_distance {
                     navigator.stop();
                     *state = ActionState::Success;
                     continue;
@@ -486,12 +496,12 @@ fn chase_action_system(
 // ---------------------------------------------------------------------------
 
 fn melee_range_scorer_system(
-    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<MeleeRangeScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok(bb) = npcs.get(*actor) {
-            if bb.player_distance <= MELEE_RANGE {
+        let value = if let Ok((bb, profile)) = npcs.get(*actor) {
+            if bb.player_distance <= profile.reach.max {
                 1.0
             } else {
                 0.0
@@ -505,7 +515,15 @@ fn melee_range_scorer_system(
 
 fn melee_attack_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<MeleeAttackAction>>,
-    mut npcs: Query<(&Position, &mut NpcBlackboard, &mut Navigator), With<NpcMarker>>,
+    mut npcs: Query<
+        (
+            &Position,
+            &mut NpcBlackboard,
+            &NpcMeleeProfile,
+            &mut Navigator,
+        ),
+        With<NpcMarker>,
+    >,
     mut attack_intents: EventWriter<AttackIntent>,
     game_tick: Option<Res<GameTick>>,
 ) {
@@ -514,18 +532,22 @@ fn melee_attack_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                if let Ok((_, _, mut nav)) = npcs.get_mut(*actor) {
+                if let Ok((_, _, _, mut nav)) = npcs.get_mut(*actor) {
                     nav.stop();
                 }
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok((_npc_pos, mut bb, _)) = npcs.get_mut(*actor) else {
+                let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
                     continue;
                 };
 
-                if bb.player_distance > MELEE_RANGE * 1.5 {
+                if bb.player_distance > profile.disengage_distance {
                     *state = ActionState::Success;
+                    continue;
+                }
+
+                if bb.player_distance > profile.reach.max {
                     continue;
                 }
 
@@ -539,7 +561,9 @@ fn melee_attack_action_system(
                                 attacker: *actor,
                                 target: Some(target_entity),
                                 issued_at_tick: u64::from(tick),
-                                reach: MELEE_RANGE,
+                                reach: profile.reach,
+                                qi_invest: 10.0,
+                                wound_kind: profile.wound_kind,
                                 debug_command: None,
                             });
                         }
@@ -689,7 +713,7 @@ mod tests {
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use bevy_transform::components::Transform;
     use big_brain::prelude::{FirstToScore, Thinker};
-    use valence::prelude::{App, Position};
+    use valence::prelude::{App, EventReader, IntoSystemConfigs, Position};
 
     #[derive(Default)]
     struct CapturedAttackIntents(Vec<AttackIntent>);
@@ -783,10 +807,12 @@ mod tests {
 
     #[test]
     fn chase_score_within_range() {
-        assert!(chase_score(10.0) > 0.0);
-        assert!(chase_score(32.0) > -f32::EPSILON);
-        assert_eq!(chase_score(33.0), 0.0);
-        assert_eq!(chase_score(f32::INFINITY), 0.0);
+        let profile = NpcMeleeProfile::fist();
+        assert!(chase_score(10.0, &profile) > 0.0);
+        assert!(chase_score(32.0, &profile) > -f32::EPSILON);
+        assert_eq!(chase_score(33.0, &profile), 0.0);
+        assert_eq!(chase_score(f32::INFINITY, &profile), 0.0);
+        assert_eq!(chase_score(0.8, &profile), 0.0);
     }
 
     #[test]
@@ -812,6 +838,7 @@ mod tests {
                     target_position: Some(DVec3::new(0.0, 66.0, 0.0)),
                     ..Default::default()
                 },
+                NpcMeleeProfile::default(),
                 NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::new(30.0, 66.0, 0.0)),
                 Navigator::new(),
             ))
@@ -892,6 +919,7 @@ mod tests {
                     target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Navigator::new(),
             ))
             .id();
@@ -910,14 +938,22 @@ mod tests {
         assert_eq!(*action_state, ActionState::Executing);
 
         let captured = &app.world().resource::<CapturedAttackIntents>().0;
-        assert_eq!(captured.len(), 1, "melee cooldown should emit one AttackIntent");
+        assert_eq!(
+            captured.len(),
+            1,
+            "melee cooldown should emit one AttackIntent"
+        );
         assert_eq!(captured[0].attacker, npc);
         assert_eq!(captured[0].target, Some(target));
-        assert_eq!(captured[0].reach, MELEE_RANGE);
+        assert_eq!(captured[0].reach, NpcMeleeProfile::spear().reach);
+        assert_eq!(captured[0].qi_invest, 10.0);
+        assert_eq!(captured[0].wound_kind, NpcMeleeProfile::spear().wound_kind);
         assert_eq!(captured[0].debug_command, None);
 
         assert!(
-            app.world().get::<crate::npc::movement::PendingKnockback>(target).is_none(),
+            app.world()
+                .get::<crate::npc::movement::PendingKnockback>(target)
+                .is_none(),
             "melee bridge should not rely on PendingKnockback as primary damage path"
         );
     }
@@ -951,6 +987,7 @@ mod tests {
                     target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Navigator::new(),
             ))
             .id();
@@ -966,6 +1003,103 @@ mod tests {
             captured.len(),
             1,
             "same GameTick should not produce duplicate melee AttackIntent"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_respects_profile_reach_max() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let short_npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 1.6,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+            ))
+            .id();
+        let long_npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 1.6,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+            ))
+            .id();
+
+        let short_scorer = app
+            .world_mut()
+            .spawn((Actor(short_npc), Score::default(), MeleeRangeScorer))
+            .id();
+        let long_scorer = app
+            .world_mut()
+            .spawn((Actor(long_npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().get::<Score>(short_scorer).unwrap().get(), 0.0);
+        assert_eq!(app.world().get::<Score>(long_scorer).unwrap().get(), 1.0);
+    }
+
+    #[test]
+    fn melee_action_waits_inside_disengage_band_without_swinging() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(240));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([13.2, 66.0, 10.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 3.2,
+                    target_position: Some(DVec3::new(13.2, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Navigator::new(),
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        app.update();
+        app.update();
+
+        let action_state = app.world().get::<ActionState>(action_entity).unwrap();
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+
+        assert_eq!(*action_state, ActionState::Executing);
+        assert!(
+            captured.is_empty(),
+            "npc should hold range instead of swinging outside reach"
         );
     }
 

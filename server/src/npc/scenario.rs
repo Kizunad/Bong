@@ -13,7 +13,9 @@ use crate::npc::brain::{
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker};
+use crate::npc::spawn::{
+    DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype,
+};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use crate::{
     combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds},
@@ -110,6 +112,13 @@ fn process_pending_scenarios(
         let spawn_pos = player_pos + offset;
 
         let thinker = build_thinker(&scenario);
+        let loadout = scenario_combat_loadout(&scenario, i);
+        let melee_archetype = loadout.melee_archetype;
+        let melee_profile = loadout.melee_profile();
+        let movement_capabilities = MovementCapabilities {
+            can_sprint: loadout.movement_capabilities.can_sprint,
+            can_dash: loadout.movement_capabilities.can_dash,
+        };
 
         let entity = commands
             .spawn((
@@ -123,9 +132,12 @@ fn process_pending_scenarios(
                 GlobalTransform::default(),
                 NpcMarker,
                 NpcBlackboard::default(),
+                loadout,
+                melee_archetype,
+                melee_profile,
                 Navigator::new(),
                 MovementController::new(),
-                scenario_capabilities(&scenario),
+                movement_capabilities,
                 MovementCooldowns::default(),
                 NpcPatrol::new(
                     DEFAULT_SPAWN_ZONE_NAME,
@@ -204,15 +216,24 @@ fn build_thinker(scenario: &ScenarioType) -> ThinkerBuilder {
     }
 }
 
-/// Movement capabilities per scenario type.
-/// Fight/Swarm NPCs get dash; others only get sprint.
-fn scenario_capabilities(scenario: &ScenarioType) -> MovementCapabilities {
+fn scenario_combat_loadout(scenario: &ScenarioType, index: usize) -> NpcCombatLoadout {
     match scenario {
-        ScenarioType::Fight | ScenarioType::Swarm | ScenarioType::Duel => MovementCapabilities {
-            can_sprint: true,
-            can_dash: true,
-        },
-        _ => MovementCapabilities::default(),
+        ScenarioType::Fight => NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword),
+        ScenarioType::Swarm => {
+            if index.is_multiple_of(2) {
+                NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler)
+            } else {
+                NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword)
+            }
+        }
+        ScenarioType::Duel => {
+            if index == 0 {
+                NpcCombatLoadout::fighter(NpcMeleeArchetype::Spear)
+            } else {
+                NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword)
+            }
+        }
+        _ => NpcCombatLoadout::default(),
     }
 }
 
@@ -222,6 +243,7 @@ mod tests {
 
     use crate::combat::components::{Lifecycle, Stamina, Wounds};
     use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+    use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
     use valence::prelude::{Entity, Update, With};
     use valence::testing::ScenarioSingleClient;
 
@@ -279,5 +301,51 @@ mod tests {
                 "scenario NPC Lifecycle should use canonical npc identity"
             );
         }
+    }
+
+    #[test]
+    fn duel_scenario_assigns_distinct_melee_profiles() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::Duel, DVec3::new(8.0, 66.0, 8.0))),
+        });
+        app.add_systems(Update, process_pending_scenarios);
+
+        app.update();
+
+        let entries = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<(&NpcCombatLoadout, &NpcMeleeArchetype, &NpcMeleeProfile), With<ScenarioNpc>>();
+            query
+                .iter(world)
+                .map(|(l, a, p)| {
+                    (
+                        l.melee_archetype,
+                        l.movement_capabilities.can_sprint,
+                        l.movement_capabilities.can_dash,
+                        *a,
+                        *p,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&(
+            NpcMeleeArchetype::Spear,
+            true,
+            true,
+            NpcMeleeArchetype::Spear,
+            NpcMeleeArchetype::Spear.profile(),
+        )));
+        assert!(entries.contains(&(
+            NpcMeleeArchetype::Sword,
+            true,
+            true,
+            NpcMeleeArchetype::Sword,
+            NpcMeleeArchetype::Sword.profile(),
+        )));
     }
 }

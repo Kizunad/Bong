@@ -58,6 +58,22 @@ pub enum BiographyEntry {
         new_realm: Realm,
         tick: u64,
     },
+    CombatHit {
+        attacker_id: String,
+        body_part: String,
+        #[serde(default = "default_combat_hit_wound_kind")]
+        wound_kind: String,
+        damage: f32,
+        tick: u64,
+    },
+    NearDeath {
+        cause: String,
+        tick: u64,
+    },
+    Terminated {
+        cause: String,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +141,10 @@ fn default_character_id() -> String {
     UNASSIGNED_CHARACTER_ID.to_string()
 }
 
+fn default_combat_hit_wound_kind() -> String {
+    "Blunt".to_string()
+}
+
 fn format_entry(entry: &BiographyEntry) -> String {
     match entry {
         BiographyEntry::BreakthroughStarted { realm_target, tick } => {
@@ -157,6 +177,15 @@ fn format_entry(entry: &BiographyEntry) -> String {
             new_realm,
             tick,
         } => format!("t{tick}:rebirth:{prior_realm:?}→{new_realm:?}"),
+        BiographyEntry::CombatHit {
+            attacker_id,
+            body_part,
+            wound_kind,
+            damage,
+            tick,
+        } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
+        BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
+        BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
     }
 }
 
@@ -214,6 +243,23 @@ mod tests {
     }
 
     #[test]
+    fn combat_hit_summary_includes_wound_kind() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::CombatHit {
+            attacker_id: "offline:Azure".to_string(),
+            body_part: "Chest".to_string(),
+            wound_kind: "Cut".to_string(),
+            damage: 12.0,
+            tick: 18,
+        });
+
+        assert_eq!(
+            lr.recent_summary_text(1),
+            "t18:combat:offline:Azure:Chest:Cut:12.0"
+        );
+    }
+
+    #[test]
     fn serde_defaults_missing_character_id_for_legacy_records() {
         let legacy = serde_json::json!({
             "created_at": 5,
@@ -226,5 +272,31 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy life record should deserialize");
 
         assert_eq!(decoded.character_id, UNASSIGNED_CHARACTER_ID);
+    }
+
+    #[test]
+    fn legacy_combat_hit_defaults_wound_kind() {
+        let legacy = serde_json::json!({
+            "character_id": "offline:Alice",
+            "created_at": 5,
+            "biography": [{
+                "CombatHit": {
+                    "attacker_id": "offline:Azure",
+                    "body_part": "Chest",
+                    "damage": 9.0,
+                    "tick": 7
+                }
+            }],
+            "insights_taken": [],
+            "spirit_root_first": null
+        });
+
+        let decoded: LifeRecord =
+            serde_json::from_value(legacy).expect("legacy combat hit should deserialize");
+
+        assert_eq!(
+            decoded.recent_summary_text(1),
+            "t7:combat:offline:Azure:Chest:Blunt:9.0"
+        );
     }
 }
