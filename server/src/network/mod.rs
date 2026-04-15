@@ -6,6 +6,7 @@ pub mod client_request_handler;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod redis_bridge;
+pub mod vfx_event_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -163,9 +164,13 @@ pub fn register(app: &mut App) {
             cultivation_bridge::publish_insight_requests,
             client_request_handler::handle_client_request_payloads,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            vfx_event_emit::handle_vfx_debug_commands,
+            vfx_event_emit::emit_vfx_event_payloads
+                .after(vfx_event_emit::handle_vfx_debug_commands),
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
+    app.add_event::<vfx_event_emit::VfxEventRequest>();
 }
 
 fn redis_url_from_env() -> String {
@@ -2220,11 +2225,14 @@ mod tests {
     mod gameplay_tests {
         use super::*;
         use crate::combat::{
-            components::{CombatState, DerivedAttrs, Lifecycle, Stamina, Wounds},
-            events::{AttackIntent, CombatEvent, DeathEvent},
+            components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds},
+            events::{ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent},
             CombatClock,
         };
-        use crate::cultivation::components::{Contamination, MeridianId, MeridianSystem};
+        use crate::cultivation::components::{
+            Contamination, Cultivation, MeridianId, MeridianSystem,
+        };
+        use crate::cultivation::life_record::LifeRecord;
         use crate::player::gameplay::{
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
@@ -2254,6 +2262,7 @@ mod tests {
             app.insert_resource(GameplayTick::default());
             app.insert_resource(CombatClock::default());
             app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
             app.add_systems(
@@ -2262,6 +2271,10 @@ mod tests {
                     crate::combat::debug::tick_combat_clock,
                     crate::player::gameplay::apply_queued_gameplay_actions
                         .after(crate::combat::debug::tick_combat_clock),
+                    crate::combat::status::status_effect_apply_tick
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                    crate::combat::status::attribute_aggregate_tick
+                        .after(crate::combat::status::status_effect_apply_tick),
                     crate::combat::resolve::resolve_attack_intents
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     emit_gameplay_narrations
@@ -2288,10 +2301,16 @@ mod tests {
                 .world_mut()
                 .spawn((
                     client_bundle,
+                    Cultivation {
+                        qi_current: player_state.spirit_qi,
+                        qi_max: player_state.spirit_qi_max,
+                        ..Cultivation::default()
+                    },
                     player_state,
                     Wounds::default(),
                     Stamina::default(),
                     CombatState::default(),
+                    StatusEffects::default(),
                     DerivedAttrs::default(),
                     Lifecycle {
                         character_id: canonical_player_id(username),
@@ -2299,6 +2318,7 @@ mod tests {
                     },
                     Contamination::default(),
                     MeridianSystem::default(),
+                    LifeRecord::new(canonical_player_id(username)),
                 ))
                 .id();
             (entity, helper)
@@ -2380,7 +2400,7 @@ mod tests {
             let (target, _target_helper) = spawn_test_client_with_state(
                 &mut app,
                 "Crimson",
-                [10.0, 66.0, 8.0],
+                [9.0, 66.0, 8.0],
                 PlayerState {
                     realm: "qi_refining_1".to_string(),
                     spirit_qi: 65.0,
@@ -2408,7 +2428,7 @@ mod tests {
                     "Azure",
                     GameplayAction::Combat(CombatAction {
                         target: "Crimson".to_string(),
-                        target_health: 40.0,
+                        qi_invest: 40.0,
                     }),
                 );
 
@@ -2469,6 +2489,13 @@ mod tests {
                 .get::<PlayerState>()
                 .expect("attacker player state should remain attached");
             assert_eq!(attacker_state.spirit_qi, 70.0, "attacker PlayerState should not be fake-mutated");
+
+            let attacker_cultivation = app
+                .world()
+                .entity(attacker)
+                .get::<crate::cultivation::components::Cultivation>()
+                .expect("attacker cultivation should be present for qi-backed combat");
+            assert_eq!(attacker_cultivation.qi_current, 30.0);
         }
 
         #[test]

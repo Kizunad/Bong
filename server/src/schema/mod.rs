@@ -12,4 +12,5 @@ pub mod common;
 pub mod cultivation;
 pub mod narration;
 pub mod server_data;
+pub mod vfx_event;
 pub mod world_state;

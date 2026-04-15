@@ -27,6 +27,7 @@ import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import { NarrationV1 } from "./narration.js";
 import { ServerDataV1 } from "./server-data.js";
+import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
 export const SCHEMA_REGISTRY = {
@@ -56,6 +57,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  vfxEventV1: VfxEventV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -87,6 +89,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

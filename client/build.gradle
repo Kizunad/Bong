@@ -13,6 +13,15 @@ repositories {
     maven {
         url = 'https://maven.wispforest.io/releases'
     }
+    maven {
+        name = "KosmX's maven"
+        url = 'https://maven.kosmx.dev/'
+    }
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
     mavenCentral()
 }
 
@@ -23,6 +32,17 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     modImplementation "io.wispforest:owo-lib:${project.owo_version}"
     annotationProcessor "io.wispforest:owo-lib:${project.owo_version}"
+    // PlayerAnimator by KosmX: 玩家骨骼动画库（纯客户端，服务端无需）
+    // Maven: https://maven.kosmx.dev/dev/kosmx/player-anim/player-animation-lib-fabric/
+    // include 把它 JarJar 进输出 jar，同时保证 dev runClient 能找到类
+    include modImplementation("dev.kosmx.player-anim:player-animation-lib-fabric:${project.player_anim_version}")
+
+    // bendy-lib by KosmX: player-animation 的 bend / bendDirection 轴实际靠这个 mod 的
+    // BendableCuboid 顶点变形器来实现。不装它 PlayerAnimator 会悄悄退化成 DummyBendable
+    // no-op——keyframe 仍会写进动画但渲染时完全没有弯折效果。Bong 的 buildFistPunchRight
+    // 等动画对 bend 依赖严重（肘弯 115° / 膝弯 45° 都在 bend 轴），所以 depends 而非 suggests。
+    // 同作者、同 maven、MIT；4.0.0 是 MC 1.20.1 唯一 tag 版本（见 Modrinth bendy-lib）。
+    include modImplementation("io.github.kosmx.bendy-lib:bendy-lib-fabric:${project.bendy_lib_version}")
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'

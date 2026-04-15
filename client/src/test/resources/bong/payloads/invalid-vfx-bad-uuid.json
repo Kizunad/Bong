@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "play_anim",
+  "target_player": "not-a-uuid",
+  "anim_id": "bong:sword_swing_horiz",
+  "priority": 1000
+}

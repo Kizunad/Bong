@@ -1,11 +1,13 @@
 package com.bong.client;
 
+import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
+import com.bong.client.network.VfxEventRouter;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.UiOpenState;
@@ -25,15 +27,22 @@ public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
 
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
+    private static final VfxEventRouter VFX_ROUTER = new VfxEventRouter(new ClientAnimationBridge());
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
     private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
+    private static final Map<String, Long> VFX_BRIDGE_MISS_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);
 
     public static ParseResult parseServerPayload(String jsonPayload) {
         return BongServerPayloadParser.parse(jsonPayload);
     }
 
     public static void register() {
+        registerServerDataChannel();
+        registerVfxEventChannel();
+    }
+
+    private static void registerServerDataChannel() {
         ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
             int readableBytes = buf.readableBytes();
             byte[] bytes = new byte[readableBytes];
@@ -70,6 +79,31 @@ public class BongNetworkHandler {
                 || dispatch.uiOpenState().isPresent()) {
                 client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
             }
+        });
+    }
+
+    private static void registerVfxEventChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "vfx_event"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            // 派发到主线程：VFX bridge 里会读 world.getPlayerByUuid + 调 PlayerAnimator，
+            // 这些都是主线程约束。路由/解析可以在网络线程做，但我们索性一把送到主线程，
+            // 简化并避免解析成功但 bridge 落地时 world 已经切换的竞态。
+            client.execute(() -> {
+                VfxEventRouter.RouteResult result = VFX_ROUTER.route(jsonPayload, readableBytes);
+                if (result.isParseError()) {
+                    BongClient.LOGGER.error("Failed to parse bong:vfx_event payload: {}", result.logMessage());
+                    return;
+                }
+                if (result.isBridgeMiss()) {
+                    logVfxBridgeMiss(result);
+                    return;
+                }
+                BongClient.LOGGER.info("Processed bong:vfx_event payload: {}", result.logMessage());
+            });
         });
     }
 
@@ -156,6 +190,13 @@ public class BongNetworkHandler {
         }
     }
 
+    private static void logVfxBridgeMiss(VfxEventRouter.RouteResult result) {
+        String payloadType = result.payload() != null ? result.payload().type() : "unknown";
+        if (shouldLogVfxBridgeMiss(payloadType)) {
+            BongClient.LOGGER.warn("Ignoring bong:vfx_event payload: {}", result.logMessage());
+        }
+    }
+
     static boolean shouldLogNoOp(String payloadType) {
         return shouldLogNoOp(payloadType, System.currentTimeMillis());
     }
@@ -166,6 +207,19 @@ public class BongNetworkHandler {
 
             Long previous = UNKNOWN_TYPE_LOG_TIMES.put(payloadType, nowMillis);
             trimUnknownTypeLogTimes();
+            return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
+        }
+    }
+
+    static boolean shouldLogVfxBridgeMiss(String payloadType) {
+        return shouldLogVfxBridgeMiss(payloadType, System.currentTimeMillis());
+    }
+
+    static boolean shouldLogVfxBridgeMiss(String payloadType, long nowMillis) {
+        synchronized (VFX_BRIDGE_MISS_LOG_TIMES) {
+            pruneExpired(VFX_BRIDGE_MISS_LOG_TIMES, nowMillis);
+            Long previous = VFX_BRIDGE_MISS_LOG_TIMES.put(payloadType, nowMillis);
+            trimToLimit(VFX_BRIDGE_MISS_LOG_TIMES);
             return previous == null || nowMillis - previous >= UNKNOWN_LOG_THROTTLE_MS;
         }
     }
@@ -207,7 +261,15 @@ public class BongNetworkHandler {
     }
 
     private static void pruneExpiredUnknownTypeLogTimes(long nowMillis) {
-        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
+        pruneExpired(UNKNOWN_TYPE_LOG_TIMES, nowMillis);
+    }
+
+    private static void trimUnknownTypeLogTimes() {
+        trimToLimit(UNKNOWN_TYPE_LOG_TIMES);
+    }
+
+    private static void pruneExpired(Map<String, Long> cache, long nowMillis) {
+        Iterator<Map.Entry<String, Long>> iterator = cache.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<String, Long> entry = iterator.next();
             if (nowMillis - entry.getValue() >= UNKNOWN_LOG_THROTTLE_MS) {
@@ -216,9 +278,9 @@ public class BongNetworkHandler {
         }
     }
 
-    private static void trimUnknownTypeLogTimes() {
-        Iterator<Map.Entry<String, Long>> iterator = UNKNOWN_TYPE_LOG_TIMES.entrySet().iterator();
-        while (UNKNOWN_TYPE_LOG_TIMES.size() > UNKNOWN_TYPE_LOG_CACHE_LIMIT && iterator.hasNext()) {
+    private static void trimToLimit(Map<String, Long> cache) {
+        Iterator<Map.Entry<String, Long>> iterator = cache.entrySet().iterator();
+        while (cache.size() > UNKNOWN_TYPE_LOG_CACHE_LIMIT && iterator.hasNext()) {
             iterator.next();
             iterator.remove();
         }

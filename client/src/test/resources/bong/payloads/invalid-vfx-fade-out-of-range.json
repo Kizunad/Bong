@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "play_anim",
+  "target_player": "550e8400-e29b-41d4-a716-446655440000",
+  "anim_id": "bong:sword_swing_horiz",
+  "priority": 1000,
+  "fade_in_ticks": 41
+}

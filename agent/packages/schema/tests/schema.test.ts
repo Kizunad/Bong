@@ -25,6 +25,7 @@ import {
 } from "../src/narration.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import { validate } from "../src/validate.js";
+import { VfxEventV1 } from "../src/vfx-event.js";
 import {
   WorldStateV1,
   validateWorldStateV1Contract,
@@ -159,6 +160,18 @@ describe("sample files pass schema validation", () => {
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("vfx-event.play-anim.sample.json", () => {
+    const data = loadSample("vfx-event.play-anim.sample.json");
+    const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("vfx-event.stop-anim.sample.json", () => {
+    const data = loadSample("vfx-event.stop-anim.sample.json");
+    const result = validate(VfxEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });

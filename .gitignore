@@ -64,3 +64,6 @@ local_images/
 
 # Local worldgen/Fabric runtime artifacts
 worldgen/worldgen-mofa/server/
+
+# Vendored third-party mods (reference-only, not compiled in)
+third_party/

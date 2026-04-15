@@ -1,5 +1,9 @@
 package com.bong.client;
 
+import com.bong.client.animation.BongAnimationPlayer;
+import com.bong.client.animation.BongAnimations;
+import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
@@ -25,7 +29,11 @@ public class BongClient implements ClientModInitializer {
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
         BongVfxCommand.register();
+        BongAnimations.bootstrap();
+        BongAnimationPlayer.init();
+        BongPunchCombo.bootstrap();
+        BongAnimCommand.register();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, and /vfx test command are active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx and /anim commands active.");
     }
 }
