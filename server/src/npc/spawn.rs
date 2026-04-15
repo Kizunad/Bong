@@ -1,15 +1,20 @@
 use bevy_transform::components::{GlobalTransform, Transform};
-use big_brain::prelude::{FirstToScore, Thinker};
+use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, ChunkLayer, Commands, Component, DVec3, Entity, EntityKind, EntityLayer,
     EntityLayerId, IntoSystemConfigs, Position, PostStartup, Query, With,
 };
 
-use crate::combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, WoundKind, Wounds};
+use crate::combat::components::{
+    CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, WoundKind, Wounds,
+};
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
-use crate::npc::brain::{canonical_npc_id, FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
+use crate::npc::brain::{
+    canonical_npc_id, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, MeleeAttackAction,
+    MeleeRangeScorer,
+};
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -42,8 +47,9 @@ impl Default for NpcBlackboard {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Component)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Component)]
 pub enum NpcMeleeArchetype {
+    #[default]
     Brawler,
     Sword,
     Spear,
@@ -56,12 +62,6 @@ impl NpcMeleeArchetype {
             Self::Sword => NpcMeleeProfile::sword(),
             Self::Spear => NpcMeleeProfile::spear(),
         }
-    }
-}
-
-impl Default for NpcMeleeArchetype {
-    fn default() -> Self {
-        Self::Brawler
     }
 }
 
@@ -166,6 +166,14 @@ pub fn register(app: &mut App) {
     );
 }
 
+fn startup_npc_thinker() -> ThinkerBuilder {
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(DashScorer, DashAction)
+        .when(ChaseTargetScorer, ChaseAction)
+}
+
 fn spawn_single_zombie_npc_on_startup(
     mut commands: Commands,
     layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
@@ -213,11 +221,7 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
                     NPC_SPAWN_POSITION[2],
                 ),
             ),
-            Thinker::build()
-                .picker(FirstToScore {
-                    threshold: PROXIMITY_THRESHOLD,
-                })
-                .when(PlayerProximityScorer, FleeAction),
+            startup_npc_thinker(),
         ))
         .id();
 
@@ -228,6 +232,7 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
         Wounds::default(),
         Stamina::default(),
         CombatState::default(),
+        StatusEffects::default(),
         DerivedAttrs::default(),
         Lifecycle {
             character_id: canonical_npc_id(entity),
@@ -253,13 +258,23 @@ fn log_npc_marker_count(query: Query<Entity, With<NpcMarker>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::events::AttackIntent;
+    use crate::npc::brain;
+    use crate::npc::movement::GameTick;
     use big_brain::prelude::{BigBrainPlugin, HasThinker, ThinkerBuilder};
+    use valence::client::ClientMarker;
     use valence::prelude::{
-        bevy_ecs, App, Commands, DVec3, Entity, EntityKind, EntityLayerId, PreUpdate, Res, Resource,
+        bevy_ecs, App, Commands, DVec3, Entity, EntityKind, EntityLayerId, EventReader, Position,
+        PreUpdate, Res, Resource, Update,
     };
 
     #[derive(Clone, Copy, Resource)]
     struct TestLayer(Entity);
+
+    #[derive(Default)]
+    struct CapturedAttackIntents(Vec<AttackIntent>);
+
+    impl Resource for CapturedAttackIntents {}
 
     fn setup_test_layer(mut commands: Commands) {
         let layer = commands.spawn_empty().id();
@@ -268,6 +283,13 @@ mod tests {
 
     fn spawn_test_npc(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_single_zombie_npc(&mut commands, layer.0);
+    }
+
+    fn capture_attack_intents(
+        mut events: EventReader<AttackIntent>,
+        mut captured: valence::prelude::ResMut<CapturedAttackIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
     }
 
     #[test]
@@ -347,6 +369,10 @@ mod tests {
             .world()
             .get::<MovementCapabilities>(npc_entity)
             .expect("NPC should have MovementCapabilities component");
+        let _status_effects = app
+            .world()
+            .get::<StatusEffects>(npc_entity)
+            .expect("NPC should include StatusEffects for shared combat resolver");
         assert_eq!(
             loadout.melee_archetype,
             NpcCombatLoadout::default().melee_archetype
@@ -402,5 +428,37 @@ mod tests {
             .world()
             .get::<Thinker>(has_thinker.entity())
             .expect("BigBrain thinker entity should contain Thinker component");
+    }
+
+    #[test]
+    fn startup_spawned_npc_default_thinker_emits_attack_intent_in_melee_range() {
+        let mut app = App::new();
+        brain::register(&mut app);
+        app.insert_resource(CapturedAttackIntents::default());
+        app.insert_resource(GameTick(120));
+        app.add_event::<AttackIntent>();
+        app.add_systems(Update, capture_attack_intents);
+        app.add_systems(
+            valence::prelude::Startup,
+            (setup_test_layer, spawn_test_npc.after(setup_test_layer)),
+        );
+
+        let player = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([14.8, 66.0, 14.0])))
+            .id();
+
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert!(
+            !captured.is_empty(),
+            "default startup NPC thinker should emit AttackIntent when a player enters melee range"
+        );
+        assert_eq!(captured[0].target, Some(player));
+        assert_eq!(captured[0].reach, FIST_REACH);
+        assert_eq!(captured[0].wound_kind, WoundKind::Blunt);
     }
 }
