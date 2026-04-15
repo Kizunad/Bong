@@ -1,0 +1,34 @@
+{
+  "id": "kai_mai_pill_v0",
+  "name": "开脉丹（测试）",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "kai_mai_cao", "count": 3 },
+      { "material": "ling_shui",   "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.60,
+    "target_duration_ticks": 200,
+    "qi_cost": 15.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 30 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "kai_mai_pill",        "quality": 1.0, "toxin_amount": 0.30, "toxin_color": "Mellow" },
+    "good":    { "pill": "kai_mai_pill",        "quality": 0.7, "toxin_amount": 0.50, "toxin_color": "Mellow" },
+    "flawed":  { "pill": "kai_mai_pill_flawed", "quality": 0.4, "toxin_amount": 0.80, "toxin_color": "Turbid" },
+    "waste":   null,
+    "explode": { "damage": 20.0, "meridian_crack": 0.15 }
+  },
+  "flawed_fallback": {
+    "pill": "kai_mai_pill_flawed",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "minor_qi_regen_boost",   "duration_s": 300, "weight": 1 },
+      { "tag": "meridian_itch_debuff",   "duration_s": 300, "weight": 2 },
+      { "tag": "random_color_shift",     "color": "Insidious", "amount": 0.2, "weight": 1 }
+    ]
+  }
+}

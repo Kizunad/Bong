@@ -74,6 +74,17 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    /// plan-alchemy-v1 §1.3 — 每次炼丹结算写一条（精确或残缺路径）。
+    AlchemyAttempt {
+        recipe_id: String,
+        #[serde(default)]
+        pill: Option<String>,
+        #[serde(default)]
+        flawed_path: bool,
+        #[serde(default)]
+        side_effect_tag: Option<String>,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +197,18 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
+        BiographyEntry::AlchemyAttempt {
+            recipe_id,
+            pill,
+            flawed_path,
+            side_effect_tag,
+            tick,
+        } => {
+            let flag = if *flawed_path { "flawed" } else { "exact" };
+            let pill = pill.as_deref().unwrap_or("-");
+            let side = side_effect_tag.as_deref().unwrap_or("-");
+            format!("t{tick}:alchemy:{recipe_id}:{flag}:{pill}:{side}")
+        }
     }
 }
 
