@@ -1,6 +1,8 @@
 mod biome;
+mod blocks;
 mod column;
 mod decoration;
+mod flora;
 mod mega_tree;
 mod noise;
 mod raster;
@@ -182,6 +184,7 @@ fn ensure_chunk_generated(
     }
 
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
+    flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);
