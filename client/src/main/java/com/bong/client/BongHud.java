@@ -1,13 +1,26 @@
 package com.bong.client;
 
+import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.CombatHudStateStore;
+import com.bong.client.combat.DefenseStanceStore;
+import com.bong.client.combat.DefenseWindowStore;
+import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SpellVolumeStore;
+import com.bong.client.combat.UnifiedEventStore;
+import com.bong.client.combat.UnlockedStylesStore;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.List;
 import java.util.Objects;
@@ -25,8 +38,22 @@ public class BongHud {
     public static void render(DrawContext context, float tickDelta) {
         MinecraftClient client = MinecraftClient.getInstance();
         long nowMillis = System.currentTimeMillis();
+
+        // Tick cast-state + defense-window expiries so they self-clear each frame.
+        CastStateStore.tick(nowMillis);
+        DefenseWindowStore.tick(nowMillis);
+
+        Screen currentScreen = client.currentScreen;
+        ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);
+        if (visibility == ScreenHudVisibility.HIDDEN) {
+            return;
+        }
+
+        CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
+
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateStore.snapshot(),
+            combatSnapshot,
             nowMillis,
             client.textRenderer::getWidth,
             HUD_TEXT_MAX_WIDTH,
@@ -34,12 +61,21 @@ public class BongHud {
             client.getWindow().getScaledHeight()
         );
 
+        if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
+            commands = filterCastBarOnly(commands);
+        } else if (visibility == ScreenHudVisibility.INVENTORY_DIMMED) {
+            commands = filterInventoryDimmed(commands);
+        }
+
         for (HudRenderCommand command : commands) {
             if (command.isText()) {
                 context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
                 continue;
             }
-
+            if (command.isRect()) {
+                context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+                continue;
+            }
             if (command.isToast()) {
                 BongToast.render(
                     context,
@@ -60,6 +96,45 @@ public class BongHud {
                 EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+    }
+
+    private static CombatHudSnapshot captureCombatSnapshot(MinecraftClient client) {
+        int selectedSlot = -1;
+        PlayerEntity player = client.player;
+        if (player != null) {
+            selectedSlot = player.getInventory().selectedSlot;
+        }
+        return CombatHudSnapshot.create(
+            CombatHudStateStore.snapshot(),
+            PhysicalBodyStore.snapshot(),
+            QuickUseSlotStore.snapshot(),
+            selectedSlot,
+            CastStateStore.snapshot(),
+            UnifiedEventStore.stream(),
+            SpellVolumeStore.snapshot(),
+            DefenseWindowStore.snapshot(),
+            DefenseStanceStore.snapshot(),
+            UnlockedStylesStore.snapshot()
+        );
+    }
+
+    private static List<HudRenderCommand> filterCastBarOnly(List<HudRenderCommand> commands) {
+        return commands.stream()
+            .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.CAST_BAR)
+            .toList();
+    }
+
+    private static List<HudRenderCommand> filterInventoryDimmed(List<HudRenderCommand> commands) {
+        return commands.stream()
+            .filter(cmd -> {
+                com.bong.client.hud.HudRenderLayer layer = cmd.layer();
+                // Keep quick-bar + event-stream + cast-bar; dim/hide everything else.
+                return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
+                    || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
+                    || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
+                    || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
+            })
+            .toList();
     }
 
     static HudSnapshot snapshot(long nowMs) {

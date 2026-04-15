@@ -33,7 +33,28 @@ public final class BongHudOrchestrator {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(
+            snapshot,
+            CombatHudSnapshot.empty(),
+            nowMillis,
+            widthMeasurer,
+            maxTextWidth,
+            screenWidth,
+            screenHeight
+        );
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
+        CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         int normalizedWidth = normalizeWidth(maxTextWidth);
         List<HudRenderCommand> commands = new ArrayList<>();
         commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, BASELINE_LABEL, BASELINE_X, BASELINE_Y, 0xFFFFFF));
@@ -68,6 +89,50 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             );
+        }
+
+        if (BongClientFeatures.ENABLE_COMBAT_HUD) {
+            commands.addAll(MiniBodyHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(),
+                combatSnapshot.physicalBody(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(QuickBarHudPlanner.buildCommands(
+                combatSnapshot.quickSlotConfig(),
+                combatSnapshot.selectedHotbarSlot(),
+                combatSnapshot.castState(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(EventStreamHudPlanner.buildCommands(
+                combatSnapshot.eventStream(),
+                nowMillis,
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(JiemaiRingHudPlanner.buildCommands(
+                combatSnapshot.defenseWindowState(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(SpellVolumeHudPlanner.buildCommands(
+                combatSnapshot.spellVolumeState(),
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(EdgeFeedbackHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(),
+                combatSnapshot.defenseWindowState(),
+                combatSnapshot.castState(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
         }
 
         return List.copyOf(commands);
