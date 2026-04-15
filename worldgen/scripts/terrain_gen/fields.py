@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .blueprint import BlueprintZone
 
@@ -59,6 +61,22 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
 }
+
+
+def layer_storage_dtype(layer_name: str) -> np.dtype:
+    """Internal storage dtype for a layer.
+
+    Discrete-id layers (export_type == "uint8") live in memory as uint8 so they
+    survive np.where / blending without silent up-casts to int32/64.  Continuous
+    layers stay in float64 to preserve mid-pipeline precision; the raster baker
+    downcasts to float32 only at the final write boundary.
+    """
+    spec = LAYER_REGISTRY.get(layer_name)
+    if spec is None:
+        return np.dtype(np.float64)
+    if spec.export_type == "uint8":
+        return np.dtype(np.uint8)
+    return np.dtype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -218,7 +236,7 @@ class SurfacePalette:
 class TileFieldBuffer:
     tile: WorldTile
     tile_size: int
-    layers: dict[str, list[float | int]]
+    layers: dict[str, np.ndarray]
     contributing_zones: list[str] = field(default_factory=list)
 
     @classmethod
@@ -226,10 +244,11 @@ class TileFieldBuffer:
         cls, tile: WorldTile, tile_size: int, layer_names: Iterable[str]
     ) -> "TileFieldBuffer":
         area = tile_size * tile_size
-        layers = {
-            name: [LAYER_REGISTRY[name].safe_default if name in LAYER_REGISTRY else 0.0] * area
-            for name in layer_names
-        }
+        layers: dict[str, np.ndarray] = {}
+        for name in layer_names:
+            spec = LAYER_REGISTRY.get(name)
+            default = spec.safe_default if spec is not None else 0.0
+            layers[name] = np.full(area, default, dtype=layer_storage_dtype(name))
         return cls(tile=tile, tile_size=tile_size, layers=layers)
 
     def index(self, local_x: int, local_z: int) -> int:
@@ -241,17 +260,19 @@ class TileFieldBuffer:
         self.layers[layer_name][self.index(local_x, local_z)] = value
 
     def get_value(self, layer_name: str, local_x: int, local_z: int) -> float | int:
-        return self.layers[layer_name][self.index(local_x, local_z)]
+        return self.layers[layer_name][self.index(local_x, local_z)].item()
 
     def set_index_value(self, layer_name: str, index: int, value: float | int) -> None:
         self.layers[layer_name][index] = value
 
     def get_index_value(self, layer_name: str, index: int) -> float | int:
-        return self.layers[layer_name][index]
+        return self.layers[layer_name][index].item()
 
     def layer_stats(self, layer_name: str) -> tuple[float | int, float | int]:
-        values = self.layers[layer_name]
-        return min(values), max(values)
+        arr = self.layers[layer_name]
+        if arr.size == 0:
+            return 0, 0
+        return arr.min().item(), arr.max().item()
 
 
 @dataclass(frozen=True)

@@ -194,46 +194,44 @@ def _blend_tile_layers(
     wx, wz = _tile_coords(base_tile.tile.min_x, base_tile.tile.min_z, tile_size)
     weight = _compute_boundary_weight_array(zone, wx, wz).ravel()
 
-    active = weight > 0.0
-    if not np.any(active):
+    if not np.any(weight > 0.0):
         if zone.name not in base_tile.contributing_zones:
             base_tile.contributing_zones.append(zone.name)
         return
 
-    # Convert layers to numpy for fast blending
     transition_noise = _coherent_noise_2d_array(wx, wz, scale=84.0, seed=71).ravel()
     transition_band = np.clip(1.0 - np.abs(weight - 0.5) * 2.0, 0.0, 1.0)
     height_weight = np.clip(
         weight + transition_noise * 0.12 * transition_band, 0.0, 1.0
     )
 
-    base_height = np.array(base_tile.layers["height"], dtype=np.float64)
-    overlay_height = np.array(overlay_tile.layers["height"], dtype=np.float64)
+    # Layers are stored as ndarrays already; operate in place where possible.
+    base_height = base_tile.layers["height"]
+    overlay_height = overlay_tile.layers["height"]
     blended_height = base_height + (overlay_height - base_height) * height_weight
-    base_tile.layers["height"] = np.round(blended_height, 3).tolist()
+    np.round(blended_height, 3, out=blended_height)
+    base_tile.layers["height"] = blended_height
 
     # Discrete layers: dither the transition instead of cutting at a fixed threshold.
     swap_threshold = np.clip(0.5 + transition_noise * 0.18 * transition_band, 0.2, 0.8)
     swap = weight >= swap_threshold
     for layer_name in ("surface_id", "subsurface_id"):
         if layer_name in overlay_tile.layers:
-            base_arr = np.array(base_tile.layers[layer_name])
-            overlay_arr = np.array(overlay_tile.layers[layer_name])
             base_tile.layers[layer_name] = np.where(
-                swap, overlay_arr, base_arr
-            ).tolist()
+                swap, overlay_tile.layers[layer_name], base_tile.layers[layer_name]
+            )
 
     if "biome_id" in overlay_tile.layers:
-        base_arr = np.array(base_tile.layers["biome_id"])
-        overlay_arr = np.array(overlay_tile.layers["biome_id"])
         biome_swap = weight >= np.maximum(0.55, swap_threshold)
         base_tile.layers["biome_id"] = np.where(
-            biome_swap, overlay_arr, base_arr
-        ).tolist()
+            biome_swap,
+            overlay_tile.layers["biome_id"],
+            base_tile.layers["biome_id"],
+        )
 
     # Water level
-    base_water = np.array(base_tile.layers["water_level"], dtype=np.float64)
-    overlay_water = np.array(overlay_tile.layers["water_level"], dtype=np.float64)
+    base_water = base_tile.layers["water_level"]
+    overlay_water = overlay_tile.layers["water_level"]
     has_overlay_water = overlay_water >= 0.0
     no_base_water = base_water < 0.0
     blended_water = np.where(
@@ -246,49 +244,49 @@ def _blend_tile_layers(
         ),
     )
     # Remove water where blended terrain is above water level (stitching raised it)
-    blended_height_final = np.array(base_tile.layers["height"], dtype=np.float64)
     blended_water = np.where(
-        (blended_water >= 0) & (blended_height_final >= blended_water),
+        (blended_water >= 0) & (base_tile.layers["height"] >= blended_water),
         -1.0,
         blended_water,
     )
-    base_tile.layers["water_level"] = np.round(blended_water, 3).tolist()
+    np.round(blended_water, 3, out=blended_water)
+    base_tile.layers["water_level"] = blended_water
 
     # Feature mask
-    base_feature = np.array(base_tile.layers["feature_mask"], dtype=np.float64)
-    overlay_feature = np.array(overlay_tile.layers["feature_mask"], dtype=np.float64)
-    base_tile.layers["feature_mask"] = np.round(
-        np.maximum(base_feature, overlay_feature * weight), 3
-    ).tolist()
+    base_feature = base_tile.layers["feature_mask"]
+    overlay_feature = overlay_tile.layers["feature_mask"]
+    blended_feature = np.maximum(base_feature, overlay_feature * weight)
+    np.round(blended_feature, 3, out=blended_feature)
+    base_tile.layers["feature_mask"] = blended_feature
 
     # Boundary weight
-    base_bw = np.array(base_tile.layers["boundary_weight"], dtype=np.float64)
-    base_tile.layers["boundary_weight"] = np.round(
-        np.maximum(base_bw, weight), 3
-    ).tolist()
+    base_bw = base_tile.layers["boundary_weight"]
+    blended_bw = np.maximum(base_bw, weight)
+    np.round(blended_bw, 3, out=blended_bw)
+    base_tile.layers["boundary_weight"] = blended_bw
 
     # Extra layers
-    for extra_layer in overlay_tile.layers:
-        if extra_layer in (
-            "height",
-            "surface_id",
-            "subsurface_id",
-            "biome_id",
-            "water_level",
-            "feature_mask",
-            "boundary_weight",
-        ):
+    core_layers = {
+        "height",
+        "surface_id",
+        "subsurface_id",
+        "biome_id",
+        "water_level",
+        "feature_mask",
+        "boundary_weight",
+    }
+    for extra_layer, overlay_arr in overlay_tile.layers.items():
+        if extra_layer in core_layers or extra_layer not in base_tile.layers:
             continue
-        if extra_layer in base_tile.layers:
-            base_arr = np.array(base_tile.layers[extra_layer], dtype=np.float64)
-            overlay_arr = np.array(overlay_tile.layers[extra_layer], dtype=np.float64)
-            spec = LAYER_REGISTRY.get(extra_layer)
-            blend = spec.blend_mode if spec else "maximum"
-            if blend == "minimum":
-                blended = np.minimum(base_arr, overlay_arr)
-            else:  # "maximum" (default for extra layers)
-                blended = np.maximum(base_arr, overlay_arr * weight)
-            base_tile.layers[extra_layer] = np.round(blended, 3).tolist()
+        base_arr = base_tile.layers[extra_layer]
+        spec = LAYER_REGISTRY.get(extra_layer)
+        blend = spec.blend_mode if spec else "maximum"
+        if blend == "minimum":
+            blended = np.minimum(base_arr, overlay_arr)
+        else:  # "maximum" (default for extra layers)
+            blended = np.maximum(base_arr, overlay_arr * weight)
+        np.round(blended, 3, out=blended)
+        base_tile.layers[extra_layer] = blended
 
     if zone.name not in base_tile.contributing_zones:
         base_tile.contributing_zones.append(zone.name)

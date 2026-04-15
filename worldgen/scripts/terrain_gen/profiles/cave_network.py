@@ -78,16 +78,16 @@ def fill_cave_network_tile(
     feature_mask = np.minimum(1.0, cave_mask * 0.8 + entrance_mask * 0.35)
 
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [deepslate_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [cave_biome_id] * area
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
-    buffer.layers["cave_mask"] = np.round(cave_mask, 3).ravel().tolist()
-    buffer.layers["ceiling_height"] = np.round(ceiling_height, 3).ravel().tolist()
-    buffer.layers["entrance_mask"] = np.round(entrance_mask, 3).ravel().tolist()
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, deepslate_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = np.full(area, cave_biome_id, dtype=np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["cave_mask"] = np.round(cave_mask, 3).ravel()
+    buffer.layers["ceiling_height"] = np.round(ceiling_height, 3).ravel()
+    buffer.layers["entrance_mask"] = np.round(entrance_mask, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

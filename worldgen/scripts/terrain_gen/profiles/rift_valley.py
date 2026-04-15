@@ -134,16 +134,16 @@ def fill_rift_valley_tile(
     feature_mask = np.maximum(valley_strength, rim_edge_mask * 0.72)
 
     area = tile_size * tile_size
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * area
-    buffer.layers["water_level"] = [-1.0] * area
-    buffer.layers["biome_id"] = [rift_biome_id] * area
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * area
-    buffer.layers["rift_axis_sdf"] = np.round(normalized_cross, 3).ravel().tolist()
-    buffer.layers["rim_edge_mask"] = np.round(rim_edge_mask, 3).ravel().tolist()
-    buffer.layers["fracture_mask"] = np.round(fracture_mask, 3).ravel().tolist()
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = np.full(area, rift_biome_id, dtype=np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
+    buffer.layers["rift_axis_sdf"] = np.round(normalized_cross, 3).ravel()
+    buffer.layers["rim_edge_mask"] = np.round(rim_edge_mask, 3).ravel()
+    buffer.layers["fracture_mask"] = np.round(fracture_mask, 3).ravel()
 
     buffer.contributing_zones.append(zone.name)
     return buffer

@@ -145,13 +145,14 @@ def fill_wilderness_tile(
     biome_id = np.where(feature_mask > 0.2, 7, biome_id)
     biome_id = np.where(drainage < 0.09, 8, biome_id)
 
-    buffer.layers["height"] = np.round(height, 3).ravel().tolist()
-    buffer.layers["surface_id"] = surface_id.ravel().tolist()
-    buffer.layers["subsurface_id"] = [stone_id] * (tile_size * tile_size)
-    buffer.layers["water_level"] = [-1.0] * (tile_size * tile_size)
-    buffer.layers["biome_id"] = biome_id.ravel().tolist()
-    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel().tolist()
-    buffer.layers["boundary_weight"] = [0.0] * (tile_size * tile_size)
+    area = tile_size * tile_size
+    buffer.layers["height"] = np.round(height, 3).ravel()
+    buffer.layers["surface_id"] = surface_id.ravel().astype(np.uint8)
+    buffer.layers["subsurface_id"] = np.full(area, stone_id, dtype=np.uint8)
+    buffer.layers["water_level"] = np.full(area, -1.0, dtype=np.float64)
+    buffer.layers["biome_id"] = biome_id.ravel().astype(np.uint8)
+    buffer.layers["feature_mask"] = np.round(feature_mask, 3).ravel()
+    buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
 
     # Zone-specific layers (rift_axis_sdf, cave_mask, etc.) are already
     # initialized to their safe defaults by TileFieldBuffer.create() via
