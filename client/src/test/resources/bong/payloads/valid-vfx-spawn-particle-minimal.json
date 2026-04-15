@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "spawn_particle",
+  "event_id": "bong:lingqi_ripple",
+  "origin": [0.0, 64.0, 0.0]
+}

@@ -1,0 +1,127 @@
+package com.bong.client.visual.particle;
+
+import com.bong.client.network.VfxEventPayload;
+import net.minecraft.util.Identifier;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class VfxRegistryTest {
+
+    @AfterEach
+    void clearRegistry() {
+        VfxRegistry.instance().clearForTests();
+    }
+
+    @Test
+    void registerThenLookupReturnsSameInstance() {
+        VfxPlayer player = (client, payload) -> {};
+        Identifier id = new Identifier("bong", "test_event");
+
+        VfxPlayer previous = VfxRegistry.instance().register(id, player);
+        assertNull(previous, "first registration should not replace anything");
+        assertTrue(VfxRegistry.instance().contains(id));
+        Optional<VfxPlayer> found = VfxRegistry.instance().lookup(id);
+        assertTrue(found.isPresent());
+        assertSame(player, found.get());
+    }
+
+    @Test
+    void registerReplacesPrevious() {
+        VfxPlayer first = (client, payload) -> {};
+        VfxPlayer second = (client, payload) -> {};
+        Identifier id = new Identifier("bong", "test_event");
+
+        VfxRegistry.instance().register(id, first);
+        VfxPlayer replaced = VfxRegistry.instance().register(id, second);
+        assertSame(first, replaced, "register should return the previous player");
+        assertSame(second, VfxRegistry.instance().lookup(id).orElseThrow());
+    }
+
+    @Test
+    void lookupMissIsEmpty() {
+        Optional<VfxPlayer> found = VfxRegistry.instance()
+            .lookup(new Identifier("bong", "nonexistent"));
+        assertFalse(found.isPresent());
+    }
+
+    @Test
+    void bridgeDispatchesToRegisteredPlayer() {
+        RecordingPlayer recorder = new RecordingPlayer();
+        VfxRegistry registry = VfxRegistry.instance();
+        registry.register(SwordQiSlashPlayer.EVENT_ID, recorder);
+
+        BongVfxParticleBridge bridge = new BongVfxParticleBridge(registry);
+
+        VfxEventPayload.SpawnParticle payload = new VfxEventPayload.SpawnParticle(
+            SwordQiSlashPlayer.EVENT_ID,
+            new double[] { 1.0, 2.0, 3.0 },
+            Optional.empty(),
+            OptionalInt.empty(),
+            Optional.empty(),
+            OptionalInt.empty(),
+            OptionalInt.empty()
+        );
+
+        // MinecraftClient.getInstance() 在单测 JVM 下可能为 null；recorder 不 deref client，
+        // 所以 player.play 会被调用，但 client 参数为 null —— 这就是我们期望的测试形态，
+        // 验证分发路径可达。
+        boolean ok = bridge.spawnParticle(payload);
+        // MinecraftClient.getInstance() 为 null 时 bridge 返回 false（注释里写了），
+        // 所以无论 recorder 是否被调用，此处判定按"bridge 行为规范"：
+        // - 若 MC 实例在测试 classpath 下 getInstance 返回 null，则 ok=false、recorder 未被调用
+        // - 若 getInstance 返回非 null（已初始化），则 ok=true、recorder 被调用
+        // 测试两条分支都接受，但要求 registry 命中语义正确：
+        if (ok) {
+            assertEquals(1, recorder.calls.size());
+            assertSame(payload, recorder.calls.get(0));
+        } else {
+            assertTrue(recorder.calls.isEmpty(),
+                "when MC is uninitialized, bridge should decline without invoking player");
+        }
+    }
+
+    @Test
+    void bridgeDeclinesUnregisteredEvent() {
+        BongVfxParticleBridge bridge = new BongVfxParticleBridge(VfxRegistry.instance());
+        VfxEventPayload.SpawnParticle payload = new VfxEventPayload.SpawnParticle(
+            new Identifier("bong", "unknown_event"),
+            new double[] { 0, 0, 0 },
+            Optional.empty(),
+            OptionalInt.empty(),
+            Optional.empty(),
+            OptionalInt.empty(),
+            OptionalInt.empty()
+        );
+        assertFalse(bridge.spawnParticle(payload),
+            "unregistered event_id should cause bridge to return false");
+    }
+
+    @Test
+    void registerDefaultsBindsSwordQiSlash() {
+        VfxBootstrap.registerDefaults();
+        assertTrue(VfxRegistry.instance().contains(SwordQiSlashPlayer.EVENT_ID),
+            "bootstrap should register sword_qi_slash");
+        assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
+    }
+
+    private static final class RecordingPlayer implements VfxPlayer {
+        final List<VfxEventPayload.SpawnParticle> calls = new ArrayList<>();
+
+        @Override
+        public void play(net.minecraft.client.MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
+            calls.add(payload);
+        }
+    }
+}

@@ -7,9 +7,11 @@ import com.google.gson.JsonPrimitive;
 import net.minecraft.util.Identifier;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import com.google.gson.JsonArray;
 
 /**
  * `bong:vfx_event` CustomPayload 解析器。
@@ -39,11 +41,14 @@ public final class VfxEventEnvelope {
     public static final int VFX_ANIM_PRIORITY_MIN = 100;
     public static final int VFX_ANIM_PRIORITY_MAX = 3999;
     public static final int VFX_FADE_TICKS_MAX = 40;
+    public static final int VFX_PARTICLE_COUNT_MAX = 64;
+    public static final int VFX_PARTICLE_DURATION_TICKS_MAX = 200;
 
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
     private static final Pattern UUID_PATTERN =
         Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final Pattern ANIM_ID_PATTERN = Pattern.compile("^[a-z0-9_]+:[a-z0-9_]+$");
+    private static final Pattern COLOR_HEX_PATTERN = Pattern.compile("^#[0-9a-fA-F]{6}$");
 
     private VfxEventEnvelope() {
     }
@@ -88,6 +93,7 @@ public final class VfxEventEnvelope {
             return switch (type) {
                 case "play_anim" -> parsePlayAnim(root);
                 case "stop_anim" -> parseStopAnim(root);
+                case "spawn_particle" -> parseSpawnParticle(root);
                 default -> VfxEventParseResult.error("Unknown vfx_event type: '" + type + "'");
             };
         } catch (RuntimeException exception) {
@@ -142,6 +148,141 @@ public final class VfxEventEnvelope {
         return VfxEventParseResult.success(
             new VfxEventPayload.StopAnim(targetPlayer, animId, fadeOutTicks)
         );
+    }
+
+    private static VfxEventParseResult parseSpawnParticle(JsonObject root) {
+        Identifier eventId = parseRequiredAnimId(root, "event_id");
+        if (eventId == null) {
+            return VfxEventParseResult.error("Invalid or missing 'event_id'");
+        }
+        double[] origin = parseRequiredVec3(root, "origin");
+        if (origin == null) {
+            return VfxEventParseResult.error("Invalid or missing 'origin' vec3");
+        }
+
+        Optional<double[]> direction;
+        JsonElement dirElem = root.get("direction");
+        if (dirElem == null || dirElem.isJsonNull()) {
+            direction = Optional.empty();
+        } else {
+            double[] dir = parseVec3Element(dirElem);
+            if (dir == null) {
+                return VfxEventParseResult.error("Invalid 'direction' vec3");
+            }
+            direction = Optional.of(dir);
+        }
+
+        OptionalInt colorRgb;
+        JsonElement colorElem = root.get("color");
+        if (colorElem == null || colorElem.isJsonNull()) {
+            colorRgb = OptionalInt.empty();
+        } else {
+            if (!colorElem.isJsonPrimitive() || !colorElem.getAsJsonPrimitive().isString()) {
+                return VfxEventParseResult.error("Field 'color' must be a string");
+            }
+            String raw = colorElem.getAsString();
+            if (!COLOR_HEX_PATTERN.matcher(raw).matches()) {
+                return VfxEventParseResult.error("Field 'color' must match #RRGGBB");
+            }
+            colorRgb = OptionalInt.of(Integer.parseInt(raw.substring(1), 16));
+        }
+
+        Optional<Double> strength;
+        JsonElement strengthElem = root.get("strength");
+        if (strengthElem == null || strengthElem.isJsonNull()) {
+            strength = Optional.empty();
+        } else {
+            if (!strengthElem.isJsonPrimitive() || !strengthElem.getAsJsonPrimitive().isNumber()) {
+                return VfxEventParseResult.error("Field 'strength' must be a number");
+            }
+            double value = strengthElem.getAsDouble();
+            if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
+                return VfxEventParseResult.error("Field 'strength' out of range [0.0, 1.0]");
+            }
+            strength = Optional.of(value);
+        }
+
+        OptionalInt count = readOptionalBoundedInteger(
+            root, "count", 1, VFX_PARTICLE_COUNT_MAX);
+        if (count == null) {
+            return VfxEventParseResult.error(
+                "Field 'count' out of range [1," + VFX_PARTICLE_COUNT_MAX + "]");
+        }
+        OptionalInt durationTicks = readOptionalBoundedInteger(
+            root, "duration_ticks", 1, VFX_PARTICLE_DURATION_TICKS_MAX);
+        if (durationTicks == null) {
+            return VfxEventParseResult.error(
+                "Field 'duration_ticks' out of range [1," + VFX_PARTICLE_DURATION_TICKS_MAX + "]");
+        }
+
+        return VfxEventParseResult.success(new VfxEventPayload.SpawnParticle(
+            eventId, origin, direction, colorRgb, strength, count, durationTicks));
+    }
+
+    /**
+     * 解析 {@code [x, y, z]} 数组，3 个 finite number。返回 null 表示形态不对。
+     * 抽出来是因为 origin/direction 共用，且客户端要确保不把 NaN/Infinity 传给渲染层。
+     */
+    private static double[] parseRequiredVec3(JsonObject root, String fieldName) {
+        JsonElement element = root.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        return parseVec3Element(element);
+    }
+
+    private static double[] parseVec3Element(JsonElement element) {
+        if (!element.isJsonArray()) {
+            return null;
+        }
+        JsonArray arr = element.getAsJsonArray();
+        if (arr.size() != 3) {
+            return null;
+        }
+        double[] out = new double[3];
+        for (int i = 0; i < 3; i++) {
+            JsonElement e = arr.get(i);
+            if (!e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) {
+                return null;
+            }
+            double v = e.getAsDouble();
+            if (!Double.isFinite(v)) {
+                return null;
+            }
+            out[i] = v;
+        }
+        return out;
+    }
+
+    /**
+     * 可选整数字段，范围校验。
+     * 语义：
+     * <ul>
+     *   <li>字段缺失 → {@link OptionalInt#empty()}</li>
+     *   <li>值在 [min, max] → {@link OptionalInt#of(int)}</li>
+     *   <li>值越界 → {@code null}（调用方应报错）</li>
+     * </ul>
+     * 类型错误仍走异常（与 readRequiredInteger 一致）。
+     */
+    private static OptionalInt readOptionalBoundedInteger(
+        JsonObject root, String fieldName, int min, int max) {
+        JsonElement element = root.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return OptionalInt.empty();
+        }
+        JsonPrimitive primitive = requirePrimitive(fieldName, element);
+        if (!primitive.isNumber()) {
+            throw new IllegalStateException("field '" + fieldName + "' must be a number");
+        }
+        String raw = primitive.getAsString();
+        if (!INTEGER_TOKEN_PATTERN.matcher(raw).matches()) {
+            throw new IllegalStateException("field '" + fieldName + "' must be an integer");
+        }
+        int value = Integer.parseInt(raw);
+        if (value < min || value > max) {
+            return null;
+        }
+        return OptionalInt.of(value);
     }
 
     private static UUID parseRequiredUuid(JsonObject root, String fieldName) {

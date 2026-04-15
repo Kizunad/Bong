@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "spawn_particle",
+  "event_id": "bong:sword_qi_slash",
+  "origin": [128.5, 64.0, -32.25],
+  "direction": [0.7071, 0.0, 0.7071],
+  "color": "#88ccff",
+  "strength": 0.8,
+  "count": 1,
+  "duration_ticks": 20
+}

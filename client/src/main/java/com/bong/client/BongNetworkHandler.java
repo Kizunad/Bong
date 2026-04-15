@@ -8,6 +8,7 @@ import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.network.VfxEventRouter;
+import com.bong.client.visual.particle.BongVfxParticleBridge;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.UiOpenState;
@@ -27,7 +28,8 @@ public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
 
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
-    private static final VfxEventRouter VFX_ROUTER = new VfxEventRouter(new ClientAnimationBridge());
+    private static final VfxEventRouter VFX_ROUTER =
+        new VfxEventRouter(new ClientAnimationBridge(), new BongVfxParticleBridge());
     private static final long UNKNOWN_LOG_THROTTLE_MS = 30_000L;
     private static final int UNKNOWN_TYPE_LOG_CACHE_LIMIT = 256;
     private static final Map<String, Long> UNKNOWN_TYPE_LOG_TIMES = new LinkedHashMap<>(16, 0.75f, true);

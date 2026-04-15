@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "spawn_particle",
+  "event_id": "bong:sword_qi_slash",
+  "origin": [0.0, 64.0]
+}
