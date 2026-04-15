@@ -87,7 +87,7 @@ pub struct PlayerInventory {
     pub containers: Vec<Container>,          // 默认 3: 主背包 5×7 / 小口袋 3×3 / 前挂包 3×4
     pub equipped: HashMap<EquipSlot, ItemInstance>,
     pub hotbar: [Option<ItemInstance>; 9],
-    pub spirit_stones: u64,                  // 散装灵石（不占格子）
+    // v1 out-of-scope: future currency slot, not modeled here
     pub bone_coins: u64,                     // 骨币
     pub max_weight: f64,
 }
@@ -122,7 +122,7 @@ pub struct ItemInstance {
 - `double spiritQuality`（MVP 仅展示，不影响逻辑）
 - `double durability`（MVP 仅展示）
 
-`InventoryModel` 新增 `spiritStones / boneCoins` 已有 → 复用。
+`InventoryModel` 仅复用骨币，不再为 v1 引入额外散装灵石字段。
 
 ---
 
@@ -153,13 +153,12 @@ pub struct ItemInstance {
 需要扩的 `ServerDataType` 变体（`server/src/schema/server_data.rs`）：
 - `InventorySnapshot`（全量，进服 / 重生 / 容器切换时推一次）
 - `InventoryEvent`（delta，`kind: Added|Removed|Moved|StackChanged|DurabilityChanged` + `instance_id`）
-- `ItemRegistrySnapshot`（进服首次推送模板库，client 缓存到 `ItemRegistryStore`）
+- 模板同步方案已移出 v1，不再作为当前实现目标。
 
-Client 端照 `ServerDataRouter` 现有模式，新增三个 handler 注册到 dispatcher：
+Client 端照 `ServerDataRouter` 现有模式，新增两个 handler 注册到 dispatcher：
 ```java
 handlers.put("inventory_snapshot", new InventorySnapshotHandler(store));
 handlers.put("inventory_event",    new InventoryEventHandler(store));
-handlers.put("item_registry_snapshot", new ItemRegistrySnapshotHandler(registry));
 ```
 
 C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequestV1` / `ApplyPillRequestV1` / `DropItemRequestV1`）。
@@ -177,7 +176,7 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
 
 ### 3.3 Item Template 同步
 
-**决策**：template **不**走每帧 world_state，仅**一次性** S2C `item_registry_snapshot`（玩家进服首次推送）。Client 缓存到 `ItemRegistryStore`，按 `template_id` 查 name/icon/grid size。
+**决策**：v1 不再依赖单独的模板同步通道。库存快照本身要自包含，`InventorySnapshot` 直接携带 UI 需要的显示字段，客户端按快照数据渲染。模板同步若以后要做，另起 plan。
 
 ---
 
@@ -246,7 +245,7 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
 
 ## 7. Client UI Refactor Checklist
 
-UI 侧为**增量改造**，无推倒重来。按 P 阶段拆分。
+UI 已经存在，这个 plan 只负责把它接到权威 snapshot 上。按 P 阶段拆分。
 
 ### 7.1 P1 — 只读 snapshot 替换 mock
 
@@ -257,13 +256,13 @@ UI 侧为**增量改造**，无推倒重来。按 P 阶段拆分。
 
 **新类**
 - [ ] `com.bong.client.inventory.state.InventoryStateStore`：复刻 `MeridianStateStore` 模式（`CopyOnWriteArrayList<Consumer<InventoryModel>>` 监听、`replace()` / `snapshot()` / `addListener()` / `resetForTests()`）
-- [ ] `com.bong.client.inventory.state.ItemRegistryStore`：缓存 `Map<String, ItemTemplate>`，进服首次 snapshot 后常驻；提供 `lookup(templateId)` 给 UI 查 name/icon/grid size
+- [ ] `com.bong.client.inventory.state.ItemRegistryStore`：如后续需要再单独立项，当前 v1 不作为主线
 - [ ] `com.bong.client.network.InventorySnapshotHandler implements ServerDataHandler`：解析 `inventory_snapshot` 全量 → `InventoryStateStore.replace(...)`
-- [ ] `com.bong.client.network.ItemRegistrySnapshotHandler implements ServerDataHandler`：解析 `item_registry_snapshot` → `ItemRegistryStore.replace(...)`
-- [ ] 两个 handler 在 `ServerDataDispatch` / 分发路由处注册
+- [ ] `com.bong.client.network.InventoryEventHandler implements ServerDataHandler`：解析 `inventory_event` → `InventoryStateStore` 增量合并
+- [ ] 两个 handler 在 `ServerDataRouter` / 分发路由处注册
 
 **Bootstrap + Screen 接线**
-- [ ] `InspectScreenBootstrap.createScreenForCurrentState()`：从 `InventoryStateStore.snapshot()` 取 model，空时 fallback `MockInventoryData`
+- [ ] `InspectScreenBootstrap.createScreenForCurrentState()`：从 `InventoryStateStore.snapshot()` 取 model，权威快照未到时才 fallback `MockInventoryData`
 - [ ] `InspectScreen` 打开时注册 `InventoryStateStore.addListener(...)`，close 时移除；listener 内重新刷新 grid/hotbar/equipment
 - [ ] 丢弃 screen 内保留的 `model` 字段直接引用 —— 改为每次渲染前从 store 取最新
 
@@ -271,7 +270,7 @@ UI 侧为**增量改造**，无推倒重来。按 P 阶段拆分。
 - [ ] `GridSlotComponent`：`stackCount > 1` 时右下角叠加数字（使用 MC 默认 font renderer）
 - [ ] `GridSlotComponent`：`spiritQuality < 0.5` 时边框变灰；`< 0.2` 时再降饱和
 - [ ] `ItemTooltipPanel`：追加两行「纯度 X%」「耐久 Y%」，仅当 < 1.0 显示，避免新玩家信息过载
-- [ ] `InspectScreen` bottom bar：显示 `spiritStones` / `boneCoins` 双通货（现有字段 `spiritStones` 复用，`boneCoins` 需加到 `InventoryModel`）
+- [ ] 散装灵石相关 UI 指引已 out-of-scope，不再作为 v1 目标；如未来要做双通货，再开新 plan
 
 **测试**
 - [ ] `InventorySnapshotHandlerTest`：全量 payload → store 断言；字段缺失 / 长度不一致 → 不触碰 store

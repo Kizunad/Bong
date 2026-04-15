@@ -4,9 +4,12 @@ use big_brain::prelude::{
 use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventReader, EventWriter,
-    IntoSystemConfigs, Position, PreUpdate, Query, Res, Resource, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
+    Position, PreUpdate, Query, Res, Resource, With, Without,
 };
+
+#[cfg(test)]
+use valence::prelude::EventReader;
 
 use crate::combat::events::AttackIntent;
 use crate::npc::movement::{
@@ -910,14 +913,20 @@ mod tests {
         assert_eq!(*action_state, ActionState::Executing);
 
         let captured = &app.world().resource::<CapturedAttackIntents>().0;
-        assert_eq!(captured.len(), 1, "melee cooldown should emit one AttackIntent");
+        assert_eq!(
+            captured.len(),
+            1,
+            "melee cooldown should emit one AttackIntent"
+        );
         assert_eq!(captured[0].attacker, npc);
         assert_eq!(captured[0].target, Some(target));
         assert_eq!(captured[0].reach, MELEE_RANGE);
         assert_eq!(captured[0].debug_command, None);
 
         assert!(
-            app.world().get::<crate::npc::movement::PendingKnockback>(target).is_none(),
+            app.world()
+                .get::<crate::npc::movement::PendingKnockback>(target)
+                .is_none(),
             "melee bridge should not rely on PendingKnockback as primary damage path"
         );
     }

@@ -460,13 +460,8 @@ mod tests {
     use valence::prelude::{App, EventReader, Position, ResMut, Update};
     use valence::testing::create_mock_client;
 
+    #[derive(Default)]
     struct CapturedAttackIntents(Vec<AttackIntent>);
-
-    impl Default for CapturedAttackIntents {
-        fn default() -> Self {
-            Self(Vec::new())
-        }
-    }
 
     impl valence::prelude::Resource for CapturedAttackIntents {}
 
@@ -504,20 +499,29 @@ mod tests {
         };
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
-        let entity = app.world_mut().spawn((client_bundle, initial_state.clone())).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, initial_state.clone()))
+            .id();
 
-        app.world_mut().resource_mut::<GameplayActionQueue>().enqueue(
-            "offline:Azure",
-            GameplayAction::Combat(CombatAction {
-                target: "Crimson".to_string(),
-                target_health: 18.0,
-            }),
-        );
+        app.world_mut()
+            .resource_mut::<GameplayActionQueue>()
+            .enqueue(
+                "offline:Azure",
+                GameplayAction::Combat(CombatAction {
+                    target: "Crimson".to_string(),
+                    target_health: 18.0,
+                }),
+            );
 
         app.update();
 
         let captured = &app.world().resource::<CapturedAttackIntents>().0;
-        assert_eq!(captured.len(), 1, "combat queue should bridge into AttackIntent");
+        assert_eq!(
+            captured.len(),
+            1,
+            "combat queue should bridge into AttackIntent"
+        );
         assert_eq!(captured[0].attacker, entity);
         assert_eq!(captured[0].target, None);
         assert_eq!(captured[0].issued_at_tick, 1);

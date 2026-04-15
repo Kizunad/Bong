@@ -1,0 +1,23 @@
+[[item]]
+id = "guyuan_pill"
+name = "固元丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "温补真元，服后可加速恢复灵力。"
+effect = { kind = "breakthrough_bonus", magnitude = 0.12 }
+
+[[item]]
+id = "ningmai_powder"
+name = "凝脉散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "外敷经脉，缓解走火入魔。"
+effect = { kind = "meridian_heal", magnitude = 0.2, target = "any_meridian" }

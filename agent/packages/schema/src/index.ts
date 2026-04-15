@@ -11,6 +11,9 @@ export * from "./chat-message.js";
 export * from "./client-payload.js";
 export * from "./client-request.js";
 export * from "./combat-event.js";
+export * from "./inventory.js";
+export * from "./narration.js";
+export * from "./server-data.js";
 export * from "./world-state.js";
 
 // Validation & registry

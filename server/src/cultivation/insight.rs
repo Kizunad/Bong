@@ -30,7 +30,7 @@ impl InsightCategory {
             InsightCategory::Composure => 0.10,
             InsightCategory::Coloring => 0.05,
             InsightCategory::Breakthrough => 0.05,
-            InsightCategory::Style => 0.15,    // 流派类效果更大
+            InsightCategory::Style => 0.15,     // 流派类效果更大
             InsightCategory::Perception => 1.0, // 解锁类无幅度
         }
     }

@@ -9,7 +9,7 @@ pub const COOLDOWN_SAME_TARGET_MS: u64 = 600_000;
 pub const NEWBIE_POWER_THRESHOLD: f64 = 0.2;
 pub const MAX_COMMANDS_PER_TICK: usize = 5;
 pub const MAX_NARRATION_LENGTH: usize = 500;
-pub const MAX_PAYLOAD_BYTES: usize = 1024;
+pub const MAX_PAYLOAD_BYTES: usize = 8192;
 
 // ─── 枚举 ───────────────────────────────────────────────
 

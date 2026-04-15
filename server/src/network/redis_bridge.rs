@@ -6,8 +6,8 @@ use std::time::Duration;
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER,
-    CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_PLAYER_CHAT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -861,7 +861,9 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
-    use crate::schema::combat_event::{CombatRealtimeKindV1, CombatRealtimeEventV1, CombatSummaryV1};
+    use crate::schema::combat_event::{
+        CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
+    };
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -960,8 +962,8 @@ mod redis_bridge_tests {
 
     #[test]
     fn publishes_combat_realtime_and_summary_on_correct_channels() {
-        let realtime = prepare_outbound_command(RedisOutbound::CombatRealtime(
-            CombatRealtimeEventV1 {
+        let realtime =
+            prepare_outbound_command(RedisOutbound::CombatRealtime(CombatRealtimeEventV1 {
                 v: 1,
                 kind: CombatRealtimeKindV1::CombatEvent,
                 tick: 44,
@@ -969,9 +971,8 @@ mod redis_bridge_tests {
                 attacker_id: Some("offline:Azure".to_string()),
                 description: Some("shared path hit".to_string()),
                 cause: None,
-            },
-        ))
-        .expect("combat realtime payload should serialize");
+            }))
+            .expect("combat realtime payload should serialize");
         match realtime {
             RedisIoCommand::Publish { channel, payload } => {
                 assert_eq!(channel, CH_COMBAT_REALTIME);

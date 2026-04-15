@@ -1,0 +1,114 @@
+{
+  "revision": 12,
+  "containers": [
+    {
+      "id": "main_pack",
+      "name": "主背包",
+      "rows": 5,
+      "cols": 7
+    },
+    {
+      "id": "small_pouch",
+      "name": "小口袋",
+      "rows": 3,
+      "cols": 3
+    },
+    {
+      "id": "front_satchel",
+      "name": "前挂包",
+      "rows": 3,
+      "cols": 4
+    }
+  ],
+  "placed_items": [
+    {
+      "container_id": "main_pack",
+      "row": 0,
+      "col": 0,
+      "item": {
+        "instance_id": 1001,
+        "item_id": "starter_talisman",
+        "display_name": "启程护符",
+        "grid_width": 1,
+        "grid_height": 1,
+        "weight": 0.2,
+        "rarity": "uncommon",
+        "description": "初入修途者配发的护身符。",
+        "stack_count": 1,
+        "spirit_quality": 0.76,
+        "durability": 0.93
+      }
+    },
+    {
+      "container_id": "front_satchel",
+      "row": 1,
+      "col": 2,
+      "item": {
+        "instance_id": 1002,
+        "item_id": "field_ration",
+        "display_name": "行军干粮",
+        "grid_width": 1,
+        "grid_height": 1,
+        "weight": 0.4,
+        "rarity": "common",
+        "description": "便携干粮，适合外出巡山。",
+        "stack_count": 6,
+        "spirit_quality": 0.1,
+        "durability": 1
+      }
+    }
+  ],
+  "equipped": {
+    "head": null,
+    "chest": null,
+    "legs": null,
+    "feet": null,
+    "main_hand": {
+      "instance_id": 1003,
+      "item_id": "training_blade",
+      "display_name": "训练短刃",
+      "grid_width": 1,
+      "grid_height": 2,
+      "weight": 1.1,
+      "rarity": "common",
+      "description": "门内发放的练习武器。",
+      "stack_count": 1,
+      "spirit_quality": 0.22,
+      "durability": 0.88
+    },
+    "off_hand": null,
+    "two_hand": null
+  },
+  "hotbar": [
+    {
+      "instance_id": 1004,
+      "item_id": "healing_draught",
+      "display_name": "疗伤药剂",
+      "grid_width": 1,
+      "grid_height": 1,
+      "weight": 0.3,
+      "rarity": "uncommon",
+      "description": "用于应急恢复体魄。",
+      "stack_count": 2,
+      "spirit_quality": 0.54,
+      "durability": 1
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "bone_coins": 57,
+  "weight": {
+    "current": 3.7,
+    "max": 50
+  },
+  "realm": "qi_refining_1",
+  "qi_current": 24,
+  "qi_max": 100,
+  "body_level": 0.18
+}

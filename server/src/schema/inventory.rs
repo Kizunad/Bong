@@ -1,0 +1,756 @@
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+
+const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+const HOTBAR_SLOT_COUNT: usize = 9;
+const INVENTORY_CONTAINER_COUNT: usize = 3;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerIdV1 {
+    MainPack,
+    SmallPouch,
+    FrontSatchel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipSlotV1 {
+    Head,
+    Chest,
+    Legs,
+    Feet,
+    MainHand,
+    OffHand,
+    TwoHand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemRarityV1 {
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+    Legendary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct InventoryItemViewV1 {
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_128")]
+    pub item_id: String,
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_256")]
+    pub display_name: String,
+    #[serde(deserialize_with = "deserialize_grid_span")]
+    pub grid_width: u8,
+    #[serde(deserialize_with = "deserialize_grid_span")]
+    pub grid_height: u8,
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub weight: f64,
+    pub rarity: ItemRarityV1,
+    #[serde(deserialize_with = "deserialize_string_up_to_4096")]
+    pub description: String,
+    #[serde(deserialize_with = "deserialize_positive_u64")]
+    pub stack_count: u64,
+    #[serde(deserialize_with = "deserialize_unit_interval_f64")]
+    pub spirit_quality: f64,
+    #[serde(deserialize_with = "deserialize_unit_interval_f64")]
+    pub durability: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct InventoryWeightV1 {
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub current: f64,
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub max: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EquippedInventorySnapshotV1 {
+    pub head: Option<InventoryItemViewV1>,
+    pub chest: Option<InventoryItemViewV1>,
+    pub legs: Option<InventoryItemViewV1>,
+    pub feet: Option<InventoryItemViewV1>,
+    pub main_hand: Option<InventoryItemViewV1>,
+    pub off_hand: Option<InventoryItemViewV1>,
+    pub two_hand: Option<InventoryItemViewV1>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InventoryLocationV1 {
+    Container {
+        container_id: ContainerIdV1,
+        row: u64,
+        col: u64,
+    },
+    Equip {
+        slot: EquipSlotV1,
+    },
+    Hotbar {
+        index: u8,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PlacedInventoryItemV1 {
+    pub container_id: ContainerIdV1,
+    #[serde(deserialize_with = "deserialize_grid_coordinate")]
+    pub row: u64,
+    #[serde(deserialize_with = "deserialize_grid_coordinate")]
+    pub col: u64,
+    pub item: InventoryItemViewV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerSnapshotV1 {
+    pub id: ContainerIdV1,
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
+    pub name: String,
+    #[serde(deserialize_with = "deserialize_container_extent")]
+    pub rows: u8,
+    #[serde(deserialize_with = "deserialize_container_extent")]
+    pub cols: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct InventorySnapshotV1 {
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_inventory_containers")]
+    pub containers: Vec<ContainerSnapshotV1>,
+    pub placed_items: Vec<PlacedInventoryItemV1>,
+    pub equipped: EquippedInventorySnapshotV1,
+    #[serde(deserialize_with = "deserialize_hotbar")]
+    pub hotbar: Vec<Option<InventoryItemViewV1>>,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub bone_coins: u64,
+    pub weight: InventoryWeightV1,
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
+    pub realm: String,
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub qi_current: f64,
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub qi_max: f64,
+    #[serde(deserialize_with = "deserialize_non_negative_f64")]
+    pub body_level: f64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InventoryEventV1 {
+    Moved {
+        revision: u64,
+        instance_id: u64,
+        from: InventoryLocationV1,
+        to: InventoryLocationV1,
+    },
+    StackChanged {
+        revision: u64,
+        instance_id: u64,
+        stack_count: u64,
+    },
+    DurabilityChanged {
+        revision: u64,
+        instance_id: u64,
+        durability: f64,
+    },
+}
+
+impl<'de> Deserialize<'de> for InventoryLocationV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawInventoryLocationV1::deserialize(deserializer)?;
+        raw.try_into().map_err(D::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for InventoryEventV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawInventoryEventV1::deserialize(deserializer)?;
+        raw.try_into().map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawInventoryLocationV1 {
+    Container(RawInventoryContainerLocationV1),
+    Equip(RawInventoryEquipLocationV1),
+    Hotbar(RawInventoryHotbarLocationV1),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryContainerLocationV1 {
+    kind: String,
+    container_id: ContainerIdV1,
+    #[serde(deserialize_with = "deserialize_grid_coordinate")]
+    row: u64,
+    #[serde(deserialize_with = "deserialize_grid_coordinate")]
+    col: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEquipLocationV1 {
+    kind: String,
+    slot: EquipSlotV1,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryHotbarLocationV1 {
+    kind: String,
+    #[serde(deserialize_with = "deserialize_hotbar_index")]
+    index: u8,
+}
+
+impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
+    type Error = String;
+
+    fn try_from(value: RawInventoryLocationV1) -> Result<Self, Self::Error> {
+        match value {
+            RawInventoryLocationV1::Container(location) => {
+                if location.kind != "container" {
+                    return Err(format!(
+                        "InventoryLocationV1.kind must be 'container', got '{}'",
+                        location.kind
+                    ));
+                }
+
+                Ok(Self::Container {
+                    container_id: location.container_id,
+                    row: location.row,
+                    col: location.col,
+                })
+            }
+            RawInventoryLocationV1::Equip(location) => {
+                if location.kind != "equip" {
+                    return Err(format!(
+                        "InventoryLocationV1.kind must be 'equip', got '{}'",
+                        location.kind
+                    ));
+                }
+
+                Ok(Self::Equip {
+                    slot: location.slot,
+                })
+            }
+            RawInventoryLocationV1::Hotbar(location) => {
+                if location.kind != "hotbar" {
+                    return Err(format!(
+                        "InventoryLocationV1.kind must be 'hotbar', got '{}'",
+                        location.kind
+                    ));
+                }
+
+                Ok(Self::Hotbar {
+                    index: location.index,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawInventoryEventV1 {
+    Moved(RawInventoryEventMovedV1),
+    StackChanged(RawInventoryEventStackChangedV1),
+    DurabilityChanged(RawInventoryEventDurabilityChangedV1),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEventMovedV1 {
+    kind: String,
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    pub from: InventoryLocationV1,
+    pub to: InventoryLocationV1,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEventStackChangedV1 {
+    kind: String,
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    #[serde(deserialize_with = "deserialize_non_negative_u64")]
+    pub stack_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEventDurabilityChangedV1 {
+    kind: String,
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    #[serde(deserialize_with = "deserialize_unit_interval_f64")]
+    pub durability: f64,
+}
+
+impl TryFrom<RawInventoryEventV1> for InventoryEventV1 {
+    type Error = String;
+
+    fn try_from(value: RawInventoryEventV1) -> Result<Self, Self::Error> {
+        match value {
+            RawInventoryEventV1::Moved(event) => {
+                if event.kind != "moved" {
+                    return Err(format!(
+                        "InventoryEventV1.kind must be 'moved', got '{}'",
+                        event.kind
+                    ));
+                }
+
+                Ok(Self::Moved {
+                    revision: event.revision,
+                    instance_id: event.instance_id,
+                    from: event.from,
+                    to: event.to,
+                })
+            }
+            RawInventoryEventV1::StackChanged(event) => {
+                if event.kind != "stack_changed" {
+                    return Err(format!(
+                        "InventoryEventV1.kind must be 'stack_changed', got '{}'",
+                        event.kind
+                    ));
+                }
+
+                Ok(Self::StackChanged {
+                    revision: event.revision,
+                    instance_id: event.instance_id,
+                    stack_count: event.stack_count,
+                })
+            }
+            RawInventoryEventV1::DurabilityChanged(event) => {
+                if event.kind != "durability_changed" {
+                    return Err(format!(
+                        "InventoryEventV1.kind must be 'durability_changed', got '{}'",
+                        event.kind
+                    ));
+                }
+
+                Ok(Self::DurabilityChanged {
+                    revision: event.revision,
+                    instance_id: event.instance_id,
+                    durability: event.durability,
+                })
+            }
+        }
+    }
+}
+
+fn deserialize_fixed_len_vec<'de, D, T, const EXPECTED: usize>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let values = Vec::<T>::deserialize(deserializer)?;
+    if values.len() == EXPECTED {
+        Ok(values)
+    } else {
+        Err(D::Error::custom(format!(
+            "expected array length {EXPECTED}, got {}",
+            values.len()
+        )))
+    }
+}
+
+fn deserialize_inventory_containers<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ContainerSnapshotV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_fixed_len_vec::<D, ContainerSnapshotV1, INVENTORY_CONTAINER_COUNT>(deserializer)
+}
+
+fn deserialize_hotbar<'de, D>(deserializer: D) -> Result<Vec<Option<InventoryItemViewV1>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_fixed_len_vec::<D, Option<InventoryItemViewV1>, HOTBAR_SLOT_COUNT>(deserializer)
+}
+
+fn deserialize_js_safe_integer<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value <= JS_SAFE_INTEGER_MAX {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "integer must be <= {JS_SAFE_INTEGER_MAX}, got {value}"
+        )))
+    }
+}
+
+fn deserialize_grid_coordinate<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    u64::deserialize(deserializer)
+}
+
+fn deserialize_grid_span<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if (1..=4).contains(&value) {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "grid span must be in 1..=4, got {value}"
+        )))
+    }
+}
+
+fn deserialize_container_extent<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if (1..=16).contains(&value) {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "container extent must be in 1..=16, got {value}"
+        )))
+    }
+}
+
+fn deserialize_hotbar_index<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if (0..HOTBAR_SLOT_COUNT as u8).contains(&value) {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "hotbar index must be in 0..={}, got {value}",
+            HOTBAR_SLOT_COUNT - 1
+        )))
+    }
+}
+
+fn deserialize_positive_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value >= 1 {
+        Ok(value)
+    } else {
+        Err(D::Error::custom("value must be >= 1"))
+    }
+}
+
+fn deserialize_non_negative_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    u64::deserialize(deserializer)
+}
+
+fn deserialize_non_negative_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "number must be >= 0, got {value}"
+        )))
+    }
+}
+
+fn deserialize_unit_interval_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "number must be in 0..=1, got {value}"
+        )))
+    }
+}
+
+fn deserialize_string_up_to_4096<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_string::<D, 0, 4096>(deserializer)
+}
+
+fn deserialize_non_empty_string_up_to_64<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_string::<D, 1, 64>(deserializer)
+}
+
+fn deserialize_non_empty_string_up_to_128<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_string::<D, 1, 128>(deserializer)
+}
+
+fn deserialize_non_empty_string_up_to_256<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_string::<D, 1, 256>(deserializer)
+}
+
+fn deserialize_bounded_string<'de, D, const MIN: usize, const MAX: usize>(
+    deserializer: D,
+) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let len = value.chars().count();
+    if (MIN..=MAX).contains(&len) {
+        Ok(value)
+    } else {
+        Err(D::Error::custom(format!(
+            "string length must be in {MIN}..={MAX}, got {len}"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use serde_json::{json, Value};
+
+    const INVENTORY_SNAPSHOT_SAMPLE: &str =
+        include_str!("../../../agent/packages/schema/samples/inventory-snapshot.sample.json");
+    const INVENTORY_EVENT_SAMPLE: &str =
+        include_str!("../../../agent/packages/schema/samples/inventory-event.sample.json");
+    const INVENTORY_EVENT_INVALID_UNKNOWN_KIND_SAMPLE: &str = include_str!(
+        "../../../agent/packages/schema/samples/inventory-event.invalid-unknown-kind.sample.json"
+    );
+    const SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE: &str = include_str!(
+        "../../../agent/packages/schema/samples/server-data.inventory-snapshot.sample.json"
+    );
+    const SERVER_DATA_INVENTORY_EVENT_SAMPLE: &str = include_str!(
+        "../../../agent/packages/schema/samples/server-data.inventory-event.sample.json"
+    );
+
+    fn sample_value(json_text: &str) -> Value {
+        serde_json::from_str(json_text).expect("sample should parse into serde_json::Value")
+    }
+
+    #[test]
+    fn deserialize_inventory_snapshot_sample() {
+        let snapshot: InventorySnapshotV1 = serde_json::from_str(INVENTORY_SNAPSHOT_SAMPLE)
+            .expect("inventory-snapshot.sample.json should deserialize into InventorySnapshotV1");
+
+        assert_eq!(snapshot.revision, 12);
+        assert_eq!(snapshot.containers.len(), 3);
+        assert_eq!(snapshot.placed_items.len(), 2);
+        assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
+        assert_eq!(snapshot.hotbar.len(), HOTBAR_SLOT_COUNT);
+        assert_eq!(snapshot.bone_coins, 57);
+        assert_eq!(snapshot.realm, "qi_refining_1");
+    }
+
+    #[test]
+    fn inventory_snapshot_roundtrip_preserves_content() {
+        let snapshot: InventorySnapshotV1 = serde_json::from_str(INVENTORY_SNAPSHOT_SAMPLE)
+            .expect("inventory snapshot sample should deserialize");
+        let reserialized =
+            serde_json::to_string(&snapshot).expect("inventory snapshot should serialize back");
+        let roundtrip: InventorySnapshotV1 = serde_json::from_str(&reserialized)
+            .expect("serialized inventory snapshot should deserialize again");
+
+        assert_eq!(
+            serde_json::to_value(&snapshot).expect("snapshot should convert to value"),
+            serde_json::to_value(&roundtrip).expect("roundtrip should convert to value"),
+        );
+    }
+
+    #[test]
+    fn inventory_snapshot_rejects_unknown_top_level_field() {
+        let mut value = sample_value(INVENTORY_SNAPSHOT_SAMPLE);
+        value["realm_clock"] = json!(99);
+
+        assert!(serde_json::from_value::<InventorySnapshotV1>(value).is_err());
+    }
+
+    #[test]
+    fn inventory_snapshot_rejects_unknown_nested_item_field() {
+        let mut value = sample_value(INVENTORY_SNAPSHOT_SAMPLE);
+        value["placed_items"][0]["item"]["attunement"] = json!(0.8);
+
+        assert!(serde_json::from_value::<InventorySnapshotV1>(value).is_err());
+    }
+
+    #[test]
+    fn deserialize_inventory_event_sample() {
+        let event: InventoryEventV1 = serde_json::from_str(INVENTORY_EVENT_SAMPLE)
+            .expect("inventory-event.sample.json should deserialize into InventoryEventV1");
+
+        match event {
+            InventoryEventV1::Moved {
+                revision,
+                instance_id,
+                from,
+                to,
+            } => {
+                assert_eq!(revision, 13);
+                assert_eq!(instance_id, 1001);
+                assert_eq!(
+                    from,
+                    InventoryLocationV1::Container {
+                        container_id: ContainerIdV1::MainPack,
+                        row: 0,
+                        col: 0,
+                    }
+                );
+                assert_eq!(to, InventoryLocationV1::Hotbar { index: 1 });
+            }
+            other => panic!("expected moved inventory event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inventory_event_roundtrip_preserves_content() {
+        let event: InventoryEventV1 = serde_json::from_str(INVENTORY_EVENT_SAMPLE)
+            .expect("inventory event sample should deserialize");
+        let reserialized =
+            serde_json::to_string(&event).expect("inventory event should serialize back");
+        let roundtrip: InventoryEventV1 = serde_json::from_str(&reserialized)
+            .expect("serialized inventory event should deserialize again");
+
+        assert_eq!(
+            serde_json::to_value(&event).expect("event should convert to value"),
+            serde_json::to_value(&roundtrip).expect("roundtrip should convert to value"),
+        );
+    }
+
+    #[test]
+    fn inventory_event_rejects_unknown_field() {
+        let mut value = sample_value(INVENTORY_EVENT_SAMPLE);
+        value["cooldown_ticks"] = json!(40);
+
+        assert!(serde_json::from_value::<InventoryEventV1>(value).is_err());
+    }
+
+    #[test]
+    fn inventory_event_rejects_unsupported_kind_sample() {
+        assert!(serde_json::from_str::<InventoryEventV1>(
+            INVENTORY_EVENT_INVALID_UNKNOWN_KIND_SAMPLE
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn deserialize_server_data_inventory_snapshot_sample() {
+        let payload: ServerDataV1 = serde_json::from_str(SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE)
+            .expect("server-data inventory snapshot sample should deserialize into ServerDataV1");
+
+        match payload.payload {
+            ServerDataPayloadV1::InventorySnapshot(snapshot) => {
+                assert_eq!(snapshot.revision, 12);
+                assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
+            }
+            other => panic!("expected inventory_snapshot payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_server_data_inventory_event_sample() {
+        let payload: ServerDataV1 = serde_json::from_str(SERVER_DATA_INVENTORY_EVENT_SAMPLE)
+            .expect("server-data inventory event sample should deserialize into ServerDataV1");
+
+        match payload.payload {
+            ServerDataPayloadV1::InventoryEvent(event) => match event {
+                InventoryEventV1::StackChanged {
+                    revision,
+                    instance_id,
+                    stack_count,
+                } => {
+                    assert_eq!(revision, 13);
+                    assert_eq!(instance_id, 1004);
+                    assert_eq!(stack_count, 1);
+                }
+                other => panic!("expected stack_changed inventory event, got {other:?}"),
+            },
+            other => panic!("expected inventory_event payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn server_data_inventory_samples_roundtrip_preserves_content() {
+        for sample in [
+            SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE,
+            SERVER_DATA_INVENTORY_EVENT_SAMPLE,
+        ] {
+            let payload: ServerDataV1 = serde_json::from_str(sample)
+                .expect("server data inventory sample should deserialize");
+            let reserialized = serde_json::to_string(&payload)
+                .expect("server data inventory sample should serialize");
+            let roundtrip: ServerDataV1 = serde_json::from_str(&reserialized)
+                .expect("serialized server data inventory sample should deserialize again");
+
+            assert_eq!(
+                serde_json::to_value(&payload).expect("payload should convert to value"),
+                serde_json::to_value(&roundtrip).expect("roundtrip should convert to value"),
+            );
+        }
+    }
+
+    #[test]
+    fn server_data_inventory_samples_reject_wrong_version() {
+        let mut snapshot = sample_value(SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE);
+        snapshot["v"] = json!(2);
+        assert!(serde_json::from_value::<ServerDataV1>(snapshot).is_err());
+
+        let mut event = sample_value(SERVER_DATA_INVENTORY_EVENT_SAMPLE);
+        event["v"] = json!(9);
+        assert!(serde_json::from_value::<ServerDataV1>(event).is_err());
+    }
+
+    #[test]
+    fn server_data_inventory_samples_reject_unknown_field() {
+        let mut snapshot = sample_value(SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE);
+        snapshot["realm_clock"] = json!(99);
+        assert!(serde_json::from_value::<ServerDataV1>(snapshot).is_err());
+
+        let mut event = sample_value(SERVER_DATA_INVENTORY_EVENT_SAMPLE);
+        event["extra_delta"] = json!(true);
+        assert!(serde_json::from_value::<ServerDataV1>(event).is_err());
+    }
+}

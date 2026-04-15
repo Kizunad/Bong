@@ -63,6 +63,7 @@ impl Default for Stamina {
 }
 
 impl Stamina {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn normalized(&self) -> Self {
         let max = self.max.max(1.0);
 

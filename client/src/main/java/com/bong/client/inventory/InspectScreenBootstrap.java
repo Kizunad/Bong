@@ -11,6 +11,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
 public final class InspectScreenBootstrap {
@@ -23,8 +24,11 @@ public final class InspectScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(InspectScreenBootstrap::onEndClientTick);
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
+            client.execute(InspectScreenBootstrap::beginAuthoritativeLoading)
+        );
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
-            client.execute(() -> InventoryStateStore.replace(null))
+            client.execute(InspectScreenBootstrap::clearInventorySnapshot)
         );
         BongClient.LOGGER.info("Registered inspect screen bootstrap keybinding on key: I");
     }
@@ -47,16 +51,52 @@ public final class InspectScreenBootstrap {
 
     private static void requestOpenInspectScreen(MinecraftClient client) {
         client.execute(() -> {
-            if (client.currentScreen instanceof InspectScreen) return;
-            client.setScreen(createScreenForCurrentState());
+            if (!shouldOpenInspectScreen(client.currentScreen)) {
+                return;
+            }
+
+            InspectScreen screen = createScreenForCurrentState();
+            if (screen == null) {
+                BongClient.LOGGER.info("Rejecting inspect screen open: inventory loading");
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal("背包数据加载中…"), true);
+                }
+                return;
+            }
+
+            client.setScreen(screen);
         });
     }
 
+    static boolean shouldOpenInspectScreen(Screen currentScreen) {
+        return !(currentScreen instanceof InspectScreen);
+    }
+
+    static void beginAuthoritativeLoading() {
+        InventoryStateStore.replace(null);
+    }
+
+    static void clearInventorySnapshot() {
+        InventoryStateStore.clearOnDisconnect();
+    }
+
     static InspectScreen createScreenForCurrentState() {
-        InventoryModel snapshot = InventoryStateStore.snapshot();
-        if (snapshot.isEmpty()) {
-            snapshot = MockInventoryData.create();
+        if (InventoryStateStore.revision() < 0L) {
+            return createMockScreenForDev();
         }
+
+        if (!InventoryStateStore.isAuthoritativeLoaded()) {
+            return null;
+        }
+
+        return createScreen(InventoryStateStore.snapshot());
+    }
+
+    static InspectScreen createScreen(InventoryModel snapshot) {
         return new InspectScreen(snapshot);
+    }
+
+    static InspectScreen createMockScreenForDev() {
+        return createScreen(MockInventoryData.create());
     }
 }

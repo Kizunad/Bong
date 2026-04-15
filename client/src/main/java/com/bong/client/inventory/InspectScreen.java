@@ -336,7 +336,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
         for (int i = 0; i < containerCount; i++) {
             var def = containerDefs.get(i);
-            containerGrids[i] = new BackpackGridPanel(def.rows(), def.cols());
+            containerGrids[i] = new BackpackGridPanel(def.id(), def.rows(), def.cols());
             FlowLayout w = Containers.verticalFlow(Sizing.fixed(wrapperW), Sizing.content());
             w.surface(Surface.flat(0xFF111111));
             w.padding(Insets.of(2));
@@ -489,9 +489,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Populate ====================
 
     private void populateFromModel() {
-        // Main backpack (container 0) gets model data
-        containerGrids[0].populateFromModel(model);
-        // Other containers start empty
+        populateContainerGrids(model, containerGrids);
+
         equipPanel.populateFromModel(model);
         statusBars.updateFromModel(model);
         bottomBar.updateFromModel(model);
@@ -506,6 +505,36 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 else hotbarSlots[i].clearItem();
             }
         }
+    }
+
+    static void populateContainerGrids(InventoryModel model, BackpackGridPanel[] containerGrids) {
+        if (containerGrids == null) {
+            return;
+        }
+
+        for (BackpackGridPanel containerGrid : containerGrids) {
+            if (containerGrid != null) {
+                containerGrid.populateFromModel(model);
+            }
+        }
+    }
+
+    InventoryModel model() {
+        return model;
+    }
+
+    static InventoryModel.ContainerDef containerDefAt(InventoryModel model, int index) {
+        return model.containers().get(index);
+    }
+
+    static java.util.List<InventoryModel.GridEntry> gridEntriesForContainer(InventoryModel model, String containerId) {
+        java.util.ArrayList<InventoryModel.GridEntry> entries = new java.util.ArrayList<>();
+        for (InventoryModel.GridEntry entry : model.gridItems()) {
+            if (containerId.equals(entry.containerId())) {
+                entries.add(entry);
+            }
+        }
+        return java.util.List.copyOf(entries);
     }
 
     // ==================== Hit detection ====================

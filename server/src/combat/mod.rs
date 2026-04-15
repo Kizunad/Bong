@@ -1,6 +1,7 @@
 pub mod components;
 pub mod debug;
 pub mod events;
+#[cfg(test)]
 pub mod raycast;
 pub mod resolve;
 
@@ -18,10 +19,10 @@ use self::events::{AttackIntent, CombatEvent, DeathEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub enum CombatSystemSet {
-    IntentSet,
-    PhysicsSet,
-    ResolveSet,
-    EmitSet,
+    Intent,
+    Physics,
+    Resolve,
+    Emit,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,7 +37,10 @@ type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
 
 fn attach_combat_bundle_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<JoinedClientsWithoutCombatBundle<'_>, JoinedClientsWithoutCombatBundleFilter>,
+    joined_clients: Query<
+        JoinedClientsWithoutCombatBundle<'_>,
+        JoinedClientsWithoutCombatBundleFilter,
+    >,
 ) {
     for (entity, username) in &joined_clients {
         commands.entity(entity).insert((
@@ -84,10 +88,10 @@ pub fn register(app: &mut App) {
     app.configure_sets(
         Update,
         (
-            CombatSystemSet::IntentSet,
-            CombatSystemSet::PhysicsSet,
-            CombatSystemSet::ResolveSet,
-            CombatSystemSet::EmitSet,
+            CombatSystemSet::Intent,
+            CombatSystemSet::Physics,
+            CombatSystemSet::Resolve,
+            CombatSystemSet::Emit,
         )
             .chain(),
     );
@@ -95,12 +99,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::IntentSet),
-            attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::IntentSet),
-            debug::tick_combat_clock.in_set(CombatSystemSet::IntentSet),
-            resolve::resolve_attack_intents.in_set(CombatSystemSet::ResolveSet),
+            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::Intent),
+            attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
+            debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
+            resolve::resolve_attack_intents.in_set(CombatSystemSet::Resolve),
             debug::drain_combat_events_for_debug
-                .in_set(CombatSystemSet::EmitSet)
+                .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
         ),
     );

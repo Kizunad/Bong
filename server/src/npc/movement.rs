@@ -77,20 +77,15 @@ const KNOCKBACK_DURATION_TICKS: u32 = 5;
 // ---------------------------------------------------------------------------
 
 /// What kind of movement is active right now.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum MovementMode {
     /// Navigator handles ground A* pathfinding. Default state.
+    #[default]
     GroundNav,
     /// A short burst of speed — Navigator still drives, but speed is scaled.
     Sprinting(SprintState),
     /// An override ability has taken over Position writing.
     Override(ActiveOverride),
-}
-
-impl Default for MovementMode {
-    fn default() -> Self {
-        Self::GroundNav
-    }
 }
 
 impl MovementMode {
