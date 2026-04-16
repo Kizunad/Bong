@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
-    bevy_ecs, App, Bundle, Commands, Component, Despawned, Entity, Event, EventReader, EventWriter,
-    IntoSystemConfigs, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event, EventReader,
+    EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update,
+    With, Without,
 };
 
 use crate::combat::components::{
@@ -185,6 +186,16 @@ pub struct NpcRetireRequest {
     pub entity: Entity,
 }
 
+/// 邻居生子（plan §3.3）：Commoner 老死后由 spawn 侧消费，在死者附近
+/// 生一个年龄 0–5% max_age 的新生儿。受 `NpcRegistry` 预留预算约束。
+#[derive(Clone, Debug, Event)]
+pub struct NpcReproductionRequest {
+    pub archetype: NpcArchetype,
+    pub position: DVec3,
+    pub home_zone: String,
+    pub initial_age_ticks: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NpcDeathReason {
@@ -207,6 +218,7 @@ pub fn register(app: &mut App) {
         .add_event::<CultivationDeathTrigger>()
         .add_event::<PlayerTerminated>()
         .add_event::<NpcRetireRequest>()
+        .add_event::<NpcReproductionRequest>()
         .add_event::<NpcDeathNotice>()
         .add_systems(
             PreUpdate,
@@ -276,13 +288,23 @@ fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: AgingNpcQuery<'_, '_>) {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn process_npc_retire_requests(
     mut retire_requests: EventReader<NpcRetireRequest>,
-    npcs: Query<(&NpcArchetype, &NpcLifespan), With<NpcMarker>>,
+    npcs: Query<
+        (
+            &NpcArchetype,
+            &NpcLifespan,
+            Option<&Position>,
+            Option<&crate::npc::patrol::NpcPatrol>,
+        ),
+        With<NpcMarker>,
+    >,
     mut cultivation_deaths: EventWriter<CultivationDeathTrigger>,
+    mut reproduction_requests: EventWriter<NpcReproductionRequest>,
 ) {
     for request in retire_requests.read() {
-        let Ok((archetype, lifespan)) = npcs.get(request.entity) else {
+        let Ok((archetype, lifespan, position, patrol)) = npcs.get(request.entity) else {
             continue;
         };
 
@@ -298,6 +320,19 @@ fn process_npc_retire_requests(
                 "reason": "retire_action",
             }),
         });
+
+        // plan §3.3 — 凡人老死即邻居生子。由 spawn 侧消费事件并通过
+        // `NpcRegistry::reserve_spawn_batch` 统一占配额，避免击穿上限。
+        if *archetype == NpcArchetype::Commoner {
+            if let (Some(pos), Some(patrol)) = (position, patrol) {
+                reproduction_requests.send(NpcReproductionRequest {
+                    archetype: NpcArchetype::Commoner,
+                    position: pos.get(),
+                    home_zone: patrol.home_zone.clone(),
+                    initial_age_ticks: 0.0,
+                });
+            }
+        }
     }
 }
 
@@ -368,6 +403,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<NpcRetireRequest>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<NpcReproductionRequest>();
         app.add_systems(Update, process_npc_retire_requests);
 
         let entity = app
@@ -386,6 +422,49 @@ mod tests {
             .world()
             .resource::<bevy_ecs::event::Events<CultivationDeathTrigger>>();
         assert_eq!(events.len(), 1);
+
+        let births = app
+            .world()
+            .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>();
+        assert_eq!(
+            births.len(),
+            0,
+            "zombie retirement must not trigger reproduction"
+        );
+    }
+
+    #[test]
+    fn process_retire_requests_triggers_commoner_reproduction() {
+        let mut app = App::new();
+        app.add_event::<NpcRetireRequest>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<NpcReproductionRequest>();
+        app.add_systems(Update, process_npc_retire_requests);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Commoner,
+                NpcLifespan::new(89_999.0, 90_000.0),
+                Position::new([42.0, 66.0, 17.5]),
+                crate::npc::patrol::NpcPatrol::new("forest", DVec3::new(42.0, 66.0, 17.5)),
+            ))
+            .id();
+
+        app.world_mut().send_event(NpcRetireRequest { entity });
+        app.update();
+
+        let births = app
+            .world()
+            .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>();
+        let all: Vec<_> = births.iter_current_update_events().collect();
+        assert_eq!(all.len(), 1);
+        let req = all[0];
+        assert_eq!(req.archetype, NpcArchetype::Commoner);
+        assert_eq!(req.home_zone, "forest");
+        assert_eq!(req.position, DVec3::new(42.0, 66.0, 17.5));
+        assert_eq!(req.initial_age_ticks, 0.0);
     }
 
     #[test]
@@ -430,5 +509,136 @@ mod tests {
         assert_eq!(notice.reason, NpcDeathReason::NaturalAging);
         assert_eq!(notice.age_ticks, 120.0);
         assert_eq!(notice.max_age_ticks, 100.0);
+    }
+
+    /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
+    /// → NearDeath → near_death_tick 过 deadline → PlayerTerminated
+    /// → handle_npc_terminated → `Despawned`. 全栈 NPC 无 LifeRecord。
+    #[test]
+    fn npc_full_death_chain_from_attack_to_despawned() {
+        use crate::combat::components::NEAR_DEATH_WINDOW_TICKS;
+        use crate::combat::events::{
+            ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, FIST_REACH,
+        };
+        use crate::combat::lifecycle::{death_arbiter_tick, near_death_tick};
+        use crate::combat::resolve::resolve_attack_intents;
+        use crate::combat::CombatClock;
+        use crate::cultivation::death_hooks::{
+            CultivationDeathTrigger, PlayerRevived, PlayerTerminated,
+        };
+        use valence::prelude::{App, IntoSystemConfigs, Position, Update};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<NpcDeathNotice>();
+        app.add_systems(
+            Update,
+            (
+                resolve_attack_intents,
+                death_arbiter_tick.after(resolve_attack_intents),
+                near_death_tick.after(death_arbiter_tick),
+                handle_npc_terminated.after(near_death_tick),
+            ),
+        );
+
+        // 两个 NPC：attacker（满 qi）+ victim（濒死）
+        let attacker = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+        let mut attacker_bundle = npc_runtime_bundle(attacker, NpcArchetype::Zombie);
+        attacker_bundle.cultivation.qi_current = 80.0;
+        attacker_bundle.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(attacker).insert(attacker_bundle);
+
+        let victim = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
+            .id();
+        let mut victim_bundle = npc_runtime_bundle(victim, NpcArchetype::Commoner);
+        victim_bundle.wounds.health_current = 3.0;
+        victim_bundle.wounds.health_max = 100.0;
+        victim_bundle.cultivation.qi_current = 80.0;
+        victim_bundle.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(victim).insert(victim_bundle);
+
+        // victim 应无 LifeRecord（生产形态）。
+        assert!(
+            app.world()
+                .get::<crate::cultivation::life_record::LifeRecord>(victim)
+                .is_none(),
+            "victim must not carry LifeRecord to prove NPC production bundle"
+        );
+
+        // 一击致命。
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(victim),
+            issued_at_tick: 99,
+            reach: FIST_REACH,
+            qi_invest: 30.0,
+            wound_kind: crate::combat::components::WoundKind::Blunt,
+            debug_command: None,
+        });
+
+        // Tick 1: resolve 写 Wounds + DeathEvent；death_arbiter 看到 DeathEvent
+        // 转 NearDeath + 设 deadline = clock.tick + 600。
+        app.update();
+
+        let victim_lifecycle = app
+            .world()
+            .entity(victim)
+            .get::<crate::combat::components::Lifecycle>()
+            .expect("victim keeps Lifecycle");
+        assert_eq!(
+            victim_lifecycle.state,
+            crate::combat::components::LifecycleState::NearDeath,
+            "after first tick victim should be NearDeath"
+        );
+        let deadline = victim_lifecycle
+            .near_death_deadline_tick
+            .expect("deadline should be set on NearDeath entry");
+        assert_eq!(deadline, 100 + NEAR_DEATH_WINDOW_TICKS);
+        assert!(app
+            .world()
+            .get::<valence::prelude::Despawned>(victim)
+            .is_none());
+
+        // 推进 CombatClock 过 deadline：NPC fortune_remaining=0 → 直接 Terminated。
+        app.world_mut().resource_mut::<CombatClock>().tick = deadline + 1;
+
+        // Tick 2: near_death_tick 发 PlayerTerminated；handle_npc_terminated
+        //         插 Despawned + 发 NpcDeathNotice（只在 PendingRetirement 存在时，
+        //         这里没有，所以 notice 不 fire — 但 Despawned 必须有）。
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<valence::prelude::Despawned>(victim)
+                .is_some(),
+            "victim should be marked Despawned after termination chain"
+        );
+
+        // attacker 存活。
+        assert!(app
+            .world()
+            .get::<valence::prelude::Despawned>(attacker)
+            .is_none());
+        let attacker_life = app
+            .world()
+            .entity(attacker)
+            .get::<crate::combat::components::Lifecycle>()
+            .unwrap();
+        assert_eq!(
+            attacker_life.state,
+            crate::combat::components::LifecycleState::Alive
+        );
     }
 }

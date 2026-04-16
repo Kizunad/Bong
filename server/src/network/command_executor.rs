@@ -10,8 +10,9 @@ use crate::npc::faction::{
     FactionStore,
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
-use crate::npc::spawn::spawn_zombie_npc_at;
-use crate::npc::spawn::NpcMarker;
+use crate::npc::spawn::{
+    spawn_commoner_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+};
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::world::events::ActiveEventsResource;
@@ -312,6 +313,8 @@ fn execute_spawn_npc(
 
     let archetype = match archetype {
         "zombie" => NpcArchetype::Zombie,
+        "commoner" => NpcArchetype::Commoner,
+        "rogue" => NpcArchetype::Rogue,
         _ => {
             tracing::warn!(
                 "[bong][network] spawn_npc target `{}` uses unsupported archetype `{}`",
@@ -372,6 +375,13 @@ fn execute_spawn_npc(
         .unwrap_or_else(|| zone.center());
     let patrol_target = zone.center();
 
+    let initial_age_ticks = command
+        .params
+        .get("initial_age_ticks")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .max(0.0);
+
     match archetype {
         NpcArchetype::Zombie => {
             spawn_zombie_npc_at(
@@ -380,6 +390,28 @@ fn execute_spawn_npc(
                 zone.name.as_str(),
                 spawn_position,
                 patrol_target,
+            );
+            "ok"
+        }
+        NpcArchetype::Commoner => {
+            spawn_commoner_npc_at(
+                commands,
+                layer,
+                zone.name.as_str(),
+                spawn_position,
+                patrol_target,
+                initial_age_ticks,
+            );
+            "ok"
+        }
+        NpcArchetype::Rogue => {
+            spawn_rogue_npc_at(
+                commands,
+                layer,
+                zone.name.as_str(),
+                spawn_position,
+                patrol_target,
+                initial_age_ticks,
             );
             "ok"
         }
@@ -971,6 +1003,86 @@ mod command_executor_tests {
     }
 
     #[test]
+    fn spawn_npc_creates_commoner_when_archetype_param_is_commoner() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("commoner"));
+        params.insert("initial_age_ticks".to_string(), json!(42.0));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_commoner",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<(Entity, &NpcArchetype, &EntityKind), With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|(e, a, k)| (e, *a, *k))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(npcs.len(), 1);
+        let (entity, archetype, kind) = npcs[0];
+        assert_eq!(archetype, NpcArchetype::Commoner);
+        assert_eq!(kind, EntityKind::VILLAGER);
+
+        let lifespan = app
+            .world()
+            .get::<crate::npc::lifecycle::NpcLifespan>(entity)
+            .expect("commoner should include lifespan");
+        assert_eq!(lifespan.age_ticks, 42.0);
+
+        let hunger = app
+            .world()
+            .get::<crate::npc::hunger::Hunger>(entity)
+            .expect("commoner should include Hunger component");
+        assert_eq!(hunger.value, 1.0);
+    }
+
+    #[test]
+    fn spawn_npc_creates_rogue_when_archetype_param_is_rogue() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("rogue"));
+        params.insert("initial_age_ticks".to_string(), json!(5000.0));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_rogue",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).map(|(e, a)| (e, *a)).collect::<Vec<_>>()
+        };
+        assert_eq!(npcs.len(), 1);
+        assert_eq!(npcs[0].1, NpcArchetype::Rogue);
+
+        let lifespan = app
+            .world()
+            .get::<crate::npc::lifecycle::NpcLifespan>(npcs[0].0)
+            .unwrap();
+        assert_eq!(lifespan.age_ticks, 5000.0);
+    }
+
+    #[test]
     fn spawn_npc_rejects_unknown_zone_unsupported_archetype_and_exhausted_budget() {
         let mut app = setup_executor_app();
 
@@ -981,7 +1093,7 @@ mod command_executor_tests {
         commands.push(command(CommandType::SpawnNpc, "missing_zone", bad_zone));
 
         let mut bad_archetype = HashMap::new();
-        bad_archetype.insert("archetype".to_string(), json!("rogue"));
+        bad_archetype.insert("archetype".to_string(), json!("beast"));
         commands.push(command(CommandType::SpawnNpc, "spawn", bad_archetype));
 
         {

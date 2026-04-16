@@ -2830,4 +2830,118 @@ mod tests {
 
         assert!(pierce_contam > blunt_contam);
     }
+
+    /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
+    /// 的真实形态（**无 LifeRecord**）双方交叉 `AttackIntent`，断言 Wounds
+    /// 写入 + 致命伤触发 DeathEvent。既有测试用 test-only helper 挂了
+    /// LifeRecord，未代表生产形态；本测试补齐。
+    #[test]
+    fn npc_to_npc_duel_via_runtime_bundle_resolves_damage_and_death() {
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        // 两个 NPC 用真实生产 bundle，无 LifeRecord。
+        let npc_a = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_a = npc_runtime_bundle(npc_a, NpcArchetype::Rogue);
+        // 让 A 血量濒死以便单击致命；qi 注满以过 resolver 的 qi_invest 检查。
+        bundle_a.wounds = Wounds {
+            health_current: 3.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        };
+        bundle_a.cultivation.qi_current = 80.0;
+        bundle_a.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_a).insert(bundle_a);
+
+        let npc_b = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_b = npc_runtime_bundle(npc_b, NpcArchetype::Zombie);
+        bundle_b.cultivation.qi_current = 80.0;
+        bundle_b.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_b).insert(bundle_b);
+
+        // 双向 AttackIntent：A 打 B 一下（非致命），B 打 A 一下（致命）。
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_a,
+            target: Some(npc_b),
+            issued_at_tick: 199,
+            reach: FIST_REACH,
+            qi_invest: 8.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_b,
+            target: Some(npc_a),
+            issued_at_tick: 199,
+            reach: NpcMeleeProfile::spear().reach,
+            qi_invest: 12.0,
+            wound_kind: WoundKind::Pierce,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let a_wounds = app.world().entity(npc_a).get::<Wounds>().unwrap();
+        let b_wounds = app.world().entity(npc_b).get::<Wounds>().unwrap();
+
+        assert_eq!(
+            a_wounds.entries.len(),
+            1,
+            "A should take exactly one wound from B's pierce"
+        );
+        assert_eq!(a_wounds.entries[0].kind, WoundKind::Pierce);
+        assert!(
+            a_wounds.health_current <= 0.0,
+            "A was 3hp + pierce should be lethal, got {}",
+            a_wounds.health_current
+        );
+
+        assert_eq!(
+            b_wounds.entries.len(),
+            1,
+            "B should take exactly one wound from A's blunt"
+        );
+        assert_eq!(b_wounds.entries[0].kind, WoundKind::Blunt);
+        assert!(
+            b_wounds.health_current > 0.0,
+            "B full-hp should survive one blunt, got {}",
+            b_wounds.health_current
+        );
+
+        // Contamination 同样被写（双向都有 attacker_id = canonical_npc_id）。
+        let a_contam = app.world().entity(npc_a).get::<Contamination>().unwrap();
+        let b_contam = app.world().entity(npc_b).get::<Contamination>().unwrap();
+        assert_eq!(
+            a_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_b).as_str())
+        );
+        assert_eq!(
+            b_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_a).as_str())
+        );
+
+        // DeathEvent 应该恰为 A 触发（B 未致命）。
+        let deaths: Vec<_> = app
+            .world()
+            .resource::<Events<DeathEvent>>()
+            .get_reader()
+            .read(app.world().resource::<Events<DeathEvent>>())
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].target, npc_a);
+    }
 }
