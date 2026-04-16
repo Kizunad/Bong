@@ -86,6 +86,12 @@ pub fn on_player_revived(
     let now = clock.tick;
     for ev in events.read() {
         if let Ok((mut c, mut ms, mut cn, mut life)) = players.get_mut(ev.entity) {
+            if matches!(
+                life.biography.last(),
+                Some(BiographyEntry::Rebirth { tick, .. }) if *tick == now
+            ) {
+                continue;
+            }
             let prior = c.realm;
             apply_revive_penalty(&mut c, &mut ms, &mut cn);
             life.push(BiographyEntry::Rebirth {
@@ -212,5 +218,53 @@ mod tests {
             life.biography.last(),
             Some(BiographyEntry::Rebirth { tick: 42, .. })
         ));
+    }
+
+    #[test]
+    fn revived_hook_skips_when_rebirth_already_recorded_for_tick() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<PlayerRevived>();
+        app.add_systems(valence::prelude::Update, on_player_revived);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 8.0,
+                    composure: 0.9,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord {
+                    character_id: canonical_player_id("Alice"),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Rebirth {
+                        prior_realm: Realm::Induce,
+                        new_realm: Realm::Awaken,
+                        tick: 42,
+                    }],
+                    insights_taken: Vec::new(),
+                    spirit_root_first: None,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+
+        assert_eq!(cultivation.realm, Realm::Induce);
+        assert_eq!(life.biography.len(), 1);
     }
 }

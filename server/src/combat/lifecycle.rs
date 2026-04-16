@@ -1,8 +1,15 @@
 use valence::prelude::{Entity, EventReader, EventWriter, Query, Res};
 
 use crate::combat::CombatClock;
-use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerRevived, PlayerTerminated};
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::death_hooks::{
+    apply_revive_penalty, CultivationDeathTrigger, PlayerRevived, PlayerTerminated,
+};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::persistence::{
+    persist_near_death_transition, persist_revival_transition, persist_termination_transition,
+    LifespanEventRecord, PersistenceSettings,
+};
 
 use super::components::{
     CombatState, Lifecycle, LifecycleState, Stamina, StaminaState, Wounds, ATTACK_STAMINA_COST,
@@ -23,6 +30,21 @@ type NearDeathQueryItem<'a> = (
     Option<&'a mut Wounds>,
     Option<&'a mut Stamina>,
     Option<&'a mut CombatState>,
+);
+
+type DeathArbiterQueryItem<'a> = (
+    &'a mut Lifecycle,
+    Option<&'a mut Wounds>,
+    Option<&'a mut LifeRecord>,
+    Option<&'a Cultivation>,
+);
+
+type NearDeathPersistenceQueryItem<'a> = (
+    NearDeathQueryItem<'a>,
+    Option<&'a mut Cultivation>,
+    Option<&'a mut MeridianSystem>,
+    Option<&'a mut Contamination>,
+    Option<&'a mut LifeRecord>,
 );
 
 pub fn sync_combat_state_from_events(
@@ -166,32 +188,92 @@ pub fn combat_state_tick(
 
 pub fn death_arbiter_tick(
     clock: Res<CombatClock>,
+    persistence: Res<PersistenceSettings>,
     mut death_events: EventReader<DeathEvent>,
     mut cultivation_deaths: EventReader<CultivationDeathTrigger>,
-    mut lifecycle_q: Query<(&mut Lifecycle, Option<&mut Wounds>, Option<&mut LifeRecord>)>,
+    mut lifecycle_q: Query<DeathArbiterQueryItem<'_>>,
 ) {
     for event in death_events.read() {
-        let Ok((mut lifecycle, wounds, life_record)) = lifecycle_q.get_mut(event.target) else {
+        let Ok((mut lifecycle, wounds, life_record, cultivation)) =
+            lifecycle_q.get_mut(event.target)
+        else {
             continue;
         };
+        if matches!(
+            lifecycle.state,
+            LifecycleState::NearDeath | LifecycleState::Terminated
+        ) {
+            continue;
+        }
+        let now_tick = event.at_tick.max(clock.tick);
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
                 cause: event.cause.clone(),
-                tick: event.at_tick.max(clock.tick),
+                tick: now_tick,
             });
+            let mut staged_lifecycle = lifecycle.clone();
+            staged_lifecycle.enter_near_death(now_tick);
+            let lifespan_event =
+                death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
+            if let Err(error) = persist_near_death_transition(
+                &persistence,
+                &staged_lifecycle,
+                &life_record,
+                event.cause.as_str(),
+                lifespan_event.as_ref(),
+            ) {
+                tracing::warn!(
+                    "[bong][persistence] failed to persist near-death transition for {}: {error}",
+                    life_record.character_id
+                );
+                let _ = life_record.biography.pop();
+                continue;
+            }
         }
-        enter_near_death(&mut lifecycle, wounds, event.at_tick.max(clock.tick));
+        enter_near_death(&mut lifecycle, wounds, now_tick);
     }
 
     for event in cultivation_deaths.read() {
-        let Ok((mut lifecycle, wounds, life_record)) = lifecycle_q.get_mut(event.entity) else {
+        let Ok((mut lifecycle, wounds, life_record, cultivation)) =
+            lifecycle_q.get_mut(event.entity)
+        else {
             continue;
         };
+        if matches!(
+            lifecycle.state,
+            LifecycleState::NearDeath | LifecycleState::Terminated
+        ) {
+            continue;
+        }
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
                 cause: format!("cultivation:{:?}", event.cause),
                 tick: clock.tick,
             });
+            let cause = format!("cultivation:{:?}", event.cause);
+            let mut staged_lifecycle = lifecycle.clone();
+            staged_lifecycle.enter_near_death(clock.tick);
+            let lifespan_event =
+                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str()).filter(
+                    |_| {
+                        event.cause
+                    != crate::cultivation::death_hooks::CultivationDeathCause::TribulationFailure
+                    },
+                );
+            if let Err(error) = persist_near_death_transition(
+                &persistence,
+                &staged_lifecycle,
+                &life_record,
+                cause.as_str(),
+                lifespan_event.as_ref(),
+            ) {
+                tracing::warn!(
+                    "[bong][persistence] failed to persist cultivation near-death transition for {}: {error}",
+                    life_record.character_id
+                );
+                let _ = life_record.biography.pop();
+                continue;
+            }
         }
         enter_near_death(&mut lifecycle, wounds, clock.tick);
     }
@@ -199,11 +281,19 @@ pub fn death_arbiter_tick(
 
 pub fn near_death_tick(
     clock: Res<CombatClock>,
+    persistence: Res<PersistenceSettings>,
     mut revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
-    mut lifecycle_q: Query<NearDeathQueryItem<'_>>,
+    mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
 ) {
-    for (entity, mut lifecycle, wounds, stamina, combat_state) in &mut lifecycle_q {
+    for (
+        (entity, mut lifecycle, wounds, stamina, combat_state),
+        cultivation,
+        meridians,
+        contam,
+        life_record,
+    ) in &mut lifecycle_q
+    {
         if lifecycle
             .weakened_until_tick
             .is_some_and(|until_tick| clock.tick >= until_tick)
@@ -232,8 +322,65 @@ pub fn near_death_tick(
         }
 
         if lifecycle.fortune_remaining > 0 {
-            lifecycle.fortune_remaining = lifecycle.fortune_remaining.saturating_sub(1);
+            let mut staged_lifecycle = lifecycle.clone();
+            staged_lifecycle.fortune_remaining =
+                staged_lifecycle.fortune_remaining.saturating_sub(1);
+            staged_lifecycle.revive(clock.tick);
+
+            let mut staged_cultivation = cultivation
+                .as_ref()
+                .map(|cultivation| (**cultivation).clone());
+            let mut staged_meridians = meridians.as_ref().map(|meridians| (**meridians).clone());
+            let mut staged_contam = contam.as_ref().map(|contam| (**contam).clone());
+            let mut staged_life_record = life_record
+                .as_ref()
+                .map(|life_record| (**life_record).clone());
+
+            if let (
+                Some(staged_cultivation),
+                Some(staged_meridians),
+                Some(staged_contam),
+                Some(staged_life_record),
+            ) = (
+                staged_cultivation.as_mut(),
+                staged_meridians.as_mut(),
+                staged_contam.as_mut(),
+                staged_life_record.as_mut(),
+            ) {
+                let prior_realm = staged_cultivation.realm;
+                apply_revive_penalty(staged_cultivation, staged_meridians, staged_contam);
+                staged_life_record.push(BiographyEntry::Rebirth {
+                    prior_realm,
+                    new_realm: staged_cultivation.realm,
+                    tick: clock.tick,
+                });
+                if let Err(error) = persist_revival_transition(&persistence, staged_life_record) {
+                    tracing::warn!(
+                        "[bong][persistence] failed to persist revival transition for {}: {error}",
+                        staged_life_record.character_id
+                    );
+                    continue;
+                }
+            }
+
+            lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
             lifecycle.revive(clock.tick);
+            if let (Some(mut cultivation), Some(staged_cultivation)) =
+                (cultivation, staged_cultivation)
+            {
+                *cultivation = staged_cultivation;
+            }
+            if let (Some(mut meridians), Some(staged_meridians)) = (meridians, staged_meridians) {
+                *meridians = staged_meridians;
+            }
+            if let (Some(mut contam), Some(staged_contam)) = (contam, staged_contam) {
+                *contam = staged_contam;
+            }
+            if let (Some(mut life_record), Some(staged_life_record)) =
+                (life_record, staged_life_record)
+            {
+                *life_record = staged_life_record;
+            }
 
             if let Some(mut wounds) = wounds {
                 let recovered = (wounds.health_max * REVIVE_HEALTH_FRACTION).max(1.0);
@@ -257,8 +404,57 @@ pub fn near_death_tick(
             continue;
         }
 
+        let Some(mut life_record) = life_record else {
+            lifecycle.terminate(clock.tick);
+            terminated.send(PlayerTerminated { entity });
+            continue;
+        };
+        life_record.push(BiographyEntry::Terminated {
+            cause: "fortune_exhausted".to_string(),
+            tick: clock.tick,
+        });
+        let mut staged_lifecycle = lifecycle.clone();
+        staged_lifecycle.terminate(clock.tick);
+        if let Err(error) =
+            persist_termination_transition(&persistence, &staged_lifecycle, &life_record)
+        {
+            tracing::warn!(
+                "[bong][persistence] failed to persist terminated snapshot for {}: {error}",
+                life_record.character_id
+            );
+            let _ = life_record.biography.pop();
+            continue;
+        }
         lifecycle.terminate(clock.tick);
         terminated.send(PlayerTerminated { entity });
+    }
+}
+
+fn death_penalty_lifespan_event(
+    cultivation: Option<&Cultivation>,
+    at_tick: u64,
+    source: &str,
+) -> Option<LifespanEventRecord> {
+    let delta_years = -i64::from(match cultivation {
+        Some(cultivation) => death_penalty_years(cultivation.realm),
+        None => 4,
+    });
+    Some(LifespanEventRecord {
+        at_tick,
+        kind: "death_penalty".to_string(),
+        delta_years,
+        source: source.to_string(),
+    })
+}
+
+fn death_penalty_years(realm: Realm) -> i32 {
+    match realm {
+        Realm::Awaken => 6,
+        Realm::Induce => 10,
+        Realm::Condense => 17,
+        Realm::Solidify => 30,
+        Realm::Spirit => 50,
+        Realm::Void => 100,
     }
 }
 
@@ -289,6 +485,14 @@ mod tests {
     use crate::combat::events::DefenseIntent;
     use crate::cultivation::death_hooks::CultivationDeathCause;
     use crate::cultivation::life_record::LifeRecord;
+    use crate::cultivation::tick::CultivationClock;
+    use crate::persistence::{
+        bootstrap_sqlite, DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
+    };
+    use rusqlite::{params, Connection};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, IntoSystemConfigs, Update};
 
     fn spawn_actor(
@@ -306,6 +510,34 @@ mod tests {
                 lifecycle,
             ))
             .id()
+    }
+
+    fn unique_temp_dir(test_name: &str) -> PathBuf {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "bong-combat-lifecycle-{test_name}-{}-{unique_suffix}",
+            std::process::id()
+        ))
+    }
+
+    fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
+        let root = unique_temp_dir(test_name);
+        let db_path = root.join("data").join("bong.db");
+        let deceased_dir = root.join("library-web").join("public").join("deceased");
+        bootstrap_sqlite(&db_path, &format!("combat-lifecycle-{test_name}"))
+            .expect("sqlite bootstrap should succeed");
+        (
+            PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                format!("combat-lifecycle-{test_name}"),
+            ),
+            root,
+        )
     }
 
     #[test]
@@ -494,6 +726,8 @@ mod tests {
     #[test]
     fn death_arbiter_timeout_revives_when_fortune_remains() {
         let mut app = App::new();
+        let (settings, root) = persistence_settings("revive-existing");
+        app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
@@ -549,11 +783,15 @@ mod tests {
         );
         assert!(wounds.health_current >= 6.0);
         assert_eq!(revived_events.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn cultivation_death_without_fortune_terminates_after_deadline() {
         let mut app = App::new();
+        let (settings, root) = persistence_settings("terminate-existing");
+        app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 40 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
@@ -591,12 +829,16 @@ mod tests {
         let terminated_events = app.world().resource::<Events<PlayerTerminated>>();
         assert_eq!(lifecycle.state, LifecycleState::Terminated);
         assert_eq!(terminated_events.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn repeated_death_events_do_not_extend_near_death_deadline() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 10 });
+        let (settings, root) = persistence_settings("repeated-death");
+        app.insert_resource(settings.clone());
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_systems(Update, death_arbiter_tick);
@@ -634,5 +876,216 @@ mod tests {
         assert_eq!(lifecycle.state, LifecycleState::NearDeath);
         assert_eq!(lifecycle.near_death_deadline_tick, first_deadline);
         assert_eq!(lifecycle.death_count, 1);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let life_event_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
+                params!["unassigned:life_record"],
+                |row| row.get(0),
+            )
+            .expect("life_events query should succeed");
+        assert_eq!(life_event_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn life_events_are_append_only_and_atomic_with_state_updates() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("append-only-atomic");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 90 });
+        app.insert_resource(CultivationClock { tick: 691 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+                crate::cultivation::death_hooks::on_player_revived.after(near_death_tick),
+                crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
+            ),
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Ancestor".to_string(),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                crate::cultivation::components::Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 12.0,
+                    qi_max: 24.0,
+                    ..Default::default()
+                },
+                crate::cultivation::components::MeridianSystem::default(),
+                crate::cultivation::components::Contamination::default(),
+                LifeRecord::new("offline:Ancestor"),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "bleed_out".to_string(),
+            at_tick: 90,
+        });
+        app.update();
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let near_death_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1 AND event_type = 'near_death'",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("near death count query should succeed");
+        let lifespan_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM lifespan_events WHERE char_id = ?1 AND event_type = 'death_penalty'",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("lifespan count query should succeed");
+        let death_registry: (i64, i64, String) = connection
+            .query_row(
+                "SELECT death_count, last_death_tick, last_death_cause FROM death_registry WHERE char_id = ?1",
+                params!["offline:Ancestor"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("death registry should exist");
+
+        assert_eq!(near_death_count, 1);
+        assert_eq!(lifespan_count, 1);
+        assert_eq!(death_registry, (1, 90, "bleed_out".to_string()));
+        assert_eq!(
+            app.world().entity(entity).get::<Lifecycle>().unwrap().state,
+            LifecycleState::NearDeath
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 691;
+        app.update();
+
+        let life_event_types: Vec<String> = connection
+            .prepare(
+                "SELECT event_type FROM life_events WHERE char_id = ?1 ORDER BY game_tick, event_id",
+            )
+            .expect("statement should prepare")
+            .query_map(params!["offline:Ancestor"], |row| row.get(0))
+            .expect("life_events query should succeed")
+            .map(|row| row.expect("row should decode"))
+            .collect();
+        let lifespan_payload_json: String = connection
+            .query_row(
+                "SELECT payload_json FROM lifespan_events WHERE char_id = ?1 LIMIT 1",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("lifespan payload should exist");
+        let lifespan_payload: crate::persistence::LifespanEventRecord =
+            serde_json::from_str(&lifespan_payload_json).expect("lifespan payload should decode");
+
+        assert_eq!(
+            life_event_types,
+            vec!["near_death".to_string(), "rebirth".to_string()]
+        );
+        assert_eq!(lifespan_payload.delta_years, -10);
+        assert_eq!(lifespan_payload.kind, "death_penalty");
+        assert_eq!(
+            app.world().entity(entity).get::<Lifecycle>().unwrap().state,
+            LifecycleState::Alive
+        );
+        assert!(matches!(
+            app.world()
+                .entity(entity)
+                .get::<LifeRecord>()
+                .unwrap()
+                .biography
+                .last(),
+            Some(BiographyEntry::Rebirth { tick: 691, .. })
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deceased_snapshot_export_writes_public_json() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("deceased-public-json");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 40 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+                crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
+            ),
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Ancestor".to_string(),
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Ancestor"),
+            ))
+            .id();
+
+        app.world_mut().send_event(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::NegativeZoneDrain,
+            context: serde_json::json!({"zone": "rift_valley"}),
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 641;
+        app.update();
+
+        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(&snapshot_path).expect("snapshot file should exist"),
+        )
+        .expect("snapshot file should decode");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index file should exist"),
+        )
+        .expect("index file should decode");
+
+        assert_eq!(snapshot.char_id, "offline:Ancestor");
+        assert_eq!(snapshot.died_at_tick, 641);
+        assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
+        assert!(matches!(
+            snapshot.life_record.biography.last(),
+            Some(BiographyEntry::Terminated { tick: 641, .. })
+        ));
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].char_id, "offline:Ancestor");
+        assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
