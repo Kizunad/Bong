@@ -21,6 +21,7 @@ import {
 } from "../src/common.js";
 import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
+import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
@@ -147,6 +148,60 @@ describe("sample files pass schema validation", () => {
   it("server-data.cultivation-detail.sample.json", () => {
     const data = loadSample("server-data.cultivation-detail.sample.json");
     const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-furnace.sample.json", () => {
+    const data = loadSample("server-data.alchemy-furnace.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-session.sample.json", () => {
+    const data = loadSample("server-data.alchemy-session.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-outcome-forecast.sample.json", () => {
+    const data = loadSample("server-data.alchemy-outcome-forecast.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-outcome-resolved.sample.json", () => {
+    const data = loadSample("server-data.alchemy-outcome-resolved.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-recipe-book.sample.json", () => {
+    const data = loadSample("server-data.alchemy-recipe-book.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-contamination.sample.json", () => {
+    const data = loadSample("server-data.alchemy-contamination.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-feed-slot.sample.json", () => {
+    const data = loadSample("client-request.alchemy-feed-slot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-ignite.sample.json", () => {
+    const data = loadSample("client-request.alchemy-ignite.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-intervention.sample.json", () => {
+    const data = loadSample("client-request.alchemy-intervention.sample.json");
+    const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

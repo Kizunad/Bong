@@ -1,13 +1,22 @@
 pub mod agent_bridge;
+pub mod alchemy_snapshot_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
+pub mod cast_emit;
 pub mod combat_bridge;
+pub mod combat_hud_state_emit;
+pub mod defense_sync_emit;
+pub mod defense_window_emit;
+pub mod event_stream_emit;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod inventory_snapshot_emit;
+pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
+pub mod wounds_snapshot_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -156,6 +165,8 @@ pub fn register(app: &mut App) {
                 .after(crate::player::gameplay::apply_queued_gameplay_actions),
             inventory_snapshot_emit::emit_join_inventory_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
+            alchemy_snapshot_emit::emit_join_alchemy_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
@@ -172,7 +183,37 @@ pub fn register(app: &mut App) {
                 .after(vfx_event_emit::handle_vfx_debug_commands),
         ),
     );
+    // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
+    app.add_systems(
+        Update,
+        (
+            combat_hud_state_emit::emit_combat_hud_state_payloads,
+            wounds_snapshot_emit::emit_wounds_snapshot_payloads,
+            // After apply_defense_intents writes incoming_window the same tick.
+            defense_window_emit::emit_defense_window_payloads
+                .after(crate::combat::resolve::apply_defense_intents),
+            // Run after attack resolve so damage interrupts are observed same tick.
+            cast_emit::tick_casts_or_interrupt
+                .after(crate::combat::resolve::resolve_attack_intents),
+            // After cast tick (which sets cooldown) so client sees fresh state same frame.
+            quickslot_config_emit::emit_quickslot_config_payloads
+                .after(cast_emit::tick_casts_or_interrupt),
+            // Fires on Added (join hydration) + any later mutation.
+            unlocks_sync_emit::emit_unlocks_sync_payloads,
+            // After resolve so we read freshly-emitted CombatEvents the same tick.
+            event_stream_emit::emit_combat_events_to_event_stream
+                .after(crate::combat::resolve::resolve_attack_intents),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            // Fires on Added (join hydration) + later mutation via switch / fake-skin / vortex.
+            defense_sync_emit::emit_defense_sync_payloads,
+        ),
+    );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
+    app.init_resource::<client_request_handler::AlchemyMockState>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
 }
 

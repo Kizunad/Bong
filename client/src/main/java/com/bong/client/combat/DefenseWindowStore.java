@@ -14,6 +14,11 @@ public final class DefenseWindowStore {
         snapshot = DefenseWindowState.active(durationMs, nowMs, nowMs + Math.max(0, durationMs));
     }
 
+    /** Replace with a server-provided snapshot (preserves authoritative timestamps). */
+    public static void replaceSnapshot(DefenseWindowState next) {
+        snapshot = next == null ? DefenseWindowState.idle() : next;
+    }
+
     public static void close() {
         snapshot = DefenseWindowState.idle();
     }

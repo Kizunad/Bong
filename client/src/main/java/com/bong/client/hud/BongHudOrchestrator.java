@@ -103,6 +103,7 @@ public final class BongHudOrchestrator {
                 combatSnapshot.quickSlotConfig(),
                 combatSnapshot.selectedHotbarSlot(),
                 combatSnapshot.castState(),
+                com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),
                 nowMillis,
                 screenWidth,
                 screenHeight
@@ -147,6 +148,9 @@ public final class BongHudOrchestrator {
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
             ));
+            // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
+            // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
+            // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));
         }
 
         return List.copyOf(commands);

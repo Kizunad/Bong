@@ -41,7 +41,7 @@ public final class CombatHudBootstrap {
 
         // Predict the cast-begin client-side so the UI responds instantly.
         CastStateStore.beginCast(slot, entry.castDurationMs(), now);
-        // TODO: dispatch UseQuickSlotIntent to the server via BongNetworkHandler.
+        com.bong.client.network.ClientRequestSender.sendUseQuickSlot(slot);
     }
 
     private static void onJiemaiPressed() {
@@ -51,7 +51,7 @@ public final class CombatHudBootstrap {
             return; // §7.2: V only fires during an active DefenseWindow.
         }
         DefenseWindowStore.close();
-        // TODO: dispatch JiemaiIntent to the server.
+        com.bong.client.network.ClientRequestSender.sendJiemai();
     }
 
     private static void onSpellVolumeHold(boolean pressed) {
@@ -79,7 +79,7 @@ public final class CombatHudBootstrap {
             current.vortexActive(),
             current.vortexReadyAtMs()
         ));
-        // TODO: dispatch SwitchDefenseStanceIntent to the server.
+        com.bong.client.network.ClientRequestSender.sendSwitchDefenseStance(stance.name());
     }
 
     static void resetOnDisconnect() {

@@ -1,0 +1,116 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "recipe_id",
+    "active",
+    "elapsed_ticks",
+    "target_ticks",
+    "temp_current",
+    "temp_target",
+    "temp_band",
+    "qi_injected",
+    "qi_target",
+    "status_label",
+    "stages",
+    "interventions_recent"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_session",
+      "type": "string"
+    },
+    "recipe_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "elapsed_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "target_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "temp_current": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "temp_target": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "temp_band": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_injected": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_target": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "status_label": {
+      "type": "string"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "at_tick",
+          "window",
+          "summary",
+          "completed",
+          "missed"
+        ],
+        "properties": {
+          "at_tick": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "missed": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "interventions_recent": {
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

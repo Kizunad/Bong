@@ -37,28 +37,51 @@ pub fn emit_join_inventory_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
     for (entity, mut client, username, inventory, player_state) in &mut joined_clients {
-        let snapshot = build_inventory_snapshot(inventory, player_state);
-        let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-        tracing::info!(
-            "[bong][network] sent {} {} payload to client entity {entity:?} for `{}`",
-            SERVER_DATA_CHANNEL,
-            payload_type,
-            canonical_player_id(username.0.as_str())
+        send_inventory_snapshot_to_client(
+            entity,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            "join",
         );
     }
 }
 
-fn build_inventory_snapshot(
+/// Push a fresh inventory_snapshot payload to a single client. Used for both
+/// join hydration and corrective resync after a rejected move intent.
+pub(crate) fn send_inventory_snapshot_to_client(
+    entity: Entity,
+    client: &mut Client,
+    username: &str,
+    inventory: &PlayerInventory,
+    player_state: &PlayerState,
+    reason: &str,
+) {
+    let snapshot = build_inventory_snapshot(inventory, player_state);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+
+    send_server_data_payload(client, payload_bytes.as_slice());
+    tracing::info!(
+        "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` ({reason})",
+        SERVER_DATA_CHANNEL,
+        payload_type,
+        canonical_player_id(username)
+    );
+}
+
+/// Build a full inventory snapshot from current ECS state.
+/// Exposed for callers that need to push a corrective resync (e.g. after a
+/// rejected client move intent left the optimistic UI diverged).
+pub(crate) fn build_inventory_snapshot(
     inventory: &PlayerInventory,
     player_state: &PlayerState,
 ) -> InventorySnapshotV1 {

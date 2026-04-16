@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot_idx",
+    "material",
+    "count"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_feed_slot",
+      "type": "string"
+    },
+    "slot_idx": {
+      "minimum": 0,
+      "maximum": 7,
+      "type": "integer"
+    },
+    "material": {
+      "type": "string"
+    },
+    "count": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  }
+}

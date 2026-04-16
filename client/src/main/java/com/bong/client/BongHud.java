@@ -17,10 +17,12 @@ import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.Identifier;
 
 import java.util.List;
 import java.util.Objects;
@@ -76,6 +78,10 @@ public class BongHud {
             }
             if (command.isRect()) {
                 context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+                continue;
+            }
+            if (command.isItemTexture()) {
+                drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
                 continue;
             }
             if (command.isToast()) {
@@ -157,6 +163,31 @@ public class BongHud {
         BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
         BongEventAlertOverlay.render(surface, snapshot.eventAlert());
         renderToast(surface, snapshot.toast());
+    }
+
+    /**
+     * Draw a 128×128 source PNG (`bong-client:textures/gui/items/{itemId}.png`)
+     * scaled into a {@code size×size} box at {@code (dx, dy)}. Mirrors the
+     * approach used in {@code GridSlotComponent.drawItemTexture}.
+     */
+    private static void drawItemTexture(DrawContext context, String itemId, int dx, int dy, int size) {
+        if (itemId == null || itemId.isEmpty() || size <= 0) return;
+        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
+
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.enableDepthTest();
+
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(dx, dy, 100);
+        float scale = (float) size / 128.0f;
+        matrices.scale(scale, scale, 1.0f);
+
+        context.drawTexture(tex, 0, 0, 128, 128, 0, 0, 128, 128, 128, 128);
+
+        matrices.pop();
+        RenderSystem.disableBlend();
     }
 
     private static void renderToast(HudSurface surface, NarrationState.ToastState toast) {

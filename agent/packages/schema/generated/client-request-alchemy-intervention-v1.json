@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "intervention"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_intervention",
+      "type": "string"
+    },
+    "intervention": {
+      "description": "plan §1.3 Intervention",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "temp"
+          ],
+          "properties": {
+            "kind": {
+              "const": "adjust_temp",
+              "type": "string"
+            },
+            "temp": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "qi"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inject_qi",
+              "type": "string"
+            },
+            "qi": {
+              "minimum": 0,
+              "type": "number"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "profile_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "auto_profile",
+              "type": "string"
+            },
+            "profile_id": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

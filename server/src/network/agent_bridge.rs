@@ -41,6 +41,20 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::CultivationDetail => "cultivation_detail",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
+        ServerDataType::AlchemyFurnace => "alchemy_furnace",
+        ServerDataType::AlchemySession => "alchemy_session",
+        ServerDataType::AlchemyOutcomeForecast => "alchemy_outcome_forecast",
+        ServerDataType::AlchemyOutcomeResolved => "alchemy_outcome_resolved",
+        ServerDataType::AlchemyRecipeBook => "alchemy_recipe_book",
+        ServerDataType::AlchemyContamination => "alchemy_contamination",
+        ServerDataType::CombatHudState => "combat_hud_state",
+        ServerDataType::WoundsSnapshot => "wounds_snapshot",
+        ServerDataType::DefenseWindow => "defense_window",
+        ServerDataType::CastSync => "cast_sync",
+        ServerDataType::QuickSlotConfig => "quickslot_config",
+        ServerDataType::UnlocksSync => "unlocks_sync",
+        ServerDataType::EventStreamPush => "event_stream_push",
+        ServerDataType::DefenseSync => "defense_sync",
     }
 }
 

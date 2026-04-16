@@ -34,7 +34,22 @@ public class ServerDataRouterTest {
             "death_screen",
             "terminate_screen",
             "wounds_snapshot",
-            "tribulation_broadcast"
+            "tribulation_broadcast",
+            // Alchemy handlers (plan-alchemy-v1 §4).
+            "alchemy_furnace",
+            "alchemy_session",
+            "alchemy_outcome_forecast",
+            "alchemy_recipe_book",
+            "alchemy_contamination",
+            "alchemy_outcome_resolved",
+            // HUD state push (plan-HUD-v1 §11.4).
+            "combat_hud_state",
+            "defense_window",
+            "cast_sync",
+            "quickslot_config",
+            "unlocks_sync",
+            "event_stream_push",
+            "defense_sync"
         ), router.registeredTypes());
     }
 

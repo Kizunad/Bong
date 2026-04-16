@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "alchemy_outcome_resolved",
+  "bucket": "perfect",
+  "recipe_id": "hui_yuan_pill_v0",
+  "pill": "hui_yuan_pill",
+  "quality": 1.0,
+  "toxin_amount": 0.2,
+  "toxin_color": "Mellow",
+  "qi_gain": 24.0,
+  "flawed_path": false
+}

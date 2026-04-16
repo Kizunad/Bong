@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "alchemy_recipe_book",
+  "learned": [
+    {
+      "id": "kai_mai_pill_v0",
+      "display_name": "开脉丹方",
+      "body_text": "§e凡炼开脉，先取§6【开脉草】§e三株...",
+      "author": "散修 刘三",
+      "era": "末法 十二年",
+      "max_known": 8
+    },
+    {
+      "id": "hui_yuan_pill_v0",
+      "display_name": "回元丹方",
+      "body_text": "§e温补真元，低阶筑基常备。",
+      "author": "散修 刘三",
+      "era": "末法 十二年",
+      "max_known": 8
+    }
+  ],
+  "current_index": 0
+}

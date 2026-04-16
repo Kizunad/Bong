@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "furnace_id",
+    "tier",
+    "integrity",
+    "integrity_max",
+    "owner_name",
+    "has_session"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_furnace",
+      "type": "string"
+    },
+    "furnace_id": {
+      "type": "string"
+    },
+    "tier": {
+      "minimum": 1,
+      "maximum": 9,
+      "type": "integer"
+    },
+    "integrity": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "integrity_max": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "owner_name": {
+      "type": "string"
+    },
+    "has_session": {
+      "type": "boolean"
+    }
+  }
+}

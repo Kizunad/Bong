@@ -31,7 +31,9 @@ pub mod recipe;
 pub mod resolver;
 pub mod session;
 
-use valence::prelude::{bevy_ecs, App, Event};
+use valence::prelude::{
+    bevy_ecs, Added, App, Client, Commands, Entity, Event, Query, Username, With, Without,
+};
 
 #[allow(unused_imports)]
 pub use furnace::AlchemyFurnace;
@@ -73,8 +75,7 @@ pub struct AlchemyOutcomeEvent {
 
 /// 注册到主 App。
 ///
-/// MVP 只做资源加载 + 事件注册；session 推进由炉体实体上的 system 驱动，
-/// 接入 ECS 的部分留给客户端 Screen 落地时一起连（避免孤立 system）。
+/// 资源加载 + 事件注册 + attach system(玩家加入时挂 AlchemyFurnace + LearnedRecipes)。
 pub fn register(app: &mut App) {
     tracing::info!("[bong][alchemy] registering alchemy subsystem (plan-alchemy-v1 P0)");
     let registry = recipe::load_recipe_registry().unwrap_or_else(|error| {
@@ -88,6 +89,26 @@ pub fn register(app: &mut App) {
     app.add_event::<StartAlchemyRequest>();
     app.add_event::<InterventionRequest>();
     app.add_event::<AlchemyOutcomeEvent>();
+    app.add_systems(valence::prelude::Update, attach_alchemy_to_joined_clients);
+}
+
+/// 玩家加入时挂 AlchemyFurnace + LearnedRecipes。MVP 简化:每个玩家自带一个虚拟炉
+/// (而非按 BlockEntity 绑炉),plan §1.2 多炉并行 / BlockEntity 持久化留 plan-persistence-v1。
+pub(crate) fn attach_alchemy_to_joined_clients(
+    mut commands: Commands,
+    joined: Query<(Entity, &Username), (Added<Username>, With<Client>, Without<LearnedRecipes>)>,
+) {
+    for (entity, username) in &joined {
+        let mut learned = LearnedRecipes::default();
+        // MVP 默认开局已悟一张教学方(开脉丹)
+        learned.learn("kai_mai_pill_v0".into());
+        let mut furnace = AlchemyFurnace::new(1);
+        furnace.owner = Some(username.0.clone());
+        commands.entity(entity).insert((furnace, learned));
+        tracing::info!(
+            "[bong][alchemy] attached AlchemyFurnace + LearnedRecipes to {entity:?} ({username:?})"
+        );
+    }
 }
 
 #[cfg(test)]

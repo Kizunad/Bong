@@ -73,3 +73,6 @@ third_party/
 .sisyphus/
 # 全自动 plan 消费脚本（scripts/bong-plan-auto.sh）生成的 worktrees
 .worktrees/
+# 手动评审用的 worktree
+.worktree/
+tmp/

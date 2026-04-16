@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "alchemy_outcome_forecast",
+  "perfect_pct": 18.0,
+  "good_pct": 54.0,
+  "flawed_pct": 22.0,
+  "waste_pct": 5.0,
+  "explode_pct": 1.0,
+  "perfect_note": "q1.0 · Mellow 0.30",
+  "good_note": "q0.7 · Mellow 0.50",
+  "flawed_note": "q0.4 · Turbid 0.80"
+}
