@@ -237,7 +237,9 @@ impl FactionStore {
                 })
             }
             FactionEventKind::PopMission => {
-                faction.mission_queue.pending.pop();
+                if !faction.mission_queue.pending.is_empty() {
+                    faction.mission_queue.pending.remove(0);
+                }
                 Ok(FactionEventApplied {
                     faction_id: faction.id,
                     kind: event.kind,
@@ -500,6 +502,56 @@ mod tests {
             })
             .expect("adjust loyalty should succeed");
         assert!((adjust.loyalty_bias - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pop_mission_removes_head_not_tail() {
+        let mut store = FactionStore::default();
+
+        for mission in ["mission_a", "mission_b"] {
+            store
+                .apply_event(FactionEventCommand {
+                    faction_id: FactionId::Neutral,
+                    kind: FactionEventKind::EnqueueMission,
+                    subject_id: None,
+                    mission_id: Some(mission.to_string()),
+                    loyalty_delta: None,
+                })
+                .expect("enqueue should succeed");
+        }
+
+        let popped = store
+            .apply_event(FactionEventCommand {
+                faction_id: FactionId::Neutral,
+                kind: FactionEventKind::PopMission,
+                subject_id: None,
+                mission_id: None,
+                loyalty_delta: None,
+            })
+            .expect("pop should succeed");
+        assert_eq!(popped.mission_queue_size, 1);
+
+        let queue = &store.faction_mut(FactionId::Neutral).unwrap().mission_queue;
+        assert_eq!(queue.top_mission_id(), Some("mission_b"));
+
+        store
+            .apply_event(FactionEventCommand {
+                faction_id: FactionId::Neutral,
+                kind: FactionEventKind::PopMission,
+                subject_id: None,
+                mission_id: None,
+                loyalty_delta: None,
+            })
+            .expect("pop on single-entry queue should succeed");
+        store
+            .apply_event(FactionEventCommand {
+                faction_id: FactionId::Neutral,
+                kind: FactionEventKind::PopMission,
+                subject_id: None,
+                mission_id: None,
+                loyalty_delta: None,
+            })
+            .expect("pop on empty queue should be a no-op, not a panic");
     }
 
     #[test]

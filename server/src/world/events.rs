@@ -275,7 +275,7 @@ impl ActiveEventsResource {
         layer_entity: Option<Entity>,
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
-        npc_spawn_budget: Option<usize>,
+        mut npc_spawn_budget: Option<usize>,
     ) {
         let Some(zone_registry) = zone_registry else {
             self.tick_metadata_only(None);
@@ -362,6 +362,9 @@ impl ActiveEventsResource {
                                 event.zone_name
                             );
                             continue;
+                        }
+                        if let Some(budget) = npc_spawn_budget.as_mut() {
+                            *budget = budget.saturating_sub(beast_count);
                         }
                         for beast_index in 0..beast_count {
                             let spawn_position =
@@ -731,6 +734,7 @@ mod events_tests {
         tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
         EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     };
+    use crate::npc::lifecycle::NpcRegistry;
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
     use crate::schema::agent_command::Command;
@@ -1196,6 +1200,53 @@ mod events_tests {
                         .is_some_and(|flag| flag == &Value::Bool(true))
             ),
             "realm_collapse placeholder should append verifiable recent event"
+        );
+    }
+
+    #[test]
+    fn concurrent_beast_tides_share_npc_registry_budget() {
+        let (mut app, _layer) = setup_events_app();
+        app.insert_resource(NpcRegistry {
+            max_npc_count: 10,
+            resume_npc_count: 8,
+            ..NpcRegistry::default()
+        });
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .zones
+            .push(Zone {
+                name: "forest".to_string(),
+                bounds: (
+                    DVec3::new(100.0, 60.0, 100.0),
+                    DVec3::new(200.0, 80.0, 200.0),
+                ),
+                spirit_qi: 0.5,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: vec![DVec3::new(150.0, 70.0, 150.0)],
+                blocked_tiles: Vec::new(),
+            });
+
+        {
+            let world = app.world_mut();
+            let cmd_spawn =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 6, 0.7, None);
+            let cmd_forest =
+                spawn_event_command_with_params("forest", EVENT_BEAST_TIDE, 6, 0.7, None);
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command(&cmd_spawn, Some(&mut zones)));
+                assert!(events.enqueue_from_spawn_command(&cmd_forest, Some(&mut zones)));
+            });
+        }
+
+        app.update();
+
+        let live = query_npc_entities(app.world_mut()).len();
+        let cap = app.world().resource::<NpcRegistry>().max_npc_count;
+        assert!(
+            live <= cap,
+            "concurrent beast_tides must share the reserved npc budget: live={live} cap={cap}"
         );
     }
 
