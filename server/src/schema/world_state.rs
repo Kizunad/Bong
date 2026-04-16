@@ -1,6 +1,8 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use crate::npc::faction::{FactionId, FactionRank};
+
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
 use super::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 
@@ -44,6 +46,57 @@ pub struct NpcSnapshot {
     pub pos: Vec3,
     pub state: NpcStateKind,
     pub blackboard: HashMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub digest: Option<NpcDigestV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NpcDigestV1 {
+    pub archetype: String,
+    pub age_band: String,
+    pub age_ratio: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub disciple: Option<DiscipleSummaryV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscipleSummaryV1 {
+    pub faction_id: FactionId,
+    pub rank: FactionRank,
+    pub loyalty: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lineage: Option<LineageSummaryV1>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mission_queue: Option<MissionQueueSummaryV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageSummaryV1 {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub master_id: Option<String>,
+    pub disciple_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissionQueueSummaryV1 {
+    pub pending_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub top_mission_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactionSummaryV1 {
+    pub id: FactionId,
+    pub loyalty_bias: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub leader_lineage: Option<LineageSummaryV1>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mission_queue: Option<MissionQueueSummaryV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +134,8 @@ pub struct WorldStateV1 {
     pub tick: u64,
     pub players: Vec<PlayerProfile>,
     pub npcs: Vec<NpcSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub factions: Option<Vec<FactionSummaryV1>>,
     pub zones: Vec<ZoneSnapshot>,
     pub recent_events: Vec<GameEvent>,
 }
@@ -125,6 +180,15 @@ mod tests {
         assert_eq!(state.players[0].pos, [128.5, 66.0, 200.3]);
         assert_eq!(state.npcs.len(), 1);
         assert_eq!(state.npcs[0].id, "npc_001");
+        assert_eq!(
+            state.npcs[0]
+                .digest
+                .as_ref()
+                .and_then(|digest| digest.disciple.as_ref())
+                .map(|d| d.faction_id),
+            Some(FactionId::Neutral)
+        );
+        assert_eq!(state.factions.as_ref().map(Vec::len), Some(3));
         assert_eq!(state.zones.len(), 2);
         assert_eq!(state.recent_events.len(), 2);
         assert_eq!(CH_WORLD_STATE, "bong:world_state");
@@ -140,6 +204,10 @@ mod tests {
         assert_eq!(state.v, state2.v);
         assert_eq!(state.tick, state2.tick);
         assert_eq!(state.players.len(), state2.players.len());
+        assert_eq!(
+            state.factions.as_ref().map(Vec::len),
+            state2.factions.as_ref().map(Vec::len)
+        );
     }
 
     #[test]
