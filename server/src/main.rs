@@ -4,6 +4,7 @@ mod cultivation;
 mod inventory;
 mod network;
 mod npc;
+mod persistence;
 mod player;
 #[allow(dead_code)]
 mod schema;
@@ -43,6 +44,7 @@ fn main() {
     combat::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);
+    persistence::register(&mut app);
 
     app.run();
 }
