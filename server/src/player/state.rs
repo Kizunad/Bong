@@ -2,14 +2,17 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, Resource};
 
+use crate::inventory::PlayerInventory;
+use crate::persistence::DEFAULT_DATABASE_PATH;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::PlayerPowerBreakdown;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
-pub const PLAYER_STATE_AUTOSAVE_INTERVAL_TICKS: u64 = 1_200;
 
 const DEFAULT_REALM: &str = "mortal";
 const DEFAULT_SPIRIT_QI_MAX: f64 = 100.0;
@@ -17,6 +20,8 @@ const REALM_SCORE_QI_REFINING_DIVISOR: f64 = 12.0;
 const REALM_SCORE_FOUNDATION_BASE: f64 = 0.7;
 const REALM_SCORE_FOUNDATION_STEP: f64 = 0.08;
 const EXPERIENCE_SCORE_DIVISOR: f64 = 10_000.0;
+const PLAYER_ROW_SCHEMA_VERSION: i32 = 1;
+const DEFAULT_INVENTORY_JSON: &str = "null";
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
@@ -39,6 +44,18 @@ impl Default for PlayerState {
             inventory_score: 0.0,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+struct PlayerUiPrefs {
+    quick_slots: [Option<String>; 9],
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedPlayerSlices {
+    pub state: PlayerState,
+    pub position: [f64; 3],
+    pub inventory: Option<PlayerInventory>,
 }
 
 impl PlayerState {
@@ -109,6 +126,7 @@ impl PlayerState {
 #[derive(Debug, Clone)]
 pub struct PlayerStatePersistence {
     data_dir: PathBuf,
+    db_path: PathBuf,
 }
 
 impl Default for PlayerStatePersistence {
@@ -121,11 +139,21 @@ impl Resource for PlayerStatePersistence {}
 
 impl PlayerStatePersistence {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
+        Self::with_db_path(data_dir, DEFAULT_DATABASE_PATH)
+    }
+
+    pub fn with_db_path(data_dir: impl Into<PathBuf>, db_path: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
+            db_path: db_path.into(),
         }
     }
 
+    pub fn db_path(&self) -> &std::path::Path {
+        self.db_path.as_path()
+    }
+
+    #[cfg(test)]
     pub fn data_dir(&self) -> &std::path::Path {
         self.data_dir.as_path()
     }
@@ -133,6 +161,11 @@ impl PlayerStatePersistence {
     pub fn path_for_username(&self, username: &str) -> PathBuf {
         let player_key = canonical_player_id(username);
         self.data_dir.join(format!("{player_key}.json"))
+    }
+
+    fn migrated_path_for_username(&self, username: &str) -> PathBuf {
+        let player_key = canonical_player_id(username);
+        self.data_dir.join(format!("{player_key}.json.migrated"))
     }
 }
 
@@ -148,38 +181,115 @@ pub fn canonical_player_id(username: &str) -> String {
 }
 
 pub fn load_player_state(persistence: &PlayerStatePersistence, username: &str) -> PlayerState {
-    let path = persistence.path_for_username(username);
-
-    let contents = match fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            tracing::warn!(
-                "[bong][player] no saved PlayerState for `{}` at {}; using default state",
-                canonical_player_id(username),
-                path.display()
-            );
-            return PlayerState::default();
-        }
+    let mut connection = match open_player_connection(persistence) {
+        Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to read PlayerState for `{}` from {}: {error}; using default state",
-                canonical_player_id(username),
-                path.display()
+                "[bong][player] failed to open sqlite PlayerState store for `{}` at {}: {error}; using default state",
+                username,
+                persistence.db_path().display()
             );
             return PlayerState::default();
         }
     };
 
-    match serde_json::from_str::<PlayerState>(&contents) {
-        Ok(state) => state.normalized(),
+    match load_player_state_from_sqlite(&connection, username) {
+        Ok(Some(state)) => {
+            if let Err(error) = ensure_player_auxiliary_rows(&mut connection, username) {
+                tracing::warn!(
+                    "[bong][player] failed to ensure auxiliary sqlite rows for `{}`: {error}",
+                    username
+                );
+            }
+            return state;
+        }
+        Ok(None) => {}
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to parse PlayerState for `{}` from {}: {error}; using default state",
-                canonical_player_id(username),
-                path.display()
+                "[bong][player] failed to load PlayerState for `{}` from sqlite {}: {error}; using default state",
+                username,
+                persistence.db_path().display()
             );
-            PlayerState::default()
+            return PlayerState::default();
         }
+    }
+
+    match migrate_legacy_player_json_to_sqlite(persistence, &mut connection, username) {
+        Ok(Some(state)) => return state,
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            "[bong][player] failed to migrate legacy PlayerState for `{}` from {}: {error}; using default state",
+            username,
+            persistence.path_for_username(username).display()
+        ),
+    }
+
+    let default_state = PlayerState::default();
+    if let Err(error) = save_player_state(persistence, username, &default_state) {
+        tracing::warn!(
+            "[bong][player] failed to initialize default sqlite PlayerState for `{}`: {error}",
+            username
+        );
+    } else {
+        tracing::warn!(
+            "[bong][player] no sqlite PlayerState for `{}`; initialized default state in {}",
+            username,
+            persistence.db_path().display()
+        );
+    }
+
+    default_state
+}
+
+pub fn load_player_slices(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> LoadedPlayerSlices {
+    let state = load_player_state(persistence, username);
+    let connection = match open_player_connection(persistence) {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to reopen sqlite player slice store for `{}` at {}: {error}; using default slow/inventory slices",
+                username,
+                persistence.db_path().display()
+            );
+            return LoadedPlayerSlices {
+                state,
+                position: crate::player::spawn_position(),
+                inventory: None,
+            };
+        }
+    };
+
+    let position = match load_player_position_from_sqlite(&connection, username) {
+        Ok(Some(position)) => position,
+        Ok(None) => crate::player::spawn_position(),
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted position for `{}` from sqlite {}: {error}; using spawn position",
+                username,
+                persistence.db_path().display()
+            );
+            crate::player::spawn_position()
+        }
+    };
+    let inventory = match load_player_inventory_from_sqlite(&connection, username) {
+        Ok(inventory) => inventory,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using default inventory fallback",
+                username,
+                persistence.db_path().display()
+            );
+            None
+        }
+    };
+
+    LoadedPlayerSlices {
+        state,
+        position,
+        inventory,
     }
 }
 
@@ -188,15 +298,621 @@ pub fn save_player_state(
     username: &str,
     state: &PlayerState,
 ) -> io::Result<PathBuf> {
-    let path = persistence.path_for_username(username);
+    save_player_slices(
+        persistence,
+        username,
+        state,
+        crate::player::spawn_position(),
+        None,
+    )
+}
+
+pub fn save_player_slices(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    state: &PlayerState,
+    position: [f64; 3],
+    inventory: Option<&PlayerInventory>,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_slices_in_sqlite(&mut connection, username, state, position, inventory)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_core_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    state: &PlayerState,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_core_slice_in_sqlite(&mut connection, username, state)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_slow_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    position: [f64; 3],
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_slow_slice_in_sqlite(&mut connection, username, position)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_progression_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    state: &PlayerState,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_progression_slice_in_sqlite(&mut connection, username, state)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_inventory_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_inventory_slice_in_sqlite(&mut connection, username, inventory)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Connection> {
+    if let Some(parent) = persistence.db_path().parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    Connection::open(persistence.db_path()).map_err(io::Error::other)
+}
+
+fn load_player_state_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<PlayerState>> {
+    let row: Option<(String, f64, f64, f64, i64, f64)> = connection
+        .query_row(
+            "
+            SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+            FROM player_core
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some((realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score)) = row else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        PlayerState {
+            realm,
+            spirit_qi,
+            spirit_qi_max,
+            karma,
+            experience: u64::try_from(experience)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            inventory_score,
+        }
+        .normalized(),
+    ))
+}
+
+fn load_player_position_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<[f64; 3]>> {
+    let row: Option<(f64, f64, f64)> = connection
+        .query_row(
+            "
+            SELECT pos_x, pos_y, pos_z
+            FROM player_slow
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    Ok(row.map(|(pos_x, pos_y, pos_z)| [pos_x, pos_y, pos_z]))
+}
+
+fn load_player_inventory_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<PlayerInventory>> {
+    let inventory_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT inventory_json
+            FROM inventories
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(inventory_json) = inventory_json else {
+        return Ok(None);
+    };
+
+    if inventory_json.trim() == DEFAULT_INVENTORY_JSON {
+        return Ok(None);
+    }
+
+    serde_json::from_str::<PlayerInventory>(&inventory_json)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn persist_player_core_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    state: &PlayerState,
+) -> io::Result<()> {
     let normalized = state.normalized();
-    let serialized = serde_json::to_vec_pretty(&normalized)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+    let updated = connection
+        .execute(
+            "
+            UPDATE player_core
+            SET spirit_qi = ?2,
+                karma = ?3,
+                inventory_score = ?4,
+                schema_version = ?5,
+                last_updated_wall = ?6
+            WHERE username = ?1
+            ",
+            params![
+                username,
+                normalized.spirit_qi,
+                normalized.karma,
+                normalized.inventory_score,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
 
-    fs::create_dir_all(persistence.data_dir())?;
-    fs::write(&path, serialized)?;
+    if updated == 0 {
+        persist_player_slices_in_sqlite(
+            connection,
+            username,
+            state,
+            crate::player::spawn_position(),
+            None,
+        )?;
+    }
 
-    Ok(path)
+    Ok(())
+}
+
+fn persist_player_slow_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    position: [f64; 3],
+) -> io::Result<()> {
+    let [pos_x, pos_y, pos_z] = position;
+    let last_updated_wall = current_unix_seconds();
+    let prefs_json = default_ui_prefs_json()?;
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_slow (
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    connection
+        .execute(
+            "
+            INSERT OR IGNORE INTO player_ui_prefs (
+                username,
+                prefs_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![
+                username,
+                prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    connection
+        .execute(
+            "
+            UPDATE player_ui_prefs
+            SET schema_version = ?2,
+                last_updated_wall = ?3
+            WHERE username = ?1
+            ",
+            params![username, PLAYER_ROW_SCHEMA_VERSION, last_updated_wall],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+fn persist_player_progression_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    state: &PlayerState,
+) -> io::Result<()> {
+    let normalized = state.normalized();
+    let experience = experience_to_sql(normalized.experience)?;
+    let last_updated_wall = current_unix_seconds();
+    let updated = connection
+        .execute(
+            "
+            UPDATE player_core
+            SET realm = ?2,
+                spirit_qi_max = ?3,
+                experience = ?4,
+                schema_version = ?5,
+                last_updated_wall = ?6
+            WHERE username = ?1
+            ",
+            params![
+                username,
+                normalized.realm,
+                normalized.spirit_qi_max,
+                experience,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    if updated == 0 {
+        persist_player_slices_in_sqlite(
+            connection,
+            username,
+            state,
+            crate::player::spawn_position(),
+            None,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn persist_player_inventory_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+) -> io::Result<()> {
+    let inventory_json = serialize_inventory_json(inventory)?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO inventories (
+                username,
+                inventory_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                inventory_json = excluded.inventory_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+fn persist_player_slices_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    state: &PlayerState,
+    position: [f64; 3],
+    inventory: Option<&PlayerInventory>,
+) -> io::Result<()> {
+    let normalized = state.normalized();
+    let realm = normalized.realm;
+    let spirit_qi = normalized.spirit_qi;
+    let spirit_qi_max = normalized.spirit_qi_max;
+    let karma = normalized.karma;
+    let experience = experience_to_sql(normalized.experience)?;
+    let inventory_score = normalized.inventory_score;
+    let [pos_x, pos_y, pos_z] = position;
+    let inventory_json = serialize_inventory_json(inventory)?;
+    let last_updated_wall = current_unix_seconds();
+    let prefs_json = default_ui_prefs_json()?;
+
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let current_char_id: Option<String> = transaction
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let current_char_id = current_char_id.unwrap_or_else(|| Uuid::now_v7().to_string());
+
+    transaction
+        .execute(
+            "
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                realm,
+                spirit_qi,
+                spirit_qi_max,
+                karma,
+                experience,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                realm = excluded.realm,
+                spirit_qi = excluded.spirit_qi,
+                spirit_qi_max = excluded.spirit_qi_max,
+                karma = excluded.karma,
+                experience = excluded.experience,
+                inventory_score = excluded.inventory_score,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                current_char_id,
+                realm,
+                spirit_qi,
+                spirit_qi_max,
+                karma,
+                experience,
+                inventory_score,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    transaction
+        .execute(
+            "
+            INSERT INTO player_slow (
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO inventories (
+                username,
+                inventory_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                inventory_json = excluded.inventory_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT OR IGNORE INTO player_ui_prefs (
+                username,
+                prefs_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![
+                username,
+                prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn ensure_player_auxiliary_rows(connection: &mut Connection, username: &str) -> io::Result<()> {
+    let last_updated_wall = current_unix_seconds();
+    let prefs_json = default_ui_prefs_json()?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    insert_default_player_slice_rows(&transaction, username, last_updated_wall, &prefs_json)
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn insert_default_player_slice_rows(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    last_updated_wall: i64,
+    prefs_json: &str,
+) -> rusqlite::Result<()> {
+    let [pos_x, pos_y, pos_z] = crate::player::spawn_position();
+
+    transaction.execute(
+        "
+        INSERT OR IGNORE INTO player_slow (
+            username,
+            pos_x,
+            pos_y,
+            pos_z,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ",
+        params![
+            username,
+            pos_x,
+            pos_y,
+            pos_z,
+            PLAYER_ROW_SCHEMA_VERSION,
+            last_updated_wall
+        ],
+    )?;
+    transaction.execute(
+        "
+        INSERT OR IGNORE INTO inventories (
+            username,
+            inventory_json,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ",
+        params![
+            username,
+            DEFAULT_INVENTORY_JSON,
+            PLAYER_ROW_SCHEMA_VERSION,
+            last_updated_wall
+        ],
+    )?;
+    transaction.execute(
+        "
+        INSERT OR IGNORE INTO player_ui_prefs (
+            username,
+            prefs_json,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ",
+        params![
+            username,
+            prefs_json,
+            PLAYER_ROW_SCHEMA_VERSION,
+            last_updated_wall
+        ],
+    )?;
+
+    Ok(())
+}
+
+fn migrate_legacy_player_json_to_sqlite(
+    persistence: &PlayerStatePersistence,
+    connection: &mut Connection,
+    username: &str,
+) -> io::Result<Option<PlayerState>> {
+    let path = persistence.path_for_username(username);
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+
+    let state = serde_json::from_str::<PlayerState>(&contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .normalized();
+    persist_player_slices_in_sqlite(
+        connection,
+        username,
+        &state,
+        crate::player::spawn_position(),
+        None,
+    )?;
+    fs::rename(&path, persistence.migrated_path_for_username(username))?;
+    Ok(Some(state))
+}
+
+fn default_ui_prefs_json() -> io::Result<String> {
+    serde_json::to_string(&PlayerUiPrefs::default())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn serialize_inventory_json(inventory: Option<&PlayerInventory>) -> io::Result<String> {
+    match inventory {
+        Some(inventory) => serde_json::to_string(inventory)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+        None => Ok(DEFAULT_INVENTORY_JSON.to_string()),
+    }
+}
+
+fn experience_to_sql(experience: u64) -> io::Result<i64> {
+    i64::try_from(experience).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn current_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs() as i64
 }
 
 fn ratio_score(value: f64, max: f64) -> f64 {
@@ -245,10 +961,14 @@ fn realm_progress_score(realm: &str) -> f64 {
 #[cfg(test)]
 mod player_state_tests {
     use super::*;
+    use crate::combat::components::TICKS_PER_SECOND;
     use crate::network::agent_bridge::serialize_server_data_payload;
+    use crate::persistence::bootstrap_sqlite;
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
+    use rusqlite::{params, Connection};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use uuid::Uuid;
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -269,13 +989,21 @@ mod player_state_tests {
         );
     }
 
-    #[test]
-    fn loads_and_saves_offline_player_state() {
-        let data_dir = unique_temp_dir("load-save");
-        let persistence = PlayerStatePersistence::new(&data_dir);
-        let default_state = load_player_state(&persistence, "Azure");
+    fn sqlite_persistence(test_name: &str) -> (PlayerStatePersistence, PathBuf) {
+        let data_dir = unique_temp_dir(test_name);
+        let db_path = data_dir.join("bong.db");
+        bootstrap_sqlite(&db_path, &format!("player-state-{test_name}"))
+            .expect("sqlite bootstrap should succeed");
+        (
+            PlayerStatePersistence::with_db_path(&data_dir, &db_path),
+            data_dir,
+        )
+    }
 
-        assert_eq!(default_state, PlayerState::default());
+    #[test]
+    fn loads_and_saves_player_state_in_sqlite() {
+        let (persistence, data_dir) = sqlite_persistence("sqlite-load-save");
+        let autosave_interval_ticks = 60 * TICKS_PER_SECOND;
 
         let persisted = PlayerState {
             realm: "qi_refining_3".to_string(),
@@ -289,12 +1017,52 @@ mod player_state_tests {
         let save_path = save_player_state(&persistence, "Azure", &persisted)
             .expect("saving PlayerState should succeed");
         let reloaded = load_player_state(&persistence, "Azure");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let current_char_id: String = connection
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_core row should exist");
+        let (pos_x, pos_y, pos_z): (f64, f64, f64) = connection
+            .query_row(
+                "SELECT pos_x, pos_y, pos_z FROM player_slow WHERE username = ?1",
+                params!["Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("player_slow row should exist");
+        let inventory_json: String = connection
+            .query_row(
+                "SELECT inventory_json FROM inventories WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("inventories row should exist");
+        let prefs_json: String = connection
+            .query_row(
+                "SELECT prefs_json FROM player_ui_prefs WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_ui_prefs row should exist");
+        let prefs: PlayerUiPrefs =
+            serde_json::from_str(&prefs_json).expect("prefs_json should decode");
+        let current_char_uuid =
+            Uuid::parse_str(&current_char_id).expect("current_char_id should be a UUID");
+        let [spawn_x, spawn_y, spawn_z] = crate::player::spawn_position();
 
-        assert!(
-            save_path.ends_with("offline:Azure.json"),
-            "save path should use canonical offline:{{username}} key"
-        );
+        assert_eq!(save_path, persistence.db_path().to_path_buf());
         assert_eq!(reloaded, persisted.normalized());
+        assert_eq!(autosave_interval_ticks, 1_200);
+        assert_eq!(current_char_uuid.get_version_num(), 7);
+        assert_eq!((pos_x, pos_y, pos_z), (spawn_x, spawn_y, spawn_z));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&inventory_json)
+                .expect("inventory_json should decode"),
+            serde_json::Value::Null
+        );
+        assert_eq!(prefs, PlayerUiPrefs::default());
 
         let _ = fs::remove_dir_all(&data_dir);
     }
@@ -364,17 +1132,61 @@ mod player_state_tests {
     }
 
     #[test]
-    fn corrupt_save_uses_default_state() {
-        let data_dir = unique_temp_dir("corrupt");
-        let persistence = PlayerStatePersistence::new(&data_dir);
+    fn migrate_legacy_player_json_to_sqlite_once() {
+        let (persistence, data_dir) = sqlite_persistence("legacy-migrate");
+        let legacy_state = PlayerState {
+            realm: "qi_refining_3".to_string(),
+            spirit_qi: 78.0,
+            spirit_qi_max: 100.0,
+            karma: 0.2,
+            experience: 1_200,
+            inventory_score: 0.4,
+        };
         let save_path = persistence.path_for_username("CorruptCultivator");
+        let migrated_path = persistence.migrated_path_for_username("CorruptCultivator");
 
-        fs::create_dir_all(&data_dir).expect("test data dir should be creatable");
-        fs::write(&save_path, b"{not valid json")
-            .expect("corrupt PlayerState fixture should be writable");
+        fs::create_dir_all(persistence.data_dir()).expect("test data dir should be creatable");
+        fs::write(
+            &save_path,
+            serde_json::to_vec_pretty(&legacy_state).expect("legacy state should serialize"),
+        )
+        .expect("legacy PlayerState fixture should be writable");
 
-        let recovered = load_player_state(&persistence, "CorruptCultivator");
-        assert_eq!(recovered, PlayerState::default());
+        let migrated = load_player_state(&persistence, "CorruptCultivator");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let first_char_id: String = connection
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params!["CorruptCultivator"],
+                |row| row.get(0),
+            )
+            .expect("migrated player_core row should exist");
+        let reloaded = load_player_state(&persistence, "CorruptCultivator");
+        let second_char_id: String = connection
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params!["CorruptCultivator"],
+                |row| row.get(0),
+            )
+            .expect("reloaded player_core row should exist");
+
+        assert_eq!(migrated, legacy_state.normalized());
+        assert_eq!(reloaded, legacy_state.normalized());
+        assert!(
+            !save_path.exists(),
+            "legacy json should be renamed after migration"
+        );
+        assert!(
+            migrated_path.exists(),
+            "migrated legacy json should be preserved"
+        );
+        assert_eq!(first_char_id, second_char_id);
+        assert_eq!(
+            Uuid::parse_str(&first_char_id)
+                .expect("current_char_id should be a UUID")
+                .get_version_num(),
+            7
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }
