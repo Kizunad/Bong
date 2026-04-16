@@ -27,6 +27,10 @@
         {
           "const": "ContaminationOverflow",
           "type": "string"
+        },
+        {
+          "const": "NaturalAging",
+          "type": "string"
         }
       ]
     },
