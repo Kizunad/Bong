@@ -64,6 +64,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeRequest(meridian, axis));
     }
 
+    /** Combat UI 系列 C2S 通用发送入口。 */
+    public static void send(String type, com.google.gson.JsonObject payload) {
+        dispatch(ClientRequestProtocol.encodeGeneric(type, payload));
+    }
+
     private static void dispatch(String json) {
         backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
     }

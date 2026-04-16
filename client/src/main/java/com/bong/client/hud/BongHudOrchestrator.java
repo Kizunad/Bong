@@ -133,6 +133,20 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(StaminaBarHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(ThroughputPeakHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(NearDeathOverlayPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
         }
 
         return List.copyOf(commands);

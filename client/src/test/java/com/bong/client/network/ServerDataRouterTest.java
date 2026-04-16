@@ -26,7 +26,15 @@ public class ServerDataRouterTest {
             "ui_open",
             "cultivation_detail",
             "inventory_snapshot",
-            "inventory_event"
+            "inventory_event",
+            // Combat UI handlers (plan-combat-ui §U1–U7).
+            "combat_event",
+            "status_snapshot",
+            "derived_attrs_sync",
+            "death_screen",
+            "terminate_screen",
+            "wounds_snapshot",
+            "tribulation_broadcast"
         ), router.registeredTypes());
     }
 

@@ -92,5 +92,15 @@ public final class CombatHudBootstrap {
         UnlockedStylesStore.resetForTests();
         UnifiedEventStore.resetForTests();
         SpellVolumeStore.resetForTests();
+        // Combat UI stores (plan-combat-ui).
+        com.bong.client.combat.store.WoundsStore.resetForTests();
+        com.bong.client.combat.store.StatusEffectStore.resetForTests();
+        com.bong.client.combat.store.DerivedAttrsStore.resetForTests();
+        com.bong.client.combat.store.DamageFloaterStore.resetForTests();
+        com.bong.client.combat.store.DeathStateStore.resetForTests();
+        com.bong.client.combat.store.TerminateStateStore.resetForTests();
+        com.bong.client.combat.store.TribulationBroadcastStore.resetForTests();
+        com.bong.client.combat.inspect.TechniquesListPanel.resetForTests();
+        com.bong.client.combat.inspect.WeaponTreasurePanel.resetForTests();
     }
 }
