@@ -128,8 +128,11 @@ pub fn handle_vfx_debug_commands(
         };
 
         let origin = position.get();
-        let outcome =
-            parse_vfx_debug_command_with_origin(trimmed, unique_id.0, [origin.x, origin.y, origin.z]);
+        let outcome = parse_vfx_debug_command_with_origin(
+            trimmed,
+            unique_id.0,
+            [origin.x, origin.y, origin.z],
+        );
         match outcome {
             VfxDebugCommand::Usage(hint) => {
                 if let Ok(mut c) = clients.get_mut(*client) {
@@ -284,9 +287,7 @@ fn is_valid_anim_id_shape(anim_id: &str) -> bool {
 /// `#RRGGBB` 形态（6 位 hex）。与 `VfxEventPayloadV1::validate_ranges` 的 `is_valid_color_hex`
 /// 一致，但那个在 schema 模块里是 private，为保持模块边界干净这里独立实现。
 fn is_valid_color_hex_shape(hex: &str) -> bool {
-    hex.len() == 7
-        && hex.starts_with('#')
-        && hex[1..].chars().all(|c| c.is_ascii_hexdigit())
+    hex.len() == 7 && hex.starts_with('#') && hex[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn anim_id_from_payload(payload: &VfxEventPayloadV1) -> &str {
@@ -494,15 +495,16 @@ mod tests {
             test_origin(),
         ) {
             VfxDebugCommand::Play {
-                payload: VfxEventPayloadV1::SpawnParticle {
-                    event_id,
-                    origin,
-                    color,
-                    strength,
-                    count,
-                    duration_ticks,
-                    direction,
-                },
+                payload:
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id,
+                        origin,
+                        color,
+                        strength,
+                        count,
+                        duration_ticks,
+                        direction,
+                    },
             } => {
                 assert_eq!(event_id, "bong:sword_qi_slash");
                 assert_eq!(origin, test_origin());
@@ -524,12 +526,13 @@ mod tests {
             test_origin(),
         ) {
             VfxDebugCommand::Play {
-                payload: VfxEventPayloadV1::SpawnParticle {
-                    color,
-                    strength,
-                    count,
-                    ..
-                },
+                payload:
+                    VfxEventPayloadV1::SpawnParticle {
+                        color,
+                        strength,
+                        count,
+                        ..
+                    },
             } => {
                 assert_eq!(color.as_deref(), Some("#ffaa00"));
                 assert_eq!(strength, Some(0.5));

@@ -30,15 +30,28 @@ pub const VFX_PARTICLE_DURATION_TICKS_MAX: u16 = 200;
 #[derive(Debug)]
 pub enum VfxEventBuildError {
     Json(serde_json::Error),
-    Oversize { size: usize, max: usize },
-    PriorityOutOfRange { priority: u16 },
-    FadeTicksOutOfRange { ticks: u8 },
+    Oversize {
+        size: usize,
+        max: usize,
+    },
+    PriorityOutOfRange {
+        priority: u16,
+    },
+    FadeTicksOutOfRange {
+        ticks: u8,
+    },
     /// 粒子 `count` 越界（0 或 > `VFX_PARTICLE_COUNT_MAX`）。
-    ParticleCountOutOfRange { count: u16 },
+    ParticleCountOutOfRange {
+        count: u16,
+    },
     /// 粒子 `duration_ticks` 越界。
-    ParticleDurationOutOfRange { ticks: u16 },
+    ParticleDurationOutOfRange {
+        ticks: u16,
+    },
     /// 粒子 `strength` 非有限或超出 `[0, 1]` 区间。
-    ParticleStrengthOutOfRange { strength: f32 },
+    ParticleStrengthOutOfRange {
+        strength: f32,
+    },
     /// 粒子 `origin`/`direction` 含 NaN / inf。
     ParticleVectorNotFinite,
     /// 粒子 `color` 不是 `#RRGGBB` 6-hex 形态。
@@ -275,6 +288,8 @@ impl VfxEventV1 {
 mod tests {
     use super::*;
 
+    const SAMPLE_DIAGONAL_COMPONENT: f64 = 7071.0 / 10_000.0;
+
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
     #[test]
@@ -447,7 +462,7 @@ mod tests {
         let event = VfxEventV1::spawn_particle(
             "bong:sword_qi_slash",
             [10.0, 64.0, -5.0],
-            Some([0.7071, 0.0, 0.7071]),
+            Some([SAMPLE_DIAGONAL_COMPONENT, 0.0, SAMPLE_DIAGONAL_COMPONENT]),
             Some("#88ccff".to_string()),
             Some(0.75),
             Some(4),
@@ -494,15 +509,8 @@ mod tests {
 
     #[test]
     fn spawn_particle_rejects_zero_count() {
-        let event = VfxEventV1::spawn_particle(
-            "bong:x",
-            [0.0, 0.0, 0.0],
-            None,
-            None,
-            None,
-            Some(0),
-            None,
-        );
+        let event =
+            VfxEventV1::spawn_particle("bong:x", [0.0, 0.0, 0.0], None, None, None, Some(0), None);
         assert!(matches!(
             event.to_json_bytes_checked(),
             Err(VfxEventBuildError::ParticleCountOutOfRange { count: 0 })
@@ -608,7 +616,10 @@ mod tests {
             } => {
                 assert_eq!(event_id, "bong:sword_qi_slash");
                 assert_eq!(origin, [128.5, 64.0, -32.25]);
-                assert_eq!(direction, Some([0.7071, 0.0, 0.7071]));
+                assert_eq!(
+                    direction,
+                    Some([SAMPLE_DIAGONAL_COMPONENT, 0.0, SAMPLE_DIAGONAL_COMPONENT])
+                );
                 assert_eq!(color.as_deref(), Some("#88ccff"));
                 assert_eq!(strength, Some(0.8));
                 assert_eq!(count, Some(1));
