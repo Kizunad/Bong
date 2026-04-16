@@ -1,0 +1,33 @@
+{
+  "id": "du_ming_san_v0",
+  "name": "赌命散（测试）",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0,   "required": [{ "material": "xue_cao",  "count": 4 }], "window": 0 },
+    { "at_tick": 80,  "required": [{ "material": "shou_gu",  "count": 1 }], "window": 20 },
+    { "at_tick": 160, "required": [{ "material": "huo_jing", "count": 1 }], "window": 10 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.85,
+    "target_duration_ticks": 220,
+    "qi_cost": 35.0,
+    "tolerance": { "temp_band": 0.05, "duration_band": 10 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "du_ming_san",        "quality": 1.0, "toxin_amount": 1.20, "toxin_color": "Violent", "qi_gain": 60.0 },
+    "good":    { "pill": "du_ming_san",        "quality": 0.7, "toxin_amount": 1.50, "toxin_color": "Violent", "qi_gain": 40.0 },
+    "flawed":  { "pill": "du_ming_san_flawed", "quality": 0.3, "toxin_amount": 2.00, "toxin_color": "Violent" },
+    "waste":   null,
+    "explode": { "damage": 40.0, "meridian_crack": 0.30 }
+  },
+  "flawed_fallback": {
+    "pill": "du_ming_san_flawed",
+    "quality_scale": 0.3,
+    "toxin_scale": 2.0,
+    "side_effect_pool": [
+      { "tag": "berserk_5s",           "duration_s": 5,   "weight": 2 },
+      { "tag": "qi_cap_perm_minus_1",  "perm": true,      "weight": 1 },
+      { "tag": "rare_insight_flash",   "duration_s": 0,   "weight": 1 }
+    ]
+  }
+}
