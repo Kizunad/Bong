@@ -13,6 +13,7 @@ class FakeRedisListClient {
   private readonly lists = new Map<string, string[]>();
   private readonly subscribers = new Map<string, Array<(channel: string, message: string) => void>>();
   private readonly hashes = new Map<string, Record<string, string>>();
+  private readonly published: Array<{ channel: string; message: string }> = [];
   private nextMultiResult: FakeMultiResult | null = null;
 
   async subscribe(channel: string): Promise<number> {
@@ -56,6 +57,7 @@ class FakeRedisListClient {
   disconnect(): void {}
 
   async publish(channel: string, message: string): Promise<number> {
+    this.published.push({ channel, message });
     const listeners = this.subscribers.get(channel) ?? [];
     for (const listener of listeners) {
       listener(channel, message);
@@ -137,6 +139,10 @@ class FakeRedisListClient {
 
   getHash(key: string): Record<string, string> {
     return { ...(this.hashes.get(key) ?? {}) };
+  }
+
+  getPublished(): Array<{ channel: string; message: string }> {
+    return [...this.published];
   }
 }
 
@@ -243,6 +249,39 @@ describe("redis-ipc", () => {
     );
 
     expect(ipc.getLatestState()?.tick).toBe(1);
+  });
+
+  it("publishes spawn_npc commands through the existing agent command channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    await ipc.publishCommands({
+      source: "arbiter",
+      commands: [{ type: "spawn_npc", target: "starter_zone", params: { archetype: "zombie" } }],
+      metadata: { sourceTick: 123, correlationId: "corr_spawn_npc" },
+    });
+
+    const published = pub.getPublished();
+    expect(published).toHaveLength(1);
+    const [publishedBatch] = published;
+    expect(publishedBatch?.channel).toBe(CHANNELS.AGENT_COMMAND);
+    expect(JSON.parse(publishedBatch?.message ?? "{}")).toMatchObject({
+      v: 1,
+      source: "arbiter",
+      commands: [{ type: "spawn_npc", target: "starter_zone", params: { archetype: "zombie" } }],
+    });
   });
 
   it("keeps world_state callback execution single even if connect is retried without teardown", async () => {
