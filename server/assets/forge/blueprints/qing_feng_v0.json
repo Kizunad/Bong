@@ -1,0 +1,44 @@
+{
+  "id": "qing_feng_v0",
+  "name": "青锋剑（测试）",
+  "station_tier_min": 1,
+  "tier_cap": 2,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [
+          { "material": "iron_ingot", "count": 4 },
+          { "material": "qing_steel", "count": 1 }
+        ],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    },
+    {
+      "kind": "tempering",
+      "profile": {
+        "pattern": ["L", "L", "H", "L", "F", "H", "L", "F", "H", "H"],
+        "window_ticks": 12,
+        "qi_per_hit": 0.5,
+        "tolerance": { "miss_allowed": 2 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "qing_feng_sword",        "quality": 1.0 },
+    "good":    { "weapon": "qing_feng_sword",        "quality": 0.75 },
+    "flawed":  { "weapon": "qing_feng_sword_flawed", "quality": 0.45 },
+    "waste":   null,
+    "explode": { "damage": 15.0, "station_wear": 0.05 }
+  },
+  "flawed_fallback": {
+    "weapon": "qing_feng_sword_flawed",
+    "quality_scale": 0.5,
+    "side_effect_pool": [
+      { "tag": "+5_durability",        "weight": 1 },
+      { "tag": "-10_durability",       "weight": 2 },
+      { "tag": "minor_qi_leak_on_hit", "weight": 1 }
+    ]
+  }
+}

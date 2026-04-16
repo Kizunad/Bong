@@ -1,0 +1,23 @@
+{
+  "id": "iron_sword_v0",
+  "name": "铁剑（测试）",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "iron_ingot", "count": 3 }],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "iron_sword",        "quality": 1.0 },
+    "good":    { "weapon": "iron_sword",        "quality": 0.8 },
+    "flawed":  { "weapon": "iron_sword_flawed", "quality": 0.5 },
+    "waste":   null,
+    "explode": { "damage": 6.0, "station_wear": 0.02 }
+  }
+}

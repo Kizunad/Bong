@@ -1,6 +1,8 @@
 mod combat;
 #[allow(dead_code)]
 mod cultivation;
+#[allow(dead_code)]
+mod forge;
 mod inventory;
 mod network;
 mod npc;
@@ -41,6 +43,7 @@ fn main() {
     inventory::register(&mut app);
     cultivation::register(&mut app);
     combat::register(&mut app);
+    forge::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);
 
