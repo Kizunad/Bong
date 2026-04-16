@@ -1,4 +1,6 @@
 pub mod brain;
+pub mod faction;
+pub mod lifecycle;
 pub mod movement;
 pub mod navigator;
 pub mod patrol;
@@ -10,9 +12,11 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering spawn/patrol/sync/brain/movement/navigator/scenario systems"
+        "[bong][npc] registering faction/spawn/lifecycle/patrol/sync/brain/movement/navigator/scenario systems"
     );
+    faction::register(app);
     spawn::register(app);
+    lifecycle::register(app);
     patrol::register(app);
     sync::register(app);
     brain::register(app);
