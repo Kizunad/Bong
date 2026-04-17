@@ -2512,7 +2512,6 @@ mod tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
-            app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
             app.add_systems(
                 Update,
                 (
