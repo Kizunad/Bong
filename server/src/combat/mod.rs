@@ -5,9 +5,6 @@ pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
-// Weapon 的伤害乘数 / 耐久扣减 / SoulBond 累加等 API 留给 W6 战斗插桩接入。
-// W2b 已接 sync system 和 emit payload,核心组件上线;纯函数层暂无 prod 调用。
-#[allow(dead_code)]
 pub mod weapon;
 
 use valence::prelude::{
