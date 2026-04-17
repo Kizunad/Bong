@@ -5,6 +5,9 @@ pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
+// W1 落数据结构 + 纯函数; system 与 event 消费留 W2,暂允许 dead_code。
+#[allow(dead_code)]
+pub mod weapon;
 
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, IntoSystemConfigs, IntoSystemSetConfigs, Query,
