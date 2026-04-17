@@ -1,5 +1,6 @@
 {
   "category.bong-client.controls": "Bong Controls",
   "key.bong-client.open_cultivation_screen": "Open Cultivation Screen",
-  "key.bong-client.open_inspect_screen": "Open Inspect Screen"
+  "key.bong-client.open_inspect_screen": "Open Inspect Screen",
+  "key.bong-client.botany_auto_harvest": "Botany Auto Harvest"
 }

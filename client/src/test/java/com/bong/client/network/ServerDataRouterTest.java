@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ServerDataRouterTest {
     @Test
-    void defaultRouterRegistersExactlyTenTypes() {
+    void defaultRouterRegistersExactlyTwelveTypes() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
         assertEquals(Set.of(
@@ -26,7 +26,9 @@ public class ServerDataRouterTest {
             "ui_open",
             "cultivation_detail",
             "inventory_snapshot",
-            "inventory_event"
+            "inventory_event",
+            "botany_harvest_progress",
+            "botany_skill"
         ), router.registeredTypes());
     }
 
@@ -88,6 +90,26 @@ public class ServerDataRouterTest {
         assertTrue(result.isHandled());
         assertTrue(result.dispatch().alertToast().isPresent());
         assertTrue(result.dispatch().visualEffectState().isPresent());
+    }
+
+    @Test
+    void routesBotanyHarvestProgressIntoStoreHandler() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-botany-harvest-progress.json");
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("botany_harvest_progress", result.envelope().type());
+    }
+
+    @Test
+    void routesBotanySkillIntoStoreHandler() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-botany-skill.json");
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("botany_skill", result.envelope().type());
     }
 
     @Test

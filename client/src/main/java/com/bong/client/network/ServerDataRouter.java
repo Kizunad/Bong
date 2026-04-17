@@ -22,6 +22,8 @@ public final class ServerDataRouter {
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
+        BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -34,6 +36,8 @@ public final class ServerDataRouter {
         handlers.put("cultivation_detail", cultivationDetailHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
+        handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("botany_skill", botanySkillHandler);
         return new ServerDataRouter(handlers);
     }
 

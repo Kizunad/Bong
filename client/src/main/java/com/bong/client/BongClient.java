@@ -3,6 +3,7 @@ package com.bong.client;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongVfxCommand;
@@ -39,6 +40,7 @@ public class BongClient implements ClientModInitializer {
         BongPunchCombo.bootstrap();
         BongAnimCommand.register();
         CombatHudBootstrap.register();
+        BotanyHudBootstrap.register();
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx and /anim commands active.");
     }

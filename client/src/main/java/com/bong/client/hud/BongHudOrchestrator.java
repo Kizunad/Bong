@@ -134,6 +134,13 @@ public final class BongHudOrchestrator {
                 screenHeight
             ));
         }
+        if (BongClientFeatures.ENABLE_BOTANY_HUD) {
+            commands.addAll(BotanyHudPlanner.buildCommands(
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
+        }
 
         return List.copyOf(commands);
     }

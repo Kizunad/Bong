@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.BongClient;
+import com.bong.client.botany.BotanyHarvestMode;
 import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
@@ -62,6 +63,10 @@ public final class ClientRequestSender {
         ClientRequestProtocol.ForgeAxis axis
     ) {
         dispatch(ClientRequestProtocol.encodeForgeRequest(meridian, axis));
+    }
+
+    public static void sendBotanyHarvestRequest(String sessionId, BotanyHarvestMode mode) {
+        dispatch(ClientRequestProtocol.encodeBotanyHarvestRequest(sessionId, mode));
     }
 
     private static void dispatch(String json) {
