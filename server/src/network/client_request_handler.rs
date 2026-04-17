@@ -8,12 +8,14 @@
 //!   - ForgeRequest → emit `ForgeRequest` Bevy event
 
 use valence::custom_payload::CustomPayloadEvent;
-use valence::prelude::{Commands, EventReader, EventWriter};
+use valence::prelude::{Commands, EventReader, EventWriter, Query, Username, With};
 
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
+use crate::player::state::canonical_player_id;
 use crate::schema::client_request::ClientRequestV1;
 
 const CHANNEL: &str = "bong:client_request";
@@ -21,9 +23,11 @@ const SUPPORTED_VERSION: u8 = 1;
 
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
+    mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
     mut breakthrough_tx: EventWriter<BreakthroughRequest>,
     mut forge_tx: EventWriter<ForgeRequest>,
     mut insight_tx: EventWriter<InsightChosen>,
+    clients: Query<&Username, With<valence::prelude::Client>>,
     mut commands: Commands,
 ) {
     for ev in events.read() {
@@ -57,7 +61,8 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::SetMeridianTarget { v, .. }
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::ForgeRequest { v, .. }
-            | ClientRequestV1::InsightDecision { v, .. } => *v,
+            | ClientRequestV1::InsightDecision { v, .. }
+            | ClientRequestV1::BotanyHarvestRequest { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -117,6 +122,35 @@ pub fn handle_client_request_payloads(
                     meridian,
                     axis,
                 });
+            }
+            ClientRequestV1::BotanyHarvestRequest {
+                session_id, mode, ..
+            } => {
+                let Some(queue) = gameplay_queue.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
+                    );
+                    continue;
+                };
+
+                queue.enqueue(
+                    clients
+                        .get(ev.client)
+                        .map(|username| canonical_player_id(username.0.as_str()))
+                        .unwrap_or_else(|_| format!("offline:{:?}", ev.client)),
+                    GameplayAction::Gather(GatherAction {
+                        resource: session_id,
+                        target_entity: None,
+                        mode: Some(match mode {
+                            crate::schema::botany::BotanyHarvestModeV1::Manual => {
+                                crate::botany::components::BotanyHarvestMode::Manual
+                            }
+                            crate::schema::botany::BotanyHarvestModeV1::Auto => {
+                                crate::botany::components::BotanyHarvestMode::Auto
+                            }
+                        }),
+                    }),
+                );
             }
         }
     }

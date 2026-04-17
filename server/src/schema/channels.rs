@@ -15,6 +15,11 @@ pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
 
+// botany 观测通道（server-agent 侧），客户端 gameplay 仍走 bong:server_data / bong:client_request
+pub const CH_BOTANY_SPAWN: &str = "bong:botany/spawn";
+pub const CH_BOTANY_WITHER: &str = "bong:botany/wither";
+pub const CH_BOTANY_HARVEST_PROGRESS: &str = "bong:botany/harvest_progress";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -27,5 +32,8 @@ mod tests {
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
+        assert_eq!(CH_BOTANY_SPAWN, "bong:botany/spawn");
+        assert_eq!(CH_BOTANY_WITHER, "bong:botany/wither");
+        assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
     }
 }

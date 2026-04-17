@@ -37,7 +37,7 @@ pub fn emit_join_inventory_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
     for (entity, mut client, username, inventory, player_state) in &mut joined_clients {
-        let snapshot = build_inventory_snapshot(inventory, player_state);
+        let snapshot = build_inventory_snapshot_for_network(inventory, player_state);
         let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -58,7 +58,7 @@ pub fn emit_join_inventory_snapshots(
     }
 }
 
-fn build_inventory_snapshot(
+pub(crate) fn build_inventory_snapshot_for_network(
     inventory: &PlayerInventory,
     player_state: &PlayerState,
 ) -> InventorySnapshotV1 {

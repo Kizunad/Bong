@@ -165,6 +165,14 @@ pub struct PlayerInventory {
     pub max_weight: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryGrantReceipt {
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub template_id: String,
+    pub stack_count: u32,
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][inventory] registering inventory resources and join attach system");
 
@@ -363,6 +371,62 @@ impl ItemRegistry {
     pub fn len(&self) -> usize {
         self.templates.len()
     }
+}
+
+pub fn add_item_to_player_inventory(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    template_id: &str,
+    stack_count: u32,
+) -> Result<InventoryGrantReceipt, String> {
+    if stack_count == 0 {
+        return Err("add_item_to_player_inventory requires stack_count >= 1".to_string());
+    }
+
+    let template = registry
+        .get(template_id)
+        .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
+
+    let instance_id = allocator.next_id()?;
+    let instance = ItemInstance {
+        instance_id,
+        template_id: template.id.clone(),
+        display_name: template.display_name.clone(),
+        grid_w: template.grid_w,
+        grid_h: template.grid_h,
+        weight: template.base_weight,
+        rarity: template.rarity,
+        description: template.description.clone(),
+        stack_count,
+        spirit_quality: template.spirit_quality_initial,
+        durability: 1.0,
+    };
+
+    let Some(main_pack) = inventory
+        .containers
+        .iter_mut()
+        .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+    else {
+        return Err(format!(
+            "player inventory missing required `{MAIN_PACK_CONTAINER_ID}` container"
+        ));
+    };
+
+    main_pack.items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance,
+    });
+
+    inventory.revision.0 = inventory.revision.0.saturating_add(1);
+
+    Ok(InventoryGrantReceipt {
+        revision: inventory.revision,
+        instance_id,
+        template_id: template.id.clone(),
+        stack_count,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1318,5 +1382,42 @@ cols = 4
             .to_string();
 
         assert!(error.contains("unknown field `spirit_stones`"));
+    }
+
+    #[test]
+    fn runtime_grant_increments_revision_and_creates_instance() {
+        let registry = load_item_registry().expect("item registry should load");
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator)
+            .expect("inventory should instantiate from loadout");
+
+        let baseline_revision = inventory.revision;
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            2,
+        )
+        .expect("runtime inventory grant should succeed for canonical herb");
+
+        assert_eq!(receipt.template_id, "ci_she_hao");
+        assert_eq!(receipt.stack_count, 2);
+        assert!(receipt.instance_id >= 1);
+        assert_eq!(inventory.revision.0, baseline_revision.0.saturating_add(1));
+
+        let main_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main pack should exist");
+        assert!(
+            main_pack
+                .items
+                .iter()
+                .any(|entry| entry.instance.template_id == "ci_she_hao"),
+            "runtime grant should materialize in main pack"
+        );
     }
 }
