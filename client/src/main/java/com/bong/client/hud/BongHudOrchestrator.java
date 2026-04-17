@@ -108,6 +108,8 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
+            commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(EventStreamHudPlanner.buildCommands(
                 combatSnapshot.eventStream(),
                 nowMillis,

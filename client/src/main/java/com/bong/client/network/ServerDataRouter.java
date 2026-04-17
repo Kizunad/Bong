@@ -55,6 +55,8 @@ public final class ServerDataRouter {
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
         DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
+        WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
+        WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -87,6 +89,8 @@ public final class ServerDataRouter {
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
         handlers.put("defense_sync", defenseSyncHandler);
+        handlers.put("weapon_equipped", weaponEquippedHandler);
+        handlers.put("weapon_broken", weaponBrokenHandler);
         return new ServerDataRouter(handlers);
     }
 
