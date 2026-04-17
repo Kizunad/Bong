@@ -50,6 +50,11 @@ public final class InspectScreenBootstrap {
         return openScreenKey;
     }
 
+    /** plan-weapon-v1 §4.4：Mixin 拦截 E 键后调用。 */
+    public static void openInspectScreen(MinecraftClient client) {
+        requestOpenInspectScreen(client);
+    }
+
     private static void requestOpenInspectScreen(MinecraftClient client) {
         client.execute(() -> {
             if (!shouldOpenInspectScreen(client.currentScreen)) {

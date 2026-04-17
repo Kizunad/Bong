@@ -7,6 +7,8 @@
   "client": [
     "MixinCamera",
     "MixinGameRenderer",
+    "MixinInGameHud",
+    "MixinMinecraftClient",
     "MixinMouse"
   ],
   "injectors": {
