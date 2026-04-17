@@ -29,6 +29,17 @@ pub struct Zone {
     pub blocked_tiles: Vec<(i32, i32)>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BotanyZoneTag {
+    Plains,
+    Mountain,
+    Marsh,
+    BloodValley,
+    Cave,
+    Wastes,
+}
+
 impl Zone {
     fn spawn() -> Self {
         Self {
@@ -169,6 +180,40 @@ impl ZoneRegistry {
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
         self.zones.iter_mut().find(|zone| zone.name == name)
+    }
+}
+
+impl Zone {
+    pub fn botany_tags(&self) -> Vec<BotanyZoneTag> {
+        let mut tags = Vec::new();
+        if self.name.eq_ignore_ascii_case("spawn") {
+            tags.push(BotanyZoneTag::Plains);
+        }
+        if self.name.eq_ignore_ascii_case("qingyun_peaks") {
+            tags.push(BotanyZoneTag::Mountain);
+        }
+        if self.name.eq_ignore_ascii_case("lingquan_marsh") {
+            tags.push(BotanyZoneTag::Marsh);
+        }
+        if self.name.eq_ignore_ascii_case("blood_valley") {
+            tags.push(BotanyZoneTag::BloodValley);
+        }
+        if self.name.eq_ignore_ascii_case("youan_depths") {
+            tags.push(BotanyZoneTag::Cave);
+        }
+        if self.name.eq_ignore_ascii_case("north_wastes") {
+            tags.push(BotanyZoneTag::Wastes);
+        }
+
+        if tags.is_empty() {
+            tags.push(BotanyZoneTag::Plains);
+        }
+
+        tags
+    }
+
+    pub fn supports_botany_tag(&self, tag: BotanyZoneTag) -> bool {
+        self.botany_tags().contains(&tag)
     }
 }
 
@@ -373,6 +418,7 @@ fn dvec3_from_array(value: [f64; 3]) -> DVec3 {
 #[cfg(test)]
 mod zone_tests {
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -540,6 +586,27 @@ mod zone_tests {
         let registry = ZoneRegistry::load_from_path(&valid_path);
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(registry.zones[0].spirit_qi, 1.0);
+    }
+
+    #[test]
+    fn botany_tags_are_derived_from_zone_name_without_biome_field() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+
+        let spawn = registry
+            .find_zone_by_name("spawn")
+            .expect("spawn zone should exist");
+        assert!(spawn.supports_botany_tag(super::BotanyZoneTag::Plains));
+
+        let marsh = registry
+            .find_zone_by_name("lingquan_marsh")
+            .expect("lingquan_marsh should exist");
+        assert!(marsh.supports_botany_tag(super::BotanyZoneTag::Marsh));
+
+        let blood = registry
+            .find_zone_by_name("blood_valley")
+            .expect("blood_valley should exist");
+        assert!(blood.supports_botany_tag(super::BotanyZoneTag::BloodValley));
     }
 
     fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {

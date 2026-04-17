@@ -30,3 +30,58 @@ base_weight = 1.8
 rarity = "common"
 spirit_quality_initial = 0.8
 description = "边境散修常见的防身短刃。"
+
+[[item]]
+id = "ci_she_hao"
+name = "刺舌蒿"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.12
+rarity = "common"
+spirit_quality_initial = 0.92
+description = "辛苦微毒，常用于试探经络反应的入门药材。"
+
+[[item]]
+id = "ning_mai_cao"
+name = "凝脉草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.14
+rarity = "uncommon"
+spirit_quality_initial = 0.95
+description = "性平而凝，常用于稳固气机与收束散乱经脉。"
+
+[[item]]
+id = "hui_yuan_zhi"
+name = "回元枝"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.16
+rarity = "uncommon"
+spirit_quality_initial = 0.96
+description = "枝液温润，可与丹引配伍以回补亏虚真元。"
+
+[[item]]
+id = "chi_sui_cao"
+name = "赤髓草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.18
+rarity = "rare"
+spirit_quality_initial = 0.98
+description = "色赤入髓，药性偏烈，常用于重症筋骨与血络调理。"
+
+[[item]]
+id = "gu_yuan_gen"
+name = "固元根"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "根性沉稳，能在低灵压环境下维持元气不散。"
