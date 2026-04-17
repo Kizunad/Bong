@@ -181,6 +181,51 @@ pub struct CombatHudStateV1 {
     pub derived: DerivedAttrFlagsV1,
 }
 
+// ─── plan-weapon-v1 §8.2：装备槽推送 ────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SoulBondV1 {
+    pub character_id: String,
+    pub bond_level: u8,
+    pub bond_progress: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaponViewV1 {
+    pub instance_id: u64,
+    pub template_id: String,
+    /// 小写 snake_case: `sword` / `saber` / `staff` / `fist` / `spear` / `dagger` / `bow`。
+    pub weapon_kind: String,
+    pub durability_current: f32,
+    pub durability_max: f32,
+    pub quality_tier: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soul_bond: Option<SoulBondV1>,
+}
+
+/// 装备槽变更推送（plan-weapon-v1 §8.2）。
+///
+/// `weapon: None` 表示该槽位被清空（卸下 / 死亡 drop / 武器 broken 后自动移除）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaponEquippedV1 {
+    /// `main_hand` / `off_hand` / `two_hand`。
+    pub slot: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weapon: Option<WeaponViewV1>,
+}
+
+/// 武器损坏通知（plan-weapon-v1 §6.3）。`Weapon` component 已被 server 移除，
+/// 但 ItemInstance（durability=0）仍在背包里等待修复。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaponBrokenV1 {
+    pub instance_id: u64,
+    pub template_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +244,56 @@ mod tests {
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: CombatHudStateV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn weapon_equipped_roundtrip_with_bond() {
+        let original = WeaponEquippedV1 {
+            slot: "main_hand".to_string(),
+            weapon: Some(WeaponViewV1 {
+                instance_id: 42,
+                template_id: "iron_sword".to_string(),
+                weapon_kind: "sword".to_string(),
+                durability_current: 185.0,
+                durability_max: 200.0,
+                quality_tier: 1,
+                soul_bond: Some(SoulBondV1 {
+                    character_id: "char_a".to_string(),
+                    bond_level: 2,
+                    bond_progress: 0.4,
+                }),
+            }),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: WeaponEquippedV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn weapon_equipped_roundtrip_without_weapon_omits_field() {
+        // plan §8.2：weapon=None 时 omit 字段(skip_serializing_if)而非 `"weapon":null`
+        let original = WeaponEquippedV1 {
+            slot: "main_hand".to_string(),
+            weapon: None,
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        assert!(
+            !json.contains("weapon"),
+            "weapon field should be omitted: {json}"
+        );
+        let parsed: WeaponEquippedV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn weapon_broken_roundtrip() {
+        let original = WeaponBrokenV1 {
+            instance_id: 77,
+            template_id: "bone_dagger".to_string(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: WeaponBrokenV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
     }
 

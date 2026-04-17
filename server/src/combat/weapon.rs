@@ -240,7 +240,12 @@ pub struct WeaponBroken {
     pub template_id: String,
 }
 
-/// plan-weapon-v1 §2.3: 装备武器意图。W2 会消费并插入 Weapon component。
+/// plan-weapon-v1 §2.3: 装备武器意图。
+///
+/// 当前架构走 `sync_weapon_component_from_equipped`:直接从 `PlayerInventory.equipped`
+/// 派生 Weapon component,不走 Intent。本结构体保留给未来"不经过 inventory move 的
+/// 快捷装备键"(例如双持快速切换)使用。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Event)]
 pub struct EquipWeaponIntent {
     pub entity: Entity,
@@ -248,7 +253,8 @@ pub struct EquipWeaponIntent {
     pub slot: EquipSlot,
 }
 
-/// plan-weapon-v1 §2.4: 卸下武器意图。
+/// plan-weapon-v1 §2.4: 卸下武器意图。同 [`EquipWeaponIntent`] 暂未接入。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Event)]
 pub struct UnequipWeaponIntent {
     pub entity: Entity,

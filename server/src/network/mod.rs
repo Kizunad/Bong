@@ -16,6 +16,7 @@ pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
+pub mod weapon_equipped_emit;
 pub mod wounds_snapshot_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -208,6 +209,10 @@ pub fn register(app: &mut App) {
             // After resolve so we read freshly-emitted CombatEvents the same tick.
             event_stream_emit::emit_combat_events_to_event_stream
                 .after(crate::combat::resolve::resolve_attack_intents),
+            // plan-weapon-v1 §8：weapon equipped / broken 推送。放在 sync_weapon 之后
+            // 以便 Added/Changed/Removed 能观察到本 tick sync 产生的结果。
+            weapon_equipped_emit::emit_weapon_equipped_payloads,
+            weapon_equipped_emit::emit_weapon_broken_payloads,
         ),
     );
     app.add_systems(
@@ -220,6 +225,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
 }
 
 fn redis_url_from_env() -> String {
