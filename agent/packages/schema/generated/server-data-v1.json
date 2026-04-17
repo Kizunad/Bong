@@ -1796,6 +1796,121 @@
           }
         }
       ]
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "target_id",
+        "target_name",
+        "plant_kind",
+        "mode",
+        "progress",
+        "auto_selectable",
+        "request_pending",
+        "interrupted",
+        "completed",
+        "detail"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "botany_harvest_progress",
+          "type": "string"
+        },
+        "session_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "plant_kind": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "auto",
+              "type": "string"
+            }
+          ]
+        },
+        "progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "auto_selectable": {
+          "type": "boolean"
+        },
+        "request_pending": {
+          "type": "boolean"
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "level",
+        "xp",
+        "xp_to_next_level",
+        "auto_unlock_level"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "botany_skill",
+          "type": "string"
+        },
+        "level": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "xp": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "xp_to_next_level": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "auto_unlock_level": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
     }
   ]
 }

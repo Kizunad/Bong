@@ -10,6 +10,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
+import { BotanyHarvestModeV1 } from "./botany.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 
@@ -55,10 +56,22 @@ export const InsightDecisionRequestV1 = Type.Object(
 );
 export type InsightDecisionRequestV1 = Static<typeof InsightDecisionRequestV1>;
 
+export const BotanyHarvestRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_harvest_request"),
+    session_id: Type.String({ minLength: 1 }),
+    mode: BotanyHarvestModeV1,
+  },
+  { additionalProperties: false },
+);
+export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
+  BotanyHarvestRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

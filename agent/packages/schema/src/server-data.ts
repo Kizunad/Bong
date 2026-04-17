@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { BotanyHarvestModeV1 } from "./botany.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import {
   InventoryEventDurabilityChangedV1,
@@ -57,6 +58,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("cultivation_detail"),
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
+  Type.Literal("botany_harvest_progress"),
+  Type.Literal("botany_skill"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -208,6 +211,41 @@ export const ServerDataInventoryEventV1 = Type.Union([
 ]);
 export type ServerDataInventoryEventV1 = Static<typeof ServerDataInventoryEventV1>;
 
+export const ServerDataBotanyHarvestProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_harvest_progress"),
+    session_id: Type.String({ minLength: 1 }),
+    target_id: Type.String({ minLength: 1 }),
+    target_name: Type.String({ minLength: 1 }),
+    plant_kind: Type.String({ minLength: 1 }),
+    mode: BotanyHarvestModeV1,
+    progress: Type.Number({ minimum: 0, maximum: 1 }),
+    auto_selectable: Type.Boolean(),
+    request_pending: Type.Boolean(),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+    detail: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanyHarvestProgressV1 = Static<
+  typeof ServerDataBotanyHarvestProgressV1
+>;
+
+export const ServerDataBotanySkillV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_skill"),
+    level: Type.Integer({ minimum: 0 }),
+    xp: Type.Integer({ minimum: 0 }),
+    xp_to_next_level: Type.Integer({ minimum: 1 }),
+    auto_unlock_level: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanySkillV1 = Static<typeof ServerDataBotanySkillV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -219,5 +257,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataCultivationDetailV1,
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
+  ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanySkillV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

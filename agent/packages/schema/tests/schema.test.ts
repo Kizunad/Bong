@@ -144,6 +144,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.botany-harvest-progress.sample.json", () => {
+    const data = loadSample("server-data.botany-harvest-progress.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.botany-skill.sample.json", () => {
+    const data = loadSample("server-data.botany-skill.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.cultivation-detail.sample.json", () => {
     const data = loadSample("server-data.cultivation-detail.sample.json");
     const result = validate(ServerDataV1, data);
