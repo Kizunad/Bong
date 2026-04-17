@@ -91,10 +91,16 @@ mod tests {
         assert_eq!(cmd.v, 1);
         assert_eq!(cmd.id, "cmd_1712345678_001");
         assert_eq!(cmd.source.as_deref(), Some("calamity"));
-        assert_eq!(cmd.commands.len(), 2);
+        assert_eq!(cmd.commands.len(), 5);
         assert_eq!(cmd.commands[0].command_type, CommandType::SpawnEvent);
         assert_eq!(cmd.commands[0].target, "blood_valley");
         assert_eq!(cmd.commands[1].command_type, CommandType::ModifyZone);
+        assert_eq!(cmd.commands[2].command_type, CommandType::SpawnNpc);
+        assert_eq!(cmd.commands[2].target, "spawn");
+        assert_eq!(cmd.commands[3].command_type, CommandType::DespawnNpc);
+        assert_eq!(cmd.commands[3].target, "npc_2v1");
+        assert_eq!(cmd.commands[4].command_type, CommandType::FactionEvent);
+        assert_eq!(cmd.commands[4].target, "neutral");
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
     }
 

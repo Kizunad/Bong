@@ -380,6 +380,174 @@
             "patternProperties": {
               "^(.*)$": {}
             }
+          },
+          "digest": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "archetype",
+              "age_band",
+              "age_ratio"
+            ],
+            "properties": {
+              "archetype": {
+                "type": "string"
+              },
+              "age_band": {
+                "type": "string"
+              },
+              "age_ratio": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "disciple": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "faction_id",
+                  "rank",
+                  "loyalty"
+                ],
+                "properties": {
+                  "faction_id": {
+                    "anyOf": [
+                      {
+                        "const": "attack",
+                        "type": "string"
+                      },
+                      {
+                        "const": "defend",
+                        "type": "string"
+                      },
+                      {
+                        "const": "neutral",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "rank": {
+                    "anyOf": [
+                      {
+                        "const": "leader",
+                        "type": "string"
+                      },
+                      {
+                        "const": "disciple",
+                        "type": "string"
+                      },
+                      {
+                        "const": "ally",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "loyalty": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "lineage": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "disciple_count"
+                    ],
+                    "properties": {
+                      "master_id": {
+                        "type": "string"
+                      },
+                      "disciple_count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "mission_queue": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "pending_count"
+                    ],
+                    "properties": {
+                      "pending_count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "top_mission_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "factions": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "loyalty_bias"
+        ],
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "const": "attack",
+                "type": "string"
+              },
+              {
+                "const": "defend",
+                "type": "string"
+              },
+              {
+                "const": "neutral",
+                "type": "string"
+              }
+            ]
+          },
+          "loyalty_bias": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "leader_lineage": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "disciple_count"
+            ],
+            "properties": {
+              "master_id": {
+                "type": "string"
+              },
+              "disciple_count": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          },
+          "mission_queue": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "pending_count"
+            ],
+            "properties": {
+              "pending_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "top_mission_id": {
+                "type": "string"
+              }
+            }
           }
         }
       }
