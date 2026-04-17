@@ -5,8 +5,6 @@ pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
-// W1 落数据结构 + 纯函数; system 与 event 消费留 W2,暂允许 dead_code。
-#[allow(dead_code)]
 pub mod weapon;
 
 use valence::prelude::{
@@ -130,6 +128,9 @@ pub fn register(app: &mut App) {
             debug::drain_combat_events_for_debug
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
+            // plan-weapon-v1 §2.3: 装备槽 → Weapon component 同步。放 Intent 阶段,
+            // 让 resolve 阶段查 Weapon 时已经是当前 tick 的最新装备状态。
+            weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),
         ),
     );
 }

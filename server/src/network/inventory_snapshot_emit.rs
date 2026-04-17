@@ -315,6 +315,7 @@ mod tests {
             stack_count,
             spirit_quality: 0.5,
             durability: 1.0,
+            soul_bond: None,
         }
     }
 

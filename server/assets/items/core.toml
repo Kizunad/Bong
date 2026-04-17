@@ -30,3 +30,9 @@ base_weight = 1.8
 rarity = "common"
 spirit_quality_initial = 0.8
 description = "边境散修常见的防身短刃。"
+# plan-weapon-v1 §10：起手凡铁剑,低 base_attack 高耐久。
+[item.weapon]
+kind = "sword"
+base_attack = 6.0
+quality_tier = 0
+durability_max = 180.0
