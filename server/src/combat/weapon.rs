@@ -9,7 +9,9 @@
 //! 数据结构 + 纯函数(伤害乘数 / 耐久扣减 / soul_bond 累加),为后续业务层搭桥。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Entity, Event};
+use valence::prelude::{bevy_ecs, Changed, Commands, Component, Entity, Event, Query, Res};
+
+use crate::inventory::{ItemInstance, ItemRegistry, PlayerInventory, WeaponSpec};
 
 /// plan-weapon-v1 §1.3: 武器大类。影响渲染 transform(§5.4)、攻击动画、技能兼容性。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -157,6 +159,77 @@ impl Weapon {
         self.soul_bond = Some(SoulBond::new(character_id.to_string()));
         true
     }
+
+    /// plan §2.3: 从 [`ItemInstance`] 和 [`WeaponSpec`] 派生一个运行时 `Weapon`。
+    ///
+    /// `ItemInstance.durability` 是 `[0, 1]` 比例；此处乘 `spec.durability_max`
+    /// 转为绝对值挂到 component(tick_durability 扣减用绝对值)。
+    pub fn from_item_and_spec(item: &ItemInstance, spec: &WeaponSpec) -> Self {
+        let durability = (item.durability as f32) * spec.durability_max;
+        Self {
+            instance_id: item.instance_id,
+            template_id: item.template_id.clone(),
+            weapon_kind: spec.weapon_kind,
+            base_attack: spec.base_attack,
+            quality_tier: spec.quality_tier,
+            durability,
+            durability_max: spec.durability_max,
+            soul_bond: item.soul_bond.clone(),
+        }
+    }
+}
+
+/// plan-weapon-v1 §2.3: 每 tick 同步 `PlayerInventory.equipped.main_hand` ↔ `Weapon` component。
+///
+/// 使用 `Changed<PlayerInventory>` 过滤：只处理本 tick 有变动的玩家 Entity（含 revision 变化）。
+/// 三种状态转移：
+/// 1. 新装备（equipped 有，component 无）→ 插入
+/// 2. 卸下（equipped 无，component 有）→ 移除
+/// 3. 切换武器（equipped 与 component 指向不同 instance_id）→ 换成新的
+pub fn sync_weapon_component_from_equipped(
+    mut commands: Commands,
+    registry: Res<ItemRegistry>,
+    inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
+    existing_weapons: Query<&Weapon>,
+) {
+    for (entity, inv) in &inventories {
+        let current_item = inv.equipped.get("main_hand");
+        let existing = existing_weapons.get(entity).ok();
+
+        match (current_item, existing) {
+            (Some(item), None) => {
+                // 新装备
+                if let Some(tpl) = registry.get(&item.template_id) {
+                    if let Some(spec) = &tpl.weapon_spec {
+                        commands
+                            .entity(entity)
+                            .insert(Weapon::from_item_and_spec(item, spec));
+                    }
+                }
+            }
+            (None, Some(_)) => {
+                // 卸下
+                commands.entity(entity).remove::<Weapon>();
+            }
+            (Some(item), Some(w)) if item.instance_id != w.instance_id => {
+                // 切换不同武器
+                if let Some(tpl) = registry.get(&item.template_id) {
+                    match &tpl.weapon_spec {
+                        Some(spec) => {
+                            commands
+                                .entity(entity)
+                                .insert(Weapon::from_item_and_spec(item, spec));
+                        }
+                        None => {
+                            // equipped slot 放入了非武器(理论上 inventory 会拒但兜底)
+                            commands.entity(entity).remove::<Weapon>();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// plan-weapon-v1 §6.3: 武器损坏事件。`Weapon` component 已被调用方移除,ItemInstance 仍在。
@@ -199,6 +272,11 @@ pub enum EquipSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemCategory, ItemRarity, ItemRegistry, ItemTemplate,
+    };
+    use std::collections::HashMap;
+    use valence::prelude::{App, Update};
 
     fn sample_weapon(tier: u8, durability: f32, bond: Option<SoulBond>) -> Weapon {
         Weapon {
@@ -354,6 +432,189 @@ mod tests {
         let mut w = sample_weapon(0, 0.3, None);
         assert!(w.tick_durability()); // 0.3 - 0.5 → max(0, -0.2) = 0
         assert_eq!(w.durability, 0.0);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 集成测试:sync_weapon_component_from_equipped
+    // ──────────────────────────────────────────────────────────────────────
+
+    fn test_registry_with_iron_sword() -> ItemRegistry {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "iron_sword".to_string(),
+            ItemTemplate {
+                id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                category: ItemCategory::Weapon,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 1.2,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: "test".to_string(),
+                effect: None,
+                cast_duration_ms: 0,
+                cooldown_ms: 0,
+                weapon_spec: Some(WeaponSpec {
+                    weapon_kind: WeaponKind::Sword,
+                    base_attack: 8.0,
+                    quality_tier: 0,
+                    durability_max: 200.0,
+                    qi_cost_mul: 1.0,
+                }),
+            },
+        );
+        templates.insert(
+            "spirit_saber".to_string(),
+            ItemTemplate {
+                id: "spirit_saber".to_string(),
+                display_name: "灵刀".to_string(),
+                category: ItemCategory::Weapon,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 1.0,
+                rarity: ItemRarity::Uncommon,
+                spirit_quality_initial: 1.0,
+                description: "test".to_string(),
+                effect: None,
+                cast_duration_ms: 0,
+                cooldown_ms: 0,
+                weapon_spec: Some(WeaponSpec {
+                    weapon_kind: WeaponKind::Saber,
+                    base_attack: 14.0,
+                    quality_tier: 1,
+                    durability_max: 400.0,
+                    qi_cost_mul: 1.0,
+                }),
+            },
+        );
+        ItemRegistry::from_map(templates)
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        }
+    }
+
+    fn make_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: "t".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: "".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            soul_bond: None,
+        }
+    }
+
+    fn bump(inv: &mut PlayerInventory) {
+        inv.revision = InventoryRevision(inv.revision.0 + 1);
+    }
+
+    #[test]
+    fn sync_inserts_weapon_component_on_equip() {
+        let mut app = App::new();
+        app.insert_resource(test_registry_with_iron_sword());
+        app.add_systems(Update, sync_weapon_component_from_equipped);
+        let entity = app.world_mut().spawn(empty_inventory()).id();
+        app.update();
+        assert!(app.world().entity(entity).get::<Weapon>().is_none());
+
+        // 装备 iron_sword
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inv.equipped
+                .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+            bump(&mut inv);
+        }
+        app.update();
+
+        let w = app
+            .world()
+            .entity(entity)
+            .get::<Weapon>()
+            .expect("Weapon inserted");
+        assert_eq!(w.instance_id, 42);
+        assert_eq!(w.weapon_kind, WeaponKind::Sword);
+        assert!((w.base_attack - 8.0).abs() < 1e-6);
+        assert_eq!(w.quality_tier, 0);
+        assert!((w.durability_max - 200.0).abs() < 1e-6);
+        assert!((w.durability - 200.0).abs() < 1e-6); // ratio 1.0 × max
+    }
+
+    #[test]
+    fn sync_removes_weapon_component_on_unequip() {
+        let mut app = App::new();
+        app.insert_resource(test_registry_with_iron_sword());
+        app.add_systems(Update, sync_weapon_component_from_equipped);
+        let mut inv = empty_inventory();
+        inv.equipped
+            .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+        let entity = app.world_mut().spawn(inv).id();
+        app.update();
+        assert!(app.world().entity(entity).get::<Weapon>().is_some());
+
+        // 卸下
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inv.equipped.remove("main_hand");
+            bump(&mut inv);
+        }
+        app.update();
+        assert!(app.world().entity(entity).get::<Weapon>().is_none());
+    }
+
+    #[test]
+    fn sync_switches_weapon_component_on_swap() {
+        let mut app = App::new();
+        app.insert_resource(test_registry_with_iron_sword());
+        app.add_systems(Update, sync_weapon_component_from_equipped);
+        let mut inv = empty_inventory();
+        inv.equipped
+            .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+        let entity = app.world_mut().spawn(inv).id();
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<Weapon>()
+                .unwrap()
+                .instance_id,
+            42
+        );
+
+        // 换装 spirit_saber
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inv.equipped.clear();
+            inv.equipped
+                .insert("main_hand".to_string(), make_item(77, "spirit_saber"));
+            bump(&mut inv);
+        }
+        app.update();
+
+        let w = app.world().entity(entity).get::<Weapon>().unwrap();
+        assert_eq!(w.instance_id, 77);
+        assert_eq!(w.weapon_kind, WeaponKind::Saber);
+        assert_eq!(w.quality_tier, 1);
     }
 
     #[test]

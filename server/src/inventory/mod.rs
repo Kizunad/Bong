@@ -50,6 +50,20 @@ pub struct ItemTemplate {
     pub cast_duration_ms: u32,
     /// plan-HUD-v1 §4.4 完成后冷却（ms）。中断短冷却另算固定值。
     pub cooldown_ms: u32,
+    /// plan-weapon-v1 §1.1：武器特有属性。非武器恒为 None。
+    pub weapon_spec: Option<WeaponSpec>,
+}
+
+/// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeaponSpec {
+    pub weapon_kind: crate::combat::weapon::WeaponKind,
+    pub base_attack: f32,
+    /// 0=凡铁 · 1=灵器 · 2=法宝 · 3=仙器。
+    pub quality_tier: u8,
+    pub durability_max: f32,
+    /// qi 技能消耗倍率（v1 默认 1.0）。
+    pub qi_cost_mul: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +136,9 @@ pub struct ItemInstance {
     pub stack_count: u32,
     pub spirit_quality: f64,
     pub durability: f64,
+    /// plan-weapon-v1 §7：灵魂绑定（仅武器有意义，非武器恒为 None）。
+    /// 新实例缺省 None；首次使用时由 runtime ensure_bond 写入。
+    pub soul_bond: Option<crate::combat::weapon::SoulBond>,
 }
 
 #[derive(Debug)]
@@ -293,6 +310,7 @@ fn instantiate_item_instance(
         stack_count: template_instance.stack_count,
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
+        soul_bond: template_instance.soul_bond.clone(),
     })
 }
 
@@ -389,6 +407,12 @@ impl ItemRegistry {
         self.templates.get(template_id)
     }
 
+    /// 测试用:从手动构造的 templates map 建 registry。
+    #[cfg(test)]
+    pub fn from_map(templates: HashMap<String, ItemTemplate>) -> Self {
+        Self { templates }
+    }
+
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.templates.len()
@@ -476,6 +500,25 @@ struct ItemTemplateToml {
     /// 缺省 → DEFAULT_COOLDOWN_MS。
     #[serde(default)]
     cooldown_ms: Option<u32>,
+    /// plan-weapon-v1 §1.1：category == "Weapon" 时必填，否则须缺省。
+    #[serde(default)]
+    weapon: Option<WeaponSpecToml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WeaponSpecToml {
+    /// `sword` / `saber` / `staff` / `fist` / `spear` / `dagger` / `bow`。
+    kind: String,
+    base_attack: f32,
+    quality_tier: u8,
+    durability_max: f32,
+    #[serde(default = "default_qi_cost_mul")]
+    qi_cost_mul: f32,
+}
+
+fn default_qi_cost_mul() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -528,6 +571,26 @@ impl ItemTemplateToml {
             .map(|raw| parse_item_effect(raw, source_path, id.as_str()))
             .transpose()?;
 
+        // plan-weapon-v1 §1.1：weapon 块与 category=Weapon 必须一致。
+        let weapon_spec = match (&category, self.weapon) {
+            (ItemCategory::Weapon, Some(raw)) => {
+                Some(parse_weapon_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::Weapon, None) => {
+                return Err(format!(
+                    "{} item `{id}` has category=Weapon but missing [item.weapon] block",
+                    source_path.display()
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.weapon] block but category != Weapon",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
+
         Ok(ItemTemplate {
             id,
             display_name,
@@ -541,8 +604,67 @@ impl ItemTemplateToml {
             effect,
             cast_duration_ms: self.cast_duration_ms.unwrap_or(DEFAULT_CAST_DURATION_MS),
             cooldown_ms: self.cooldown_ms.unwrap_or(DEFAULT_COOLDOWN_MS),
+            weapon_spec,
         })
     }
+}
+
+fn parse_weapon_spec(
+    raw: WeaponSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<WeaponSpec, String> {
+    use crate::combat::weapon::WeaponKind;
+    let weapon_kind = match raw.kind.as_str() {
+        "sword" => WeaponKind::Sword,
+        "saber" => WeaponKind::Saber,
+        "staff" => WeaponKind::Staff,
+        "fist" => WeaponKind::Fist,
+        "spear" => WeaponKind::Spear,
+        "dagger" => WeaponKind::Dagger,
+        "bow" => WeaponKind::Bow,
+        other => {
+            return Err(format!(
+                "{} item `{item_id}` has invalid weapon.kind `{other}`; expected sword/saber/staff/fist/spear/dagger/bow",
+                source_path.display()
+            ));
+        }
+    };
+    if !raw.base_attack.is_finite() || raw.base_attack < 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.base_attack {}; expected finite >= 0",
+            source_path.display(),
+            raw.base_attack
+        ));
+    }
+    if raw.quality_tier > 3 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.quality_tier {}; expected 0..=3",
+            source_path.display(),
+            raw.quality_tier
+        ));
+    }
+    if !raw.durability_max.is_finite() || raw.durability_max <= 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.durability_max {}; expected finite > 0",
+            source_path.display(),
+            raw.durability_max
+        ));
+    }
+    if !raw.qi_cost_mul.is_finite() || raw.qi_cost_mul <= 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.qi_cost_mul {}; expected finite > 0",
+            source_path.display(),
+            raw.qi_cost_mul
+        ));
+    }
+    Ok(WeaponSpec {
+        weapon_kind,
+        base_attack: raw.base_attack,
+        quality_tier: raw.quality_tier,
+        durability_max: raw.durability_max,
+        qi_cost_mul: raw.qi_cost_mul,
+    })
 }
 
 fn parse_item_category(
@@ -1353,6 +1475,7 @@ fn build_item_instance_from_template(
         stack_count,
         spirit_quality,
         durability,
+        soul_bond: None, // plan-weapon-v1 §7：首次使用时 runtime ensure_bond 填入。
     })
 }
 
@@ -1474,6 +1597,7 @@ mod tests {
                     effect: None,
                     cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                     cooldown_ms: DEFAULT_COOLDOWN_MS,
+                    weapon_spec: None,
                 },
             );
         }
@@ -1699,6 +1823,7 @@ cols = 4
                 effect: None,
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -1755,6 +1880,7 @@ cols = 4
                 effect: None,
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -1881,6 +2007,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            soul_bond: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -1984,6 +2111,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            soul_bond: None,
         });
 
         let outcome = apply_inventory_move(
@@ -2033,6 +2161,7 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 1.0,
+                soul_bond: None,
             },
         });
 

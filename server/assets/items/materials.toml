@@ -70,6 +70,12 @@ base_weight = 0.6
 rarity = "uncommon"
 spirit_quality_initial = 1.0
 description = "异变兽骨削成的暗器载体。封 80% 真元可飞五十格。"
+# plan-weapon-v1 §1.1：暗器 → Dagger 类,低耐久一次性偏消耗。
+[item.weapon]
+kind = "dagger"
+base_attack = 6.0
+quality_tier = 0
+durability_max = 80.0
 
 [[item]]
 id = "poison_needle"
@@ -81,6 +87,12 @@ base_weight = 0.05
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "毒蛊师专用极小飞针。只附 1 点脏真元，但慢性侵蚀经脉。"
+# 毒性附魔体现在 base_attack 低但 tier 1 灵器(毒性是灵蕴)。
+[item.weapon]
+kind = "dagger"
+base_attack = 3.0
+quality_tier = 1
+durability_max = 50.0
 
 [[item]]
 id = "zhenyuan_mine"
@@ -92,6 +104,12 @@ base_weight = 1.5
 rarity = "uncommon"
 spirit_quality_initial = 1.0
 description = "封真元于环境方块的地师陷阱。踩中瞬间穿腿。"
+# 陷阱类,一次性爆发高伤害低耐久。后续如分离 category 再调整。
+[item.weapon]
+kind = "dagger"
+base_attack = 15.0
+quality_tier = 0
+durability_max = 30.0
 
 # ─── 防御 / 替身 ──────────────────────────────────────────────────────────
 [[item]]
