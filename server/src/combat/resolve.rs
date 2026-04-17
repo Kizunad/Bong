@@ -1,10 +1,11 @@
 use serde_json::json;
 use valence::prelude::{
-    Client, DVec3, Entity, EventReader, EventWriter, ParamSet, Position, Query, Res, ResMut,
-    Username, With,
+    Client, Commands, DVec3, Entity, EventReader, EventWriter, ParamSet, Position, Query, Res,
+    ResMut, Username, With,
 };
 
 use crate::combat::status::has_active_status;
+use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::CombatClock;
 use crate::combat::{
     components::{
@@ -101,6 +102,10 @@ pub fn resolve_attack_intents(
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
+    // plan-weapon-v1 §6：武器加成 + 耐久扣减 + soul_bond 累加
+    mut weapons: Query<&mut Weapon>,
+    mut weapon_broken_events: EventWriter<WeaponBroken>,
+    mut commands: Commands,
 ) {
     for intent in intents.read() {
         if statuses
@@ -188,13 +193,48 @@ pub fn resolve_attack_intents(
         let defender_damage_multiplier = defender_attrs
             .map(|attrs| attrs.defense_power)
             .unwrap_or(1.0);
+        // plan-weapon-v1 §6.1：查 attacker 的 Weapon component 得伤害倍率。
+        // 无武器(赤手) → 1.0 基线;有武器 → attack × quality × durability × soul_bond。
+        let weapon_multiplier: f32 = weapons
+            .get(intent.attacker)
+            .map(|w| w.damage_multiplier_for(&attacker_id))
+            .unwrap_or(1.0);
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
             * damage_multiplier
             * attacker_damage_multiplier
-            * defender_damage_multiplier)
+            * defender_damage_multiplier
+            * weapon_multiplier)
             .max(1.0);
         let was_alive = wounds.health_current > 0.0;
+
+        // plan-weapon-v1 §6.3 / §7.1：命中一次 → 首次绑定 + soul_bond 累加 + 耐久扣减。
+        // 若耐久归零收集 broken info,下面统一 commands 操作(避免与 mut borrow 冲突)。
+        let broken_weapon: Option<(u64, String)> =
+            if let Ok(mut weapon) = weapons.get_mut(intent.attacker) {
+                weapon.ensure_bond(&attacker_id);
+                if let Some(bond) = weapon.soul_bond.as_mut() {
+                    if bond.character_id == attacker_id {
+                        // plan §7.1：累计 100 伤害 → +0.01 progress(即 damage / 10000)。
+                        bond.advance((damage as f32) / 10000.0);
+                    }
+                }
+                if weapon.tick_durability() {
+                    Some((weapon.instance_id, weapon.template_id.clone()))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+        if let Some((instance_id, template_id)) = broken_weapon {
+            commands.entity(intent.attacker).remove::<Weapon>();
+            weapon_broken_events.send(WeaponBroken {
+                entity: intent.attacker,
+                instance_id,
+                template_id,
+            });
+        }
 
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
@@ -696,6 +736,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(
             Update,
             (
@@ -825,6 +866,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -914,6 +956,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let npc_attacker = spawn_npc(
@@ -992,6 +1035,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let player = spawn_player(
@@ -1086,6 +1130,7 @@ mod tests {
             valence::prelude::Startup,
             (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
         );
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -1156,6 +1201,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1215,6 +1261,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1289,6 +1336,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1336,6 +1384,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1394,6 +1443,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1483,6 +1533,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1559,6 +1610,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1634,6 +1686,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1703,6 +1756,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1791,6 +1845,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(
             Update,
             (
@@ -1846,6 +1901,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
         app.add_systems(
             Update,
             (
@@ -1943,6 +1999,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
         app.add_systems(
             Update,
             (
@@ -2035,6 +2092,181 @@ mod tests {
         );
     }
 
+    // plan-weapon-v1 §6：武器加成 + 耐久扣减 + WeaponBroken 事件。
+    #[test]
+    fn weapon_increases_outgoing_damage_versus_unarmed() {
+        use crate::combat::weapon::{Weapon, WeaponKind};
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1400 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let unarmed = spawn_player(
+            &mut app,
+            "Unarmed",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let armed = spawn_player(
+            &mut app,
+            "Swordsman",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let t1 = spawn_player(
+            &mut app,
+            "T1",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let t2 = spawn_player(
+            &mut app,
+            "T2",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // armed 手持强攻武器:attack_mul 2.0 × quality 1.0 × durability 1.0 × bond 1.0 = 2.0
+        app.world_mut().entity_mut(armed).insert(Weapon {
+            instance_id: 1,
+            template_id: "strong_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 20.0, // attack_multiplier = 2.0
+            quality_tier: 0,
+            durability: 200.0,
+            durability_max: 200.0,
+            soul_bond: None,
+        });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: unarmed,
+            target: Some(t1),
+            issued_at_tick: 1399,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: armed,
+            target: Some(t2),
+            issued_at_tick: 1399,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        let unarmed_damage = events[0].damage;
+        let armed_damage = events[1].damage;
+        assert!(
+            armed_damage > unarmed_damage * 1.5,
+            "armed {armed_damage} should exceed unarmed {unarmed_damage} × 1.5"
+        );
+
+        // 命中后 armed attacker 的武器应有:durability ↓ + soul_bond 自动绑定到自己。
+        let weapon = app.world().entity(armed).get::<Weapon>().unwrap();
+        assert!(weapon.durability < 200.0, "durability ticked down");
+        assert!(weapon.soul_bond.is_some(), "first use auto-binds soul");
+    }
+
+    // 耐久归零后 Weapon component 被移除 + WeaponBroken 事件发出。
+    #[test]
+    fn weapon_breaks_after_durability_depleted() {
+        use crate::combat::weapon::{Weapon, WeaponKind};
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1500 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let attacker = spawn_player(
+            &mut app,
+            "FragileSwordsman",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Dummy",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 1000.0, // 防止先死
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        // 脆武器:只剩 0.4 耐久,一击即破(HIT_DURABILITY_COST = 0.5)
+        app.world_mut().entity_mut(attacker).insert(Weapon {
+            instance_id: 42,
+            template_id: "glass_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 0.4,
+            durability_max: 10.0,
+            soul_bond: None,
+        });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1499,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+
+        app.update();
+
+        // Weapon component 已被移除
+        assert!(
+            app.world().entity(attacker).get::<Weapon>().is_none(),
+            "Weapon removed after durability depleted"
+        );
+        // WeaponBroken event 发出
+        let broken_events = app.world().resource::<Events<WeaponBroken>>();
+        let events: Vec<_> = broken_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1, "one WeaponBroken emitted");
+        assert_eq!(events[0].instance_id, 42);
+        assert_eq!(events[0].template_id, "glass_sword");
+    }
+
     #[test]
     fn cut_and_blunt_hits_produce_different_bleed_and_crack_outputs() {
         let mut app = App::new();
@@ -2043,6 +2275,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let cut_attacker = spawn_player(
@@ -2140,6 +2373,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         let pierce_attacker = spawn_player(

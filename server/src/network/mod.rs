@@ -2518,6 +2518,7 @@ mod tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
+            app.add_event::<crate::combat::weapon::WeaponBroken>();
             app.add_systems(
                 Update,
                 (

@@ -313,12 +313,31 @@ public class MixinHeldItemRenderer {
 MVP：**不改**。他人看玩家的武器仍走 vanilla `ItemStack` 渲染（要求武器 ItemInstance → fake ItemStack 转换，picked up as plan-forge-v2 的事）。
 后续：另一 Mixin 拦 `PlayerEntityRenderer` 的手部物品 feature layer。
 
-### 5.3 武器模型资源
+### 5.3 武器模型资源（路径 X：OBJ via Special Model Loader）
 
-- 位置：`client/src/main/resources/assets/bong/models/weapon/*.json`
-- 格式：Blockbench 导出的 MC model JSON（沿用 Fabric 标准加载器）
-- 命名：按 template_id：`iron_sword.json` / `spirit_saber.json` / ...
-- 加载：`BongWeaponModelRegistry` 启动扫描 + mc texture manager
+**加载器路径 X（MVP 选定）**：Tripo AI 生成任意 mesh → Blockbench 5.0 中转编辑（减面、轴归一、UV/材质整理、可选 Armature —— 但 OBJ 不导出骨骼）→ `.obj` + `.mtl` + 1×1 纯色 PNG → **Special Model Loader** (TeamFelNull/SpecialModelLoader, MIT, Fabric 1.20.1 client-only) 接入 vanilla item 渲染管线。
+
+- **依赖**（client/build.gradle）：Modrinth maven + `maven.modrinth:special-model-loader:mc1.20-1.2.0`
+- **位置**：
+  - `client/src/main/resources/assets/bong/models/item/<template_id>.json`（SML 顶层 JSON，`loader: "sml:obj"` + `obj` 字段指向 OBJ 文件 + `display` transform 沿用 §5.4 默认表）
+  - `client/src/main/resources/assets/bong/models/item/obj/<template_id>.obj` + `.mtl`
+  - `client/src/main/resources/assets/bong/textures/item/<template_id>/*.png`（1×1 纯色贴图，AI 管线产出）
+- **Mixin 接管路径**：§5.1 `BongWeaponRenderer.render()` → 拿 SML 烘焙的 `BakedModel` → 走 vanilla `ItemRenderer.renderBakedItemModel` 提交 quads。SML 本身不解析 ItemStack NBT，所以按 template_id 直接从 `ModelManager` 取对应 BakedModel，绕过 vanilla overrides。
+- **限制**：OBJ 无骨骼；Blockbench 5.0 Armature 工作在 OBJ 导出时被丢弃（官方明文）。武器挥砍完全由 vanilla hand swing + `plan-player-animation-v1` 的 PlayerAnimator 驱动，武器本体静态。
+- **动态效果**（按需）：
+  - emissive（灵器/法宝剑刃发光）：1×1 贴图走 `RenderType.entityTranslucentEmissive`，在自定义 renderer 换 VertexConsumer
+  - 刚体动画（飘浮、抖动、呼吸光位移）：自写 `BuiltinItemRendererRegistry.DynamicItemRenderer` + PoseStack 手写变换（SML 官方 example 模式），不走 keyframe timeline
+  - 单 mesh 内骨骼变形（刀鞘出鞘、刀刃分离）：不支持；必须拆成多个 OBJ 组装，或留 plan-treasure-v1 走 Entity 路径
+
+### 5.3.Y 加载器路径 Y（跨资产评估钩子，MVP 不实施）
+
+**路径 Y**：Blockbench Meshy 插件导出 `poly_mesh` (`.geo.json`) → fork GeckoLib 或通过其 `GeckoLibLoader` SPI 实现 `poly_mesh` → BakedQuad 渲染管线。GeckoLib 源码已有 `GeometryPolyMesh` record 和反序列化代码，但 Javadoc 明确 "This information isn't used by GeckoLib natively" —— **只 parse 不渲染**。补齐渲染管线约 300-500 行 Java。
+
+**解锁收益**：任意 mesh + 骨骼动画 + keyframe timeline + emissive + triggerable animation 全家桶。
+
+**评估时机（不是现在）**：当 `plan-armor-v1`（盔甲需对齐玩家骨骼）或 `plan-monster-v1`（怪物 walk/attack 动画）启动时，重新评估是否值得投资 fork GeckoLib。届时武器可顺便统一迁移到该加载器；反之保持 SML 作 item 专用通道不冲突。
+
+**风险点**：① `poly_mesh` 在 Mojang Bedrock schema 中标记 `***EXPERIMENTAL***`；② Blockbench 官方 6 年未给 Bedrock Entity 原生支持 poly_mesh 导出（issue #555），依赖第三方插件 Meshy；③ 上游 GeckoLib 是否接受 PR 未知，可能要长期维护 fork。
 
 ### 5.4 第一人称持握 transform
 
@@ -466,8 +485,8 @@ pub struct WeaponBrokenV1 {
 | `spirit_sword` | 灵剑 | Sword | 1 | 14.0 | 400 | 1×2 | 第一件灵器 |
 | `flying_sword_feixuan` | 飞玄剑 | Sword | 2 | 22.0 | 600 | 1×2 | 可绑定后"出窍"（骨架，展开业务留 plan-treasure-v1） |
 
-贴图：7 张（AI 生成，参考 `local_images/generation_guide.md` 的物品图规范）。
-模型：7 个 Blockbench JSON。
+贴图：7 张（Tripo 输出采样提取 1×1 纯色 PNG；金属/布料/皮革等分层，详见 §5.3 与未来 `plan-asset-pipeline-v1.md`）。
+模型：7 个 OBJ + MTL（Tripo → Blockbench 5.0 中转编辑 → 导出 OBJ，加载器见 §5.3 路径 X）。
 
 ---
 
@@ -480,10 +499,10 @@ pub struct WeaponBrokenV1 {
 | **W2 装备/卸下 gameplay** | inventory-v1 `InventoryMoveRequest` 处理 filling + §2 状态机 | 1.5 | W1 + inv-v1 P2 |
 | **W3 Mixin 关原生 UI** | §4.2 + §4.4 两个 Mixin + InspectScreen 背包 tab 接管 | 1 | — |
 | **W4 BongHotbarHudPlanner** | §4.3 自定义 hotbar 渲染替代原生 | 1.5 | W3 |
-| **W5 主手 3D 渲染** | §5 HeldItemRenderer Mixin + 2-3 把武器模型 | 2.5 | W1 |
+| **W5 主手 3D 渲染** | §5 SML 依赖接入（build.gradle + Modrinth maven）+ HeldItemRenderer Mixin + 2-3 把武器 OBJ（Tripo→Blockbench→OBJ 试点管线） | 2.5 | W1 |
 | **W6 战斗加成 + 耐久** | §6 resolve 插桩 + §6.3 WeaponBroken 处理 | 1 | W1 + W5 |
 | **W7 SoulBond gameplay** | §7 触发累加 + 等级跃迁 + 跨人使用惩罚 | 1 | W6 |
-| **W8 武器物品清单 + 资源** | §10 7 把武器 TOML + 7 贴图 + 3-7 Blockbench 模型 | 2 | W5 |
+| **W8 武器物品清单 + 资源** | §10 7 把武器 TOML + 7 贴图（1×1 纯色）+ 3-7 OBJ 模型（Tripo→Blockbench→OBJ）| 2 | W5 |
 
 **MVP 路径**（W1 + W2 + W3 + W5（仅 1 把占位模型）+ W6）：≈ 7 天
 
@@ -503,17 +522,19 @@ pub struct WeaponBrokenV1 {
 6. **第三人称持握 MVP 不做**：仅第一人称，他人看走 vanilla fallback（§5.2）
 7. **赤手可战**：Weapon=None 时伤害 × 1.0（§6.1）
 8. **Treasure 业务留 plan-treasure-v1**：本 plan 只占槽（§1.4）
+9. **武器模型加载器路径 X**：OBJ via Special Model Loader（MIT, client-only, Fabric 1.20.1）。Blockbench 5.0 作**中转编辑器**（减面/归一/UV），不作格式终点。vanilla JSON cuboid-only 与 GeckoLib cubes+groups 均不支持任意 mesh，被排除（§5.3）
+10. **路径 Y 作为跨资产评估钩子保留**：`plan-armor-v1` / `plan-monster-v1` 启动时重评估 `poly_mesh` + fork GeckoLib 是否值得投资，届时武器可顺便迁移（§5.3.Y）
 
 ### 12.2 开放问题
 
-1. **武器模型格式**：Blockbench JSON vs OBJ？**倾向 Blockbench JSON**（与 MC 原生加载器兼容，Blockbench 直出）
-2. **武器图标来源**：AI 生成 vs 手绘？**沿用 `local_images/generation_guide.md` AI 流程**
-3. **耐久归零能否修复**：**能**，但需完整耐久度 30% 以上，且需 plan-forge-v1 工作站（细节待 forge plan）
-4. **SoulBond 跨服持久化**：character_id 是服务端 UUID，跨会话保留（依赖 plan-persistence-v1）
-5. **掉落分布**：death drop table 具体规则（durability ≥ 50% 保留）在 plan-death-lifecycle-v1 确认
-6. **武器技能**：tier 2+ 武器是否内置 Technique？留 plan-skill-v1
-7. **双武器并持**（双刀流）：是否允许同时 main_hand + off_hand 都是 Weapon？**v1 允许**（仅 Dagger / Fist 占 off_hand）
-8. **Bow 弹药**：Bow 吃箭 Item 吗？**v1 不做 ranged**，Bow 只做骨架
+1. **武器图标来源**：AI 生成 vs 手绘？**沿用 `local_images/generation_guide.md` AI 流程**
+2. **耐久归零能否修复**：**能**，但需完整耐久度 30% 以上，且需 plan-forge-v1 工作站（细节待 forge plan）
+3. **SoulBond 跨服持久化**：character_id 是服务端 UUID，跨会话保留（依赖 plan-persistence-v1）
+4. **掉落分布**：death drop table 具体规则（durability ≥ 50% 保留）在 plan-death-lifecycle-v1 确认
+5. **武器技能**：tier 2+ 武器是否内置 Technique？留 plan-skill-v1
+6. **双武器并持**（双刀流）：是否允许同时 main_hand + off_hand 都是 Weapon？**v1 允许**（仅 Dagger / Fist 占 off_hand）
+7. **Bow 弹药**：Bow 吃箭 Item 吗？**v1 不做 ranged**，Bow 只做骨架
+8. **AI 资源管线何时独立成 plan**：Tripo 生成 prompt 模板、减面脚本、1×1 贴图采样、glb→obj 批量转换 —— MVP W5 里用脚本糊起来；资产量 ≥ 20 时抽出独立 `plan-asset-pipeline-v1.md`（阈值在武器+首个盔甲+首只怪物通跑后重评估）
 
 ---
 
@@ -542,3 +563,5 @@ pub struct WeaponBrokenV1 {
 - 协作：`plan-forge-v1.md`（修复、锻造、祭炼解绑）
 - 后续：`plan-treasure-v1.md`（飞剑展开 Entity / 符箓投掷 / 阵法布置）
 - 后续：`plan-skill-v1.md`（武器内置 Technique）
+- 后续（未定 plan）：`plan-asset-pipeline-v1.md`（Tripo AI → Blockbench 中转 → OBJ 批量管线，§5.3 路径 X 的自动化细化）
+- 评估钩子：`plan-armor-v1.md` / `plan-monster-v1.md` 启动时触发路径 Y 重评估（§5.3.Y `poly_mesh` + GeckoLib 扩展）；若决定走 Y，武器资产一并迁移
