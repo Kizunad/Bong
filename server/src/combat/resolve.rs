@@ -24,10 +24,12 @@ use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::common::GameEventType;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
 
@@ -101,6 +103,7 @@ pub fn resolve_attack_intents(
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for intent in intents.read() {
         if statuses
@@ -346,6 +349,32 @@ pub fn resolve_attack_intents(
             contam_delta: emitted_contam_delta,
             description,
         });
+
+        // plan-particle-system-v1 §4.4：命中时发 `sword_qi_slash` 到命中处。
+        // origin 取受击点 target 位置；direction = attacker → target(剑气挥向)。
+        if let Ok(target_pos) = positions.get(target_entity) {
+            let target_dvec = target_pos.get();
+            let direction = positions.get(intent.attacker).ok().map(|p| {
+                let a = p.get();
+                [
+                    target_dvec.x - a.x,
+                    target_dvec.y - a.y,
+                    target_dvec.z - a.z,
+                ]
+            });
+            vfx_events.send(VfxEventRequest::new(
+                target_dvec,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: "bong:sword_qi_slash".to_string(),
+                    origin: [target_dvec.x, target_dvec.y, target_dvec.z],
+                    direction,
+                    color: Some("#88CCFF".to_string()),
+                    strength: Some((damage / 30.0).clamp(0.3, 1.0) as f32),
+                    count: Some(4),
+                    duration_ticks: Some(16),
+                },
+            ));
+        }
 
         if let Some(active_events) = active_events.as_deref_mut() {
             active_events.record_recent_event(GameEvent {
@@ -696,6 +725,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -825,6 +855,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -914,6 +945,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let npc_attacker = spawn_npc(
@@ -992,6 +1024,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let player = spawn_player(
@@ -1086,6 +1119,7 @@ mod tests {
             valence::prelude::Startup,
             (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
         );
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -1156,6 +1190,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1215,6 +1250,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1289,6 +1325,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1336,6 +1373,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1394,6 +1432,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1483,6 +1522,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1559,6 +1599,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1634,6 +1675,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1703,6 +1745,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1791,6 +1834,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -1846,6 +1890,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -1943,6 +1988,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -2043,6 +2089,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let cut_attacker = spawn_player(
@@ -2140,6 +2187,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, resolve_attack_intents);
 
         let pierce_attacker = spawn_player(

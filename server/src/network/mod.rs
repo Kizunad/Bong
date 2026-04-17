@@ -1,16 +1,16 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
-pub mod cast_emit;
 pub mod combat_bridge;
 pub mod combat_hud_state_emit;
-pub mod defense_sync_emit;
-pub mod defense_window_emit;
-pub mod event_stream_emit;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
+pub mod defense_sync_emit;
+pub mod defense_window_emit;
+pub mod event_stream_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
@@ -2512,6 +2512,7 @@ mod tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
+            app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
             app.add_systems(
                 Update,
                 (

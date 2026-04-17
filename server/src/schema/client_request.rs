@@ -79,7 +79,9 @@ pub enum ClientRequestV1 {
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
     /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
     /// 并回推 `defense_window` payload 让 client 渲染红环。
-    Jiemai { v: u8 },
+    Jiemai {
+        v: u8,
+    },
     /// plan-HUD-v1 §4 / §11.3 触发 F1-F9 快捷使用槽。
     /// server 校验后插入 `Casting` Component，回推 `cast_sync(Casting)`；
     /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。

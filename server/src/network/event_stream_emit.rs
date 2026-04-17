@@ -15,9 +15,7 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::combat_hud::{
-    EventChannelV1, EventPriorityV1, EventStreamPushV1,
-};
+use crate::schema::combat_hud::{EventChannelV1, EventPriorityV1, EventStreamPushV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 pub fn emit_combat_events_to_event_stream(
@@ -34,7 +32,13 @@ pub fn emit_combat_events_to_event_stream(
 
         // 攻击方视角
         let attacker_text = format!("命中 {body} {kind} -{:.0}", ev.damage);
-        push_to_client(&mut clients, ev.attacker, &source_tag, &attacker_text, now_ms);
+        push_to_client(
+            &mut clients,
+            ev.attacker,
+            &source_tag,
+            &attacker_text,
+            now_ms,
+        );
 
         // 受击方视角（自打自不重复推）
         if ev.attacker != ev.target {

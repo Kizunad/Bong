@@ -53,6 +53,23 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
         return this;
     }
 
+    public BongGroundDecalParticle setSpritePublic(net.minecraft.client.texture.Sprite sprite) {
+        if (sprite != null) {
+            this.setSprite(sprite);
+        }
+        return this;
+    }
+
+    public BongGroundDecalParticle setAlphaPublic(float alpha) {
+        this.setAlpha(alpha);
+        return this;
+    }
+
+    public BongGroundDecalParticle setMaxAgePublic(int maxAge) {
+        this.maxAge = maxAge;
+        return this;
+    }
+
     @Override
     public void tick() {
         super.tick();

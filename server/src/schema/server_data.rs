@@ -419,9 +419,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::QuickSlotConfig(config))
             }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
-            ServerDataPayloadWireV1::EventStreamPush { event } => {
-                Ok(Self::EventStreamPush(event))
-            }
+            ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
             ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
         }
     }

@@ -74,9 +74,9 @@ pub fn tick_casts_or_interrupt(
     {
         // plan §4.3 控制中断（Stunned）—— 优先级最高：玩家根本动不了。
         let stunned = status_effects.is_some_and(|se| {
-            se.active.iter().any(|e| {
-                e.kind == StatusEffectKind::Stunned && e.remaining_ticks > 0
-            })
+            se.active
+                .iter()
+                .any(|e| e.kind == StatusEffectKind::Stunned && e.remaining_ticks > 0)
         });
         if stunned {
             commands.entity(entity).remove::<Casting>();
@@ -241,7 +241,10 @@ fn apply_item_effect(
     entity: Entity,
 ) {
     match effect {
-        ItemEffect::MeridianHeal { magnitude, target: _ } => {
+        ItemEffect::MeridianHeal {
+            magnitude,
+            target: _,
+        } => {
             // v1: 跨所有经脉，advance 第一条尚未愈合的裂痕。
             // 不区分 target = "any_meridian" vs 具体经脉 id（后续接入 MeridianId
             // 解析时再细化）。
@@ -256,8 +259,8 @@ fn apply_item_effect(
                 let mut local_healed = 0usize;
                 for crack in m.cracks.iter_mut() {
                     if crack.healing_progress < crack.severity {
-                        crack.healing_progress = (crack.healing_progress + magnitude)
-                            .clamp(0.0, crack.severity);
+                        crack.healing_progress =
+                            (crack.healing_progress + magnitude).clamp(0.0, crack.severity);
                         if crack.healing_progress >= crack.severity {
                             local_healed += 1;
                         }
@@ -265,8 +268,7 @@ fn apply_item_effect(
                 }
                 m.cracks.retain(|c| c.healing_progress < c.severity);
                 if local_healed > 0 {
-                    m.integrity =
-                        (m.integrity + 0.05 * local_healed as f64).min(1.0);
+                    m.integrity = (m.integrity + 0.05 * local_healed as f64).min(1.0);
                     healed_count += local_healed;
                 }
             }
@@ -307,9 +309,8 @@ fn apply_item_effect(
 
 /// 在 inventory 内找 instance_id 并 stack-=1；归零则移除。返回是否成功扣到。
 fn consume_one_stack(inventory: &mut PlayerInventory, instance_id: u64) -> bool {
-    inventory.revision = crate::inventory::InventoryRevision(
-        inventory.revision.0.saturating_add(1),
-    );
+    inventory.revision =
+        crate::inventory::InventoryRevision(inventory.revision.0.saturating_add(1));
     for c in &mut inventory.containers {
         if let Some(idx) = c
             .items
@@ -461,9 +462,7 @@ mod tests {
 
     #[test]
     fn meridian_heal_advances_first_unhealed_crack() {
-        use crate::cultivation::components::{
-            CrackCause, MeridianCrack, MeridianSystem,
-        };
+        use crate::cultivation::components::{CrackCause, MeridianCrack, MeridianSystem};
         let mut meridians = MeridianSystem::default();
         // Inject a crack into the first regular meridian.
         meridians.regular[0].cracks.push(MeridianCrack {

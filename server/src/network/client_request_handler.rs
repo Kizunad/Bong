@@ -22,10 +22,6 @@ use crate::alchemy::{
 use crate::combat::components::{
     Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
 };
-use crate::inventory::{
-    DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
-    DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS, ItemRegistry,
-};
 use crate::combat::events::DefenseIntent;
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
@@ -33,7 +29,10 @@ use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::inventory::{apply_inventory_move, InventoryMoveOutcome, PlayerInventory};
-use crate::player::state::PlayerState;
+use crate::inventory::{
+    ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
+    DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
+};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -43,6 +42,7 @@ use crate::network::cast_emit::{
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
+use crate::player::state::PlayerState;
 use crate::schema::client_request::ClientRequestV1;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
@@ -357,9 +357,7 @@ fn handle_switch_defense_stance(
         return;
     }
     stance.stance = new_stance;
-    tracing::info!(
-        "[bong][network] switch_defense_stance entity={entity:?} -> {new_stance:?}"
-    );
+    tracing::info!("[bong][network] switch_defense_stance entity={entity:?} -> {new_stance:?}");
 }
 
 fn handle_use_quick_slot(
@@ -506,7 +504,10 @@ fn handle_use_quick_slot(
 
 fn inventory_has_instance(inv: &PlayerInventory, instance_id: u64) -> bool {
     for c in &inv.containers {
-        if c.items.iter().any(|p| p.instance.instance_id == instance_id) {
+        if c.items
+            .iter()
+            .any(|p| p.instance.instance_id == instance_id)
+        {
             return true;
         }
     }
@@ -517,7 +518,10 @@ fn inventory_has_instance(inv: &PlayerInventory, instance_id: u64) -> bool {
     {
         return true;
     }
-    inv.hotbar.iter().flatten().any(|item| item.instance_id == instance_id)
+    inv.hotbar
+        .iter()
+        .flatten()
+        .any(|item| item.instance_id == instance_id)
 }
 
 fn handle_quick_slot_bind(
@@ -543,11 +547,7 @@ fn handle_quick_slot_bind(
         None | Some("") => None,
         Some(template) => inventories.get(entity).ok().and_then(|inv| {
             for c in &inv.containers {
-                if let Some(p) = c
-                    .items
-                    .iter()
-                    .find(|p| p.instance.template_id == template)
-                {
+                if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
                     return Some(p.instance.instance_id);
                 }
             }
