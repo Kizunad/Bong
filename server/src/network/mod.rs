@@ -38,13 +38,18 @@ use valence::prelude::{
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::life_record::LifeRecord;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
+use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
+use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::common::{EventKind, NpcStateKind, PlayerTrend};
 use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
-use crate::schema::world_state::{NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot};
+use crate::schema::world_state::{
+    DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
+    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
+};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -252,14 +257,26 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 }
 
 /// Periodically publish world state snapshot to Redis
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn publish_world_state_to_redis(
     redis: Res<RedisBridgeResource>,
     mut timer: valence::prelude::ResMut<WorldStateTimer>,
     clients: Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     active_events: Option<Res<ActiveEventsResource>>,
-    npcs: Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
+    faction_store: Option<Res<FactionStore>>,
+    npcs: Query<
+        (
+            Entity,
+            &Position,
+            &NpcBlackboard,
+            &EntityKind,
+            Option<&NpcArchetype>,
+            Option<&NpcLifespan>,
+            Option<&FactionMembership>,
+        ),
+        With<NpcMarker>,
+    >,
     flee_actions: Query<(&Actor, &ActionState), With<FleeAction>>,
     chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
     melee_actions: Query<(&Actor, &ActionState), With<MeleeAttackAction>>,
@@ -288,6 +305,7 @@ fn publish_world_state_to_redis(
         &clients,
         zone_registry.as_deref(),
         active_events.as_deref(),
+        faction_store.as_deref(),
         &npcs,
         &npc_action_states,
         &cultivation_by_entity,
@@ -311,14 +329,26 @@ fn collect_cultivation_snapshots(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn build_world_state_snapshot(
     ts: u64,
     tick: u64,
     clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
     active_events: Option<&ActiveEventsResource>,
-    npcs: &Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
+    faction_store: Option<&FactionStore>,
+    npcs: &Query<
+        (
+            Entity,
+            &Position,
+            &NpcBlackboard,
+            &EntityKind,
+            Option<&NpcArchetype>,
+            Option<&NpcLifespan>,
+            Option<&FactionMembership>,
+        ),
+        With<NpcMarker>,
+    >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
 ) -> WorldStateV1 {
@@ -332,6 +362,7 @@ fn build_world_state_snapshot(
         tick,
         players,
         npcs: collect_npc_snapshots(npcs, npc_action_states, &player_ids_by_entity),
+        factions: faction_store.map(collect_faction_summaries),
         zones: collect_zone_snapshots(&zone_registry, &player_counts_by_zone),
         recent_events: active_events
             .map(ActiveEventsResource::recent_events_snapshot)
@@ -507,28 +538,116 @@ fn collect_player_snapshots(
     (players, player_ids_by_entity, player_counts_by_zone)
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_npc_snapshots(
-    npcs: &Query<(Entity, &Position, &NpcBlackboard, &EntityKind), With<NpcMarker>>,
+    npcs: &Query<
+        (
+            Entity,
+            &Position,
+            &NpcBlackboard,
+            &EntityKind,
+            Option<&NpcArchetype>,
+            Option<&NpcLifespan>,
+            Option<&FactionMembership>,
+        ),
+        With<NpcMarker>,
+    >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
 ) -> Vec<NpcSnapshot> {
     let mut npc_snapshots = npcs
         .iter()
-        .map(|(entity, position, blackboard, kind)| NpcSnapshot {
-            id: canonical_npc_id(entity),
-            kind: format!("{kind:?}"),
-            pos: vec3_to_array(position.get()),
-            state: npc_action_states
-                .get(&entity)
-                .cloned()
-                .unwrap_or(NpcStateKind::Idle),
-            blackboard: build_npc_blackboard(blackboard, player_ids_by_entity),
-        })
+        .map(
+            |(entity, position, blackboard, kind, archetype, lifespan, faction_membership)| {
+                NpcSnapshot {
+                    id: canonical_npc_id(entity),
+                    kind: format!("{kind:?}"),
+                    pos: vec3_to_array(position.get()),
+                    state: npc_action_states
+                        .get(&entity)
+                        .cloned()
+                        .unwrap_or(NpcStateKind::Idle),
+                    blackboard: build_npc_blackboard(blackboard, player_ids_by_entity),
+                    digest: build_npc_digest(
+                        archetype.copied(),
+                        lifespan.copied(),
+                        faction_membership.cloned(),
+                    ),
+                }
+            },
+        )
         .collect::<Vec<_>>();
 
     npc_snapshots.sort_by(|left, right| left.id.cmp(&right.id));
 
     npc_snapshots
+}
+
+fn build_npc_digest(
+    archetype: Option<NpcArchetype>,
+    lifespan: Option<NpcLifespan>,
+    faction_membership: Option<FactionMembership>,
+) -> Option<NpcDigestV1> {
+    let archetype = archetype?;
+    let lifespan = lifespan?;
+    let age_ratio = lifespan.age_ratio().clamp(0.0, 1.0);
+    let age_band = if age_ratio >= 1.0 {
+        "expired"
+    } else if age_ratio >= 0.8 {
+        "elder"
+    } else if age_ratio >= 0.4 {
+        "adult"
+    } else {
+        "young"
+    };
+
+    Some(NpcDigestV1 {
+        archetype: archetype.as_str().to_string(),
+        age_band: age_band.to_string(),
+        age_ratio,
+        disciple: faction_membership.map(build_disciple_summary),
+    })
+}
+
+fn collect_faction_summaries(faction_store: &FactionStore) -> Vec<FactionSummaryV1> {
+    faction_store
+        .iter()
+        .map(|faction| FactionSummaryV1 {
+            id: faction.id,
+            loyalty_bias: faction.loyalty_bias,
+            leader_lineage: faction.leader_lineage.as_ref().map(build_lineage_summary),
+            mission_queue: build_mission_queue_summary(&faction.mission_queue),
+        })
+        .collect()
+}
+
+fn build_disciple_summary(membership: FactionMembership) -> DiscipleSummaryV1 {
+    DiscipleSummaryV1 {
+        faction_id: membership.faction_id,
+        rank: membership.rank,
+        loyalty: membership.reputation.loyalty(),
+        lineage: membership.lineage.as_ref().map(build_lineage_summary),
+        mission_queue: build_mission_queue_summary(&membership.mission_queue),
+    }
+}
+
+fn build_lineage_summary(lineage: &Lineage) -> LineageSummaryV1 {
+    LineageSummaryV1 {
+        master_id: lineage.master_id.clone(),
+        disciple_count: lineage.disciple_count(),
+    }
+}
+
+fn build_mission_queue_summary(mission_queue: &MissionQueue) -> Option<MissionQueueSummaryV1> {
+    let pending_count = mission_queue.pending_count();
+    if pending_count == 0 {
+        None
+    } else {
+        Some(MissionQueueSummaryV1 {
+            pending_count,
+            top_mission_id: mission_queue.top_mission_id().map(ToString::to_string),
+        })
+    }
 }
 
 fn collect_zone_snapshots(
@@ -1186,12 +1305,19 @@ mod tests {
 
     mod world_state_tests {
         use super::*;
+        use crate::npc::faction::{
+            FactionId, FactionMembership, FactionRank, FactionStore, Lineage, MissionId,
+            MissionQueue, Reputation,
+        };
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
         use crate::player::state::PlayerState;
 
         fn setup_publish_app(with_zone_registry: bool) -> (App, Receiver<RedisOutbound>) {
             let (tx_outbound, rx_outbound) = unbounded();
             let (_tx_inbound, rx_inbound) = unbounded();
             let mut app = App::new();
+
+            crate::npc::faction::register(&mut app);
 
             app.insert_resource(RedisBridgeResource {
                 tx_outbound,
@@ -1362,6 +1488,83 @@ mod tests {
                 player.breakdown.combat > 0.0,
                 "attached PlayerState should replace placeholder power breakdown"
             );
+        }
+
+        #[test]
+        fn publishes_optional_faction_and_disciple_summaries() {
+            let (mut app, rx_outbound) = setup_publish_app(false);
+            let faction_store = app.world().resource::<FactionStore>();
+            assert_eq!(
+                faction_store.factions.len(),
+                3,
+                "faction resource should bootstrap three factions"
+            );
+
+            let npc_entity = app
+                .world_mut()
+                .spawn((
+                    NpcMarker,
+                    NpcBlackboard::default(),
+                    Position::new([14.0, 66.0, 14.0]),
+                    EntityKind::ZOMBIE,
+                    npc_runtime_bundle(Entity::PLACEHOLDER, NpcArchetype::Disciple),
+                    FactionMembership {
+                        faction_id: FactionId::Defend,
+                        rank: FactionRank::Disciple,
+                        reputation: Reputation { loyalty: 0.81 },
+                        lineage: Some(Lineage {
+                            master_id: Some("npc_master_001".to_string()),
+                            disciple_ids: vec!["npc_peer_001".to_string()],
+                        }),
+                        mission_queue: MissionQueue {
+                            pending: vec![MissionId("mission:defend_gate".to_string())],
+                        },
+                    },
+                ))
+                .id();
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let npc = state
+                .npcs
+                .iter()
+                .find(|npc| npc.id == canonical_npc_id(npc_entity))
+                .expect("disciple npc should be present in snapshot");
+            let digest = npc.digest.as_ref().expect("npc digest should be present");
+            let disciple = digest
+                .disciple
+                .as_ref()
+                .expect("disciple summary should be present for faction-bound npc");
+
+            assert_eq!(digest.archetype, "disciple");
+            assert_eq!(disciple.faction_id, FactionId::Defend);
+            assert_eq!(disciple.rank, FactionRank::Disciple);
+            assert!((disciple.loyalty - 0.81).abs() < 1e-6);
+            assert_eq!(
+                disciple
+                    .lineage
+                    .as_ref()
+                    .and_then(|lineage| lineage.master_id.as_deref()),
+                Some("npc_master_001")
+            );
+            assert_eq!(
+                disciple
+                    .mission_queue
+                    .as_ref()
+                    .and_then(|queue| queue.top_mission_id.as_deref()),
+                Some("mission:defend_gate")
+            );
+
+            let factions = state
+                .factions
+                .as_ref()
+                .expect("faction summaries should be published when store exists");
+            assert_eq!(factions.len(), 3);
+            assert_eq!(factions[0].id, FactionId::Attack);
+            assert_eq!(factions[1].id, FactionId::Defend);
+            assert_eq!(factions[2].id, FactionId::Neutral);
+            assert!(factions
+                .iter()
+                .all(|summary| summary.mission_queue.is_none()));
         }
     }
 

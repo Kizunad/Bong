@@ -99,4 +99,74 @@ describe("parseDecision", () => {
       total: 1,
     });
   });
+
+  it("keeps valid spawn_npc commands after schema validation", () => {
+    const decision = parseDecision(
+      JSON.stringify({
+        commands: [
+          { type: "spawn_npc", target: "spawn", params: { archetype: "zombie" } },
+          { type: "spawn_npc", target: "spawn", params: {} },
+        ],
+        narrations: [],
+        reasoning: "spawn one zombie npc",
+      }),
+    );
+
+    expect(decision.commands).toEqual([
+      {
+        type: "spawn_npc",
+        target: "spawn",
+        params: { archetype: "zombie" },
+      },
+    ]);
+    expect(decision.parseFailures).toEqual({
+      commands: 1,
+      narrations: 0,
+      total: 1,
+    });
+  });
+
+  it("keeps valid faction_event commands after schema validation", () => {
+    const decision = parseDecision(
+      JSON.stringify({
+        commands: [
+          {
+            type: "faction_event",
+            target: "neutral",
+            params: {
+              kind: "enqueue_mission",
+              faction_id: "neutral",
+              mission_id: "mission:hold_spawn_gate",
+            },
+          },
+          {
+            type: "faction_event",
+            target: "neutral",
+            params: {
+              faction_id: "neutral",
+            },
+          },
+        ],
+        narrations: [],
+        reasoning: "queue one faction mission",
+      }),
+    );
+
+    expect(decision.commands).toEqual([
+      {
+        type: "faction_event",
+        target: "neutral",
+        params: {
+          kind: "enqueue_mission",
+          faction_id: "neutral",
+          mission_id: "mission:hold_spawn_gate",
+        },
+      },
+    ]);
+    expect(decision.parseFailures).toEqual({
+      commands: 1,
+      narrations: 0,
+      total: 1,
+    });
+  });
 });

@@ -9,6 +9,9 @@ use valence::prelude::{
 };
 
 use crate::combat::events::AttackIntent;
+use crate::npc::lifecycle::{
+    NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
+};
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
@@ -70,6 +73,12 @@ pub struct DashScorer;
 /// Activates a dash toward the player (Override movement).
 #[derive(Clone, Copy, Debug, Component)]
 pub struct DashAction;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct AgeingScorer;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct RetireAction;
 
 #[derive(Clone, Debug)]
 pub struct NpcBehaviorConfig {
@@ -206,6 +215,26 @@ impl ActionBuilder for DashAction {
     }
 }
 
+impl ScorerBuilder for AgeingScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("AgeingScorer")
+    }
+}
+
+impl ActionBuilder for RetireAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("RetireAction")
+    }
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering brain systems");
     app.insert_resource(NpcBehaviorConfig::default())
@@ -217,6 +246,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             PreUpdate,
             (
+                ageing_scorer_system,
                 player_proximity_scorer_system,
                 chase_target_scorer_system,
                 melee_range_scorer_system,
@@ -227,6 +257,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             PreUpdate,
             (
+                retire_action_system,
                 flee_action_system,
                 chase_action_system,
                 melee_attack_action_system,
@@ -234,6 +265,75 @@ pub fn register(app: &mut App) {
             )
                 .in_set(BigBrainSet::Actions),
         );
+}
+
+fn ageing_scorer_system(
+    npcs: Query<(&NpcLifespan, &NpcArchetype, Option<&PendingRetirement>), With<NpcMarker>>,
+    registry: Option<Res<NpcRegistry>>,
+    config: Option<Res<NpcAgingConfig>>,
+    mut scorers: Query<(&Actor, &mut Score), With<AgeingScorer>>,
+) {
+    let aging_enabled = config.as_deref().map(|cfg| cfg.enabled).unwrap_or(true);
+    let should_reduce_population = registry
+        .as_deref()
+        .map(NpcRegistry::should_reduce_population)
+        .unwrap_or(false);
+
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = if let Ok((lifespan, archetype, pending_retirement)) = npcs.get(*actor) {
+            if pending_retirement.is_some()
+                || !aging_enabled
+                || *archetype == NpcArchetype::GuardianRelic
+            {
+                0.0
+            } else if lifespan.is_expired() {
+                1.0
+            } else if should_reduce_population && lifespan.age_ratio() >= 0.8 {
+                0.8
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        score.set(value);
+    }
+}
+
+fn retire_action_system(
+    mut commands: Commands,
+    npcs: Query<(Option<&PendingRetirement>, &NpcLifespan), With<NpcMarker>>,
+    mut retire_requests: EventWriter<NpcRetireRequest>,
+    mut actions: Query<(&Actor, &mut ActionState), With<RetireAction>>,
+) {
+    for (Actor(actor), mut state) in &mut actions {
+        let Ok((pending_retirement, lifespan)) = npcs.get(*actor) else {
+            *state = ActionState::Failure;
+            continue;
+        };
+
+        match *state {
+            ActionState::Requested => {
+                if pending_retirement.is_none() {
+                    commands.entity(*actor).insert(PendingRetirement);
+                    retire_requests.send(NpcRetireRequest { entity: *actor });
+                }
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                if pending_retirement.is_some() || lifespan.is_expired() {
+                    continue;
+                }
+                *state = ActionState::Success;
+            }
+            ActionState::Cancelled => {
+                commands.entity(*actor).remove::<PendingRetirement>();
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
 }
 
 pub fn update_npc_blackboard(

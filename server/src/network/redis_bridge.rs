@@ -703,7 +703,15 @@ fn validate_command_value(value: &Value, index: usize) -> Result<(), ValidationE
     validate_known_keys(object, &["type", "target", "params"], context.as_str())?;
 
     let command_type = expect_string_field(object, "type", context.as_str())?;
-    if !matches!(command_type, "spawn_event" | "modify_zone" | "npc_behavior") {
+    if !matches!(
+        command_type,
+        "spawn_event"
+            | "spawn_npc"
+            | "despawn_npc"
+            | "faction_event"
+            | "modify_zone"
+            | "npc_behavior"
+    ) {
         return Err(ValidationError::new(format!(
             "{context}.type has unsupported value `{command_type}`"
         )));
@@ -716,6 +724,47 @@ fn validate_command_value(value: &Value, index: usize) -> Result<(), ValidationE
         return Err(ValidationError::new(format!(
             "{context}.params must be an object"
         )));
+    }
+
+    if command_type == "spawn_npc" {
+        let params = params
+            .as_object()
+            .ok_or_else(|| ValidationError::new(format!("{context}.params must be an object")))?;
+        let archetype = params.get("archetype").ok_or_else(|| {
+            ValidationError::new(format!(
+                "{context}.params is missing required field `archetype`"
+            ))
+        })?;
+        if !archetype.is_string() {
+            return Err(ValidationError::new(format!(
+                "{context}.params.archetype must be a string"
+            )));
+        }
+    }
+
+    if command_type == "faction_event" {
+        let params = params
+            .as_object()
+            .ok_or_else(|| ValidationError::new(format!("{context}.params must be an object")))?;
+        let kind = params.get("kind").ok_or_else(|| {
+            ValidationError::new(format!("{context}.params is missing required field `kind`"))
+        })?;
+        if !kind.is_string() {
+            return Err(ValidationError::new(format!(
+                "{context}.params.kind must be a string"
+            )));
+        }
+
+        let faction_id = params.get("faction_id").ok_or_else(|| {
+            ValidationError::new(format!(
+                "{context}.params is missing required field `faction_id`"
+            ))
+        })?;
+        if !faction_id.is_string() {
+            return Err(ValidationError::new(format!(
+                "{context}.params.faction_id must be a string"
+            )));
+        }
     }
 
     Ok(())
@@ -1068,6 +1117,18 @@ mod redis_bridge_tests {
                 .expect("arbiter command payload should pass"),
             Some(RedisInbound::AgentCommand(_))
         ));
+
+        let invalid_spawn_npc = r#"{
+            "v": 1,
+            "id": "cmd_spawn_bad",
+            "source": "arbiter",
+            "commands": [{
+                "type": "spawn_npc",
+                "target": "spawn",
+                "params": {}
+            }]
+        }"#;
+        assert!(parse_inbound_message(CH_AGENT_COMMAND, invalid_spawn_npc).is_err());
     }
 
     #[test]

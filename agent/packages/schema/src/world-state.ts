@@ -9,6 +9,61 @@ import { validate, type ValidationResult } from "./validate.js";
 export const Vec3 = Type.Tuple([Type.Number(), Type.Number(), Type.Number()]);
 export type Vec3 = Static<typeof Vec3>;
 
+export const FactionId = Type.Union([
+  Type.Literal("attack"),
+  Type.Literal("defend"),
+  Type.Literal("neutral"),
+]);
+export type FactionId = Static<typeof FactionId>;
+
+export const FactionRank = Type.Union([
+  Type.Literal("leader"),
+  Type.Literal("disciple"),
+  Type.Literal("ally"),
+]);
+export type FactionRank = Static<typeof FactionRank>;
+
+export const LineageSummaryV1 = Type.Object(
+  {
+    master_id: Type.Optional(Type.String()),
+    disciple_count: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type LineageSummaryV1 = Static<typeof LineageSummaryV1>;
+
+export const MissionQueueSummaryV1 = Type.Object(
+  {
+    pending_count: Type.Integer({ minimum: 0 }),
+    top_mission_id: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type MissionQueueSummaryV1 = Static<typeof MissionQueueSummaryV1>;
+
+export const DiscipleSummaryV1 = Type.Object(
+  {
+    faction_id: FactionId,
+    rank: FactionRank,
+    loyalty: Type.Number({ minimum: 0, maximum: 1 }),
+    lineage: Type.Optional(LineageSummaryV1),
+    mission_queue: Type.Optional(MissionQueueSummaryV1),
+  },
+  { additionalProperties: false },
+);
+export type DiscipleSummaryV1 = Static<typeof DiscipleSummaryV1>;
+
+export const FactionSummaryV1 = Type.Object(
+  {
+    id: FactionId,
+    loyalty_bias: Type.Number({ minimum: 0, maximum: 1 }),
+    leader_lineage: Type.Optional(LineageSummaryV1),
+    mission_queue: Type.Optional(MissionQueueSummaryV1),
+  },
+  { additionalProperties: false },
+);
+export type FactionSummaryV1 = Static<typeof FactionSummaryV1>;
+
 export const PlayerPowerBreakdown = Type.Object(
   {
     combat: Type.Number({ minimum: 0, maximum: 1 }),
@@ -48,6 +103,17 @@ export const NpcSnapshot = Type.Object(
     pos: Vec3,
     state: NpcState,
     blackboard: Type.Record(Type.String(), Type.Any()),
+    digest: Type.Optional(
+      Type.Object(
+        {
+          archetype: Type.String(),
+          age_band: Type.String(),
+          age_ratio: Type.Number({ minimum: 0, maximum: 1 }),
+          disciple: Type.Optional(DiscipleSummaryV1),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -87,6 +153,7 @@ export const WorldStateV1 = Type.Object(
     tick: Type.Integer({ description: "Server game tick" }),
     players: Type.Array(PlayerProfile),
     npcs: Type.Array(NpcSnapshot),
+    factions: Type.Optional(Type.Array(FactionSummaryV1)),
     zones: Type.Array(ZoneSnapshot),
     recent_events: Type.Array(GameEvent),
   },

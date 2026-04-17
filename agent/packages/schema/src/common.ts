@@ -28,6 +28,9 @@ export const MAX_PAYLOAD_BYTES = 8192;
 
 export const CommandType = Type.Union([
   Type.Literal("spawn_event"),
+  Type.Literal("spawn_npc"),
+  Type.Literal("despawn_npc"),
+  Type.Literal("faction_event"),
   Type.Literal("modify_zone"),
   Type.Literal("npc_behavior"),
 ]);
