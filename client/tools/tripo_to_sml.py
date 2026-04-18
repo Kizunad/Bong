@@ -134,6 +134,14 @@ class PipelineArgs:
     flip_y: bool
     flip_x: bool
     flip_z: bool
+    # plan-weapon-v1 §5.4: 握柄锚点调整。
+    # Tripo mesh 的几何 origin 常在 bounds 中心(非 handle 端),在 HANDHELD
+    # rotation 下 handle 会被甩远离 hand display origin ("柄到肩膀")。
+    # --anchor-xyz "x,y,z" 在归一化后整体平移 mesh,让 handle 几何中心到 (0,0,0)。
+    # 数值是"从 handle 中心到 bounds origin 的偏移"(即 handle 在 mesh 的位置)。
+    # 例:cracked_sword mesh handle 在 (0, 7, 5) → --anchor-xyz "0,7,5" pipeline
+    # 内部做 v.xyz -= (0,7,5),handle 落到 origin。
+    anchor_xyz: tuple[float, float, float] | None
     no_winding_invert: bool
     dry_run: bool
 
@@ -161,6 +169,12 @@ def parse_args(argv: list[str]) -> PipelineArgs:
     p.add_argument("--flip-x", action="store_true", help="X 轴翻转")
     p.add_argument("--flip-z", action="store_true", help="Z 轴翻转（前后互换）")
     p.add_argument(
+        "--anchor-xyz",
+        default=None,
+        help='握柄锚点偏移 "x,y,z" (归一化后从 handle 中心到 (0,0,0) 的向量，'
+             '例 "0,7,5" 表示 handle 在 mesh (0,7,5),pipeline 内部做 v-=(0,7,5))',
+    )
+    p.add_argument(
         "--no-winding-invert",
         action="store_true",
         help="即使奇数次翻转也不 invert face winding（诊断：对比有/无 winding 反向哪个显示更接近原模型）",
@@ -177,6 +191,7 @@ def parse_args(argv: list[str]) -> PipelineArgs:
         colors=max(1, ns.colors),
         texture_max_size=max(16, ns.texture_max_size),
         flip_y=ns.flip_y,
+        anchor_xyz=tuple(float(v) for v in ns.anchor_xyz.split(",")) if ns.anchor_xyz else None,  # type: ignore
         flip_x=ns.flip_x,
         flip_z=ns.flip_z,
         no_winding_invert=ns.no_winding_invert,
@@ -374,8 +389,12 @@ def apply_verts_transform(
     flip_y: bool,
     flip_z: bool,
     target_length: float,
+    anchor_xyz: tuple[float, float, float] | None = None,
 ) -> list[tuple[float, float, float]]:
-    """顶点变换：flip 轴 + normalize（Y-min 对齐 0，居中 X/Z，最长轴缩到 target_length）。"""
+    """顶点变换：flip 轴 + normalize（Y-min 对齐 0，居中 X/Z，最长轴缩到 target_length）。
+
+    anchor_xyz: 归一化后再做 v -= anchor_xyz，让 handle 端锚到 (0,0,0)。
+    """
     V = np.array(verts, dtype=np.float64)
     if flip_x:
         V[:, 0] = -V[:, 0]
@@ -395,6 +414,10 @@ def apply_verts_transform(
         V[:, 0] = (V[:, 0] - cx) * scale
         V[:, 1] = (V[:, 1] - ty) * scale
         V[:, 2] = (V[:, 2] - cz) * scale
+    if anchor_xyz is not None:
+        V[:, 0] -= anchor_xyz[0]
+        V[:, 1] -= anchor_xyz[1]
+        V[:, 2] -= anchor_xyz[2]
     return [(float(v[0]), float(v[1]), float(v[2])) for v in V]
 
 
@@ -474,9 +497,11 @@ def run_texture_pipeline(args: PipelineArgs, mtl_path: Path, texture_path: Path)
             print(f"      奇数次翻转但 --no-winding-invert 强制保持原 winding")
     else:
         print(f"[2/5] 无轴翻转，仅归一化 target_length={args.target_length}")
-    verts = apply_verts_transform(verts, args.flip_x, args.flip_y, args.flip_z, args.target_length)
+    verts = apply_verts_transform(verts, args.flip_x, args.flip_y, args.flip_z, args.target_length, args.anchor_xyz)
     V = np.array(verts)
     print(f"      [final] bbox min={V.min(axis=0).tolist()} max={V.max(axis=0).tolist()}")
+    if args.anchor_xyz:
+        print(f"      anchor_xyz={args.anchor_xyz}（handle 端锚到 origin）")
 
     # 输出路径
     mesh_dir = RESOURCES_ROOT / "assets" / args.namespace / "models" / "item" / args.asset_id

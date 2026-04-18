@@ -1,5 +1,5 @@
 {
-  "_comment": "bronze_saber iter5: mesh pre-translated (OBJ 里 z-=5 让 handle 锚到 origin),rotation 绕 handle 转。Rx(45°) 让 blade tip 从 origin 朝 down-forward。scale 0.08 对应 ratio 0.003 (跟 vanilla iron_sword 同量级)",
+  "_comment": "bronze_saber iter12: anchor grip center (0,6.56,3)。TP ✓。FP 用 TP 同 rot [45,0,0] + 小 scale 0.3 + trs [-3,-3,0] 把 saber 拉到视野中央",
   "thirdperson_righthand": {
     "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
@@ -10,10 +10,12 @@
   },
   "firstperson_righthand": {
     "rotation": [45, 0, 0],
-    "scale": [0.08, 0.08, 0.08]
+    "translation": [-3, -3, 0],
+    "scale": [0.3, 0.3, 0.3]
   },
   "firstperson_lefthand": {
     "rotation": [45, 0, 0],
-    "scale": [0.08, 0.08, 0.08]
+    "translation": [-3, -3, 0],
+    "scale": [0.3, 0.3, 0.3]
   }
 }
