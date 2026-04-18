@@ -55,6 +55,13 @@ cols = 7
   template_id = "ash_spider_silk"
   stack_count = 1
 
+  # 铁剑 1×2 — 备用正经武器（plan-weapon-v1 §13 验收）
+  [[containers.items]]
+  row = 0
+  col = 5
+  template_id = "iron_sword"
+  stack_count = 1
+
 # ─── 小口袋 3×3 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "small_pouch"
@@ -84,11 +91,17 @@ cols = 4
   stack_count = 2
 
 # ─── 装备 ─────────────────────────────────────────────────────────────────
-# 醒灵期散修没有正经武器，只有一件破伪灵皮护胸（替尸流入门）
+# 醒灵期散修:一件破伪灵皮护胸(替尸流入门)+ 一把残破旧铁短刃(自卫)。
+# durability=0.5 表示已经半损,对应 plan-weapon-v1 §6.1 的 durability_factor=0.75。
 [[equip]]
 slot = "chest"
 template_id = "fake_spirit_hide"
 durability = 0.7
+
+[[equip]]
+slot = "main_hand"
+template_id = "rusted_blade"
+durability = 0.5
 
 # ─── 战斗 hotbar 1-9（plan-HUD-v1 §2.2 下层） ───────────────────────────
 # 起手放：左手凝脉散应急 + 右手骨刺自卫
