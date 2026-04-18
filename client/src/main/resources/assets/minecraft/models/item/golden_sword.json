@@ -38,36 +38,36 @@
     },
     "firstperson_righthand": {
       "rotation": [
-        45,
+        90,
         0,
         0
       ],
       "translation": [
-        -3,
-        -3,
+        3,
+        15,
         0
       ],
       "scale": [
-        0.3,
-        0.3,
-        0.3
+        0.09,
+        0.09,
+        0.09
       ]
     },
     "firstperson_lefthand": {
       "rotation": [
-        45,
+        90,
         0,
         0
       ],
       "translation": [
-        -3,
-        -3,
+        3,
+        15,
         0
       ],
       "scale": [
-        0.3,
-        0.3,
-        0.3
+        0.09,
+        0.09,
+        0.09
       ]
     },
     "ground": {

@@ -1,5 +1,5 @@
 {
-  "_comment": "bronze_saber iter12: anchor grip center (0,6.56,3)。TP ✓。FP 用 TP 同 rot [45,0,0] + 小 scale 0.3 + trs [-3,-3,0] 把 saber 拉到视野中央",
+  "_comment": "bronze_saber iter18: pixel 43233 → 21832 √0.5≈0.7, scale 0.13*0.7=0.09. cy 0.08→0.63 trs.y 10→15",
   "thirdperson_righthand": {
     "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
@@ -9,13 +9,13 @@
     "scale": [0.08, 0.08, 0.08]
   },
   "firstperson_righthand": {
-    "rotation": [45, 0, 0],
-    "translation": [-3, -3, 0],
-    "scale": [0.3, 0.3, 0.3]
+    "rotation": [90, 0, 0],
+    "translation": [3, 15, 0],
+    "scale": [0.09, 0.09, 0.09]
   },
   "firstperson_lefthand": {
-    "rotation": [45, 0, 0],
-    "translation": [-3, -3, 0],
-    "scale": [0.3, 0.3, 0.3]
+    "rotation": [90, 0, 0],
+    "translation": [3, 15, 0],
+    "scale": [0.09, 0.09, 0.09]
   }
 }
