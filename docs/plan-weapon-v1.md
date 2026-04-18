@@ -23,7 +23,6 @@
 | **MC 物品系统零入侵** | 不注册 vanilla `Item`，纯 ItemInstance + template_id | 给每把武器注册 `Item::register` |
 | **渲染走 Mixin** | `HeldItemRenderer` 拦截 → 按 Weapon 组件画模型 | 把武器绑进 `ItemStack` 的 NBT 绕一圈 |
 | **Weapon ≠ Treasure** | 武器（握手上）和法宝（可展开飞出去）两条 flow | 一个 Component 同时表达两者 |
-| **Soul-bond 是渐进关系** | 同角色同武器用得越久，bond_level 自然升级 | 一次性"命名绑定"无成长 |
 | **赤手可战** | 无武器时伤害基数不为 0，走拳套基线 | 没武器就完全不能打 |
 
 ---
@@ -61,13 +60,6 @@ struct ItemInstance {
     stack_count: u32,
     spirit_quality: f32,      // [0, 1]
     durability: f32,          // [0, durability_max] — 武器特有
-    soul_bond: Option<SoulBond>,  // 武器特有
-}
-
-struct SoulBond {
-    character_id: String,     // 绑定角色（不是玩家账号，而是 Bong 的 character 身份）
-    bond_level: u8,           // 0=生疏 1=磨合 2=契合 3=神融
-    bond_progress: f32,       // [0, 1] 朝下一级的进度
 }
 ```
 
@@ -83,7 +75,6 @@ pub struct Weapon {
     pub quality_tier: u8,
     pub durability: f32,
     pub durability_max: f32,
-    pub soul_bond: Option<SoulBond>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,11 +190,6 @@ inventory-v1 的 `hotbar[9]` 对应 MC 原生 1-9 快捷栏。本 plan：
 InventoryItemV1 {
   ...existing
   durability?: number          // weapon 特有
-  soul_bond?: {
-    character_id: string
-    bond_level: 0 | 1 | 2 | 3
-    bond_progress: number      // [0, 1]
-  }
 }
 ```
 
@@ -238,14 +224,13 @@ public class MixinInGameHud {
 沿用 `plan-HUD-v1.md §2.2` 规范：
 - 下层（MC `Inventory.selected` 1-9）：画消耗品/技能栏（9 格 × 60px）
 - 上层（F1-F9）：plan-HUD-v1 已有 `QuickBarHudPlanner`
-- **新增**：左端 `main_hand` + `off_hand` 武器/法宝持握槽（60×120px），显示当前装备图标 + durability 环 + soul_bond 等级徽章
+- **新增**：左端 `main_hand` + `off_hand` 武器/法宝持握槽（60×120px），显示当前装备图标 + durability 环
 
 视觉布局：
 
 ```
 ┌──[main_hand]─┐ ┌──F1──F2──F3──F4──F5──F6──F7──F8──F9──┐
 │ 铁剑 ⚔ 85%  │ │ [消耗品/技能快捷使用栏]               │
-│ soul: ♦♦    │ └──────────────────────────────────────┘
 ├──[off_hand]─┤ ┌──1───2───3───4───5───6───7───8───9──┐
 │  符箓 𝕊     │ │ [MC Inventory.selected 消耗品栏]   │
 └─────────────┘ └──────────────────────────────────────┘
@@ -364,7 +349,6 @@ final_damage = base_damage
              × weapon_attack_multiplier(weapon)
              × quality_multiplier(weapon.quality_tier)
              × durability_factor(weapon.durability / weapon.durability_max)
-             × soul_bond_multiplier(weapon.soul_bond)
 ```
 
 | 因子 | 公式 | 说明 |
@@ -372,7 +356,6 @@ final_damage = base_damage
 | `weapon_attack_multiplier` | `max(1.0, weapon.base_attack / 10.0)` | 无武器（Weapon=None）= 1.0（拳套基线） |
 | `quality_multiplier` | tier 0→1.0 · 1→1.15 · 2→1.35 · 3→1.6 | 品阶四档 |
 | `durability_factor` | `0.5 + 0.5 × (dur / dur_max)` | 残破武器保底 50% 威力 |
-| `soul_bond_multiplier` | level 0→1.0 · 1→1.05 · 2→1.12 · 3→1.25 | 未绑定 1.0 |
 
 ### 6.2 插桩位置
 
@@ -380,14 +363,13 @@ final_damage = base_damage
 
 ```rust
 let weapon = weapons.get(intent.attacker).ok();
-let weapon_mul = weapon.map(weapon_damage_multiplier).unwrap_or(1.0);
+let weapon_mul = weapon.map(Weapon::damage_multiplier).unwrap_or(1.0);
 let damage = base_damage * weapon_mul * ...;
 
 // 命中后扣 durability
-if let Some(mut w) = weapons.get_mut(intent.attacker).ok() {
-    w.durability = (w.durability - WEAPON_HIT_DURABILITY_COST).max(0.0);
-    if w.durability <= 0.0 {
-        weapon_broken_events.send(WeaponBroken { entity: intent.attacker, instance_id: w.instance_id });
+if let Ok(mut w) = weapons.get_mut(intent.attacker) {
+    if w.tick_durability() {
+        weapon_broken_events.send(WeaponBroken { entity: intent.attacker, instance_id: w.instance_id, template_id: w.template_id.clone() });
     }
 }
 ```
@@ -398,25 +380,6 @@ if let Some(mut w) = weapons.get_mut(intent.attacker).ok() {
 - `PlayerInventory.equipped.main_hand = None`（ItemInstance 仍在，durability=0，可送修）
 - 推 `WeaponBrokenV1` payload → 客户端弹 HUD 通知 + 边缘红闪一次
 - 后续修复走 `plan-forge-v1.md` 的 `RepairWeaponIntent`
-
----
-
-## §7 SoulBond（灵魂绑定）
-
-### 7.1 触发时机
-
-- 玩家用该武器造成伤害 ≥ 100 点累计 → bond_progress += 0.01
-- 玩家用该武器完成一次突破（breakthrough success） → bond_progress += 0.15
-- 玩家用该武器击杀一个高境界敌人 → bond_progress += 0.10
-- bond_progress 达 1.0 → bond_level += 1，progress 归零
-
-### 7.2 未绑定 → 首次绑定
-
-玩家拾起未绑定武器后，第一次用它造成伤害 → soul_bond = Some({ character_id: self, level: 0, progress: 0.0 })。此后其他角色不能完全发挥该武器威力（非绑定者使用 × 0.8 乘数）。
-
-### 7.3 解绑
-
-死亡不解绑。手动"祭炼"消耗资源解绑（plan-forge-v1 范围）。
 
 ---
 
@@ -441,7 +404,6 @@ pub struct WeaponEquippedV1 {
     pub durability_current: f32,
     pub durability_max: f32,
     pub quality_tier: u8,
-    pub soul_bond: Option<SoulBond>,
 }
 
 pub struct WeaponBrokenV1 {
@@ -501,12 +463,11 @@ pub struct WeaponBrokenV1 {
 | **W4 BongHotbarHudPlanner** | §4.3 自定义 hotbar 渲染替代原生 | 1.5 | W3 |
 | **W5 主手 3D 渲染** | §5 SML 依赖接入（build.gradle + Modrinth maven）+ HeldItemRenderer Mixin + 2-3 把武器 OBJ（Tripo→Blockbench→OBJ 试点管线） | 2.5 | W1 |
 | **W6 战斗加成 + 耐久** | §6 resolve 插桩 + §6.3 WeaponBroken 处理 | 1 | W1 + W5 |
-| **W7 SoulBond gameplay** | §7 触发累加 + 等级跃迁 + 跨人使用惩罚 | 1 | W6 |
 | **W8 武器物品清单 + 资源** | §10 7 把武器 TOML + 7 贴图（1×1 纯色）+ 3-7 OBJ 模型（Tripo→Blockbench→OBJ）| 2 | W5 |
 
 **MVP 路径**（W1 + W2 + W3 + W5（仅 1 把占位模型）+ W6）：≈ 7 天
 
-**完整路径**（W1-W8）：≈ 12-13 天
+**完整路径**（W1-W6, W8）：≈ 11-12 天
 
 ---
 
@@ -529,12 +490,11 @@ pub struct WeaponBrokenV1 {
 
 1. **武器图标来源**：AI 生成 vs 手绘？**沿用 `local_images/generation_guide.md` AI 流程**
 2. **耐久归零能否修复**：**能**，但需完整耐久度 30% 以上，且需 plan-forge-v1 工作站（细节待 forge plan）
-3. **SoulBond 跨服持久化**：character_id 是服务端 UUID，跨会话保留（依赖 plan-persistence-v1）
-4. **掉落分布**：death drop table 具体规则（durability ≥ 50% 保留）在 plan-death-lifecycle-v1 确认
-5. **武器技能**：tier 2+ 武器是否内置 Technique？留 plan-skill-v1
-6. **双武器并持**（双刀流）：是否允许同时 main_hand + off_hand 都是 Weapon？**v1 允许**（仅 Dagger / Fist 占 off_hand）
-7. **Bow 弹药**：Bow 吃箭 Item 吗？**v1 不做 ranged**，Bow 只做骨架
-8. **AI 资源管线何时独立成 plan**：Tripo 生成 prompt 模板、减面脚本、1×1 贴图采样、glb→obj 批量转换 —— MVP W5 里用脚本糊起来；资产量 ≥ 20 时抽出独立 `plan-asset-pipeline-v1.md`（阈值在武器+首个盔甲+首只怪物通跑后重评估）
+3. **掉落分布**：death drop table 具体规则（durability ≥ 50% 保留）在 plan-death-lifecycle-v1 确认
+4. **武器技能**：tier 2+ 武器是否内置 Technique？留 plan-skill-v1
+5. **双武器并持**（双刀流）：是否允许同时 main_hand + off_hand 都是 Weapon？**v1 允许**（仅 Dagger / Fist 占 off_hand）
+6. **Bow 弹药**：Bow 吃箭 Item 吗？**v1 不做 ranged**，Bow 只做骨架
+7. **AI 资源管线何时独立成 plan**：Tripo 生成 prompt 模板、减面脚本、1×1 贴图采样、glb→obj 批量转换 —— MVP W5 里用脚本糊起来；资产量 ≥ 20 时抽出独立 `plan-asset-pipeline-v1.md`（阈值在武器+首个盔甲+首只怪物通跑后重评估）
 
 ---
 
@@ -549,7 +509,6 @@ pub struct WeaponBrokenV1 {
 - ✓ 无武器时第一人称看到手
 - ✓ 左键攻击带武器加成（铁剑对比赤手：伤害 × 1.2 以上）
 - ✓ 连击 400 次（200 耐久 × 0.5/击）后武器损坏，HUD 弹通知
-- ✓ 同玩家用同武器累计 100 伤害后 bond_progress +0.01（可查 InspectScreen · 武器详情）
 - ✓ 跨会话保留装备（重进游戏仍主手有剑）
 
 ---
@@ -560,7 +519,7 @@ pub struct WeaponBrokenV1 {
 - 依赖：`plan-inventory-v1.md §1 / §2 / §3`（ItemInstance / 装备槽 / snapshot）
 - 协作：`plan-HUD-v1.md §2.2`（战斗快捷栏 · 本 plan §4.3 扩展）
 - 协作：`plan-particle-system-v1.md §4.1`（武器命中 VFX · 未来绑定 weapon_kind → event_id）
-- 协作：`plan-forge-v1.md`（修复、锻造、祭炼解绑）
+- 协作：`plan-forge-v1.md`（修复、锻造）
 - 后续：`plan-treasure-v1.md`（飞剑展开 Entity / 符箓投掷 / 阵法布置）
 - 后续：`plan-skill-v1.md`（武器内置 Technique）
 - 后续（未定 plan）：`plan-asset-pipeline-v1.md`（Tripo AI → Blockbench 中转 → OBJ 批量管线，§5.3 路径 X 的自动化细化）

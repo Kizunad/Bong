@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,7 +20,7 @@ public class WeaponEquippedHandlerTest {
     void tearDown() { WeaponEquippedStore.resetForTests(); }
 
     @Test
-    void equipsMainHandWeaponWithoutBond() {
+    void equipsMainHandWeapon() {
         ServerDataDispatch dispatch = new WeaponEquippedHandler().handle(parseEnvelope("""
             {"v":1,"type":"weapon_equipped","slot":"main_hand",
              "weapon":{"instance_id":42,"template_id":"iron_sword",
@@ -38,28 +37,7 @@ public class WeaponEquippedHandlerTest {
         assertEquals(185.0f, w.durabilityCurrent(), 1e-5);
         assertEquals(200.0f, w.durabilityMax(), 1e-5);
         assertEquals(0, w.qualityTier());
-        assertFalse(w.hasSoulBond());
         assertEquals(0.925f, w.durabilityRatio(), 1e-5);
-    }
-
-    @Test
-    void equipsWithBondPreservesFields() {
-        ServerDataDispatch dispatch = new WeaponEquippedHandler().handle(parseEnvelope("""
-            {"v":1,"type":"weapon_equipped","slot":"main_hand",
-             "weapon":{"instance_id":7,"template_id":"spirit_saber",
-                       "weapon_kind":"saber","durability_current":400.0,
-                       "durability_max":400.0,"quality_tier":1,
-                       "soul_bond":{"character_id":"char_a","bond_level":2,"bond_progress":0.4}}}
-            """));
-
-        assertTrue(dispatch.handled());
-        EquippedWeapon w = WeaponEquippedStore.get("main_hand");
-        assertNotNull(w);
-        assertTrue(w.hasSoulBond());
-        assertEquals("char_a", w.soulBondCharacterId());
-        assertEquals(2, w.soulBondLevel());
-        assertEquals(0.4f, w.soulBondProgress(), 1e-5);
-        assertEquals(1, w.qualityTier());
     }
 
     @Test
