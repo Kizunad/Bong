@@ -2,16 +2,16 @@ import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 import { CHANNELS } from "@bong/schema";
 import type {
-  WorldStateV1,
+  AgentWorldModelEnvelopeV1,
   AgentCommandV1,
   NarrationV1,
   ChatMessageV1,
+  WorldStateV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
-import type { WorldModelSnapshot } from "./world-model.js";
 
-const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, PLAYER_CHAT } = CHANNELS;
+const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT } = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
@@ -24,6 +24,15 @@ export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   lastTick: "last_tick",
   lastStateTs: "last_state_ts",
 });
+
+export interface PublishAgentWorldModelRequest {
+  source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
+  snapshot: AgentWorldModelEnvelopeV1["snapshot"];
+  metadata: {
+    sourceTick: number;
+    correlationId: string;
+  };
+}
 
 const DRAIN_SCRIPT = `
 local items = redis.call('lrange', ARGV[1], 0, -1)
@@ -163,79 +172,21 @@ export class RedisIpc {
     console.log("[redis-ipc] disconnected");
   }
 
-  async loadWorldModelState(logger: Pick<typeof console, "warn"> = console): Promise<
-    Partial<WorldModelSnapshot> | null
-  > {
-    if (!this.pub.hgetall) {
-      return null;
-    }
+  async publishAgentWorldModel(request: PublishAgentWorldModelRequest): Promise<void> {
+    const { source, snapshot, metadata } = request;
 
-    const hash = await this.pub.hgetall(WORLD_MODEL_STATE_KEY);
-    if (!hash || Object.keys(hash).length === 0) {
-      return null;
-    }
-
-    const snapshot: Partial<WorldModelSnapshot> = {};
-    const currentEra = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.currentEra], "current_era", logger);
-    if (currentEra !== null) {
-      snapshot.currentEra = currentEra as WorldModelSnapshot["currentEra"];
-    }
-
-    const zoneHistory = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.zoneHistory], "zone_history", logger);
-    if (zoneHistory !== null) {
-      snapshot.zoneHistory = zoneHistory as WorldModelSnapshot["zoneHistory"];
-    }
-
-    const lastDecisions = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.lastDecisions], "last_decisions", logger);
-    if (lastDecisions !== null) {
-      snapshot.lastDecisions = lastDecisions as WorldModelSnapshot["lastDecisions"];
-    }
-
-    const playerFirstSeenTick = parseJsonField(
-      hash[WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick],
-      "player_first_seen_tick",
-      logger,
-    );
-    if (playerFirstSeenTick !== null) {
-      snapshot.playerFirstSeenTick = playerFirstSeenTick as WorldModelSnapshot["playerFirstSeenTick"];
-    }
-
-    const lastTick = parseTickField(
-      hash[WORLD_MODEL_STATE_FIELDS.lastTick],
-      WORLD_MODEL_STATE_FIELDS.lastTick,
-      logger,
-    );
-    if (lastTick !== null) {
-      snapshot.lastTick = lastTick;
-    }
-
-    const lastStateTs = parseTickField(
-      hash[WORLD_MODEL_STATE_FIELDS.lastStateTs],
-      WORLD_MODEL_STATE_FIELDS.lastStateTs,
-      logger,
-    );
-    if (lastStateTs !== null) {
-      snapshot.lastStateTs = lastStateTs;
-    }
-
-    return snapshot;
-  }
-
-  async saveWorldModelState(snapshot: WorldModelSnapshot): Promise<void> {
-    if (!this.pub.hset) {
-      return;
-    }
-
-    const values: Record<string, string> = {
-      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify(snapshot.currentEra),
-      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify(snapshot.zoneHistory),
-      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify(snapshot.lastDecisions),
-      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify(snapshot.playerFirstSeenTick),
-      [WORLD_MODEL_STATE_FIELDS.lastTick]: String(snapshot.lastTick ?? ""),
-      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: String(snapshot.lastStateTs ?? ""),
+    const message: AgentWorldModelEnvelopeV1 = {
+      v: 1,
+      id: `world_model_t${metadata.sourceTick}_${source}_${Date.now()}`,
+      source,
+      snapshot,
     };
 
-    await this.pub.hset(WORLD_MODEL_STATE_KEY, values);
+    const json = JSON.stringify(message);
+    const subscribers = await this.pub.publish(AGENT_WORLD_MODEL, json);
+    console.log(
+      `[redis-ipc] published world model to ${AGENT_WORLD_MODEL} (${subscribers} subscribers, source_tick=${metadata.sourceTick}, correlation_id=${metadata.correlationId})`,
+    );
   }
 
   async drainPlayerChat(options: { maxItems?: number; logger?: Pick<typeof console, "warn"> } = {}): Promise<ChatMessageV1[]> {
@@ -285,45 +236,4 @@ export class RedisIpc {
     const rows = lrangeResult[1];
     return Array.isArray(rows) ? rows : [];
   }
-}
-
-function parseJsonField(
-  value: string | undefined,
-  fieldName: string,
-  logger: Pick<typeof console, "warn">,
-): unknown | null {
-  if (value === undefined) {
-    logger.warn(`[redis-ipc] missing ${fieldName} in ${WORLD_MODEL_STATE_KEY}`);
-    return null;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch (error) {
-    logger.warn(`[redis-ipc] failed to parse ${fieldName} from ${WORLD_MODEL_STATE_KEY}:`, error);
-    return null;
-  }
-}
-
-function parseTickField(
-  value: string | undefined,
-  fieldName: string,
-  logger: Pick<typeof console, "warn">,
-): number | null {
-  if (value === undefined) {
-    logger.warn(`[redis-ipc] missing ${fieldName} in ${WORLD_MODEL_STATE_KEY}`);
-    return null;
-  }
-
-  if (value.trim() === "") {
-    return null;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    logger.warn(`[redis-ipc] failed to parse ${fieldName} from ${WORLD_MODEL_STATE_KEY}:`, value);
-    return null;
-  }
-
-  return parsed;
 }

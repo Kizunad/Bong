@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { RedisIpc, WORLD_MODEL_STATE_FIELDS, WORLD_MODEL_STATE_KEY } from "../src/redis-ipc.js";
+import { RedisIpc } from "../src/redis-ipc.js";
 import { CHANNELS } from "@bong/schema";
 
-const { PLAYER_CHAT, WORLD_STATE } = CHANNELS;
+const { AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, WORLD_STATE } = CHANNELS;
 
 interface FakeMultiResult {
   lrange: string[];
@@ -13,6 +13,7 @@ class FakeRedisListClient {
   private readonly lists = new Map<string, string[]>();
   private readonly subscribers = new Map<string, Array<(channel: string, message: string) => void>>();
   private readonly hashes = new Map<string, Record<string, string>>();
+  private readonly publishHistory: Array<{ channel: string; message: string }> = [];
   private nextMultiResult: FakeMultiResult | null = null;
 
   async subscribe(channel: string): Promise<number> {
@@ -56,6 +57,7 @@ class FakeRedisListClient {
   disconnect(): void {}
 
   async publish(channel: string, message: string): Promise<number> {
+    this.publishHistory.push({ channel, message });
     const listeners = this.subscribers.get(channel) ?? [];
     for (const listener of listeners) {
       listener(channel, message);
@@ -137,6 +139,10 @@ class FakeRedisListClient {
 
   getHash(key: string): Record<string, string> {
     return { ...(this.hashes.get(key) ?? {}) };
+  }
+
+  getPublished(channel: string): Array<{ channel: string; message: string }> {
+    return this.publishHistory.filter((entry) => entry.channel === channel);
   }
 }
 
@@ -297,25 +303,9 @@ describe("redis-ipc", () => {
     expect(ipc.getLatestState()?.tick).toBe(2);
   });
 
-  it("loads world model state hash with field-level fail-soft", async () => {
+  it("keeps agent command/narration channels unchanged", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
-    const warn = vi.fn();
-
-    pub.setHash(WORLD_MODEL_STATE_KEY, {
-      [WORLD_MODEL_STATE_FIELDS.currentEra]: "{bad-json",
-      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({ blood_valley: [{
-        name: "blood_valley",
-        spirit_qi: 0.5,
-        danger_level: 1,
-        active_events: [],
-        player_count: 1,
-      }] }),
-      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({ mutation: { commands: [], narrations: [], reasoning: "ok" } }),
-      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: "{bad-json",
-      [WORLD_MODEL_STATE_FIELDS.lastTick]: "not-a-number",
-      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "also-bad",
-    });
 
     const createClient = vi
       .fn<(url: string) => FakeRedisListClient>()
@@ -329,88 +319,34 @@ describe("redis-ipc", () => {
       },
     );
 
-    const state = await ipc.loadWorldModelState({ warn });
-    expect(state).toEqual({
-      zoneHistory: {
-        blood_valley: [
-          {
-            name: "blood_valley",
-            spirit_qi: 0.5,
-            danger_level: 1,
-            active_events: [],
-            player_count: 1,
-          },
-        ],
-      },
-      lastDecisions: {
-        mutation: {
-          commands: [],
-          narrations: [],
-          reasoning: "ok",
+    await ipc.publishCommands({
+      source: "arbiter",
+      commands: [
+        {
+          type: "modify_zone",
+          target: "starter_zone",
+          params: { spirit_qi_delta: 0.02 },
         },
-      },
+      ],
+      metadata: { sourceTick: 10, correlationId: "tick-10" },
     });
-    expect(warn).toHaveBeenCalled();
+    await ipc.publishNarrations({
+      narrations: [
+        {
+          scope: "broadcast",
+          text: "天地异动",
+          style: "narration",
+        },
+      ],
+      metadata: { sourceTick: 10, correlationId: "tick-10" },
+    });
+
+    expect(pub.getPublished(AGENT_COMMAND)).toHaveLength(1);
+    expect(pub.getPublished(AGENT_NARRATE)).toHaveLength(1);
+    expect(pub.getPublished(AGENT_WORLD_MODEL)).toHaveLength(0);
   });
 
-  it("warns and continues when redis state hash has missing fields", async () => {
-    const pub = new FakeRedisListClient();
-    const sub = new FakeRedisListClient();
-    const warn = vi.fn();
-
-    pub.setHash(WORLD_MODEL_STATE_KEY, {
-      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
-        name: "末法纪",
-        sinceTick: 99,
-        globalEffect: "灵机渐枯",
-      }),
-      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({
-        mutation: { commands: [], narrations: [], reasoning: "ok" },
-      }),
-    });
-
-    const createClient = vi
-      .fn<(url: string) => FakeRedisListClient>()
-      .mockReturnValueOnce(sub)
-      .mockReturnValueOnce(pub);
-
-    const ipc = new RedisIpc(
-      { url: "redis://fake" },
-      {
-        createClient,
-      },
-    );
-
-    const state = await ipc.loadWorldModelState({ warn });
-    expect(state).toEqual({
-      currentEra: {
-        name: "末法纪",
-        sinceTick: 99,
-        globalEffect: "灵机渐枯",
-      },
-      lastDecisions: {
-        mutation: {
-          commands: [],
-          narrations: [],
-          reasoning: "ok",
-        },
-      },
-    });
-    expect(warn).toHaveBeenCalledWith(
-      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.zoneHistory} in ${WORLD_MODEL_STATE_KEY}`,
-    );
-    expect(warn).toHaveBeenCalledWith(
-      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastTick} in ${WORLD_MODEL_STATE_KEY}`,
-    );
-    expect(warn).toHaveBeenCalledWith(
-      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick} in ${WORLD_MODEL_STATE_KEY}`,
-    );
-    expect(warn).toHaveBeenCalledWith(
-      `[redis-ipc] missing ${WORLD_MODEL_STATE_FIELDS.lastStateTs} in ${WORLD_MODEL_STATE_KEY}`,
-    );
-  });
-
-  it("saves world model state hash in a single hset call", async () => {
+  it("publishes world model on dedicated bong:agent_world_model channel", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
 
@@ -426,67 +362,56 @@ describe("redis-ipc", () => {
       },
     );
 
-    await ipc.saveWorldModelState({
-      currentEra: {
-        name: "末法纪",
-        sinceTick: 100,
-        globalEffect: "灵机渐枯",
-      },
-      zoneHistory: {
-        blood_valley: [
-          {
-            name: "blood_valley",
-            spirit_qi: 0.4,
-            danger_level: 2,
-            active_events: ["tribulation"],
-            player_count: 3,
-          },
-        ],
-      },
-      lastDecisions: {
-        mutation: {
-          commands: [],
-          narrations: [],
-          reasoning: "ok",
+    await ipc.publishAgentWorldModel({
+      source: "arbiter",
+      metadata: { sourceTick: 123, correlationId: "tiandao-tick-123" },
+      snapshot: {
+        currentEra: {
+          name: "末法纪",
+          sinceTick: 120,
+          globalEffect: "灵机渐枯",
         },
+        zoneHistory: {
+          blood_valley: [
+            {
+              name: "blood_valley",
+              spirit_qi: 0.4,
+              danger_level: 2,
+              active_events: ["tribulation"],
+              player_count: 3,
+            },
+          ],
+        },
+        lastDecisions: {
+          mutation: {
+            commands: [],
+            narrations: [],
+            reasoning: "ok",
+          },
+        },
+        playerFirstSeenTick: {
+          "offline:Elder": 88,
+        },
+        lastTick: 123,
+        lastStateTs: 1710000100,
       },
-      playerFirstSeenTick: {
-        "offline:Elder": 88,
-      },
-      lastTick: 100,
-      lastStateTs: 1710000100,
     });
 
-    const stored = pub.getHash(WORLD_MODEL_STATE_KEY);
-    expect(stored).toEqual({
-      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
-        name: "末法纪",
-        sinceTick: 100,
-        globalEffect: "灵机渐枯",
-      }),
-      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({
-        blood_valley: [
-          {
-            name: "blood_valley",
-            spirit_qi: 0.4,
-            danger_level: 2,
-            active_events: ["tribulation"],
-            player_count: 3,
-          },
-        ],
-      }),
-      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({
-        mutation: {
-          commands: [],
-          narrations: [],
-          reasoning: "ok",
-        },
-      }),
-      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({
-        "offline:Elder": 88,
-      }),
-      [WORLD_MODEL_STATE_FIELDS.lastTick]: "100",
-      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1710000100",
-    });
+    const published = pub.getPublished(AGENT_WORLD_MODEL);
+    expect(published).toHaveLength(1);
+    expect(pub.getPublished(AGENT_COMMAND)).toHaveLength(0);
+    expect(pub.getPublished(AGENT_NARRATE)).toHaveLength(0);
+
+    const envelope = JSON.parse(published[0]?.message ?? "{}") as {
+      v: number;
+      id: string;
+      source: string;
+      snapshot: { lastTick: number | null; lastStateTs: number | null };
+    };
+    expect(envelope.v).toBe(1);
+    expect(envelope.source).toBe("arbiter");
+    expect(envelope.id).toContain("world_model_t123_arbiter_");
+    expect(envelope.snapshot.lastTick).toBe(123);
+    expect(envelope.snapshot.lastStateTs).toBe(1710000100);
   });
 });
