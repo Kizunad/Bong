@@ -1,17 +1,17 @@
 {
-  "_comment": "flying_sword_feixuan iter5: TP 0.4 太大(剑比人长)。sword 应跟玩家身高 ~持平,Y=8 × 0.3 = 2.4 vs 人 24 单位 ≈ 1/10 还偏小。取 0.3 中庸",
+  "_comment": "flying_sword_feixuan iter6: pixel 算法证实 0.3 还大 2-3x (ratio 0.009 vs ref 0.003)。按 sqrt(0.003/0.009)=0.58, scale 0.3 × 0.58 = 0.17。TP 0.17",
   "thirdperson_righthand": {
-    "scale": [0.3, 0.3, 0.3]
+    "scale": [0.17, 0.17, 0.17]
   },
   "thirdperson_lefthand": {
-    "scale": [0.3, 0.3, 0.3]
+    "scale": [0.17, 0.17, 0.17]
   },
   "firstperson_righthand": {
     "translation": [0, 0, -5],
-    "scale": [0.15, 0.15, 0.15]
+    "scale": [0.1, 0.1, 0.1]
   },
   "firstperson_lefthand": {
     "translation": [0, 0, -5],
-    "scale": [0.15, 0.15, 0.15]
+    "scale": [0.1, 0.1, 0.1]
   }
 }
