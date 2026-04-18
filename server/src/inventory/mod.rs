@@ -136,9 +136,6 @@ pub struct ItemInstance {
     pub stack_count: u32,
     pub spirit_quality: f64,
     pub durability: f64,
-    /// plan-weapon-v1 §7：灵魂绑定（仅武器有意义，非武器恒为 None）。
-    /// 新实例缺省 None；首次使用时由 runtime ensure_bond 写入。
-    pub soul_bond: Option<crate::combat::weapon::SoulBond>,
 }
 
 #[derive(Debug)]
@@ -302,7 +299,6 @@ fn instantiate_item_instance(
         stack_count: template_instance.stack_count,
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
-        soul_bond: template_instance.soul_bond.clone(),
     })
 }
 
@@ -1411,7 +1407,6 @@ fn build_item_instance_from_template(
         stack_count,
         spirit_quality,
         durability,
-        soul_bond: None, // plan-weapon-v1 §7：首次使用时 runtime ensure_bond 填入。
     })
 }
 
@@ -1906,7 +1901,6 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
-            soul_bond: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -2010,7 +2004,6 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
-            soul_bond: None,
         });
 
         let outcome = apply_inventory_move(
@@ -2060,7 +2053,6 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 1.0,
-                soul_bond: None,
             },
         });
 

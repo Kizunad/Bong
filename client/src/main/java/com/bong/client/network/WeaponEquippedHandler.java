@@ -31,28 +31,15 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
         float durMax = w.get("durability_max").getAsFloat();
         int qualityTier = w.get("quality_tier").getAsInt();
 
-        String bondChar = null;
-        int bondLevel = 0;
-        float bondProgress = 0f;
-        JsonElement bondElem = w.get("soul_bond");
-        if (bondElem != null && !bondElem.isJsonNull() && bondElem.isJsonObject()) {
-            JsonObject b = bondElem.getAsJsonObject();
-            bondChar = b.get("character_id").getAsString();
-            bondLevel = b.get("bond_level").getAsInt();
-            bondProgress = b.get("bond_progress").getAsFloat();
-        }
-
         WeaponEquippedStore.putOrClear(slot, new EquippedWeapon(
             slot, instanceId, templateId, weaponKind,
-            durCurrent, durMax, qualityTier,
-            bondChar, bondLevel, bondProgress
+            durCurrent, durMax, qualityTier
         ));
         return ServerDataDispatch.handled(
             envelope.type(),
             "Equipped " + templateId + " to " + slot
                 + " (dur=" + durCurrent + "/" + durMax
-                + ", tier=" + qualityTier
-                + ", bond=" + bondLevel + ")"
+                + ", tier=" + qualityTier + ")"
         );
     }
 

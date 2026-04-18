@@ -185,14 +185,6 @@ pub struct CombatHudStateV1 {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SoulBondV1 {
-    pub character_id: String,
-    pub bond_level: u8,
-    pub bond_progress: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct WeaponViewV1 {
     pub instance_id: u64,
     pub template_id: String,
@@ -201,8 +193,6 @@ pub struct WeaponViewV1 {
     pub durability_current: f32,
     pub durability_max: f32,
     pub quality_tier: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub soul_bond: Option<SoulBondV1>,
 }
 
 /// 装备槽变更推送（plan-weapon-v1 §8.2）。
@@ -248,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn weapon_equipped_roundtrip_with_bond() {
+    fn weapon_equipped_roundtrip_basic() {
         let original = WeaponEquippedV1 {
             slot: "main_hand".to_string(),
             weapon: Some(WeaponViewV1 {
@@ -258,11 +248,6 @@ mod tests {
                 durability_current: 185.0,
                 durability_max: 200.0,
                 quality_tier: 1,
-                soul_bond: Some(SoulBondV1 {
-                    character_id: "char_a".to_string(),
-                    bond_level: 2,
-                    bond_progress: 0.4,
-                }),
             }),
         };
         let json = serde_json::to_string(&original).expect("serialize");

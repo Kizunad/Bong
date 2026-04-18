@@ -15,7 +15,7 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::combat_hud::{SoulBondV1, WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
+use crate::schema::combat_hud::{WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 const MAIN_HAND_SLOT: &str = "main_hand";
@@ -29,11 +29,6 @@ fn weapon_to_view(w: &Weapon) -> WeaponViewV1 {
         durability_current: w.durability,
         durability_max: w.durability_max,
         quality_tier: w.quality_tier,
-        soul_bond: w.soul_bond.as_ref().map(|b| SoulBondV1 {
-            character_id: b.character_id.clone(),
-            bond_level: b.bond_level,
-            bond_progress: b.bond_progress,
-        }),
     }
 }
 

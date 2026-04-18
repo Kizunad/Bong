@@ -102,7 +102,7 @@ pub fn resolve_attack_intents(
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
-    // plan-weapon-v1 §6：武器加成 + 耐久扣减 + soul_bond 累加
+    // plan-weapon-v1 §6：武器加成 + 耐久扣减
     mut weapons: Query<&mut Weapon>,
     mut weapon_broken_events: EventWriter<WeaponBroken>,
     mut commands: Commands,
@@ -194,10 +194,10 @@ pub fn resolve_attack_intents(
             .map(|attrs| attrs.defense_power)
             .unwrap_or(1.0);
         // plan-weapon-v1 §6.1：查 attacker 的 Weapon component 得伤害倍率。
-        // 无武器(赤手) → 1.0 基线;有武器 → attack × quality × durability × soul_bond。
+        // 无武器(赤手) → 1.0 基线;有武器 → attack × quality × durability。
         let weapon_multiplier: f32 = weapons
             .get(intent.attacker)
-            .map(|w| w.damage_multiplier_for(&attacker_id))
+            .map(|w| w.damage_multiplier())
             .unwrap_or(1.0);
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
@@ -208,17 +208,10 @@ pub fn resolve_attack_intents(
             .max(1.0);
         let was_alive = wounds.health_current > 0.0;
 
-        // plan-weapon-v1 §6.3 / §7.1：命中一次 → 首次绑定 + soul_bond 累加 + 耐久扣减。
+        // plan-weapon-v1 §6.3：命中一次 → 耐久扣减。
         // 若耐久归零收集 broken info,下面统一 commands 操作(避免与 mut borrow 冲突)。
         let broken_weapon: Option<(u64, String)> =
             if let Ok(mut weapon) = weapons.get_mut(intent.attacker) {
-                weapon.ensure_bond(&attacker_id);
-                if let Some(bond) = weapon.soul_bond.as_mut() {
-                    if bond.character_id == attacker_id {
-                        // plan §7.1：累计 100 伤害 → +0.01 progress(即 damage / 10000)。
-                        bond.advance((damage as f32) / 10000.0);
-                    }
-                }
                 if weapon.tick_durability() {
                     Some((weapon.instance_id, weapon.template_id.clone()))
                 } else {
@@ -2140,7 +2133,7 @@ mod tests {
             Stamina::default(),
         );
 
-        // armed 手持强攻武器:attack_mul 2.0 × quality 1.0 × durability 1.0 × bond 1.0 = 2.0
+        // armed 手持强攻武器:attack_mul 2.0 × quality 1.0 × durability 1.0 = 2.0
         app.world_mut().entity_mut(armed).insert(Weapon {
             instance_id: 1,
             template_id: "strong_sword".to_string(),
@@ -2149,7 +2142,6 @@ mod tests {
             quality_tier: 0,
             durability: 200.0,
             durability_max: 200.0,
-            soul_bond: None,
         });
 
         app.update();
@@ -2185,10 +2177,9 @@ mod tests {
             "armed {armed_damage} should exceed unarmed {unarmed_damage} × 1.5"
         );
 
-        // 命中后 armed attacker 的武器应有:durability ↓ + soul_bond 自动绑定到自己。
+        // 命中后 armed attacker 的武器应有:durability ↓。
         let weapon = app.world().entity(armed).get::<Weapon>().unwrap();
         assert!(weapon.durability < 200.0, "durability ticked down");
-        assert!(weapon.soul_bond.is_some(), "first use auto-binds soul");
     }
 
     // 耐久归零后 Weapon component 被移除 + WeaponBroken 事件发出。
@@ -2237,7 +2228,6 @@ mod tests {
             quality_tier: 0,
             durability: 0.4,
             durability_max: 10.0,
-            soul_bond: None,
         });
 
         app.update();
