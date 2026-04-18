@@ -1,19 +1,19 @@
 {
-  "_comment": "bronze_saber iter4: Rx(45°) 绕 mesh center 让 handle (Z=+5) 被推到 display up-back = 肩膀位置,不对。改用 no rotation (blade -Z 朝 display -Z=forward) + translation 把 mesh 沿 -Z 方向拉,让 handle 端 (mesh Z=5, scale 0.08 = 0.4 display) 落到 hand origin",
+  "_comment": "bronze_saber iter5: mesh pre-translated (OBJ 里 z-=5 让 handle 锚到 origin),rotation 绕 handle 转。Rx(45°) 让 blade tip 从 origin 朝 down-forward。scale 0.08 对应 ratio 0.003 (跟 vanilla iron_sword 同量级)",
   "thirdperson_righthand": {
-    "translation": [0, 0, -0.4],
+    "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
   },
   "thirdperson_lefthand": {
-    "translation": [0, 0, -0.4],
+    "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
   },
   "firstperson_righthand": {
-    "translation": [0, 0, -0.4],
+    "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
   },
   "firstperson_lefthand": {
-    "translation": [0, 0, -0.4],
+    "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
   }
 }
