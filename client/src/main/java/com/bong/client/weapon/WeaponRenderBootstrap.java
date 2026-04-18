@@ -33,7 +33,7 @@ public final class WeaponRenderBootstrap {
             "item/flint",              // crystal_shard_dagger（匕首模型）
             "item/nether_star",        // cracked_heart（碎裂的心，展示用）
             "item/totem_of_undying",   // wooden_totem（木制图腾，后期转 Entity）
-            "item/netherite_sword",    // spirit_sword（灵剑 tier 1，cracked_sword mesh）
+            "item/golden_sword",       // bronze_saber（青铜刀 tier 0，cracked_sword mesh 铜色）
             "item/bone",               // bone_dagger（骨刀 tier 0）
             "item/diamond_sword",      // flying_sword_feixuan（飞玄剑 tier 2，medieval_dagger mesh）
             "item/leather"             // hand_wrap（拳套 tier 0，armored_gauntlets mesh）

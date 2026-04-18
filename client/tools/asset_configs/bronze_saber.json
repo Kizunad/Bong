@@ -1,0 +1,21 @@
+{
+  "_comment": "bronze_saber (cracked_sword mesh) iter2: 分析 mesh z=-5 端只 1 vert (blade tip 在 −Z 方向),z=+5 端 600+ verts (pommel+guard)。Rx(45°) 把 mesh -Z 映射到 display (0, +sin45, -cos45) = 下-前方,正确持剑姿态。",
+  "thirdperson_righthand": {
+    "rotation": [45, 0, 0],
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "thirdperson_lefthand": {
+    "rotation": [45, 0, 0],
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "firstperson_righthand": {
+    "rotation": [45, 0, 0],
+    "translation": [0, 0, -3],
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "firstperson_lefthand": {
+    "rotation": [45, 0, 0],
+    "translation": [0, 0, -3],
+    "scale": [0.15, 0.15, 0.15]
+  }
+}
