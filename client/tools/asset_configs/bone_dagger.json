@@ -1,17 +1,17 @@
 {
-  "_comment": "bone_dagger iter4: dagger 应该显著短于人(plan §10 '轻武速攻' 1×1 占格)。TP 0.5 → 0.3,FP 保留",
+  "_comment": "bone_dagger iter5: pixel 算法证实 0.3 还大 3-4x (ratio 0.010 vs ref 0.003)。按 sqrt(0.003/0.010)=0.55, scale 0.3 × 0.55 = 0.165。TP 0.16",
   "thirdperson_righthand": {
-    "scale": [0.3, 0.3, 0.3]
+    "scale": [0.16, 0.16, 0.16]
   },
   "thirdperson_lefthand": {
-    "scale": [0.3, 0.3, 0.3]
+    "scale": [0.16, 0.16, 0.16]
   },
   "firstperson_righthand": {
     "translation": [0, 0, -6],
-    "scale": [0.25, 0.25, 0.25]
+    "scale": [0.15, 0.15, 0.15]
   },
   "firstperson_lefthand": {
     "translation": [0, 0, -6],
-    "scale": [0.25, 0.25, 0.25]
+    "scale": [0.15, 0.15, 0.15]
   }
 }

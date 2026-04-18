@@ -212,8 +212,10 @@ public final class WeaponScreenshotHarness {
                 return;
             }
             final UUID uuid = client.player.getUuid();
+            // "minecraft:air" 特殊 baseline 模式: 玩家不持任何物品(不 give),纯拍空手
+            final boolean baselineMode = "minecraft:air".equals(itemId);
             final Item item = Registries.ITEM.get(Identifier.tryParse(itemId));
-            if (item == Items.AIR && bongEquipTemplateId == null) {
+            if (item == Items.AIR && bongEquipTemplateId == null && !baselineMode) {
                 LOGGER.error("不认识的 item id: {}", itemId);
                 requestStop(client);
                 return;
@@ -240,7 +242,9 @@ public final class WeaponScreenshotHarness {
                 sp.networkHandler.requestTeleport(0.5, 120.0, 0.5, -90f, 0f);
                 sp.getInventory().clear();
 
-                if (bongEquipTemplateId != null) {
+                if (baselineMode) {
+                    LOGGER.info("prep (baseline): 无武器,纯玩家 body 基准帧");
+                } else if (bongEquipTemplateId != null) {
                     // Bong equip 模式 (纯 Mixin 方案):
                     // vanilla PlayerInventory 保持空,client 仅往 WeaponEquippedStore 塞数据,
                     // MixinHeldItemRenderer + MixinPlayerEntityHeldItem 在 render 时合成 fake stack。
