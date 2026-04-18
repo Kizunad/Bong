@@ -1,0 +1,17 @@
+{
+  "_comment": "bone_dagger iter3: FP 还大,0.4 → 0.25 + trs.z=-6。TP 0.5 算合理保留",
+  "thirdperson_righthand": {
+    "scale": [0.5, 0.5, 0.5]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.5, 0.5, 0.5]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.25, 0.25, 0.25]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.25, 0.25, 0.25]
+  }
+}

@@ -22,6 +22,10 @@ repositories {
         url = 'https://api.modrinth.com/maven'
         content { includeGroup 'maven.modrinth' }
     }
+    maven {
+        name = "Felnull's maven"
+        url = 'https://maven.felnull.dev/'
+    }
     mavenCentral()
 }
 
@@ -43,6 +47,11 @@ dependencies {
     // 等动画对 bend 依赖严重（肘弯 115° / 膝弯 45° 都在 bend 轴），所以 depends 而非 suggests。
     // 同作者、同 maven、MIT；4.0.0 是 MC 1.20.1 唯一 tag 版本（见 Modrinth bendy-lib）。
     include modImplementation("io.github.kosmx.bendy-lib:bendy-lib-fabric:${project.bendy_lib_version}")
+
+    // SpecialModelLoader (SML) by TeamFelNull: 通过 parent=sml:builtin/obj 拦截 item model
+    // 加载链，让 vanilla ItemRenderer 直接吃 OBJ + MTL。Fabric 1.20.1 client-only，MIT。
+    // 路径 X 加载器（docs/plan-weapon-v1.md §5.3）。include 把它 JarJar 进输出 jar。
+    include modImplementation("dev.felnull:special-model-loader:${project.sml_version}")
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
