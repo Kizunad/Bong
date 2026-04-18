@@ -45,15 +45,14 @@ public final class WeaponVanillaIconMap {
     private static final Map<String, Item> MAP = Map.of(
             // plan §10 tier 0
             "iron_sword", Items.IRON_SWORD,            // 唐刀 mesh (placeholder_sword)
+            "bronze_saber", Items.GOLDEN_SWORD,        // 青铜刀 tier 0 (cracked_sword 铜色 mesh)
             "bone_dagger", Items.BONE,                 // 骨刀 tier 0 (dagger mesh)
             "hand_wrap", Items.LEATHER,                // 拳套 tier 0 (armored_gauntlets mesh)
-            // plan §10 tier 1
-            "spirit_sword", Items.NETHERITE_SWORD,     // 灵剑 tier 1 (cracked_sword mesh)
             // plan §10 tier 2
             "flying_sword_feixuan", Items.DIAMOND_SWORD // 飞玄剑 tier 2 (medieval_dagger mesh)
             // 待补:
-            // "bronze_saber", Items.GOLDEN_SWORD
             // "wooden_staff", Items.END_ROD
+            // "spirit_sword", Items.NETHERITE_SWORD  (需要真灵器蓝光 mesh)
     );
 
     /** 查 template_id 对应的 fake ItemStack；没映射返回 null。
