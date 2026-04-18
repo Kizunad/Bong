@@ -20,7 +20,7 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { ChatMessageV1, Command, Narration } from "@bong/schema";
+import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration } from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -53,8 +53,13 @@ class SequenceRuntimeRedis implements RuntimeRedis {
   public readonly drainPlayerChat = vi.fn(async (): Promise<ChatMessageV1[]> => []);
   public readonly publishCommands = vi.fn(async (_request: CommandPublishRequest) => {});
   public readonly publishNarrations = vi.fn(async (_request: NarrationPublishRequest) => {});
-  public readonly saveWorldModelState = vi.fn(async (_snapshot: WorldModelSnapshot) => {});
-  public readonly loadWorldModelState = vi.fn(async (): Promise<Partial<WorldModelSnapshot> | null> => null);
+  public readonly publishAgentWorldModel = vi.fn(
+    async (_request: {
+      source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
+      snapshot: AgentWorldModelEnvelopeV1["snapshot"];
+      metadata: { sourceTick: number; correlationId: string };
+    }) => {},
+  );
   private index = 0;
 
   constructor(private readonly states: Array<ReturnType<typeof createTestWorldState> | null>) {}
@@ -1067,7 +1072,7 @@ describe("runRuntime", () => {
     expect(eraChat).toHaveBeenCalledWith("gpt-5.4", expect.any(Array));
   });
 
-  it("restores world model from redis hash on startup and logs fixed restore anchor", async () => {
+  it("preserves preloaded worldModel state while publishing fresh ticks", async () => {
     const staleState = createTestWorldState();
     staleState.tick = 188;
     const freshState = createTestWorldState();
@@ -1075,8 +1080,7 @@ describe("runRuntime", () => {
     const redis = new SequenceRuntimeRedis([staleState, freshState]);
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
     const worldModel = new WorldModel();
-
-    redis.loadWorldModelState.mockResolvedValue({
+    worldModel.restoreFromJSON({
       currentEra: {
         name: "末法纪",
         sinceTick: 188,
@@ -1130,13 +1134,14 @@ describe("runRuntime", () => {
 
     expect(worldModel.currentEra?.name).toBe("末法纪");
     expect(worldModel.lastTick).toBe(200);
-    expect(logger.log).toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
-    expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
-    expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(200);
-    expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastStateTs).toBe(freshState.ts);
+    expect(logger.log).not.toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
+    expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
+    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(188);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(200);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastStateTs).toBe(freshState.ts);
   });
 
-  it("treats legacy disk snapshots without lastStateTs as restart-safe and processes next tick", async () => {
+  it("does not auto-restore startup state from local disk snapshot files", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-snapshot-restore-"));
     const previousCwd = process.cwd();
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -1164,7 +1169,6 @@ describe("runRuntime", () => {
       const freshState = createTestWorldState();
       freshState.tick = 200;
       const redis = new SequenceRuntimeRedis([staleState, freshState]);
-      redis.loadWorldModelState.mockResolvedValue(null);
 
       await runRuntime(
         {
@@ -1192,9 +1196,10 @@ describe("runRuntime", () => {
         },
       );
 
-      expect(logger.log).toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
-      expect(logger.log).not.toHaveBeenCalledWith(
-        "[tiandao] stale_state_skip tick=188 last_processed_tick=188",
+      expect(logger.log).not.toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        "[tiandao] failed to load snapshot file tiandao-snapshot-188.json:",
+        expect.any(Error),
       );
       expect(redis.publishCommands).toHaveBeenCalledTimes(2);
       expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
@@ -1207,17 +1212,17 @@ describe("runRuntime", () => {
           metadata: expect.objectContaining({ sourceTick: 200, correlationId: "tiandao-tick-200" }),
         }),
       );
-      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(2);
-      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(188);
-      expect(redis.saveWorldModelState.mock.calls[1]?.[0]?.lastTick).toBe(200);
-      expect(redis.saveWorldModelState.mock.calls[1]?.[0]?.lastStateTs).toBe(freshState.ts);
+      expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(188);
+      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(200);
+      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastStateTs).toBe(freshState.ts);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("skips duplicate restored world state when snapshot cursor includes lastStateTs", async () => {
+  it("does not seed stale cursor from preloaded worldModel on startup", async () => {
     const staleState = createTestWorldState();
     staleState.tick = 188;
     const freshState = createTestWorldState();
@@ -1226,7 +1231,8 @@ describe("runRuntime", () => {
     const redis = new SequenceRuntimeRedis([staleState, freshState]);
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
-    redis.loadWorldModelState.mockResolvedValue({
+    const worldModel = new WorldModel();
+    worldModel.restoreFromJSON({
       currentEra: {
         name: "末法纪",
         sinceTick: 188,
@@ -1263,15 +1269,21 @@ describe("runRuntime", () => {
         ],
         sleep: vi.fn(async () => {}),
         logger,
+        worldModel,
         maxLoopIterations: 2,
       },
     );
 
-    expect(logger.log).toHaveBeenCalledWith(
+    expect(logger.log).not.toHaveBeenCalledWith(
       "[tiandao] stale_state_skip tick=188 last_processed_tick=188",
     );
-    expect(redis.publishCommands).toHaveBeenCalledTimes(1);
+    expect(redis.publishCommands).toHaveBeenCalledTimes(2);
     expect(redis.publishCommands.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ sourceTick: 188, correlationId: "tiandao-tick-188" }),
+      }),
+    );
+    expect(redis.publishCommands.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         metadata: expect.objectContaining({ sourceTick: 200, correlationId: "tiandao-tick-200" }),
       }),
@@ -1409,12 +1421,12 @@ describe("runRuntime", () => {
       );
     });
 
-    expect(redis.saveWorldModelState).toHaveBeenCalledTimes(2);
-    expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(300);
-    expect(redis.saveWorldModelState.mock.calls[1]?.[0]?.lastTick).toBe(301);
+    expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
+    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(300);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(301);
   });
 
-  it("fails soft when redis fields and snapshot file are corrupted", async () => {
+  it("ignores corrupted local snapshot file at startup and continues with fresh tick", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-corrupt-"));
     const previousCwd = process.cwd();
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -1427,7 +1439,6 @@ describe("runRuntime", () => {
       const state = createTestWorldState();
       state.tick = 400;
       const redis = new SequenceRuntimeRedis([state]);
-      redis.loadWorldModelState.mockResolvedValue(null);
 
       await runRuntime(
         {
@@ -1449,27 +1460,28 @@ describe("runRuntime", () => {
         },
       );
 
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).not.toHaveBeenCalledWith(
         "[tiandao] failed to load snapshot file tiandao-snapshot-999.json:",
         expect.any(Error),
       );
       expect(redis.publishCommands).toHaveBeenCalledTimes(0);
-      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
-      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(400);
+      expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(1);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(400);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("fails soft when redis persisted fields are malformed and still continues with fresh tick", async () => {
+  it("continues with fresh tick even when startup worldModel is malformed", async () => {
     await withIsolatedCwd(async () => {
       const state = createTestWorldState();
       state.tick = 410;
       const redis = new SequenceRuntimeRedis([state]);
       const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+      const worldModel = new WorldModel();
 
-      redis.loadWorldModelState.mockResolvedValue({
+      worldModel.restoreFromJSON({
         currentEra: {
           name: "broken",
           sinceTick: "bad" as unknown as number,
@@ -1506,13 +1518,14 @@ describe("runRuntime", () => {
           agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "ok" })],
           sleep: vi.fn(async () => {}),
           logger,
-          maxLoopIterations: 1,
+        maxLoopIterations: 1,
+          worldModel,
         },
       );
 
       expect(redis.publishCommands).toHaveBeenCalledTimes(0);
-      expect(redis.saveWorldModelState).toHaveBeenCalledTimes(1);
-      expect(redis.saveWorldModelState.mock.calls[0]?.[0]?.lastTick).toBe(410);
+      expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(1);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(410);
     });
   });
 

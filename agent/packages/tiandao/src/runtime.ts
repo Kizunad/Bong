@@ -1,23 +1,30 @@
-import type { ChatMessageV1, ChatSignal, Command, Narration, WorldStateV1 } from "@bong/schema";
+import type {
+  AgentWorldModelEnvelopeV1,
+  ChatMessageV1,
+  ChatSignal,
+  Command,
+  Narration,
+  WorldStateV1,
+} from "@bong/schema";
 import dotenv from "dotenv";
-import { resolve, dirname } from "node:path";
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { TiandaoAgent, resolveAgentTools } from "./agent.js";
-import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
-import { mergeChatSignals, processChatBatch } from "./chat-processor.js";
-import { createClient, createMockClient, type LlmClient } from "./llm.js";
-import { createMockWorldState } from "./mock-state.js";
 import { Arbiter } from "./arbiter.js";
+import { TiandaoAgent, resolveAgentTools } from "./agent.js";
+import type { AgentDecisionWithMetadata } from "./agent.js";
+import { mergeChatSignals, processChatBatch } from "./chat-processor.js";
+import { CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE } from "./context.js";
+import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
+import { createMockWorldState } from "./mock-state.js";
 import {
   NARRATION_LOW_SCORE_THRESHOLD,
   evaluateNarrations,
   formatNarrationLowScoreWarning,
   summarizeNarrationAverage,
 } from "./narration-eval.js";
-import { RedisIpc } from "./redis-ipc.js";
 import type { AgentDecision } from "./parse.js";
-import { WorldModel, type WorldModelSnapshot } from "./world-model.js";
+import { RedisIpc } from "./redis-ipc.js";
 import {
   emptyErrorBreakdown,
   JsonLogSink,
@@ -28,8 +35,7 @@ import {
   type TickErrorBreakdown,
   type TickMetrics,
 } from "./telemetry.js";
-import type { AgentDecisionWithMetadata } from "./agent.js";
-import { LlmBackoffError, LlmTimeoutError } from "./llm.js";
+import { WorldModel, type WorldModelSnapshot } from "./world-model.js";
 
 declare global {
   interface NumberConstructor {
@@ -48,7 +54,6 @@ const SNAPSHOT_INTERVAL_TICKS = 100;
 const SNAPSHOT_KEEP_COUNT = 5;
 const SNAPSHOT_FILE_PREFIX = "tiandao-snapshot-";
 const SNAPSHOT_FILE_SUFFIX = ".json";
-const RESTORE_LOG_ANCHOR = "[tiandao] restored state from tick";
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
@@ -101,8 +106,11 @@ export interface RuntimeRedis {
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
-  loadWorldModelState?(logger?: Pick<typeof console, "warn">): Promise<Partial<WorldModelSnapshot> | null>;
-  saveWorldModelState?(snapshot: WorldModelSnapshot): Promise<void>;
+  publishAgentWorldModel?(request: {
+    source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
+    snapshot: AgentWorldModelEnvelopeV1["snapshot"];
+    metadata: TickPublishMetadata;
+  }): Promise<void>;
   disconnect(): Promise<void>;
 }
 
@@ -712,7 +720,6 @@ export async function runRuntime(
   let lastProcessedStateCursor: WorldStateCursor | null = null;
   const maxLoopIterations = deps.maxLoopIterations ?? Number.POSITIVE_INFINITY;
   let hasConnectedAtLeastOnce = false;
-  let restoredOnStartup = false;
   let pendingReconnectCount = 0;
   let pendingBackoffCount = 0;
   let pendingStaleSkip = false;
@@ -743,20 +750,6 @@ export async function runRuntime(
           connected = true;
           logger.log(`[tiandao] connected to Redis at ${redactRedisUrlForLog(config.redisUrl)}`);
 
-          if (!restoredOnStartup) {
-            const restoredState = await restoreWorldModelOnStartup({
-              redis,
-              worldModel,
-              logger,
-            });
-            if (restoredState.lastTick !== null && restoredState.lastStateTs !== null) {
-              lastProcessedStateCursor = {
-                tick: restoredState.lastTick,
-                ts: restoredState.lastStateTs,
-              };
-            }
-            restoredOnStartup = true;
-          }
         }
 
         const drainedChat = await redis.drainPlayerChat({
@@ -819,6 +812,10 @@ export async function runRuntime(
                   worldModel,
                   redis,
                   logger,
+                  metadata: {
+                    sourceTick: state.tick,
+                    correlationId: `tiandao-tick-${state.tick}`,
+                  },
                 });
               },
             });
@@ -872,53 +869,6 @@ export async function runRuntime(
   }
 }
 
-async function restoreWorldModelOnStartup(args: {
-  redis: RuntimeRedis;
-  worldModel: WorldModel;
-  logger: Pick<typeof console, "log" | "warn">;
-}): Promise<{ source: "redis" | "snapshot" | null; lastTick: number | null; lastStateTs: number | null }> {
-  const { redis, worldModel, logger } = args;
-
-  const redisSnapshot = await redis.loadWorldModelState?.(logger);
-  if (redisSnapshot && Object.keys(redisSnapshot).length > 0) {
-    worldModel.restoreFromJSON(redisSnapshot);
-    const normalized = worldModel.toJSON();
-    if (hasDurableState(normalized)) {
-      logger.log(formatRestoreAnchor(normalized));
-      return { source: "redis", lastTick: normalized.lastTick, lastStateTs: normalized.lastStateTs };
-    }
-  }
-
-  const fileSnapshot = await loadLatestSnapshotFromDisk(logger);
-  if (!fileSnapshot) {
-    return { source: null, lastTick: null, lastStateTs: null };
-  }
-
-  worldModel.restoreFromJSON(fileSnapshot);
-  const normalized = worldModel.toJSON();
-  if (hasDurableState(normalized)) {
-    logger.log(formatRestoreAnchor(normalized));
-    return { source: "snapshot", lastTick: normalized.lastTick, lastStateTs: normalized.lastStateTs };
-  }
-
-  return { source: null, lastTick: null, lastStateTs: null };
-}
-
-function hasDurableState(snapshot: WorldModelSnapshot): boolean {
-  return (
-    snapshot.lastTick !== null ||
-    snapshot.currentEra !== null ||
-    Object.keys(snapshot.zoneHistory).length > 0 ||
-    Object.keys(snapshot.lastDecisions).length > 0
-  );
-}
-
-function formatRestoreAnchor(snapshot: WorldModelSnapshot): string {
-  const tick = snapshot.lastTick ?? 0;
-  const eraName = snapshot.currentEra?.name ?? "(none)";
-  return `${RESTORE_LOG_ANCHOR} ${tick}, era: ${eraName}`;
-}
-
 function isStaleWorldState(state: WorldStateV1, cursor: WorldStateCursor | null): boolean {
   if (!cursor) {
     return false;
@@ -941,17 +891,22 @@ async function persistWorldModelAfterFreshTick(args: {
   worldModel: WorldModel;
   redis: RuntimeRedis;
   logger: Pick<typeof console, "warn">;
+  metadata: TickPublishMetadata;
 }): Promise<void> {
-  const { worldModel, redis, logger } = args;
+  const { worldModel, redis, logger, metadata } = args;
   const snapshot = worldModel.toJSON();
   if (snapshot.lastTick === null) {
     return;
   }
 
   try {
-    await redis.saveWorldModelState?.(snapshot);
+    await redis.publishAgentWorldModel?.({
+      source: "arbiter",
+      snapshot: worldModelSnapshotToEnvelopeSnapshot(snapshot),
+      metadata,
+    });
   } catch (error) {
-    logger.warn("[tiandao] failed to persist world model state to redis:", error);
+    logger.warn("[tiandao] failed to publish world model snapshot:", error);
   }
 
   if (snapshot.lastTick % SNAPSHOT_INTERVAL_TICKS !== 0) {
@@ -969,6 +924,19 @@ async function persistWorldModelAfterFreshTick(args: {
   } catch (error) {
     logger.warn("[tiandao] failed to persist world model snapshot file:", error);
   }
+}
+
+function worldModelSnapshotToEnvelopeSnapshot(
+  snapshot: WorldModelSnapshot,
+): AgentWorldModelEnvelopeV1["snapshot"] {
+  return {
+    currentEra: snapshot.currentEra,
+    zoneHistory: snapshot.zoneHistory,
+    lastDecisions: snapshot.lastDecisions,
+    playerFirstSeenTick: snapshot.playerFirstSeenTick,
+    lastTick: snapshot.lastTick,
+    lastStateTs: snapshot.lastStateTs,
+  };
 }
 
 interface SnapshotFileRecord {
@@ -1004,32 +972,6 @@ async function listSnapshotFiles(): Promise<SnapshotFileRecord[]> {
       return entry !== null && Number.isFinite(entry.tick);
     })
     .sort((left, right) => left.tick - right.tick);
-}
-
-async function loadLatestSnapshotFromDisk(
-  logger: Pick<typeof console, "warn">,
-): Promise<Partial<WorldModelSnapshot> | null> {
-  const files = await listSnapshotFiles();
-  if (files.length === 0) {
-    return null;
-  }
-
-  for (let i = files.length - 1; i >= 0; i -= 1) {
-    const file = files[i];
-    const filePath = resolve(getSnapshotDirPath(), file.name);
-    try {
-      const raw = await readFile(filePath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        return parsed as Partial<WorldModelSnapshot>;
-      }
-      logger.warn(`[tiandao] invalid snapshot shape in ${file.name}, skipping`);
-    } catch (error) {
-      logger.warn(`[tiandao] failed to load snapshot file ${file.name}:`, error);
-    }
-  }
-
-  return null;
 }
 
 async function rotateSnapshotFiles(logger: Pick<typeof console, "warn">): Promise<void> {
