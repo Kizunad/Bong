@@ -1,0 +1,17 @@
+{
+  "_comment": "flying_sword_feixuan iter4: FP 0.3 仍大,参照 wooden_totem (Y=10 用 0.08) 比例,再缩到 0.15。TP 0.4 先看",
+  "thirdperson_righthand": {
+    "scale": [0.4, 0.4, 0.4]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.4, 0.4, 0.4]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -5],
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -5],
+    "scale": [0.15, 0.15, 0.15]
+  }
+}

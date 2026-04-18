@@ -1,0 +1,19 @@
+{
+    "_comment": "每个字段只覆盖 HANDHELD_DISPLAY 默认的同名字段；未列出的字段沿用默认。单位：translation 是 pixel (1/16 block)，rotation 是度数 (X/Y/Z Euler)",
+    "thirdperson_righthand": {
+        "rotation": [0, -90, 0],
+        "translation": [-5, 3, 8],
+        "scale": [0.667, 0.667, 0.667]
+    },
+    "thirdperson_lefthand": {
+        "rotation": [0, 90, 0],
+        "translation": [-5, 3, 8],
+        "scale": [0.667, 0.667, 0.667]
+    },
+    "firstperson_righthand": {
+        "scale": [0.667, 0.667, 0.667]
+    },
+    "firstperson_lefthand": {
+        "scale": [0.667, 0.667, 0.667]
+    }
+}

@@ -1,0 +1,17 @@
+{
+  "_comment": "spirit_sword iter2: Z-long 12 太大,TP 0.4 还比玩家大。砍半到 0.2。FP 单独缩+trs.z=-6 推远",
+  "thirdperson_righthand": {
+    "scale": [0.2, 0.2, 0.2]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.2, 0.2, 0.2]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.15, 0.15, 0.15]
+  }
+}

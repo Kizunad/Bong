@@ -14,6 +14,8 @@ import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
+import com.bong.client.weapon.WeaponRenderBootstrap;
+import com.bong.client.weapon.WeaponScreenshotHarness;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import org.slf4j.Logger;
@@ -44,6 +46,8 @@ public class BongClient implements ClientModInitializer {
         BongPunchCombo.bootstrap();
         BongAnimCommand.register();
         CombatHudBootstrap.register();
+        WeaponRenderBootstrap.register();
+        WeaponScreenshotHarness.install();
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx and /anim commands active.");
     }

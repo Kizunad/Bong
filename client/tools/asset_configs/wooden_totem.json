@@ -1,0 +1,17 @@
+{
+  "_comment": "wooden_totem iter3: TP 0.15 看起来大小合适，FP 0.15 还是顶到相机因为 trs=[0,0,0] (2D sprite 用的 1.13 被我们零掉)。FP 缩到 0.08 + trs.z=-6 往前推（-Z=远离相机方向，display 框里）。",
+  "thirdperson_righthand": {
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.15, 0.15, 0.15]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.08, 0.08, 0.08]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -6],
+    "scale": [0.08, 0.08, 0.08]
+  }
+}
