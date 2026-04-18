@@ -4,10 +4,11 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
+use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_BREAKTHROUGH_EVENT,
+    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -29,6 +30,7 @@ const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 pub enum RedisInbound {
     AgentCommand(AgentCommandV1),
     AgentNarration(NarrationV1),
+    AgentWorldModel(AgentWorldModelEnvelopeV1),
     InsightOffer(InsightOfferV1),
 }
 
@@ -428,7 +430,7 @@ async fn connect_bridge_session(
 
     subscribe_inbound_channels(&mut pubsub).await?;
     tracing::info!(
-        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_INSIGHT_OFFER}"
+        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_AGENT_WORLD_MODEL}, {CH_INSIGHT_OFFER}"
     );
 
     let tx_to_game_clone = tx_to_game.clone();
@@ -447,6 +449,11 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .subscribe(CH_AGENT_NARRATE)
         .await
         .map_err(|error| format!("failed to subscribe to {CH_AGENT_NARRATE}: {error}"))?;
+
+    pubsub
+        .subscribe(CH_AGENT_WORLD_MODEL)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_AGENT_WORLD_MODEL}: {error}"))?;
 
     pubsub
         .subscribe(CH_INSIGHT_OFFER)
@@ -564,6 +571,11 @@ async fn run_subscriber_task(
                         "[bong][redis] received narration ({} entries)",
                         narration.narrations.len()
                     ),
+                    RedisInbound::AgentWorldModel(envelope) => tracing::info!(
+                        "[bong][redis] received world model envelope: {} (last_tick={:?})",
+                        envelope.id,
+                        envelope.snapshot.last_tick
+                    ),
                     RedisInbound::InsightOffer(offer) => tracing::info!(
                         "[bong][redis] received insight offer: trigger={} ({} choices)",
                         offer.trigger_id,
@@ -626,6 +638,15 @@ fn parse_inbound_message(
                 ValidationError::new(format!("failed to deserialize NarrationV1: {error}"))
             })?;
             Ok(Some(RedisInbound::AgentNarration(narration)))
+        }
+        CH_AGENT_WORLD_MODEL => {
+            let envelope =
+                serde_json::from_value::<AgentWorldModelEnvelopeV1>(value).map_err(|error| {
+                    ValidationError::new(format!(
+                        "failed to deserialize AgentWorldModelEnvelopeV1: {error}"
+                    ))
+                })?;
+            Ok(Some(RedisInbound::AgentWorldModel(envelope)))
         }
         CH_INSIGHT_OFFER => {
             let offer = serde_json::from_value::<InsightOfferV1>(value).map_err(|error| {

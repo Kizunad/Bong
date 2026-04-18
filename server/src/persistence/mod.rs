@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,14 @@ use crate::schema::common::NpcStateKind;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 const CURRENT_USER_VERSION: i32 = 5;
+const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
+pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
+pub const WORLD_MODEL_STATE_FIELD_CURRENT_ERA: &str = "current_era";
+pub const WORLD_MODEL_STATE_FIELD_ZONE_HISTORY: &str = "zone_history";
+pub const WORLD_MODEL_STATE_FIELD_LAST_DECISIONS: &str = "last_decisions";
+pub const WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK: &str = "player_first_seen_tick";
+pub const WORLD_MODEL_STATE_FIELD_LAST_TICK: &str = "last_tick";
+pub const WORLD_MODEL_STATE_FIELD_LAST_STATE_TS: &str = "last_state_ts";
 const CURRENT_SCHEMA_VERSION: i32 = 1;
 const EVENT_SCHEMA_VERSION: i32 = 1;
 const EVENT_PAYLOAD_VERSION: i32 = 1;
@@ -192,6 +200,49 @@ pub struct ArchetypeRegistryEntry {
     pub since_tick: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorldModelCommandRecord {
+    #[serde(rename = "type")]
+    pub command_type: String,
+    pub target: String,
+    #[serde(default)]
+    pub params: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorldModelNarrationRecord {
+    pub scope: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    pub text: String,
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorldModelDecisionRecord {
+    #[serde(default)]
+    pub commands: Vec<AgentWorldModelCommandRecord>,
+    #[serde(default)]
+    pub narrations: Vec<AgentWorldModelNarrationRecord>,
+    pub reasoning: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorldModelSnapshotRecord {
+    #[serde(default)]
+    pub current_era: Option<serde_json::Value>,
+    #[serde(default)]
+    pub zone_history: BTreeMap<String, Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub last_decisions: BTreeMap<String, AgentWorldModelDecisionRecord>,
+    #[serde(default)]
+    pub player_first_seen_tick: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub last_tick: Option<i64>,
+    #[serde(default)]
+    pub last_state_ts: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NpcPersistenceCapture {
     pub state: NpcStateRecord,
@@ -309,6 +360,54 @@ pub fn bootstrap_sqlite(db_path: &Path, server_run_id: &str) -> rusqlite::Result
     apply_migrations(&mut connection)?;
     record_bootstrap_event(&connection, server_run_id)?;
     Ok(())
+}
+
+pub fn bootstrap_agent_world_model_mirror(
+    settings: &PersistenceSettings,
+) -> io::Result<Option<AgentWorldModelSnapshotRecord>> {
+    let snapshot = load_agent_world_model_snapshot(settings)?;
+    Ok(snapshot)
+}
+
+pub fn world_model_snapshot_to_mirror_fields(
+    snapshot: &AgentWorldModelSnapshotRecord,
+) -> io::Result<BTreeMap<String, String>> {
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_CURRENT_ERA.to_string(),
+        serde_json::to_string(&snapshot.current_era)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_ZONE_HISTORY.to_string(),
+        serde_json::to_string(&snapshot.zone_history)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_LAST_DECISIONS.to_string(),
+        serde_json::to_string(&snapshot.last_decisions)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK.to_string(),
+        serde_json::to_string(&snapshot.player_first_seen_tick)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_LAST_TICK.to_string(),
+        snapshot
+            .last_tick
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_LAST_STATE_TS.to_string(),
+        snapshot
+            .last_state_ts
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    Ok(fields)
 }
 
 fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
@@ -575,12 +674,85 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    ensure_agent_world_model_table(connection)?;
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
     }
 
     Ok(())
+}
+
+fn ensure_agent_world_model_table(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS agent_world_model (
+            row_id INTEGER PRIMARY KEY CHECK (row_id = 1),
+            snapshot_json TEXT NOT NULL,
+            schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+            last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+        );
+        ",
+    )?;
+    Ok(())
+}
+
+pub fn persist_agent_world_model_snapshot(
+    settings: &PersistenceSettings,
+    snapshot: &AgentWorldModelSnapshotRecord,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let snapshot_json = serde_json::to_string(snapshot)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO agent_world_model (
+                row_id,
+                snapshot_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(row_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                AGENT_WORLD_MODEL_ROW_ID,
+                snapshot_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn load_agent_world_model_snapshot(
+    settings: &PersistenceSettings,
+) -> io::Result<Option<AgentWorldModelSnapshotRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let snapshot_json: Option<String> = connection
+        .query_row(
+            "SELECT snapshot_json FROM agent_world_model WHERE row_id = ?1",
+            params![AGENT_WORLD_MODEL_ROW_ID],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(snapshot_json) = snapshot_json else {
+        return Ok(None);
+    };
+
+    let snapshot = serde_json::from_str::<AgentWorldModelSnapshotRecord>(&snapshot_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Some(snapshot))
 }
 
 fn record_bootstrap_event(connection: &Connection, server_run_id: &str) -> rusqlite::Result<()> {
