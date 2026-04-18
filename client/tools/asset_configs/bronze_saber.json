@@ -1,5 +1,5 @@
 {
-  "_comment": "bronze_saber iter18: pixel 43233 → 21832 √0.5≈0.7, scale 0.13*0.7=0.09. cy 0.08→0.63 trs.y 10→15",
+  "_comment": "bronze_saber iter25: 不 flip-y,raw mesh Y+ 是 blade sharp edge。anchor Y 从 +6.56 变 -6.56 (flip 后 handle 改位置)。rot [90,0,0] 回 iter22",
   "thirdperson_righthand": {
     "rotation": [45, 0, 0],
     "scale": [0.08, 0.08, 0.08]
@@ -10,12 +10,12 @@
   },
   "firstperson_righthand": {
     "rotation": [90, 0, 0],
-    "translation": [3, 15, 0],
-    "scale": [0.09, 0.09, 0.09]
+    "translation": [3, 0, 0],
+    "scale": [0.15, 0.15, 0.15]
   },
   "firstperson_lefthand": {
     "rotation": [90, 0, 0],
-    "translation": [3, 15, 0],
-    "scale": [0.09, 0.09, 0.09]
+    "translation": [3, 0, 0],
+    "scale": [0.15, 0.15, 0.15]
   }
 }
