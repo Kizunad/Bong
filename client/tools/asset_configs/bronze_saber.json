@@ -1,21 +1,19 @@
 {
-  "_comment": "bronze_saber iter3: pixel 算法证实 0.15 还大 3-5x (ratio 0.012 vs ref 0.003)。按 sqrt(0.003/0.012)=0.5, scale 0.15 × 0.5 = 0.075。TP 0.08。Rx(45°) blade tip 映射保留。",
+  "_comment": "bronze_saber iter4: Rx(45°) 绕 mesh center 让 handle (Z=+5) 被推到 display up-back = 肩膀位置,不对。改用 no rotation (blade -Z 朝 display -Z=forward) + translation 把 mesh 沿 -Z 方向拉,让 handle 端 (mesh Z=5, scale 0.08 = 0.4 display) 落到 hand origin",
   "thirdperson_righthand": {
-    "rotation": [45, 0, 0],
+    "translation": [0, 0, -0.4],
     "scale": [0.08, 0.08, 0.08]
   },
   "thirdperson_lefthand": {
-    "rotation": [45, 0, 0],
+    "translation": [0, 0, -0.4],
     "scale": [0.08, 0.08, 0.08]
   },
   "firstperson_righthand": {
-    "rotation": [45, 0, 0],
-    "translation": [0, 0, -3],
+    "translation": [0, 0, -0.4],
     "scale": [0.08, 0.08, 0.08]
   },
   "firstperson_lefthand": {
-    "rotation": [45, 0, 0],
-    "translation": [0, 0, -3],
+    "translation": [0, 0, -0.4],
     "scale": [0.08, 0.08, 0.08]
   }
 }
