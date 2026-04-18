@@ -15,6 +15,9 @@ export const CHANNELS = {
   /** Agent → Server: 叙事文本，转发给客户端 (Pub/Sub) */
   AGENT_NARRATE: "bong:agent_narrate",
 
+  /** Agent → Server: WorldModel 快照权威上报（Task 5）(Pub/Sub) */
+  AGENT_WORLD_MODEL: "bong:agent_world_model",
+
   /** Server → Agent: 顿悟请求（plan-cultivation §5.5） (Pub/Sub) */
   INSIGHT_REQUEST: "bong:insight_request",
 
@@ -42,6 +45,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.PLAYER_CHAT,
   CHANNELS.AGENT_COMMAND,
   CHANNELS.AGENT_NARRATE,
+  CHANNELS.AGENT_WORLD_MODEL,
   CHANNELS.INSIGHT_REQUEST,
   CHANNELS.INSIGHT_OFFER,
   CHANNELS.BREAKTHROUGH_EVENT,
