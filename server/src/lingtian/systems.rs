@@ -17,7 +17,8 @@ use std::collections::HashMap;
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut, Resource,
+    bevy_ecs, BlockState, ChunkLayer, Commands, Entity, EventReader, EventWriter, Query, Res,
+    ResMut, Resource,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
@@ -556,6 +557,7 @@ pub fn apply_completed_sessions(
     mut zone_qi: ResMut<ZoneQiAccount>,
     clock: Res<LingtianClock>,
     mut writers: CompletionEventWriters,
+    mut layers: Query<&mut ChunkLayer>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -566,6 +568,10 @@ pub fn apply_completed_sessions(
                 let mut plot = LingtianPlot::new(s.pos, Some(player));
                 plot.plot_qi_cap = compute_plot_qi_cap(&s.environment);
                 commands.spawn(plot);
+                // plan §1.2.2 步骤 3 — 放一块 Farmland 让玩家视觉上看到 plot。
+                if let Ok(mut layer) = layers.get_single_mut() {
+                    layer.set_block(s.pos, BlockState::FARMLAND);
+                }
                 writers.till.send(TillCompleted {
                     player,
                     pos: s.pos,
@@ -579,6 +585,10 @@ pub fn apply_completed_sessions(
                 }
                 if let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| p.pos == s.pos) {
                     plot.renew();
+                    // 翻新后从"贫瘠"（CoarseDirt）回到 Farmland 可耕状态。
+                    if let Ok(mut layer) = layers.get_single_mut() {
+                        layer.set_block(s.pos, BlockState::FARMLAND);
+                    }
                     writers.renew.send(RenewCompleted {
                         player,
                         pos: s.pos,
@@ -618,6 +628,12 @@ pub fn apply_completed_sessions(
                     clock.lingtian_tick,
                     &mut writers.harvest,
                 );
+                // plan §1.6 — 收获若使 plot 贫瘠，外观改 CoarseDirt 以示灰化。
+                if plots.iter().any(|(_, p)| p.pos == s.pos && p.is_barren()) {
+                    if let Ok(mut layer) = layers.get_single_mut() {
+                        layer.set_block(s.pos, BlockState::COARSE_DIRT);
+                    }
+                }
             }
             ActiveSession::Replenish(s) => {
                 apply_replenish_completion(
