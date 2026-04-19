@@ -70,6 +70,13 @@ struct NpcDigestSweepState {
 
 impl Resource for NpcDigestSweepState {}
 
+#[derive(Debug, Default)]
+struct DailyBackupState {
+    last_backup_day: Option<i64>,
+}
+
+impl Resource for DailyBackupState {}
+
 #[derive(Debug, Default, Component)]
 struct NpcArchivedPersistence;
 
@@ -326,18 +333,24 @@ pub fn register(app: &mut App) {
     app.init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
+        .init_resource::<DailyBackupState>()
         .add_systems(Startup, bootstrap_persistence_system)
         .add_systems(
             Update,
             (
                 persist_npc_runtime_state_system,
                 sweep_npc_digest_retention_system,
+                daily_midnight_backup_system,
             ),
         );
 }
 
-fn bootstrap_persistence_system(settings: valence::prelude::Res<PersistenceSettings>) {
+fn bootstrap_persistence_system(
+    settings: valence::prelude::Res<PersistenceSettings>,
+    mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
+) {
     let wall_clock = current_unix_seconds();
+    daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
     match run_startup_backup(&settings, wall_clock) {
         Ok(Some(path)) => tracing::info!(
             "[bong][persistence] created startup sqlite backup at {}",
@@ -375,6 +388,35 @@ fn bootstrap_persistence_system(settings: valence::prelude::Res<PersistenceSetti
             "[bong][persistence] failed to scan orphaned npc archives at {}: {error}",
             settings.db_path().display()
         );
+    }
+}
+
+fn daily_midnight_backup_system(
+    settings: Res<PersistenceSettings>,
+    mut daily_backup_state: ResMut<DailyBackupState>,
+) {
+    let wall_clock = current_unix_seconds();
+    match run_daily_backup_cycle(&settings, &mut daily_backup_state, wall_clock) {
+        Ok(run) if !run.triggered => {}
+        Ok(run) => {
+            if let Some(path) = run.backup_path {
+                tracing::info!(
+                    "[bong][persistence] created daily sqlite backup at {}",
+                    path.display()
+                );
+            }
+            if !run.pruned_paths.is_empty() {
+                tracing::info!(
+                    "[bong][persistence] pruned {} stale daily backup(s) under {}",
+                    run.pruned_paths.len(),
+                    resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR).display()
+                );
+            }
+        }
+        Err(error) => tracing::warn!(
+            "[bong][persistence] daily backup cycle failed at {}: {error}",
+            settings.db_path().display()
+        ),
     }
 }
 
@@ -829,6 +871,40 @@ fn current_unix_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_secs() as i64
+}
+
+fn utc_day_from_unix_seconds(unix_seconds: i64) -> i64 {
+    unix_seconds.div_euclid(86_400)
+}
+
+#[derive(Debug, Default)]
+struct DailyBackupRun {
+    triggered: bool,
+    backup_path: Option<PathBuf>,
+    pruned_paths: Vec<PathBuf>,
+}
+
+fn run_daily_backup_cycle(
+    settings: &PersistenceSettings,
+    state: &mut DailyBackupState,
+    wall_clock: i64,
+) -> io::Result<DailyBackupRun> {
+    let current_day = utc_day_from_unix_seconds(wall_clock);
+    if state
+        .last_backup_day
+        .is_some_and(|last_backup_day| current_day <= last_backup_day)
+    {
+        return Ok(DailyBackupRun::default());
+    }
+
+    state.last_backup_day = Some(current_day);
+    let backup_path = run_startup_backup(settings, wall_clock)?;
+    let pruned_paths = prune_startup_backups(settings, STARTUP_BACKUP_KEEP_COUNT)?;
+    Ok(DailyBackupRun {
+        triggered: true,
+        backup_path,
+        pruned_paths,
+    })
 }
 
 fn run_startup_backup(
@@ -2983,6 +3059,109 @@ mod persistence_tests {
         assert!(
             !resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR).exists(),
             "backup directory should not be created when the live db is absent"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn daily_backup_cycle_waits_for_utc_day_rollover_before_snapshot() {
+        let (settings, root) = persistence_settings("daily-backup-rollover");
+        let day_zero = 1_735_689_600;
+        let day_one = day_zero + 86_400;
+        bootstrap_sqlite(settings.db_path(), "first-run").expect("first bootstrap should succeed");
+
+        let mut state = DailyBackupState {
+            last_backup_day: Some(utc_day_from_unix_seconds(day_zero)),
+        };
+        let same_day = run_daily_backup_cycle(&settings, &mut state, day_zero + 3_600)
+            .expect("same-day daily backup cycle should succeed");
+        assert!(!same_day.triggered);
+        assert!(same_day.backup_path.is_none());
+
+        bootstrap_sqlite(settings.db_path(), "second-run")
+            .expect("second bootstrap should succeed");
+
+        let next_day = run_daily_backup_cycle(&settings, &mut state, day_one)
+            .expect("next-day daily backup cycle should succeed");
+        assert!(next_day.triggered);
+        let backup_path = next_day
+            .backup_path
+            .clone()
+            .expect("next-day daily backup should create a backup path");
+        assert!(backup_path.exists());
+
+        let backup_connection = Connection::open(&backup_path).expect("backup db should open");
+        let backup_bootstrap_events: i64 = backup_connection
+            .query_row("SELECT COUNT(*) FROM bootstrap_events", [], |row| {
+                row.get(0)
+            })
+            .expect("backup bootstrap count should be readable");
+        assert_eq!(backup_bootstrap_events, 2);
+        assert_eq!(
+            state.last_backup_day,
+            Some(utc_day_from_unix_seconds(day_one)),
+            "daily backup state should advance to the new utc day"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn daily_backup_cycle_prunes_old_backups_when_triggered() {
+        let (settings, root) = persistence_settings("daily-backup-prune");
+        let day_zero = 1_735_689_600;
+        let day_one = day_zero + 86_400;
+        let backup_root = resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR);
+        fs::create_dir_all(&backup_root).expect("backup root should be creatable");
+        bootstrap_sqlite(settings.db_path(), "first-run").expect("bootstrap should succeed");
+
+        for stamp in [
+            "20241224-000000",
+            "20241225-000000",
+            "20241226-000000",
+            "20241227-000000",
+            "20241228-000000",
+            "20241229-000000",
+            "20241230-000000",
+            "20241231-000000",
+        ] {
+            fs::write(
+                backup_root.join(format!(
+                    "{STARTUP_BACKUP_FILE_PREFIX}{stamp}{STARTUP_BACKUP_FILE_SUFFIX}",
+                )),
+                b"snapshot",
+            )
+            .expect("backup fixture should be writable");
+        }
+
+        let mut state = DailyBackupState {
+            last_backup_day: Some(utc_day_from_unix_seconds(day_zero)),
+        };
+        let run = run_daily_backup_cycle(&settings, &mut state, day_one)
+            .expect("daily backup cycle should succeed on new day");
+
+        assert!(run.triggered);
+        assert_eq!(run.pruned_paths.len(), 2);
+        let mut remaining = collect_files_with_suffix(&backup_root, STARTUP_BACKUP_FILE_SUFFIX)
+            .expect("remaining backups should be enumerable")
+            .into_iter()
+            .filter_map(|path| {
+                let name = path.file_name()?.to_str()?;
+                if name.starts_with(STARTUP_BACKUP_FILE_PREFIX)
+                    && name.ends_with(STARTUP_BACKUP_FILE_SUFFIX)
+                {
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        remaining.sort();
+        assert_eq!(remaining.len(), STARTUP_BACKUP_KEEP_COUNT);
+        assert!(
+            run.backup_path.as_ref().is_some_and(|path| path.exists()),
+            "daily backup cycle should write the new backup before pruning"
         );
 
         let _ = fs::remove_dir_all(root);
