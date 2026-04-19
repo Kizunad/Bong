@@ -293,6 +293,14 @@ pub struct ZoneOverlayRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ZoneExportBundle {
+    pub schema_version: i32,
+    pub kind: String,
+    pub zones_runtime: Vec<ZoneRuntimeRecord>,
+    pub zone_overlays: Vec<ZoneOverlayRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NpcPersistenceCapture {
     pub state: NpcStateRecord,
     pub digest: NpcDigestRecord,
@@ -1111,6 +1119,15 @@ pub fn persist_zone_overlays(
 pub fn load_zone_overlays(settings: &PersistenceSettings) -> io::Result<Vec<ZoneOverlayRecord>> {
     let connection = open_persistence_connection(settings)?;
     load_zone_overlays_from_connection(&connection)
+}
+
+pub fn export_zone_persistence(settings: &PersistenceSettings) -> io::Result<ZoneExportBundle> {
+    Ok(ZoneExportBundle {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        kind: "zones_export_v1".to_string(),
+        zones_runtime: load_zone_runtime_snapshot(settings)?,
+        zone_overlays: load_zone_overlays(settings)?,
+    })
 }
 
 fn hydrate_zone_runtime(
@@ -4109,6 +4126,49 @@ mod persistence_tests {
             vec!["realm_collapse".to_string()]
         );
         assert_eq!(registry.zones[0].blocked_tiles, vec![(7, 8)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_zone_persistence_aggregates_runtime_and_overlays() {
+        let (settings, root) = persistence_settings("zone-export-bundle");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let zones = crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.31,
+                danger_level: 2,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        };
+        persist_zone_runtime_snapshot(&settings, &zones)
+            .expect("zone runtime snapshot should persist");
+        persist_zone_overlays(
+            &settings,
+            &[ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({"danger_level": 4}).to_string(),
+                payload_version: 1,
+                since_wall: 42,
+            }],
+        )
+        .expect("zone overlays should persist");
+
+        let bundle = export_zone_persistence(&settings).expect("zone export should succeed");
+        assert_eq!(bundle.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(bundle.kind, "zones_export_v1");
+        assert_eq!(bundle.zones_runtime.len(), 1);
+        assert_eq!(bundle.zone_overlays.len(), 1);
+        assert_eq!(bundle.zones_runtime[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(bundle.zone_overlays[0].overlay_kind, "collapsed");
+        assert_eq!(bundle.zone_overlays[0].payload_version, 1);
 
         let _ = fs::remove_dir_all(root);
     }
