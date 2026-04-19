@@ -187,7 +187,10 @@ fn attach_cultivation_to_joined_clients(
             }
         };
         let restored_tribulation = active_tribulation.as_ref().map(|record| TribulationState {
-            wave_current: record.wave_current,
+            wave_current: record
+                .wave_current
+                .saturating_add(1)
+                .min(record.waves_total),
             waves_total: record.waves_total,
             started_tick: record.started_tick,
         });
@@ -316,9 +319,71 @@ mod tests {
             .get::<TribulationState>(entity)
             .expect("tribulation should restore");
         assert_eq!(cultivation.realm, Realm::Spirit);
-        assert_eq!(tribulation.wave_current, 2);
+        assert_eq!(tribulation.wave_current, 3);
         assert_eq!(tribulation.waves_total, 5);
         assert_eq!(tribulation.started_tick, 1440);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn joined_clients_cap_restored_auto_pass_wave_at_total_waves() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-tribulation-restore-cap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                wave_current: 5,
+                waves_total: 5,
+                started_tick: 1888,
+            },
+        )
+        .expect("active tribulation should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    realm: "qi_refining_3".to_string(),
+                    spirit_qi: 120.0,
+                    spirit_qi_max: 160.0,
+                    karma: 0.0,
+                    experience: 4800,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let tribulation = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should restore");
+        assert_eq!(tribulation.wave_current, 5);
+        assert_eq!(tribulation.waves_total, 5);
+        assert_eq!(tribulation.started_tick, 1888);
 
         let _ = std::fs::remove_dir_all(temp_root);
     }
