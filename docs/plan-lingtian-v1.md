@@ -16,9 +16,13 @@
 **交叉引用**：`plan-botany-v1.md`（PlantKind + 浮窗）· `plan-alchemy-v1.md`（作物 → 丹方材料）· `plan-skill-v1.md`（herbalism）· `plan-zhenfa-v1.md`（欺天阵保田）· `plan-inventory-v1.md`（锄头 / 骨币 / 兽核 item）。
 
 **进度**（2026-04-19，分支 `plan-lingtian-v1`）：
-- ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法 + 5 单测）+ `register(&mut app)` 双双接入 main.rs · 534/534 tests · clippy 无新增问题
-- ⏳ **P0 收尾未做**：BlockEntity 持久化（需 plan-persistence-v1 落地）· 方块放置 e2e 验收
-- ⏳ **P1+ 全未动**：session（Till/Plant/Replenish/Renew）· tick · IPC channel · client UI · §2 表剩余作物入库
+- ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法）+ `register(&mut app)` 双双接入 main.rs
+- ✅ **P1 数据 / 状态机已落**：`hoe.rs`（HoeKind 三档 + uses_max + 耐久成本）+ `assets/items/lingtian.toml`（hoe_iron / hoe_lingtie / hoe_xuantie）+ `terrain.rs`（地形适合性 / 拒绝原因）+ `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · 重复 tick no-op）+ `events.rs`（StartTill / TillCompleted / StartRenew / RenewCompleted）。**纯状态机层就绪，ECS system / 方块 ↔ 玩家输入桥未接**
+- ⏳ **P1 收尾未做**：ECS 驱动 system（事件 → session 推进 → plot 落地）· valence BlockKind ↔ TerrainKind 适配 · 玩家主手锄读取 · inventory.durability 扣减
+- ⏳ **P0/P1 共同收尾**：BlockEntity 持久化（依 plan-persistence-v1）· 方块放置 e2e 验收
+- ⏳ **P2+ 全未动**：生长 tick / plot_qi / 区域漏吸 / 补灵浮窗 / 收获 / 偷菜偷灵 / 密度阈值 / 客户端 UI
+
+测试：546/546 全过（含 botany + lingtian 17 单测）；我的文件 clippy 0 警告。
 
 ---
 
