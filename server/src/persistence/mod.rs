@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 7;
+const CURRENT_USER_VERSION: i32 = 8;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -43,6 +43,7 @@ const NPC_ROW_SCHEMA_VERSION: i32 = 1;
 const NPC_DIGEST_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_DIGEST_SWEEP_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
 const NPC_SNAPSHOT_INTERVAL_TICKS: u32 = 20 * 60;
+const ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS: i64 = 5 * 60;
 const STARTUP_BACKUP_DIR: &str = "data/backups";
 const STARTUP_BACKUP_FILE_PREFIX: &str = "bong-";
 const STARTUP_BACKUP_FILE_SUFFIX: &str = ".db";
@@ -77,6 +78,13 @@ struct DailyBackupState {
 }
 
 impl Resource for DailyBackupState {}
+
+#[derive(Debug, Default)]
+struct ZoneRuntimeSnapshotState {
+    last_snapshot_wall: i64,
+}
+
+impl Resource for ZoneRuntimeSnapshotState {}
 
 #[derive(Debug, Default, Component)]
 struct NpcArchivedPersistence;
@@ -269,6 +277,13 @@ pub struct AscensionQuotaRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ZoneRuntimeRecord {
+    pub zone_id: String,
+    pub spirit_qi: f64,
+    pub danger_level: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NpcPersistenceCapture {
     pub state: NpcStateRecord,
     pub digest: NpcDigestRecord,
@@ -348,6 +363,7 @@ pub fn register(app: &mut App) {
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DailyBackupState>()
+        .init_resource::<ZoneRuntimeSnapshotState>()
         .add_systems(Startup, bootstrap_persistence_system)
         .add_systems(
             Update,
@@ -355,6 +371,7 @@ pub fn register(app: &mut App) {
                 persist_npc_runtime_state_system,
                 sweep_npc_digest_retention_system,
                 daily_midnight_backup_system,
+                persist_zone_runtime_system,
             ),
         );
 }
@@ -362,6 +379,7 @@ pub fn register(app: &mut App) {
 fn bootstrap_persistence_system(
     settings: valence::prelude::Res<PersistenceSettings>,
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
+    mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
 ) {
     let wall_clock = current_unix_seconds();
     daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
@@ -403,6 +421,15 @@ fn bootstrap_persistence_system(
             settings.db_path().display()
         );
     }
+
+    if let Some(zone_registry) = zones.as_deref_mut() {
+        if let Err(error) = hydrate_zone_runtime(&settings, zone_registry) {
+            tracing::warn!(
+                "[bong][persistence] failed to hydrate zone runtime from sqlite at {}: {error}",
+                settings.db_path().display()
+            );
+        }
+    }
 }
 
 fn daily_midnight_backup_system(
@@ -429,6 +456,34 @@ fn daily_midnight_backup_system(
         }
         Err(error) => tracing::warn!(
             "[bong][persistence] daily backup cycle failed at {}: {error}",
+            settings.db_path().display()
+        ),
+    }
+}
+
+fn persist_zone_runtime_system(
+    settings: Res<PersistenceSettings>,
+    mut snapshot_state: ResMut<ZoneRuntimeSnapshotState>,
+    zones: Option<Res<crate::world::zone::ZoneRegistry>>,
+) {
+    let Some(zone_registry) = zones else {
+        return;
+    };
+
+    let wall_clock = current_unix_seconds();
+    if snapshot_state.last_snapshot_wall > 0
+        && wall_clock.saturating_sub(snapshot_state.last_snapshot_wall)
+            < ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS
+    {
+        return;
+    }
+
+    match persist_zone_runtime_snapshot(&settings, &zone_registry) {
+        Ok(_) => {
+            snapshot_state.last_snapshot_wall = wall_clock;
+        }
+        Err(error) => tracing::warn!(
+            "[bong][persistence] failed to persist zone runtime snapshot at {}: {error}",
             settings.db_path().display()
         ),
     }
@@ -800,6 +855,25 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 8 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS zones_runtime (
+                zone_id TEXT PRIMARY KEY,
+                spirit_qi REAL NOT NULL,
+                danger_level INTEGER NOT NULL CHECK (danger_level >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 8;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
@@ -935,6 +1009,44 @@ pub fn complete_tribulation_ascension(
     upsert_ascension_quota(&transaction, &quota, wall_clock)?;
     transaction.commit().map_err(io::Error::other)?;
     Ok(quota)
+}
+
+pub fn persist_zone_runtime_snapshot(
+    settings: &PersistenceSettings,
+    zones: &crate::world::zone::ZoneRegistry,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    for zone in &zones.zones {
+        upsert_zone_runtime(
+            &transaction,
+            &ZoneRuntimeRecord {
+                zone_id: zone.name.clone(),
+                spirit_qi: zone.spirit_qi,
+                danger_level: zone.danger_level,
+            },
+            wall_clock,
+        )?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_zone_runtime_snapshot(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<ZoneRuntimeRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_zone_runtime_snapshot_from_connection(&connection)
+}
+
+fn hydrate_zone_runtime(
+    settings: &PersistenceSettings,
+    zones: &mut crate::world::zone::ZoneRegistry,
+) -> io::Result<()> {
+    let runtime_rows = load_zone_runtime_snapshot(settings)?;
+    zones.apply_runtime_records(&runtime_rows);
+    Ok(())
 }
 
 fn record_bootstrap_event(connection: &Connection, server_run_id: &str) -> rusqlite::Result<()> {
@@ -1962,6 +2074,39 @@ fn upsert_ascension_quota(
     Ok(())
 }
 
+fn upsert_zone_runtime(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &ZoneRuntimeRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO zones_runtime (
+                zone_id,
+                spirit_qi,
+                danger_level,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(zone_id) DO UPDATE SET
+                spirit_qi = excluded.spirit_qi,
+                danger_level = excluded.danger_level,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                record.zone_id,
+                record.spirit_qi,
+                i64::from(record.danger_level),
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn delete_npc_hot_rows(transaction: &rusqlite::Transaction<'_>, char_id: &str) -> io::Result<()> {
     transaction
         .execute("DELETE FROM npc_state WHERE char_id = ?1", params![char_id])
@@ -2023,6 +2168,40 @@ fn load_ascension_quota_from_connection(
             None => 0,
         },
     })
+}
+
+fn load_zone_runtime_snapshot_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<ZoneRuntimeRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT zone_id, spirit_qi, danger_level
+            FROM zones_runtime
+            ORDER BY zone_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .map_err(io::Error::other)?;
+
+    let mut records = Vec::new();
+    for row in rows {
+        let (zone_id, spirit_qi, danger_level) = row.map_err(io::Error::other)?;
+        records.push(ZoneRuntimeRecord {
+            zone_id,
+            spirit_qi,
+            danger_level: sql_to_u8(danger_level)?,
+        });
+    }
+    Ok(records)
 }
 
 fn load_ascension_quota_from_transaction(
@@ -2905,6 +3084,10 @@ fn sql_to_u32(value: i64) -> io::Result<u32> {
     u32::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn sql_to_u8(value: i64) -> io::Result<u8> {
+    u8::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 fn sql_to_usize(value: i64) -> io::Result<usize> {
     usize::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
@@ -3521,6 +3704,23 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task8_migrations_create_zones_runtime_table() {
+        let db_path = database_path("task8-zones-runtime");
+        bootstrap_sqlite(&db_path, "task8-zones-runtime").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'zones_runtime'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master zones_runtime query should succeed");
+        assert_eq!(exists.as_deref(), Some("zones_runtime"));
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -3598,6 +3798,117 @@ mod persistence_tests {
         let active = load_active_tribulation(&settings, record.char_id.as_str())
             .expect("active tribulation query should succeed");
         assert!(active.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zones_runtime_roundtrip_persists_spirit_qi_and_danger_level() {
+        let (settings, root) = persistence_settings("zones-runtime-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let zones = crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.42,
+                danger_level: 3,
+                active_events: vec!["beast_tide".to_string()],
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        };
+
+        persist_zone_runtime_snapshot(&settings, &zones)
+            .expect("zone runtime snapshot should persist");
+        let records =
+            load_zone_runtime_snapshot(&settings).expect("zone runtime snapshot should load");
+        assert_eq!(
+            records,
+            vec![ZoneRuntimeRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                spirit_qi: 0.42,
+                danger_level: 3,
+            }]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bootstrap_hydrates_zone_runtime_into_registry() {
+        let (settings, root) = persistence_settings("zones-runtime-hydrate");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let persisted = crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: -0.15,
+                danger_level: 4,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        };
+        persist_zone_runtime_snapshot(&settings, &persisted)
+            .expect("zone runtime snapshot should persist");
+
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        hydrate_zone_runtime(&settings, &mut registry)
+            .expect("zone runtime hydration should succeed");
+        assert_eq!(registry.zones[0].spirit_qi, -0.15);
+        assert_eq!(registry.zones[0].danger_level, 4);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_runtime_snapshot_system_respects_five_minute_interval() {
+        let (settings, root) = persistence_settings("zones-runtime-interval");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(ZoneRuntimeSnapshotState::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.25,
+                danger_level: 1,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        });
+        app.add_systems(Update, persist_zone_runtime_system);
+
+        app.update();
+        let first_records =
+            load_zone_runtime_snapshot(&settings).expect("first zone runtime snapshot should load");
+        assert_eq!(first_records.len(), 1);
+
+        {
+            let mut snapshot_state = app.world_mut().resource_mut::<ZoneRuntimeSnapshotState>();
+            snapshot_state.last_snapshot_wall = current_unix_seconds();
+        }
+        {
+            let mut zones = app
+                .world_mut()
+                .resource_mut::<crate::world::zone::ZoneRegistry>();
+            zones.zones[0].spirit_qi = -0.5;
+            zones.zones[0].danger_level = 5;
+        }
+
+        app.update();
+        let second_records = load_zone_runtime_snapshot(&settings)
+            .expect("second zone runtime snapshot should load");
+        assert_eq!(second_records[0].spirit_qi, 0.25);
+        assert_eq!(second_records[0].danger_level, 1);
 
         let _ = fs::remove_dir_all(root);
     }

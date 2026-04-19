@@ -6,6 +6,7 @@ use serde::Deserialize;
 use valence::prelude::{App, Commands, DVec3, Resource, Startup};
 
 use super::TEST_AREA_BLOCK_EXTENT;
+use crate::persistence::ZoneRuntimeRecord;
 
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
@@ -169,6 +170,15 @@ impl ZoneRegistry {
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
         self.zones.iter_mut().find(|zone| zone.name == name)
+    }
+
+    pub fn apply_runtime_records(&mut self, runtime_records: &[ZoneRuntimeRecord]) {
+        for runtime_record in runtime_records {
+            if let Some(zone) = self.find_zone_mut(runtime_record.zone_id.as_str()) {
+                zone.spirit_qi = runtime_record.spirit_qi;
+                zone.danger_level = runtime_record.danger_level;
+            }
+        }
     }
 }
 
@@ -377,6 +387,7 @@ mod zone_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use crate::persistence::ZoneRuntimeRecord;
     use valence::prelude::DVec3;
 
     #[test]
@@ -540,6 +551,28 @@ mod zone_tests {
         let registry = ZoneRegistry::load_from_path(&valid_path);
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(registry.zones[0].spirit_qi, 1.0);
+    }
+
+    #[test]
+    fn apply_runtime_records_overrides_only_known_zones() {
+        let mut registry = ZoneRegistry::fallback();
+        registry.apply_runtime_records(&[
+            ZoneRuntimeRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                spirit_qi: -0.2,
+                danger_level: 3,
+            },
+            ZoneRuntimeRecord {
+                zone_id: "missing".to_string(),
+                spirit_qi: 0.8,
+                danger_level: 5,
+            },
+        ]);
+
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(registry.zones[0].spirit_qi, -0.2);
+        assert_eq!(registry.zones[0].danger_level, 3);
     }
 
     fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
