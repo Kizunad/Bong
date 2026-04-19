@@ -240,6 +240,11 @@ pub(crate) fn attach_inventory_to_joined_clients(
         commands
             .entity(entity)
             .insert(crate::combat::components::DefenseStance::default());
+        // plan-skill-v1 §8 SkillSet 挂玩家 entity；consumed_scrolls 一生累积（死透重生由
+        // plan-death-lifecycle §4/§5 新建 default 实例，不迁移）。
+        commands
+            .entity(entity)
+            .insert(crate::skill::components::SkillSet::default());
         tracing::info!("[bong][inventory] attached PlayerInventory to joined client {entity:?}");
     }
 }

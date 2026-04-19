@@ -7,6 +7,8 @@ use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::player::state::canonical_player_id;
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 use super::components::{
     BotanyHarvestMode, BotanyPhase, BotanySkillChangedEvent, BotanyTrampleRoll, HarvestSession,
@@ -17,8 +19,9 @@ use super::registry::{BotanyKindRegistry, BotanyPlantId, PlantVariant};
 
 const MANUAL_DURATION_TICKS: u64 = 40;
 const AUTO_DURATION_TICKS: u64 = 120;
+/// plan-skill-v1 §7.1：野外采集 手动 +2 · 自动 +5。
 const MANUAL_SKILL_XP: u64 = 2;
-const AUTO_SKILL_XP: u64 = 6;
+const AUTO_SKILL_XP: u64 = 5;
 const MOVEMENT_BREAK_DISTANCE_SQ: f64 = 0.3 * 0.3;
 /// plan §1.3 路径踩踏半径：玩家水平距离 < 0.7 块（约一个方块 footprint）视为踩到。
 const TRAMPLE_RADIUS_SQ: f64 = 0.7 * 0.7;
@@ -73,6 +76,7 @@ pub fn complete_harvest_for_player(
     static_points: &mut PlantStaticPointStore,
     terminal_events: &mut EventWriter<HarvestTerminalEvent>,
     skill_events: &mut EventWriter<BotanySkillChangedEvent>,
+    skill_xp_events: &mut EventWriter<SkillXpGain>,
     now_tick: u64,
 ) -> Result<(), String> {
     let session = store
@@ -125,6 +129,21 @@ pub fn complete_harvest_for_player(
     skill_events.send(BotanySkillChangedEvent {
         client_entity: session.client_entity,
         state: new_skill,
+    });
+    // plan-skill-v1 §10 botany 钩子：同一笔 XP 同步入 SkillSet（herbalism）。
+    // BotanySkillChangedEvent 仍保留给 client 派生视图（plan §5.1 P7 完全退役）。
+    let action = match session.mode {
+        BotanyHarvestMode::Manual => "harvest_manual",
+        BotanyHarvestMode::Auto => "harvest_auto",
+    };
+    skill_xp_events.send(SkillXpGain {
+        char_entity: session.client_entity,
+        skill: SkillId::Herbalism,
+        amount: xp as u32,
+        source: XpGainSource::Action {
+            plan_id: "botany",
+            action,
+        },
     });
 
     snapshot_events.send(InventorySnapshotRequestEvent {
@@ -334,6 +353,7 @@ pub fn tick_harvest_sessions(
     mut static_points: ResMut<PlantStaticPointStore>,
     mut terminal_events: EventWriter<HarvestTerminalEvent>,
     mut skill_events: EventWriter<BotanySkillChangedEvent>,
+    mut skill_xp_events: EventWriter<SkillXpGain>,
 ) {
     let Some(gameplay_tick) = gameplay_tick else {
         return;
@@ -359,6 +379,7 @@ pub fn tick_harvest_sessions(
             &mut static_points,
             &mut terminal_events,
             &mut skill_events,
+            &mut skill_xp_events,
             now,
         );
     }
@@ -438,6 +459,17 @@ mod tests {
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
 
+    /// plan-skill-v1 §7.1 botany 行 XP 数值锚点：野外采集 手动 +2 · 自动 +5。
+    /// 若此测试挂掉意味着有人偷偷改了 skill source-of-truth 数值。
+    #[test]
+    fn harvest_xp_constants_match_skill_plan_section_seven_one() {
+        assert_eq!(
+            MANUAL_SKILL_XP, 2,
+            "野外采集 手动 须 = 2（plan-skill §7.1）"
+        );
+        assert_eq!(AUTO_SKILL_XP, 5, "野外采集 自动 须 = 5（plan-skill §7.1）");
+    }
+
     fn plant_entity(app: &mut App, zone_name: &str) -> Entity {
         app.world_mut()
             .spawn(Plant {
@@ -468,6 +500,7 @@ mod tests {
         app.add_event::<InventorySnapshotRequestEvent>();
         app.add_event::<HarvestTerminalEvent>();
         app.add_event::<BotanySkillChangedEvent>();
+        app.add_event::<SkillXpGain>();
         app
     }
 

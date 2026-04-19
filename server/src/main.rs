@@ -12,7 +12,6 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
-#[allow(dead_code)]
 mod skill;
 mod world;
 
@@ -47,6 +46,7 @@ fn main() {
     player::register(&mut app);
     inventory::register(&mut app);
     botany::register(&mut app);
+    skill::register(&mut app);
     cultivation::register(&mut app);
     alchemy::register(&mut app);
     combat::register(&mut app);
