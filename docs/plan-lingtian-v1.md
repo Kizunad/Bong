@@ -17,12 +17,12 @@
 
 **进度**（2026-04-19，分支 `plan-lingtian-v1`）：
 - ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法）+ `register(&mut app)` 双双接入 main.rs
-- ✅ **P1 数据 / 状态机已落**：`hoe.rs`（HoeKind 三档 + uses_max + 耐久成本）+ `assets/items/lingtian.toml`（hoe_iron / hoe_lingtie / hoe_xuantie）+ `terrain.rs`（地形适合性 / 拒绝原因）+ `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · 重复 tick no-op）+ `events.rs`（StartTill / TillCompleted / StartRenew / RenewCompleted）。**纯状态机层就绪，ECS system / 方块 ↔ 玩家输入桥未接**
-- ⏳ **P1 收尾未做**：ECS 驱动 system（事件 → session 推进 → plot 落地）· valence BlockKind ↔ TerrainKind 适配 · 玩家主手锄读取 · inventory.durability 扣减
-- ⏳ **P0/P1 共同收尾**：BlockEntity 持久化（依 plan-persistence-v1）· 方块放置 e2e 验收
+- ✅ **P1 数据 / 状态机 / ECS 已落**：`hoe.rs` 三档锄 + `assets/items/lingtian.toml` + `terrain.rs` 地形适合性 + `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · finish 后 tick no-op）+ `events.rs` 四事件 + `systems.rs`（`ActiveLingtianSessions` Resource · `handle_start_till` / `handle_start_renew` 起 session 系统 · `tick_lingtian_sessions` · `apply_completed_sessions` spawn/reset Plot + 扣锄耐久 · 单 player 单 session · 锄归零自动从 equipped 移除）。**端到端 e2e 集成测覆盖：起 → 推 40t → plot spawn + 锄 -0.05；翻新 → plot 重置 + 锄 -0.01；锄归零移除装备**
+- ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配（实际方块种类读取，由上层适配层填 `StartTillRequest.terrain`）· 客户端 → server 的实际请求路由（CustomPayload / network handler 接入）
+- ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI
 - ⏳ **P2+ 全未动**：生长 tick / plot_qi / 区域漏吸 / 补灵浮窗 / 收获 / 偷菜偷灵 / 密度阈值 / 客户端 UI
 
-测试：546/546 全过（含 botany + lingtian 17 单测）；我的文件 clippy 0 警告。
+测试：553/553 全过（botany + lingtian 共 23 单测，含 6 个 ECS e2e）；我的文件 clippy 0 警告。
 
 ---
 
