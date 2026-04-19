@@ -42,6 +42,10 @@ const NPC_ROW_SCHEMA_VERSION: i32 = 1;
 const NPC_DIGEST_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_DIGEST_SWEEP_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
 const NPC_SNAPSHOT_INTERVAL_TICKS: u32 = 20 * 60;
+const STARTUP_BACKUP_DIR: &str = "data/backups";
+const STARTUP_BACKUP_FILE_PREFIX: &str = "bong-";
+const STARTUP_BACKUP_FILE_SUFFIX: &str = ".db";
+const STARTUP_BACKUP_KEEP_COUNT: usize = 7;
 
 #[derive(Debug, Clone)]
 pub struct PersistenceSettings {
@@ -333,6 +337,32 @@ pub fn register(app: &mut App) {
 }
 
 fn bootstrap_persistence_system(settings: valence::prelude::Res<PersistenceSettings>) {
+    let wall_clock = current_unix_seconds();
+    match run_startup_backup(&settings, wall_clock) {
+        Ok(Some(path)) => tracing::info!(
+            "[bong][persistence] created startup sqlite backup at {}",
+            path.display()
+        ),
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            "[bong][persistence] failed to create startup sqlite backup at {}: {error}",
+            settings.db_path().display()
+        ),
+    }
+
+    match prune_startup_backups(&settings, STARTUP_BACKUP_KEEP_COUNT) {
+        Ok(pruned) if !pruned.is_empty() => tracing::info!(
+            "[bong][persistence] pruned {} stale startup backup(s) under {}",
+            pruned.len(),
+            resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR).display()
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(
+            "[bong][persistence] failed to prune startup backups under {}: {error}",
+            resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR).display()
+        ),
+    }
+
     if let Err(error) = bootstrap_sqlite(settings.db_path(), settings.server_run_id()) {
         panic!(
             "[bong][persistence] failed to bootstrap sqlite at {}: {error}",
@@ -799,6 +829,85 @@ fn current_unix_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_secs() as i64
+}
+
+fn run_startup_backup(
+    settings: &PersistenceSettings,
+    wall_clock: i64,
+) -> io::Result<Option<PathBuf>> {
+    if !settings.db_path().exists() {
+        return Ok(None);
+    }
+
+    let backup_path = startup_backup_path(settings, wall_clock);
+    snapshot_existing_sqlite(settings.db_path(), &backup_path)?;
+    Ok(Some(backup_path))
+}
+
+fn startup_backup_path(settings: &PersistenceSettings, wall_clock: i64) -> PathBuf {
+    resolve_persistence_relative_path(settings, STARTUP_BACKUP_DIR).join(format!(
+        "{STARTUP_BACKUP_FILE_PREFIX}{}{STARTUP_BACKUP_FILE_SUFFIX}",
+        format_startup_backup_stamp(wall_clock),
+    ))
+}
+
+fn format_startup_backup_stamp(unix_seconds: i64) -> String {
+    let days = unix_seconds.div_euclid(86_400);
+    let seconds_of_day = unix_seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}",)
+}
+
+fn snapshot_existing_sqlite(db_path: &Path, backup_path: &Path) -> io::Result<()> {
+    if let Some(parent) = backup_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if backup_path.exists() {
+        fs::remove_file(backup_path)?;
+    }
+
+    let connection = Connection::open(db_path).map_err(io::Error::other)?;
+    configure_connection(&connection).map_err(io::Error::other)?;
+    let escaped_path = backup_path.to_string_lossy().replace('\'', "''");
+    let sql = format!("VACUUM main INTO '{escaped_path}';");
+    connection.execute_batch(&sql).map_err(io::Error::other)
+}
+
+fn prune_startup_backups(settings: &PersistenceSettings, keep: usize) -> io::Result<Vec<PathBuf>> {
+    let backup_root = resolve_persistence_relative_path(settings, STARTUP_BACKUP_DIR);
+    let mut backup_files = collect_files_with_suffix(&backup_root, STARTUP_BACKUP_FILE_SUFFIX)?;
+    backup_files.retain(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with(STARTUP_BACKUP_FILE_PREFIX)
+                    && name.ends_with(STARTUP_BACKUP_FILE_SUFFIX)
+            })
+    });
+    backup_files.sort_by(|left, right| {
+        left.file_name()
+            .cmp(&right.file_name())
+            .then_with(|| left.cmp(right))
+    });
+
+    if backup_files.len() <= keep {
+        return Ok(Vec::new());
+    }
+
+    let stale_count = backup_files.len() - keep;
+    let stale_files = backup_files
+        .into_iter()
+        .take(stale_count)
+        .collect::<Vec<_>>();
+    for path in &stale_files {
+        fs::remove_file(path)?;
+    }
+
+    Ok(stale_files)
 }
 
 pub fn persist_near_death_transition(
@@ -2742,6 +2851,141 @@ mod persistence_tests {
             .optional()
             .expect("sqlite_master player_core query should succeed");
         assert_eq!(player_core_exists.as_deref(), Some("player_core"));
+    }
+
+    #[test]
+    fn startup_backup_creates_pre_bootstrap_snapshot_for_existing_db() {
+        let (settings, root) = persistence_settings("startup-backup-pre-bootstrap");
+        let wall_clock = 1_735_689_600;
+        bootstrap_sqlite(settings.db_path(), "first-run").expect("first bootstrap should succeed");
+
+        let backup_path = run_startup_backup(&settings, wall_clock)
+            .expect("startup backup should succeed")
+            .expect("existing db should produce a startup backup");
+        bootstrap_sqlite(settings.db_path(), "second-run")
+            .expect("second bootstrap should succeed");
+
+        assert_eq!(backup_path, startup_backup_path(&settings, wall_clock));
+        assert!(backup_path.exists(), "startup backup file should exist");
+
+        let live_connection = Connection::open(settings.db_path()).expect("live db should open");
+        let live_bootstrap_events: i64 = live_connection
+            .query_row("SELECT COUNT(*) FROM bootstrap_events", [], |row| {
+                row.get(0)
+            })
+            .expect("live bootstrap event count should be readable");
+        assert_eq!(live_bootstrap_events, 2);
+
+        let backup_connection = Connection::open(&backup_path).expect("backup db should open");
+        let backup_bootstrap_events: i64 = backup_connection
+            .query_row("SELECT COUNT(*) FROM bootstrap_events", [], |row| {
+                row.get(0)
+            })
+            .expect("backup bootstrap event count should be readable");
+        let integrity: String = backup_connection
+            .query_row("PRAGMA integrity_check;", [], |row| row.get(0))
+            .expect("backup integrity check should run");
+        assert_eq!(backup_bootstrap_events, 1);
+        assert_eq!(integrity, "ok");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_backup_retention_keeps_latest_seven_matching_backups() {
+        let (settings, root) = persistence_settings("startup-backup-retention");
+        let backup_root = resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR);
+        fs::create_dir_all(&backup_root).expect("backup root should be creatable");
+
+        for stamp in [
+            "20240101-000000",
+            "20240102-000000",
+            "20240103-000000",
+            "20240104-000000",
+            "20240105-000000",
+            "20240106-000000",
+            "20240107-000000",
+            "20240108-000000",
+            "20240109-000000",
+        ] {
+            fs::write(
+                backup_root.join(format!(
+                    "{STARTUP_BACKUP_FILE_PREFIX}{stamp}{STARTUP_BACKUP_FILE_SUFFIX}",
+                )),
+                b"snapshot",
+            )
+            .expect("backup fixture should be writable");
+        }
+        let unrelated = backup_root.join("note.txt");
+        fs::write(&unrelated, b"keep-me").expect("unrelated fixture should be writable");
+
+        let pruned = prune_startup_backups(&settings, STARTUP_BACKUP_KEEP_COUNT)
+            .expect("startup backup pruning should succeed");
+        let pruned_names = pruned
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("pruned backup should have a valid file name")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pruned_names,
+            vec![
+                "bong-20240101-000000.db".to_string(),
+                "bong-20240102-000000.db".to_string(),
+            ]
+        );
+
+        let mut remaining = collect_files_with_suffix(&backup_root, STARTUP_BACKUP_FILE_SUFFIX)
+            .expect("remaining backups should be enumerable")
+            .into_iter()
+            .filter_map(|path| {
+                let name = path.file_name()?.to_str()?;
+                if name.starts_with(STARTUP_BACKUP_FILE_PREFIX)
+                    && name.ends_with(STARTUP_BACKUP_FILE_SUFFIX)
+                {
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        remaining.sort();
+        assert_eq!(
+            remaining,
+            vec![
+                "bong-20240103-000000.db".to_string(),
+                "bong-20240104-000000.db".to_string(),
+                "bong-20240105-000000.db".to_string(),
+                "bong-20240106-000000.db".to_string(),
+                "bong-20240107-000000.db".to_string(),
+                "bong-20240108-000000.db".to_string(),
+                "bong-20240109-000000.db".to_string(),
+            ]
+        );
+        assert!(
+            unrelated.exists(),
+            "unrelated backup-root files should remain untouched"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_backup_skips_when_db_does_not_exist() {
+        let (settings, root) = persistence_settings("startup-backup-missing-db");
+        let backup = run_startup_backup(&settings, 1_735_689_600)
+            .expect("missing db should skip backup without error");
+
+        assert!(backup.is_none());
+        assert!(
+            !resolve_persistence_relative_path(&settings, STARTUP_BACKUP_DIR).exists(),
+            "backup directory should not be created when the live db is absent"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
