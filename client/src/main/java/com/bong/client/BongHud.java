@@ -21,6 +21,7 @@ import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
+import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
@@ -123,6 +124,8 @@ public class BongHud {
                 OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
             } else if (command.isEdgeVignette()) {
                 EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            } else if (command.isEdgeInkWash()) {
+                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
     }

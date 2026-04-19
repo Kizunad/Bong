@@ -6,6 +6,7 @@ import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
+import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
@@ -46,11 +47,12 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         BongAnimCommand.register();
+        BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         BotanyHudBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx and /anim commands active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /spawnp commands active.");
     }
 }

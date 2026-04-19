@@ -5,6 +5,7 @@ import net.minecraft.util.Identifier;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -46,6 +47,11 @@ public final class VfxRegistry {
 
     public boolean contains(Identifier eventId) {
         return players.containsKey(eventId);
+    }
+
+    /** 当前所有已注册事件 id 的不可变快照。/spawnp tab 补全与 list 子命令用。 */
+    public Set<Identifier> ids() {
+        return Set.copyOf(players.keySet());
     }
 
     /** 仅测试。生产代码不要调用。 */

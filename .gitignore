@@ -76,3 +76,6 @@ third_party/
 # 手动评审用的 worktree
 .worktree/
 tmp/
+
+# Reference 3D 模型（Tripo / 素材站下载），只作本地建模参考不进 repo
+local_models/

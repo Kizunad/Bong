@@ -123,6 +123,11 @@ public final class VisualEffectPlanner {
             case PRESSURE_JITTER -> List.of();
             // 受创后退：纯相机位移，走 MixinCamera TAIL 注入的 moveBy，HUD 层无输出
             case HIT_PUSHBACK -> List.of();
+            // 水墨边框：纯贴图 overlay，alpha 跟随 scaledIntensity 淡入淡出
+            case MEDITATION_INK_WASH -> List.of(HudRenderCommand.edgeInkWash(
+                HudRenderLayer.VISUAL,
+                HudTextHelper.withAlpha(profile.baseColor(), alpha)
+            ));
         };
     }
 

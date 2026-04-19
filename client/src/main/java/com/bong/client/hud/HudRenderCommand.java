@@ -47,6 +47,10 @@ public final class HudRenderCommand {
         return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, 0, 0, color, null);
     }
 
+    public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
+        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color);
+    }
+
     public static HudRenderCommand toast(HudRenderLayer layer) {
         return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0, null);
     }
@@ -128,6 +132,10 @@ public final class HudRenderCommand {
         return kind == Kind.EDGE_VIGNETTE;
     }
 
+    public boolean isEdgeInkWash() {
+        return kind == Kind.EDGE_INK_WASH;
+    }
+
     public boolean isToast() {
         return kind == Kind.TOAST;
     }
@@ -152,6 +160,7 @@ public final class HudRenderCommand {
         TEXT,
         SCREEN_TINT,
         EDGE_VIGNETTE,
+        EDGE_INK_WASH,
         TOAST,
         RECT,
         TEXTURED_RECT,
