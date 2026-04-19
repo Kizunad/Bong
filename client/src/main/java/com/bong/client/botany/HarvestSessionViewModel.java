@@ -12,6 +12,7 @@ public record HarvestSessionViewModel(
     boolean interrupted,
     boolean completed,
     String detail,
+    double[] targetPos,
     long updatedAtMillis
 ) {
     private static final HarvestSessionViewModel EMPTY = new HarvestSessionViewModel(
@@ -26,6 +27,7 @@ public record HarvestSessionViewModel(
         false,
         false,
         "",
+        null,
         0L
     );
 
@@ -36,6 +38,7 @@ public record HarvestSessionViewModel(
         plantKindId = normalize(plantKindId);
         progress = clamp(progress);
         detail = normalize(detail);
+        targetPos = normalizePos(targetPos);
         updatedAtMillis = Math.max(0L, updatedAtMillis);
     }
 
@@ -57,6 +60,38 @@ public record HarvestSessionViewModel(
         String detail,
         long updatedAtMillis
     ) {
+        return create(
+            sessionId,
+            targetId,
+            targetName,
+            plantKindId,
+            mode,
+            progress,
+            autoSelectable,
+            requestPending,
+            interrupted,
+            completed,
+            detail,
+            null,
+            updatedAtMillis
+        );
+    }
+
+    public static HarvestSessionViewModel create(
+        String sessionId,
+        String targetId,
+        String targetName,
+        String plantKindId,
+        BotanyHarvestMode mode,
+        double progress,
+        boolean autoSelectable,
+        boolean requestPending,
+        boolean interrupted,
+        boolean completed,
+        String detail,
+        double[] targetPos,
+        long updatedAtMillis
+    ) {
         if (normalize(sessionId).isEmpty()) {
             return empty();
         }
@@ -72,6 +107,7 @@ public record HarvestSessionViewModel(
             interrupted,
             completed,
             detail,
+            targetPos,
             updatedAtMillis
         );
     }
@@ -82,6 +118,10 @@ public record HarvestSessionViewModel(
 
     public boolean interactive() {
         return !isEmpty() && !interrupted && !completed;
+    }
+
+    public boolean hasTargetPos() {
+        return targetPos != null && targetPos.length == 3;
     }
 
     public String displayTargetName() {
@@ -110,6 +150,7 @@ public record HarvestSessionViewModel(
             false,
             false,
             detail,
+            targetPos,
             nowMillis
         );
     }
@@ -130,6 +171,7 @@ public record HarvestSessionViewModel(
             true,
             false,
             reason,
+            targetPos,
             nowMillis
         );
     }
@@ -143,5 +185,17 @@ public record HarvestSessionViewModel(
             return 0.0;
         }
         return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    private static double[] normalizePos(double[] src) {
+        if (src == null || src.length != 3) {
+            return null;
+        }
+        for (double v : src) {
+            if (!Double.isFinite(v)) {
+                return null;
+            }
+        }
+        return new double[] { src[0], src[1], src[2] };
     }
 }

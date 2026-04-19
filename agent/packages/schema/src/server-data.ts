@@ -226,6 +226,11 @@ export const ServerDataBotanyHarvestProgressV1 = Type.Object(
     interrupted: Type.Boolean(),
     completed: Type.Boolean(),
     detail: Type.String(),
+    // plan §1.3 投影锚定：目标植物世界坐标，client 侧做 world→screen 投影定位浮窗。
+    // 省略时 client 回退到准星右侧锚点。
+    target_pos: Type.Optional(
+      Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    ),
   },
   { additionalProperties: false },
 );

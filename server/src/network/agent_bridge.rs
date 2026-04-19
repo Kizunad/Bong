@@ -592,6 +592,7 @@ mod server_data_tests {
             interrupted: false,
             completed: false,
             detail: "晨露未散".to_string(),
+            target_pos: Some([10.5, 64.0, 10.5]),
         });
         let botany_bytes = serialize_server_data_payload(&botany_payload)
             .expect("botany payload should serialize");

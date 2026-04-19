@@ -1,6 +1,7 @@
 import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
+import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
@@ -68,6 +69,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
 } as const satisfies Record<string, TSchema>;
 
@@ -108,6 +110,7 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
   "server-data-botany-skill-v1.json":
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
 } as const satisfies Record<string, TSchema>;
 

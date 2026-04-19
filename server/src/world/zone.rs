@@ -38,6 +38,15 @@ pub enum BotanyZoneTag {
     BloodValley,
     Cave,
     Wastes,
+    /// 负灵域（噬脉根 / 浮尘草 生长地）。plan §1.1 特殊路径，不扣 zone spirit_qi。
+    /// 判定：zone.spirit_qi < -0.2 即视为负灵域（阈值可调）。
+    NegativeField,
+    // 注：原计划加 DeathEdge / ResidueAsh / FakeVeinBurn，但调查后发现它们不是 zone 属性：
+    //  - DeathEdge 是动态的"灵气衰退锋线"
+    //  - ResidueAsh 是 block 级（残灰方块表面）
+    //  - FakeVeinBurn 是事件级临时焦土
+    // 这些生境对应的植物 (yang_jing_tai / hui_jin_tai / tian_nu_jiao) 全部走 EventTriggered
+    // 路径，由专属事件系统（plan-residue / plan-tribulation）触发，不挂 zone tag。
 }
 
 impl Zone {
@@ -203,6 +212,13 @@ impl Zone {
         }
         if self.name.eq_ignore_ascii_case("north_wastes") {
             tags.push(BotanyZoneTag::Wastes);
+        }
+
+        // 负灵域判定（plan §1.1 特殊路径）：spirit_qi 持续低于 -0.2 即视为负灵域，
+        // 可让 shi_mai_gen / fu_chen_cao / zhong_yan_teng 等 NegativeField 植物
+        // 走 ZoneRefresh / StaticPoint 生长链（event-triggered 植物不受此影响）。
+        if self.spirit_qi < -0.2 {
+            tags.push(BotanyZoneTag::NegativeField);
         }
 
         if tags.is_empty() {

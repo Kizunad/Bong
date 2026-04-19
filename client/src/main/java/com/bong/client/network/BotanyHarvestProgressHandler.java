@@ -3,6 +3,7 @@ package com.bong.client.network;
 import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -32,6 +33,7 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
             readOptionalBoolean(payload, "interrupted") == Boolean.TRUE,
             readOptionalBoolean(payload, "completed") == Boolean.TRUE,
             readOptionalString(payload, "detail"),
+            readOptionalDoubleTriple(payload, "target_pos"),
             System.currentTimeMillis()
         );
 
@@ -72,5 +74,25 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
             return null;
         }
         return element.getAsJsonPrimitive();
+    }
+
+    private static double[] readOptionalDoubleTriple(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || !element.isJsonArray()) {
+            return null;
+        }
+        JsonArray array = element.getAsJsonArray();
+        if (array.size() != 3) {
+            return null;
+        }
+        double[] out = new double[3];
+        for (int i = 0; i < 3; i++) {
+            JsonElement el = array.get(i);
+            if (!el.isJsonPrimitive() || !el.getAsJsonPrimitive().isNumber()) {
+                return null;
+            }
+            out[i] = el.getAsDouble();
+        }
+        return out;
     }
 }

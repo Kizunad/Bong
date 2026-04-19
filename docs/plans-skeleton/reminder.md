@@ -101,6 +101,27 @@
 
 ---
 
+## plan-botany-v1 → 天道 agent 钩子（待 agent 侧接入）
+
+- [ ] **订阅 `bong:botany/ecology` channel**（plan §7 生态可视化 · server 每 600 tick / ~30s 发布 `BotanyEcologySnapshotV1`）。
+  - payload 结构：`{ v: 1, tick, zones: [{ zone, spirit_qi, plant_counts[{ kind, count }], variant_counts[{ variant: none|thunder|tainted, count }] }] }`
+  - agent 用途：
+    - 全局灵气重分配决策（plan-worldview §七 天道回收）—— 哪些 zone 植物密度过高/灵气透支
+    - 天道观测稀有变种分布（Thunder / Tainted）—— 用于 narrative 事件埋点
+    - 调试用：agent 掉线时靠 channel 追数据
+  - Rust side：`crate::schema::botany::BotanyEcologySnapshotV1`，`RedisOutbound::BotanyEcology`
+  - TS side：`@bong/schema` `BotanyEcologySnapshotV1` + `CHANNELS.BOTANY_ECOLOGY`
+
+---
+
+## plan-inventory-v1（并行开发中，botany 接入的已知缺口）
+
+- [ ] **塔科夫 grid placement 未实装**（`server/src/inventory/mod.rs:376 add_item_to_player_inventory`）：目前每次 harvest drop 直接 `main_pack.items.push({ row:0, col:0, instance })`，不做空 slot 搜索也不做冲突检测。单种植物多株 / 多植物同时入包 row-col 全部冲撞在 (0,0)，客户端塔科夫格位渲染会堆叠显示异常。
+- [ ] **stacking 未实装**：`add_item_to_player_inventory(..., stack_count)` 被 botany 调用时传 1，但如果后续传 >1，当前实现仅创建一个 `ItemInstance.stack_count = N` 而不与既有实例合并；也不校验 stack_count 与物品 `category` 的堆叠上限。
+- botany 这边的调用点（`server/src/botany/harvest.rs::complete_harvest_for_player`）已按"每次给 1 株 = 1 instance"写；等 inventory plan 把 placement + stacking 接上，botany 侧不需要改——`ItemRegistry` + `add_item_to_player_inventory` 的合约保持即可。
+
+---
+
 ## 通用 / 跨 plan
 
 - [ ] 所有 plan 的"开放问题"节尚未做过一次 review pass — 可能有早期假设已被后续决策推翻

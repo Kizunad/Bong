@@ -53,6 +53,19 @@ public final class BongHudOrchestrator {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(snapshot, combat, nowMillis, widthMeasurer, maxTextWidth, screenWidth, screenHeight, null);
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         int normalizedWidth = normalizeWidth(maxTextWidth);
@@ -138,7 +151,8 @@ public final class BongHudOrchestrator {
             commands.addAll(BotanyHudPlanner.buildCommands(
                 widthMeasurer,
                 screenWidth,
-                screenHeight
+                screenHeight,
+                botanyAnchor
             ));
         }
 

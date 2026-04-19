@@ -72,6 +72,23 @@
     },
     "detail": {
       "type": "string"
+    },
+    "target_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     }
   }
 }

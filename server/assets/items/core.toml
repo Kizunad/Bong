@@ -85,3 +85,192 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "根性沉稳，能在低灵压环境下维持元气不散。"
+
+[[item]]
+id = "kong_shou_hen"
+name = "空兽痕"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.08
+rarity = "epic"
+spirit_quality_initial = 0.4
+description = "负灵域中异变之残灰，形若兽骨。可炼抗灵压丹，极少见。"
+
+# ===== plan-botany-v1 §1.1 正典扩展（16 种，末法药材十七种 + 辛草试毒录）=====
+
+[[item]]
+id = "jie_gu_rui"
+name = "解蛊蕊"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.85
+description = "紫色小花，幽暗地穴湿处所生。解毒蛊之必备，涉湿地者须常备一颗。"
+
+[[item]]
+id = "yang_jing_tai"
+name = "养经苔"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.06
+rarity = "uncommon"
+spirit_quality_initial = 0.7
+description = "生于死域边缘，绿如铁锈。可养经脉裂痕，爆脉之后必服。"
+
+[[item]]
+id = "qing_zhuo_cao"
+name = "清浊草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.9
+description = "叶五瓣，生于馈赠区与负灵域交界。可中和异种真元，专克染色浊乱者。"
+
+[[item]]
+id = "an_shen_guo"
+name = "安神果"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.14
+rarity = "common"
+spirit_quality_initial = 0.8
+description = "淡黄色桃形果，生于青云残峰外门梯田。可镇心镜，对顿悟修士尤佳。"
+
+[[item]]
+id = "shi_mai_gen"
+name = "噬脉根"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.12
+rarity = "epic"
+spirit_quality_initial = 0.6
+description = "生于负灵域浅层，剧毒。毒蛊原料，误食即经脉暴走。每处裂隙仅生一株。"
+
+[[item]]
+id = "ling_yan_shi_zhi"
+name = "灵眼石芝"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.07
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "菌形，白如玉。仅生于灵眼正上方三尺，固元突破之最佳辅料。"
+
+[[item]]
+id = "ye_ku_teng"
+name = "夜枯藤"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.3
+rarity = "rare"
+spirit_quality_initial = 0.65
+description = "生于幽暗地穴深处。藤能缠物吸真元，采时须戴十层麻手套。"
+
+[[item]]
+id = "hui_jin_tai"
+name = "灰烬苔"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "残灰方块表面之薄层苔藓，灰黑与方块同色。可外敷止血，不可久服。"
+
+[[item]]
+id = "zhen_jie_zi"
+name = "针芥子"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.08
+rarity = "uncommon"
+spirit_quality_initial = 0.85
+description = "烈辛草本，青云残峰与灵泉湿地均有。凝脉散疏通药、刺经膏主料。"
+
+[[item]]
+id = "shao_hou_man"
+name = "烧喉蔓"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.16
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "幽暗地穴洞壁生蔓，发光暴露位置。固元丹辅料、清脉汤主料。"
+
+[[item]]
+id = "tian_nu_jiao"
+name = "天怒椒"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.02
+rarity = "legendary"
+spirit_quality_initial = 0.95
+description = "伪灵脉消散焦土所生，稍纵即逝。真元沸腾——自杀攻击之用。"
+
+[[item]]
+id = "fu_you_hua"
+name = "蜉蝣花"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "看似清丽，食一瓣即发狂，三日内必伤同伴。毒·可采不可炼。"
+
+[[item]]
+id = "wu_yan_guo"
+name = "无言果"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.09
+rarity = "uncommon"
+spirit_quality_initial = 0.55
+description = "形如安神果然无棱。误食即失语，永不能复。毒·可采不可炼。"
+
+[[item]]
+id = "hei_gu_jun"
+name = "黑骨菌"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.06
+rarity = "epic"
+spirit_quality_initial = 0.4
+description = "生于死人骨缝。毒入经脉，三息化骨为粉。炼丹师亦不敢动。"
+
+[[item]]
+id = "fu_chen_cao"
+name = "浮尘草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "uncommon"
+spirit_quality_initial = 0.45
+description = "看似无害，孢子飘散三里。吸入者真元自漏，勿轻易摘。毒·可采不可炼。"
+
+[[item]]
+id = "zhong_yan_teng"
+name = "终焉藤"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.22
+rarity = "legendary"
+spirit_quality_initial = 0.3
+description = "毒蛊师之终极原料，养藤者多自身先死。烧之三日不熄。"

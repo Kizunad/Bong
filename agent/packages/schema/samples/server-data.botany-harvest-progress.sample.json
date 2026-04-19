@@ -11,5 +11,6 @@
   "request_pending": false,
   "interrupted": false,
   "completed": false,
-  "detail": "晨露未散，适合手工采撷"
+  "detail": "晨露未散，适合手工采撷",
+  "target_pos": [10.5, 64.0, 10.5]
 }

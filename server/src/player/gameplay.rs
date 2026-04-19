@@ -207,6 +207,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                             (
                                 entity,
                                 canonical_player_id(username.0.as_str()),
+                                position.get(),
                                 zone_name_for_position(&zone_registry, position.get()),
                                 validation,
                             )
@@ -215,7 +216,9 @@ pub(crate) fn apply_queued_gameplay_actions(
                 })
         };
 
-        let Some((player_entity, canonical_player, zone_name, validation)) = player_context else {
+        let Some((player_entity, canonical_player, player_position, zone_name, validation)) =
+            player_context
+        else {
             tracing::warn!(
                 "[bong][gameplay] dropped queued action for unknown player `{}`: {:?}",
                 request.player,
@@ -249,6 +252,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                         apply_gather_action(
                             canonical_player.as_str(),
                             player_entity,
+                            player_position,
                             zone_name.as_str(),
                             event_tick,
                             &action,
@@ -304,6 +308,7 @@ fn bridge_debug_combat_action(
 fn apply_gather_action(
     canonical_player: &str,
     player_entity: Entity,
+    player_position: valence::prelude::DVec3,
     zone_name: &str,
     event_tick: u64,
     action: &GatherAction,
@@ -323,6 +328,7 @@ fn apply_gather_action(
                 action.target_entity,
                 plant_id,
                 action.mode.unwrap_or(BotanyHarvestMode::Manual),
+                [player_position.x, player_position.y, player_position.z],
                 event_tick,
             );
         }

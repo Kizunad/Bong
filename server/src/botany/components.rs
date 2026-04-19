@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Component, Entity, Resource};
+use valence::prelude::{bevy_ecs, Component, Entity, Event, Resource};
 
-use super::registry::BotanyPlantId;
+use super::registry::{BotanyPlantId, PlantVariant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotanyHarvestMode {
@@ -24,10 +24,13 @@ pub enum BotanyPhase {
 pub struct Plant {
     pub id: BotanyPlantId,
     pub zone_name: String,
+    pub position: [f64; 3],
     pub planted_at_tick: u64,
     pub wither_progress: u32,
     pub source_point: Option<u64>,
     pub harvested: bool,
+    pub trampled: bool,
+    pub variant: PlantVariant,
 }
 
 #[allow(dead_code)]
@@ -35,6 +38,7 @@ pub struct Plant {
 pub struct PlantStaticPoint {
     pub id: u64,
     pub zone_name: String,
+    pub position: [f64; 3],
     pub preferred_plant: BotanyPlantId,
     pub last_spawn_tick: Option<u64>,
     pub regen_ticks: u64,
@@ -97,7 +101,38 @@ pub struct HarvestSession {
     pub duration_ticks: u64,
     pub phase: BotanyPhase,
     pub last_progress: f32,
+    pub origin_position: [f64; 3],
 }
+
+/// 踩踏概率的可注入骰子。`chance_inverse = 20` ⇒ 1/20 = 5% （plan §1.3）。
+/// 测试里可覆盖（`chance_inverse = 1` 强制踩死；`= 0` 永不踩死）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotanyTrampleRoll {
+    pub chance_inverse: u32,
+}
+
+impl Default for BotanyTrampleRoll {
+    fn default() -> Self {
+        Self { chance_inverse: 20 }
+    }
+}
+
+impl Resource for BotanyTrampleRoll {}
+
+/// plan §7 植物变异概率（仅在 variant-qualifying zone 中掷）。
+/// 默认 `chance_inverse = 3` → 1/3 符合条件 zone 产出变种；测试可覆盖为 1 强制 / 0 禁用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotanyVariantRoll {
+    pub chance_inverse: u32,
+}
+
+impl Default for BotanyVariantRoll {
+    fn default() -> Self {
+        Self { chance_inverse: 3 }
+    }
+}
+
+impl Resource for BotanyVariantRoll {}
 
 impl HarvestSession {
     pub fn progress_at(&self, tick: u64) -> f32 {
@@ -118,7 +153,7 @@ impl HarvestSession {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BotanySkillState {
     pub level: u8,
     pub xp: u64,
@@ -190,29 +225,46 @@ pub struct PlantLifecycleClock {
     pub tick: u64,
 }
 
+/// 记录上一 tick 的"玩家-植物"近邻关系，用于 edge-triggered 踩踏判定：
+/// 仅在"本 tick 首次进入近邻范围"时掷骰子，避免玩家停留时每 tick 连掷。
+#[derive(Debug, Default)]
+pub struct PlantProximityTracker {
+    pub in_range: std::collections::HashSet<(Entity, Entity)>,
+}
+
+impl Resource for PlantProximityTracker {}
+
 impl Resource for PlantLifecycleClock {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InventorySnapshotPushTarget {
+/// bevy Event：客户端背包 snapshot 需要重推（采集完成 / 其他 inventory 变更）。
+/// 生产者 send；消费者 `emit_botany_inventory_snapshots` 在同一 tick 内读取发给 client。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
+pub struct InventorySnapshotRequestEvent {
     pub client_entity: Entity,
 }
 
-#[derive(Debug, Default)]
-pub struct InventorySnapshotPushQueue {
-    pending: Vec<InventorySnapshotPushTarget>,
+/// bevy Event：plan §1.3 採集 session 终结（中止 / 完成）。
+/// Session 在 enforce 或 tick 完成时已从 store 移除，故生产者在移除**前**发事件，
+/// 保证携带植物信息（kind / target_pos / detail）。
+#[derive(Debug, Clone, PartialEq, Event)]
+pub struct HarvestTerminalEvent {
+    pub client_entity: Entity,
+    pub session_id: String,
+    pub target_id: String,
+    pub target_name: String,
+    pub plant_kind: String,
+    pub mode: BotanyHarvestMode,
+    pub interrupted: bool,
+    pub completed: bool,
+    pub detail: String,
+    pub target_pos: Option<[f64; 3]>,
 }
 
-impl Resource for InventorySnapshotPushQueue {}
-
-impl InventorySnapshotPushQueue {
-    pub fn enqueue(&mut self, client_entity: Entity) {
-        self.pending
-            .push(InventorySnapshotPushTarget { client_entity });
-    }
-
-    pub fn drain(&mut self) -> Vec<InventorySnapshotPushTarget> {
-        std::mem::take(&mut self.pending)
-    }
+/// bevy Event：采药技能等级 / XP 变化（仅 add_skill_xp 路径发）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Event)]
+pub struct BotanySkillChangedEvent {
+    pub client_entity: Entity,
+    pub state: BotanySkillState,
 }
 
 #[cfg(test)]
@@ -231,6 +283,7 @@ mod tests {
             duration_ticks: 20,
             phase: BotanyPhase::InProgress,
             last_progress: 0.0,
+            origin_position: [0.0, 0.0, 0.0],
         };
 
         assert_eq!(session.progress_at(0), 0.0);

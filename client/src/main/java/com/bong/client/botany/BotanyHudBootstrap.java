@@ -58,6 +58,16 @@ public final class BotanyHudBootstrap {
         if (client == null || client.player == null) {
             return;
         }
+
+        // 拖拽跟踪：即使 session 未选模式也要消费鼠标移动，保持 panel 平滑跟随
+        if (BotanyDragState.isDragging()) {
+            double mx = client.mouse.getX() * client.getWindow().getScaledWidth()
+                / (double) client.getWindow().getWidth();
+            double my = client.mouse.getY() * client.getWindow().getScaledHeight()
+                / (double) client.getWindow().getHeight();
+            BotanyDragState.tickDrag(mx, my);
+        }
+
         HarvestSessionViewModel session = HarvestSessionStore.snapshot();
         if (!session.interactive() || session.mode() == null) {
             return;

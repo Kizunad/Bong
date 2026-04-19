@@ -181,8 +181,8 @@ zone.spirit_qi
 | `chi_sui_cao`（赤髓草，烈辛）| 区域专属 | BloodValley 红砂岩 | 1.0 | 0.005 | — | biome 过滤 + 凝脉/固元丹主料 |
 | `gu_yuan_gen`（固元根）| 区域专属 + 静态点 | 深处 · `spirit_qi > 0.6` | 0.3 | 0.01 | 6h | 静态点再生测试 |
 | `hui_jin_tai`（灰烬苔）| 事件触发 | 残灰方块表面 | — | 0 | 40min | 基底触发（残灰方块） |
-| xue_cao（血草） | 区域专属 | BloodValley | 1.0 | 0.005 | — | biome 过滤 |
-| shi_xin_hua（尸心花） | 极稀 | 任意，兽尸旁 3 块 | event | 0 | 一次性 | 事件触发生长 |
+| xue_cao（血草） | 区域专属 | BloodValley | 1.0 | 0.005 | — | biome 过滤（alias → chi_sui_cao） |
+| `kong_shou_hen`（空兽痕）| 极稀 | 任意，兽尸旁 3 块 | event | 0 | 一次性 | 事件触发生长（异变兽死亡） |
 
 ### §3.2 初始 biome 标签映射
 
@@ -214,7 +214,7 @@ zone.spirit_qi
 - [ ] `BotanyTick` system（定期刷新 + 凋零检查）
 - [ ] `HarvestSession` resource（进行中的采集，map: player_id → session）
 - [ ] Events：`PlantSpawn` / `PlantWither` / `HarvestStart` / `HarvestComplete` / `HarvestInterrupt`
-- [ ] Channel：`bong:botany/spawn` · `bong:botany/wither` · `bong:botany/harvest_progress`
+- [ ] Channel：`bong:botany/harvest_progress`（玩家维度） · `bong:botany/ecology`（zone 聚合，每 30s；覆盖原 spawn/wither 用途——每株高频推对 agent 不友好）
 - [ ] 接入 `zone.spirit_qi` 双向流动（生长扣 / 死亡归还）
 
 ### Client 侧
@@ -234,7 +234,7 @@ zone.spirit_qi
 | P1 | 凋零 + 灵气归还 | 灵气降到阈值下植物死，spirit_qi 回补可观测 |
 | P2 | 区域专属 + StaticPlantPoint 再生 | 灵木在灵泉湿地静态点，采后 3h 再生 |
 | P3 | HarvestSession 浮窗 + 手动/自动二选 + BotanySkill + 打断/踩踏 | 新手只能手动；练到 Lv.3 解锁自动；踩踏概率弄死 |
-| P4 | 事件触发（兽尸 → 尸心花） | 击杀异变兽后尸旁生成 |
+| P4 | 事件触发（兽尸 → 空兽痕） | 击杀异变兽后尸旁生成 kong_shou_hen（对齐 §1.1 + §1.2.3 正典；原稿 shi_xin_hua 不在 library，违反 §10） |
 | P5 | alchemy / forge 接入真实 item 替换 placeholder | 开脉丹炼制不再用 string id |
 
 ---
@@ -247,7 +247,7 @@ zone.spirit_qi
 - [ ] **plan-inventory-v1**：植物 item 定义（尺寸 / 堆叠 / 操作磨损）
 - [ ] **plan-worldgen-v3.1.md**：worldgen 只负责 biome 标签，不管植物分布
 - [ ] **plan-npc-ai-v1**：散修 NPC 采集行为（共用 HarvestSession）
-- [ ] **plan-tribulation-v1**：天劫遗址触发 shi_xin_hua / 雷霆竹生成
+- [ ] **plan-tribulation-v1**：天劫遗址触发 kong_shou_hen / 雷霆竹生成（或新增 library 正典专用雷击植）
 
 ---
 

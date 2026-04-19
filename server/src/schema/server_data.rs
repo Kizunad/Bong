@@ -97,6 +97,7 @@ pub enum ServerDataPayloadV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        target_pos: Option<[f64; 3]>,
     },
     BotanySkill {
         level: u64,
@@ -178,6 +179,8 @@ enum ServerDataPayloadWireV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_pos: Option<[f64; 3]>,
     },
     BotanySkill {
         level: u64,
@@ -352,6 +355,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                target_pos,
             } => Ok(Self::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -364,6 +368,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                target_pos,
             }),
             ServerDataPayloadWireV1::BotanySkill {
                 level,
@@ -472,6 +477,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted,
                 completed,
                 detail,
+                target_pos,
             } => Self::BotanyHarvestProgress {
                 session_id: session_id.clone(),
                 target_id: target_id.clone(),
@@ -484,6 +490,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted: *interrupted,
                 completed: *completed,
                 detail: detail.clone(),
+                target_pos: *target_pos,
             },
             ServerDataPayloadV1::BotanySkill {
                 level,
