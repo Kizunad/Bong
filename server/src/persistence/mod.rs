@@ -26,8 +26,9 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 6;
+const CURRENT_USER_VERSION: i32 = 7;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
+const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
 pub const WORLD_MODEL_STATE_FIELD_CURRENT_ERA: &str = "current_era";
 pub const WORLD_MODEL_STATE_FIELD_ZONE_HISTORY: &str = "zone_history";
@@ -260,6 +261,11 @@ pub struct ActiveTribulationRecord {
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AscensionQuotaRecord {
+    pub occupied_slots: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -776,6 +782,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 7 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS ascension_quota (
+                row_id INTEGER PRIMARY KEY CHECK (row_id = 1),
+                occupied_slots INTEGER NOT NULL CHECK (occupied_slots >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 7;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
@@ -884,6 +908,33 @@ pub fn delete_active_tribulation(settings: &PersistenceSettings, char_id: &str) 
         )
         .map_err(io::Error::other)?;
     Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_ascension_quota(settings: &PersistenceSettings) -> io::Result<AscensionQuotaRecord> {
+    let connection = open_persistence_connection(settings)?;
+    load_ascension_quota_from_connection(&connection)
+}
+
+pub fn complete_tribulation_ascension(
+    settings: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<AscensionQuotaRecord> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let mut quota = load_ascension_quota_from_transaction(&transaction)?;
+    quota.occupied_slots = quota.occupied_slots.saturating_add(1);
+
+    transaction
+        .execute(
+            "DELETE FROM tribulations_active WHERE char_id = ?1",
+            params![char_id],
+        )
+        .map_err(io::Error::other)?;
+    upsert_ascension_quota(&transaction, &quota, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(quota)
 }
 
 fn record_bootstrap_event(connection: &Connection, server_run_id: &str) -> rusqlite::Result<()> {
@@ -1881,6 +1932,36 @@ fn upsert_active_tribulation(
     Ok(())
 }
 
+fn upsert_ascension_quota(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &AscensionQuotaRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO ascension_quota (
+                row_id,
+                occupied_slots,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(row_id) DO UPDATE SET
+                occupied_slots = excluded.occupied_slots,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                ASCENSION_QUOTA_ROW_ID,
+                i64::from(record.occupied_slots),
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn delete_npc_hot_rows(transaction: &rusqlite::Transaction<'_>, char_id: &str) -> io::Result<()> {
     transaction
         .execute("DELETE FROM npc_state WHERE char_id = ?1", params![char_id])
@@ -1921,6 +2002,47 @@ fn load_active_tribulation_from_connection(
         waves_total: sql_to_u32(waves_total)?,
         started_tick: sql_to_tick(started_tick)?,
     }))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn load_ascension_quota_from_connection(
+    connection: &Connection,
+) -> io::Result<AscensionQuotaRecord> {
+    let row: Option<i64> = connection
+        .query_row(
+            "SELECT occupied_slots FROM ascension_quota WHERE row_id = ?1",
+            params![ASCENSION_QUOTA_ROW_ID],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    Ok(AscensionQuotaRecord {
+        occupied_slots: match row {
+            Some(occupied_slots) => sql_to_u32(occupied_slots)?,
+            None => 0,
+        },
+    })
+}
+
+fn load_ascension_quota_from_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+) -> io::Result<AscensionQuotaRecord> {
+    let row: Option<i64> = transaction
+        .query_row(
+            "SELECT occupied_slots FROM ascension_quota WHERE row_id = ?1",
+            params![ASCENSION_QUOTA_ROW_ID],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    Ok(AscensionQuotaRecord {
+        occupied_slots: match row {
+            Some(occupied_slots) => sql_to_u32(occupied_slots)?,
+            None => 0,
+        },
+    })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -3382,6 +3504,23 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task7_migrations_create_ascension_quota_table() {
+        let db_path = database_path("task7-ascension-quota");
+        bootstrap_sqlite(&db_path, "task7-ascension-quota").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ascension_quota'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master ascension_quota query should succeed");
+        assert_eq!(exists.as_deref(), Some("ascension_quota"));
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -3405,6 +3544,60 @@ mod persistence_tests {
         let deleted = load_active_tribulation(&settings, record.char_id.as_str())
             .expect("post-delete active tribulation query should succeed");
         assert!(deleted.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ascension_quota_defaults_to_zero_and_roundtrips_updates() {
+        let (settings, root) = persistence_settings("ascension-quota-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let initial = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(initial.occupied_slots, 0);
+
+        let wall_clock = current_unix_seconds();
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should open");
+        upsert_ascension_quota(
+            &transaction,
+            &AscensionQuotaRecord { occupied_slots: 3 },
+            wall_clock,
+        )
+        .expect("quota upsert should succeed");
+        transaction.commit().expect("transaction should commit");
+
+        let updated = load_ascension_quota(&settings).expect("quota reload should succeed");
+        assert_eq!(updated.occupied_slots, 3);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_tribulation_ascension_clears_active_row_and_increments_quota() {
+        let (settings, root) = persistence_settings("ascension-quota-complete-tribulation");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = ActiveTribulationRecord {
+            char_id: "offline:Azure".to_string(),
+            wave_current: 4,
+            waves_total: 5,
+            started_tick: 2880,
+        };
+        persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
+
+        let quota = complete_tribulation_ascension(&settings, record.char_id.as_str())
+            .expect("tribulation completion should succeed");
+        assert_eq!(quota.occupied_slots, 1);
+
+        let loaded_quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(loaded_quota.occupied_slots, 1);
+
+        let active = load_active_tribulation(&settings, record.char_id.as_str())
+            .expect("active tribulation query should succeed");
+        assert!(active.is_none());
 
         let _ = fs::remove_dir_all(root);
     }

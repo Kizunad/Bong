@@ -14,8 +14,8 @@ use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, EventWri
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use crate::persistence::{
-    delete_active_tribulation, persist_active_tribulation, ActiveTribulationRecord,
-    PersistenceSettings,
+    complete_tribulation_ascension, delete_active_tribulation, persist_active_tribulation,
+    ActiveTribulationRecord, PersistenceSettings,
 };
 
 #[derive(Debug, Clone, Component)]
@@ -117,10 +117,10 @@ pub fn tribulation_wave_system(
                 c.realm = Realm::Void;
                 c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
                 if let Err(error) =
-                    delete_active_tribulation(&settings, lifecycle.character_id.as_str())
+                    complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
                 {
                     tracing::warn!(
-                        "[bong][cultivation] failed to clear active tribulation for {:?}: {error}",
+                        "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
                         ev.entity,
                     );
                 }
