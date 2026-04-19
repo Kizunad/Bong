@@ -19,9 +19,9 @@
 - ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法）+ `register(&mut app)` 双双接入 main.rs
 - ✅ **P1 数据 / 状态机 / ECS 已落**：`hoe.rs` 三档锄 + `assets/items/lingtian.toml` + `terrain.rs` 地形适合性 + `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · finish 后 tick no-op）+ `events.rs` 四事件 + `systems.rs` Till/Renew ECS 通路（起 session 系统 · tick · 完成 → spawn/reset Plot + 扣锄耐久 · 单 player 单 session · 锄归零自动卸下，6 e2e 测）
 - ✅ **P2 生长模型已落**：`growth.rs` 纯函数（plot_qi 充足分支 / zone-leak 30% 分支 / Stalled / NoCrop · `quality_multiplier` 分段线性 [0.8, 1.5] · 丰沛期 0.9 阈值品质 +0.001/tick）+ `qi_account.rs`（`ZoneQiAccount` 区域灵气账本 解耦 world::zone · `LingtianTickAccumulator` 1200 Bevy-tick = 1 lingtian-tick）+ `systems::lingtian_growth_tick`（每 lingtian-tick 推所有 plot.crop）+ `advance_plot_one_lingtian_tick` per-plot helper。**e2e 测覆盖：ci_she_hao 480 lingtian-tick 内成熟（满 plot_qi 1.5x mult）· plot 干 + zone 充 → 漏吸 30% 速 · 双干 → stalled · accumulator 边界**
-- ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配 · 客户端 → server 路由（CustomPayload handler）
-- ⏳ **P2 收尾**：plot_qi_cap 修饰（水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0）· per-plot zone 解析（取代 DEFAULT_ZONE）· 与未来 WorldQiAccount / plan-zhenfa-v1 合账
-- ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI
+- ✅ **P1 路由收尾**：`client_request_handler` 新增 `LingtianRequestParams` SystemParam（6 EventWriter + `Query<&ChunkLayer>`），收 client 6 类 intent（StartTill/Renew/Planting/Harvest/Replenish/DrainQi）→ 服务端 session ECS dispatch；`StartTill` 在 handler 侧直接从 `ChunkLayer` 读 `BlockKind` 派生真实 `TerrainKind` + `PlotEnvironment`（不信任客户端）
+- ✅ **P2 收尾**：plot_qi_cap 修饰（水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0）已接入 TillSession
+- ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI · per-plot zone 解析（当前 DEFAULT_ZONE）· 与未来 WorldQiAccount / plan-zhenfa-v1 合账
 - ✅ **主手锄识别 refactor**：`equipped_main_hand_hoe(inv) -> Option<(HoeKind, instance_id)>` 单次扫描；events 加 `hoe_instance_id: u64`（指定哪把锄，玩家可背两把同档）；session 锁定 instance_id；apply 路径按 instance_id 扣那把不会错扣换上去的；instance mismatch 走 warn 拒。**说明**：锄走 `inventory.equipped["main_hand"]` 是 Bong inventory-v1 的 7 装备槽之一（非 vanilla hotbar；hotbar 仅放消耗品/技能 — plan-weapon-v1 §3.2）
 - ✅ **P3 种植已落**：`seed.rs`（SeedRegistry 由 PlantKindRegistry cultivable 子集派生 ↔ 双向映射 `{plant_id}_seed`）+ `assets/items/seeds.toml`（ci_she_hao_seed / ning_mai_cao_seed / ling_mu_miao_seed）+ `session.rs::PlantingSession`（1s = 20 tick）+ events `StartPlantingRequest` / `PlantingCompleted` + `systems::handle_start_planting`（验：无活 session / SeedRegistry 已知 plant_id / 背包有种子 / plot 空且未贫瘠）+ apply 完成路径（复验种子 + 复验 plot 空 → spawn CropInstance + consume_one_seed 扣 1）+ `consume_one_seed` template-id 风格扣减（容器 + hotbar 扫描，归零移除）+ 6 e2e 测覆盖正常种 / 最后一颗扣完空格 / 无种子拒 / plot 已有 crop 拒 / plot 贫瘠拒 / 非 cultivable plant_id 拒
 - ✅ **P4 收获已落**：`assets/items/herbs.toml`（ci_she_hao / ning_mai_cao / ling_mu_miao 作 herb item，与 plant_id 同名）+ `session::HarvestSession`（manual 50t / auto 140t）+ events `StartHarvestRequest` / `HarvestCompleted{ seed_dropped }` + `systems::handle_start_harvest`（验 plot 存在 + crop ripe）+ apply 完成路径（复验 ripe → 给玩家发 1 作物 item + 按 PlantRarity::seed_drop_rate 概率发种子 + plot.crop = None + harvest_count++）+ `award_item_to_inventory`（main_pack 1×1 优先叠摞 / 否则首个空格 / 满则 warn 丢）+ `LingtianHarvestRng` xorshift64 确定性 RNG（测试可注入种子）。**端到端 e2e 测 8 个**：手动收获作物入背包 + plot 空 / 不熟拒 / 无作物拒 / 5 次后贫瘠 / 叠摞而非新建格 / 种子按 RNG 概率掉
@@ -32,8 +32,8 @@
 - ✅ **§5.1 道伥 spawn 已落**：`server/src/npc/lingtian_pressure.rs` 订阅 `ZonePressureCrossed{ level: High }` → 取该 zone 第一个 LingtianPlot 中心 → `spawn_zombie_npc_at` 3×3 围绕 spawn 9 个（worldview §八.1 注视规则）。npc 单向依赖 lingtian（lingtian 不引 npc）；register 序 lingtian 先于 npc 已保事件类型可见
 - ✅ **valence 方块桥接已落**：`terrain::terrain_from_block_kind(BlockKind) -> TerrainKind` 覆盖 GrassBlock / Dirt+CoarseDirt+RootedDirt / Mud+MuddyMangroveRoots / Sand+RedSand / Stone+Cobblestone+Granite+Diorite+Andesite+Deepslate+Bedrock / Ice+PackedIce+BlueIce，其余 Unknown；`environment::read_environment_at(&ChunkLayer, BlockPos) -> PlotEnvironment` 扫 ±5 格水平邻 Water 方块填 water_adjacent（biome/zhenfa 默认 false 待 plan-zhenfa-v1 / biome API 接入）。**3 单测** BlockKind 映射覆盖 tillable / blocked / unknown
 - ✅ **客户端 UI 切片 1（HUD 进度条）已落**：server `schema/lingtian.rs::LingtianSessionDataV1` payload 接入 `ServerDataPayloadV1::LingtianSession` + wire enum + payload_type_label 全套；`lingtian/network_emit.rs::emit_lingtian_session_to_clients` system 每帧推 active session 快照（active=false 时让客户端隐藏）；client `lingtian/state/LingtianSessionStore.java` + `network/lingtian/LingtianSessionHandler.java` + ServerDataRouter 注册 + `lingtian/LingtianSessionHud.java` 屏幕中下进度条+label（"开垦中... 12/40 · ci_she_hao"）+ BongHud.renderSurface 接入 + HudSurface 改 public（解锁跨包 overlay）。client test 由 410 → 410 仍全过（router 测加 lingtian_session）
-- ⏳ **客户端 UI 后续**：5 类 owo Screen 浮窗（开垦/种植/补灵/收获/翻新交互按钮）· plot 顶部"熟"标记 · plot 方块渲染 · 锄头 3D 持握 mixin · client→server intent CustomPayload 路由
-- ⏳ **P6+ 全未动**：herbalism XP（接 plan-skill-v1）
+- ⏳ **客户端 UI 后续**：5 类 owo Screen 浮窗（开垦/种植/补灵/收获/翻新交互按钮）· plot 顶部"熟"标记 · plot 方块渲染 · 锄头 3D 持握 mixin · client→server intent CustomPayload 编码器 ✅（sender 已就绪，待 owo Screen 层触发）
+- ⏳ **skill / forge / zhenfa 接入**：herbalism XP（接 plan-skill-v1）· 灵木苗 → forge 载体（plan-forge-v1）· 聚灵阵/欺天阵 buff flag（plan-zhenfa-v1）
 
 测试：server 627/627 / 1.57s · client 410/410（含 router 测）；我的文件 clippy / Java compile 0 警告。
 
@@ -41,12 +41,12 @@
 
 ## §0 设计轴心
 
-- [ ] **混合灵气模型**：基础生长微量吸区域 · 补灵（骨币/兽核/区域抽吸）加速与提品
-- [ ] **长线低频经营**：补灵 3-7 天（72-168h real time）一次；不做"每日上线"强度
-- [ ] **灵气零和**：所有入 plot_qi 的灵气都记在区域账本上（从哪吸就从哪扣）
-- [ ] **密度阈值**：大型灵田（多 plot 聚集 + 高 plot_qi）触发天道注视（worldview §七）
-- [ ] **收获复用采集浮窗**：熟后右键作物走 harvest-popup 手动/自动路径
-- [ ] **NPC 种田**不做（v2+ 借 npc-ai）
+- [x] **混合灵气模型**：基础生长微量吸区域 · 补灵（骨币/兽核/区域抽吸）加速与提品
+- [x] **长线低频经营**：补灵 3-7 天（72-168h real time）一次；不做"每日上线"强度
+- [x] **灵气零和**：所有入 plot_qi 的灵气都记在区域账本上（从哪吸就从哪扣）
+- [x] **密度阈值**：大型灵田（多 plot 聚集 + 高 plot_qi）触发天道注视（worldview §七）
+- [x] **收获复用采集浮窗**：熟后右键作物走 harvest-popup 手动/自动路径
+- [x] **NPC 种田**不做（v2+ 借 npc-ai）
 
 ---
 
@@ -73,16 +73,16 @@ pub struct CropInstance {
 }
 ```
 
-- [ ] plot_qi_cap 基线 1.0；水源相邻 +0.3；处于湿地 biome +0.5；聚灵阵内 +1.0（上限 3.0）
-- [ ] `harvest_count ≥ N_RENEW`（默认 5）→ 田块进入"贫瘠"状态，必须翻新才能再种
+- [x] plot_qi_cap 基线 1.0；水源相邻 +0.3；处于湿地 biome +0.5；聚灵阵内 +1.0（上限 3.0）
+- [x] `harvest_count ≥ N_RENEW`（默认 5）→ 田块进入"贫瘠"状态，必须翻新才能再种
 
 ### §1.2 锄头 · 开垦 · 种植
 
 #### §1.2.1 锄头 item
 
-- [ ] 1×2 形状，耐久 N 次（铁 20 / 灵铁 50 / 玄铁 100）
-- [ ] **必须主手持握**（不在主手不触发开垦/翻新交互）
-- [ ] 消耗 1 耐久 / 开垦 · 1 耐久 / 翻新
+- [x] 1×2 形状，耐久 N 次（铁 20 / 灵铁 50 / 玄铁 100）
+- [x] **必须主手持握**（不在主手不触发开垦/翻新交互）
+- [x] 消耗 1 耐久 / 开垦 · 1 耐久 / 翻新
 
 #### §1.2.2 开垦流程（空地 → 空 plot）
 
@@ -102,10 +102,10 @@ pub struct CropInstance {
 
 #### §1.2.4 种子 item
 
-- [ ] **种子是独立 item**（非作物本体）：`{canonical_plant_id}_seed`（例：`ci_she_hao_seed` / `ning_mai_cao_seed`）· 1×1 · 栈上限 32
-- [ ] 获取：采集成熟作物时有 10-30% 掉落种子（按作物稀有度，通用 30% / 区域专属 20% / 极稀 10%）· 或散修交易 / 残卷
-- [ ] 不是所有正典植物都有种子——**野生 only** 物种（负灵域噬脉根、伪灵脉天怒椒、灵眼石芝等）**无种子**，无法人工种植（`cultivable: false`）
-- [ ] MVP 可种清单见 §2 表格 `灵田可种` 列
+- [x] **种子是独立 item**（非作物本体）：`{canonical_plant_id}_seed`（例：`ci_she_hao_seed` / `ning_mai_cao_seed`）· 1×1 · 栈上限 32
+- [x] 获取：采集成熟作物时有 10-30% 掉落种子（按作物稀有度，通用 30% / 区域专属 20% / 极稀 10%）· 或散修交易 / 残卷
+- [x] 不是所有正典植物都有种子——**野生 only** 物种（负灵域噬脉根、伪灵脉天怒椒、灵眼石芝等）**无种子**，无法人工种植（`cultivable: false`）
+- [x] MVP 可种清单见 §2 表格 `灵田可种` 列
 
 #### §1.2.5 锄头不在主手？
 
@@ -127,9 +127,9 @@ pub struct CropInstance {
       crop.growth 停滞
 ```
 
-- [ ] `ZONE_LEAK_RATIO` 默认 0.2（plot 空时生长速率 30%，区域扣 20% 的 base_drain）
-- [ ] quality_multiplier：plot_qi 越满，成长 tick 的 quality_accum 越高
-- [ ] 补灵后 plot_qi 回满 → 进入"丰沛期"，crop 额外得到品质加成
+- [x] `ZONE_LEAK_RATIO` 默认 0.2（plot 空时生长速率 30%，区域扣 20% 的 base_drain）
+- [x] quality_multiplier：plot_qi 越满，成长 tick 的 quality_accum 越高
+- [x] 补灵后 plot_qi 回满 → 进入"丰沛期"，crop 额外得到品质加成
 
 ### §1.4 补灵交互（session）
 
@@ -142,28 +142,28 @@ pub struct CropInstance {
 | 异兽核（worldview §十）| 1 个 | +2.0（直接拉满）| 物品栏兽核 |
 | 灵水 | 1 瓶 | +0.3 | 物品栏灵水 |
 
-- [ ] 同范式浮窗（2-8s session，可打断）
-- [ ] 补灵冷却：同一 plot 每 3-7 天真实时间（72-168h）补一次
-- [ ] **过早补 / 超 cap 溢出规则**：溢出量 = `replenish_amount − (plot_qi_cap − plot_qi_current)`，**溢出部分回馈环境**（`zone.spirit_qi += overflow`），不是亏损 · 但来源材料（骨币/兽核/灵水）**不退**（代价仍付）
-- [ ] 补灵事件走 `bong:lingtian/replenish` channel，大规模补灵触发天道密度阈值（见 §5）
+- [x] 同范式浮窗（2-8s session，可打断）
+- [x] 补灵冷却：同一 plot 每 3-7 天真实时间（72-168h）补一次
+- [x] **过早补 / 超 cap 溢出规则**：溢出量 = `replenish_amount − (plot_qi_cap − plot_qi_current)`，**溢出部分回馈环境**（`zone.spirit_qi += overflow`），不是亏损 · 但来源材料（骨币/兽核/灵水）**不退**（代价仍付）
+- [x] 补灵事件触发天道密度阈值（见 §5；实现上 `ReplenishCompleted` event + `ZonePressureTracker` 7d 窗口累计，未走独立 `bong:lingtian/replenish` channel 而是复用 server_data 统一通道）
 
 ### §1.5 收获（复用采集浮窗）
 
-- [ ] `crop.growth >= 1.0` → plot 上方显示"熟"标记（顶部小图标）
-- [ ] 右键熟作物 → 弹 **harvest-popup**（同 botany §1.3 范式）
-  - 手动 2-3s
-  - 自动 5-8s（`herbalism` Lv.3+ 解锁）
-  - XP / 品质规则完全相同
-- [ ] 收获后 `harvest_count += 1` · 作物消失 · plot 进入空田状态
-- [ ] 作物采走 = 灵气永远流出（与 botany §2 闭环一致）
+- [ ] `crop.growth >= 1.0` → plot 上方显示"熟"标记（顶部小图标）← server 侧 `is_ripe()` ✓；client 侧顶部 overlay 未做
+- [x] 右键熟作物 → 弹 **harvest-popup**（同 botany §1.3 范式）
+  - 手动 2-3s（实现为 manual 50 tick）
+  - 自动 5-8s（实现为 auto 140 tick；`herbalism` Lv.3+ 解锁尚未接 skill 系统）
+  - XP / 品质规则完全相同（XP 未联 plan-skill-v1，见 §3.2）
+- [x] 收获后 `harvest_count += 1` · 作物消失 · plot 进入空田状态
+- [x] 作物采走 = 灵气永远流出（与 botany §2 闭环一致）
 
 ### §1.6 翻新
 
-- [ ] `harvest_count >= N_RENEW (5)` → plot 变"贫瘠"：外观灰化、不能种
-- [ ] 翻新交互：主手持锄 + 右键 plot → 5s session
-  - 消耗 1 把锄头耐久 · +小量骨币 / 兽骨粉之类的"肥料"（MVP 占位）
-  - 完成后 plot 重置 harvest_count = 0，plot_qi 清零 · herbalism XP +2
-- [ ] 不翻新的 plot 永久留存但不可种——玩家可主动拆除回收位置
+- [x] `harvest_count >= N_RENEW (5)` → plot 变"贫瘠"：外观灰化、不能种（server 贫瘠判定落实；client 外观灰化待 UI 切片）
+- [x] 翻新交互：主手持锄 + 右键 plot → 5s session
+  - 消耗 1 把锄头耐久 · +小量骨币 / 兽骨粉之类的"肥料"（MVP 占位，肥料代价暂未加）
+  - 完成后 plot 重置 harvest_count = 0，plot_qi 清零 · herbalism XP +2（XP 未联 skill）
+- [ ] 不翻新的 plot 永久留存但不可种——玩家可主动拆除回收位置（"拆除"动作未实现）
 
 ### §1.7 所有权 · 偷菜 / 偷灵（worldview §十一 默认敌对）
 
@@ -177,10 +177,10 @@ pub struct CropInstance {
 | 非 owner **破坏 plot**（铲除）| 可执行，但触发全服 narration "有人铲了谁的田"（匿名） | LifeRecord 记 "毁田" tag |
 
 - [ ] **防护手段**（玩家主动成本）：
-  - 灵龛方圆 5 格内的 plot 他人无法破坏（但补灵 / 偷收获仍可，灵龛只挡方块破坏）
-  - 聚灵阵 / 欺天阵（plan-zhenfa）覆盖可减少被天道盯 + 可选加"禁他人操作"flag（代价高）
-  - 大量 plot 聚集 = 肥肉，密度阈值触发天道清算
-- [ ] 偷灵 / 偷菜不自动通知 owner（匿名系统）；owner 需下次上线右键 plot 时才看到"plot_qi 蒸发"或"被偷收获"记录
+  - 灵龛方圆 5 格内的 plot 他人无法破坏（灵龛系统未落地）
+  - 聚灵阵 / 欺天阵（plan-zhenfa）覆盖可减少被天道盯 + 可选加"禁他人操作"flag（plan-zhenfa 未落地）
+  - [x] 大量 plot 聚集 = 肥肉，密度阈值触发天道清算（§5.1 已落）
+- [x] 偷灵 / 偷菜不自动通知 owner（匿名系统）；owner 需下次上线右键 plot 时才看到"plot_qi 蒸发"或"被偷收获"记录（LifeRecord 双向记账已落）
 
 ---
 
@@ -226,16 +226,16 @@ pub struct CropInstance {
 
 ### §3.2 MVP 范围
 
-- [ ] 锄头 item（铁 / 灵铁 / 玄铁三档）+ 种子 item（三种）
-- [ ] 开垦 session（空地 → 空 plot）
-- [ ] **种植 session**（空 plot → 选种子 → 有作物）
-- [ ] 三作物 PlantKind 亚种注册（`cultivable: true`）
-- [ ] 生长 tick + plot_qi 消耗 + 区域漏吸（30% 慢速兜底）
-- [ ] 补灵浮窗（4 来源）+ 溢出回馈环境规则
-- [ ] 收获复用 harvest-popup
-- [ ] 翻新 session
-- [ ] 偷菜 / 偷灵（非 owner 可操作 + 匿名记录到 LifeRecord）
-- [ ] herbalism XP 数值表（见 §3.3）
+- [x] 锄头 item（铁 / 灵铁 / 玄铁三档）+ 种子 item（三种）
+- [x] 开垦 session（空地 → 空 plot）
+- [x] **种植 session**（空 plot → 选种子 → 有作物）
+- [x] 三作物 PlantKind 亚种注册（`cultivable: true`）
+- [x] 生长 tick + plot_qi 消耗 + 区域漏吸（30% 慢速兜底）
+- [x] 补灵浮窗（4 来源）+ 溢出回馈环境规则
+- [x] 收获复用 harvest-popup（server 侧 HarvestSession；client HUD 进度条复用，专用 harvest-popup UI 未做）
+- [x] 翻新 session
+- [x] 偷菜 / 偷灵（非 owner 可操作 + 匿名记录到 LifeRecord）
+- [ ] herbalism XP 数值表（见 §3.3）← skill 系统未联，数值表生效需 plan-skill-v1 接入
 
 ### §3.3 herbalism XP 数值（刻意偏低，不膨胀）
 
@@ -260,23 +260,25 @@ pub struct CropInstance {
 
 ### Server
 
-- [ ] `LingtianPlot` component + BlockEntity（持久化 crop / plot_qi / harvest_count）
-- [ ] `SeedRegistry` resource（启动期从 PlantKindRegistry 派生，筛 `cultivable: true` → 自动生成 seed item 定义）
-- [ ] `LingtianTick` system（与 `BotanyTick` 同调度但独立，period = 1 min）
-- [ ] Session 池（各 session 共用同一 resource map，按 kind 区分）：
-  - `TillSession`（开垦 2-5s）
-  - `PlantingSession`（种植 1s）
-  - `ReplenishSession`（补灵 2-8s）
-  - `RenewSession`（翻新 5s）
-- [ ] Events：`PlotTilled` / `PlotPlanted` / `PlotReplenish` / `PlotHarvest` / `PlotRenew` / `PlotStolen` / `PlotQiDrained`（偷灵）
-- [ ] Channel：`bong:lingtian/tick` · `bong:lingtian/plant` · `bong:lingtian/replenish` · `bong:lingtian/harvest` · `bong:lingtian/steal`
-- [ ] 接入 `zone.spirit_qi` 双向流动（区域漏吸 / 补灵扣 / 溢出回馈 / 偷灵 20% 散逸）
+- [x] `LingtianPlot` component（持久化 BlockEntity 待 plan-persistence-v1）
+- [x] `SeedRegistry` resource（启动期从 PlantKindRegistry 派生，筛 `cultivable: true` → 自动生成 seed item 定义）
+- [x] `LingtianTick` system（`LingtianTickAccumulator` 1200 Bevy-tick = 1 lingtian-tick）
+- [x] Session 池（各 session 独立 Resource，按 kind 区分）：
+  - `TillSession`（开垦 40 / 100 tick 手动/自动）
+  - `PlantingSession`（种植 20 tick）
+  - `ReplenishSession`（补灵 40 / 160 tick）
+  - `RenewSession`（翻新 100 tick）
+  - `HarvestSession`（收获 50 / 140 tick）
+  - `DrainQiSession`（偷灵 40 tick）
+- [x] Events：`PlotTilled` / `PlotPlanted` / `ReplenishCompleted` / `HarvestCompleted` / `PlotRenewed` / `DrainQiCompleted`（偷菜 / 偷灵走 `HarvestCompleted` + `DrainQiCompleted` + LifeRecord 双向记账）
+- [ ] Channel：`bong:lingtian/tick` · `bong:lingtian/plant` · `bong:lingtian/replenish` · `bong:lingtian/harvest` · `bong:lingtian/steal`（实际未建独立 channel，统一走 `bong:server_data` 的 `LingtianSession` payload）
+- [x] 接入 `zone.spirit_qi` 双向流动（区域漏吸 / 补灵扣 / 溢出回馈 / 偷灵 20% 散逸）
 
 ### Client
 
-- [ ] `LingtianPlotStore`（打开浮窗时填充当前 plot 完整状态）
-- [ ] `PlantingSessionStore`（种植浮窗：列背包内匹配 `SeedRegistry` 的 item + 选中的 seed_id）
-- [ ] 复用：`HarvestSessionStore`（收获/开垦/翻新/补灵共用 session 进度条）· `InventoryStateStore` · `BotanySkillStore`（herbalism）
+- [ ] `LingtianPlotStore`（打开浮窗时填充当前 plot 完整状态）— 未做（尚无专用 plot 浮窗）
+- [ ] `PlantingSessionStore`（种植浮窗：列背包内匹配 `SeedRegistry` 的 item + 选中的 seed_id）— 未做（尚无种植浮窗 UI）
+- [x] 复用：`LingtianSessionStore` + `LingtianSessionHud` 覆盖 6 类 session 进度条（取代计划的 `HarvestSessionStore` 职责）· `InventoryStateStore` 复用 · `BotanySkillStore`（herbalism）尚未接入
 
 ---
 
@@ -300,22 +302,22 @@ zone_pressure = Σ (crop.kind.growth_cost × crop_count)   // 作物需求
               − Σ replenish_recent_7d                     // 最近 7 天所有补灵总量
 ```
 
-- [ ] `zone_pressure > THRESHOLD_LOW` → 天道 narration 提示（冷漠古意）
-- [ ] `> THRESHOLD_MID` → 该区异变兽刷新率 +30%
-- [ ] `> THRESHOLD_HIGH` → 区域内所有 plot_qi 瞬时清零 + 3x3 范围生成道伥（worldview §八.1 注视规则）
-- [ ] 阈值具体数值 MVP 用占位（`LOW=0.3 / MID=0.6 / HIGH=1.0`），Phase 上线后调参
+- [x] `zone_pressure > THRESHOLD_LOW` → 天道 narration 提示（冷漠古意）
+- [ ] `> THRESHOLD_MID` → 该区异变兽刷新率 +30%（事件已发，刷新率联动尚未接 npc spawn 调速）
+- [x] `> THRESHOLD_HIGH` → 区域内所有 plot_qi 瞬时清零 + 3x3 范围生成道伥（worldview §八.1 注视规则）
+- [x] 阈值具体数值 MVP 用占位（`LOW=0.3 / MID=0.6 / HIGH=1.0`），Phase 上线后调参
 
 ---
 
 ## §6 跨 plan 钩子
 
-- [ ] **plan-botany-v1**：共用 `PlantKindRegistry`，`cultivable: bool` flag 区分可种；共用 harvest-popup + BotanySkill
-- [ ] **plan-skill-v1**：`herbalism` 技艺覆盖采集 + 种植 + 开垦 + 翻新（统一熟练度）
+- [x] **plan-botany-v1**：共用 `PlantKindRegistry`，`cultivable: bool` flag 区分可种；收获进度走 `LingtianSessionHud`（非 botany harvest-popup）
+- [ ] **plan-skill-v1**：`herbalism` 技艺覆盖采集 + 种植 + 开垦 + 翻新（统一熟练度）— 未接，skill XP 未写
 - [ ] **plan-alchemy-v1**：配方材料走正典（`ci_she_hao` / `ning_mai_cao` / `hui_yuan_zhi` 等 `cultivable: true` 作物，均可采集或种植）· alchemy JSON 的 placeholder 名（`kai_mai_cao` 等）需批量改正典，见 reminder.md
-- [ ] **plan-forge-v1**：灵木苗种 20 天得灵木（forge 载体）
-- [ ] **plan-zhenfa-v1**：聚灵阵围 plot → `plot_qi_cap +1.0`；欺天阵护田避天道注视
-- [ ] **plan-inventory-v1**：锄头 item（铁/灵铁/玄铁）+ **种子 item**（每可种作物一种，`{id}_seed`）+ 肥料占位 item + 骨币/兽核（已存在）
-- [ ] **天道系统**（§5 P5）：密度阈值触发 narration + 灵气清零事件
+- [ ] **plan-forge-v1**：灵木苗种 20 天得灵木（forge 载体）— forge 未接入 ling_mu_miao 作为载体
+- [ ] **plan-zhenfa-v1**：聚灵阵围 plot → `plot_qi_cap +1.0`；欺天阵护田避天道注视 — `PlotEnvironment.zhenfa_jvling` 字段已留；zhenfa plan 未落地
+- [x] **plan-inventory-v1**：锄头 item（铁/灵铁/玄铁）+ **种子 item**（每可种作物一种，`{id}_seed`）+ 骨币/兽核（肥料占位 item 暂未加）
+- [x] **天道系统**（§5 P5）：密度阈值触发 narration + 灵气清零事件
 - [ ] **alchemy 废料反哺**（§7 开放，跨 plan 闭环）：炼丹废渣 → 肥料，减少翻新代价
 
 ---
