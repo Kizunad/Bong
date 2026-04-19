@@ -10,6 +10,8 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res};
 
+use crate::combat::components::StatusEffects;
+use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
@@ -210,12 +212,14 @@ pub fn try_breakthrough<R: RollSource>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
     mut requests: EventReader<BreakthroughRequest>,
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
+    mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
@@ -232,12 +236,17 @@ pub fn breakthrough_system(
                 tick: now,
             });
         }
-        let res = try_breakthrough(
-            &mut cultivation,
-            &mut meridians,
-            req.material_bonus,
-            &mut roll,
-        );
+
+        // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
+        //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
+        //   最终 clamp 由 compute_success_rate 内部处理。
+        let buff_bonus = status_effects_q
+            .get(req.entity)
+            .map(|se| sum_breakthrough_boost(se) as f64)
+            .unwrap_or(0.0);
+        let material_bonus = req.material_bonus + buff_bonus;
+
+        let res = try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll);
 
         match &res {
             Ok(success) => {
@@ -286,6 +295,11 @@ pub fn breakthrough_system(
                     }),
                 });
             }
+        }
+
+        // 不论成败，一次性消费 BreakthroughBoost buff（plan §3.1：辅助丹药为突破"仪式"消耗）
+        if let Ok(mut se) = status_effects_q.get_mut(req.entity) {
+            clear_breakthrough_boost(&mut se);
         }
 
         outcomes.send(BreakthroughOutcome {
