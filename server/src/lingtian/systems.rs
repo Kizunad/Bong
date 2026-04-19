@@ -15,11 +15,14 @@
 
 use std::collections::HashMap;
 
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut, Resource,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
+use crate::cultivation::components::Cultivation;
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
@@ -27,9 +30,9 @@ use crate::inventory::{
 
 use super::environment::compute_plot_qi_cap;
 use super::events::{
-    HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
-    StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
-    TillCompleted, ZonePressureCrossed,
+    DrainQiCompleted, HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted,
+    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+    StartReplenishRequest, StartTillRequest, TillCompleted, ZonePressureCrossed,
 };
 use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
@@ -38,7 +41,8 @@ use super::pressure::{compute_zone_pressure, PressureLevel, ZonePressureTracker}
 use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
-    HarvestSession, PlantingSession, RenewSession, ReplenishSession, ReplenishSource, TillSession,
+    DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
+    ReplenishSource, TillSession, DRAIN_QI_TO_PLAYER_RATIO, DRAIN_QI_TO_ZONE_RATIO,
     REPLENISH_COOLDOWN_LINGTIAN_TICKS,
 };
 use super::terrain::classify_for_till;
@@ -55,6 +59,7 @@ pub enum ActiveSession {
     Planting(PlantingSession),
     Harvest(HarvestSession),
     Replenish(ReplenishSession),
+    DrainQi(DrainQiSession),
 }
 
 impl ActiveSession {
@@ -65,6 +70,7 @@ impl ActiveSession {
             ActiveSession::Planting(s) => s.tick(),
             ActiveSession::Harvest(s) => s.tick(),
             ActiveSession::Replenish(s) => s.tick(),
+            ActiveSession::DrainQi(s) => s.tick(),
         }
     }
 
@@ -75,6 +81,7 @@ impl ActiveSession {
             ActiveSession::Planting(s) => s.is_finished(),
             ActiveSession::Harvest(s) => s.is_finished(),
             ActiveSession::Replenish(s) => s.is_finished(),
+            ActiveSession::DrainQi(s) => s.is_finished(),
         }
     }
 }
@@ -83,6 +90,17 @@ impl ActiveSession {
 #[derive(Debug, Default, Resource)]
 pub struct LingtianClock {
     pub lingtian_tick: u64,
+}
+
+/// session 完成事件写出 — 6 类合一以避开 Bevy 16 system-param 限制。
+#[derive(SystemParam)]
+pub struct CompletionEventWriters<'w> {
+    pub till: EventWriter<'w, TillCompleted>,
+    pub renew: EventWriter<'w, RenewCompleted>,
+    pub planting: EventWriter<'w, PlantingCompleted>,
+    pub harvest: EventWriter<'w, HarvestCompleted>,
+    pub replenish: EventWriter<'w, ReplenishCompleted>,
+    pub drain_qi: EventWriter<'w, DrainQiCompleted>,
 }
 
 /// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
@@ -334,6 +352,34 @@ pub fn handle_start_planting(
     }
 }
 
+pub fn handle_start_drain_qi(
+    mut events: EventReader<StartDrainQiRequest>,
+    mut sessions: ResMut<ActiveLingtianSessions>,
+    plots: Query<&LingtianPlot>,
+) {
+    for req in events.read() {
+        if sessions.has_session(req.player) {
+            tracing::warn!(
+                "[bong][lingtian] StartDrainQiRequest rejected: player={:?} already has active session",
+                req.player
+            );
+            continue;
+        }
+        let exists_with_qi = plots.iter().any(|p| p.pos == req.pos && p.plot_qi > 0.0);
+        if !exists_with_qi {
+            tracing::warn!(
+                "[bong][lingtian] StartDrainQiRequest rejected: no plot with plot_qi at {:?}",
+                req.pos
+            );
+            continue;
+        }
+        sessions.try_insert(
+            req.player,
+            ActiveSession::DrainQi(DrainQiSession::new(req.pos)),
+        );
+    }
+}
+
 pub fn handle_start_harvest(
     mut events: EventReader<StartHarvestRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
@@ -500,6 +546,8 @@ pub fn apply_completed_sessions(
     mut sessions: ResMut<ActiveLingtianSessions>,
     mut inventories: Query<&mut PlayerInventory>,
     mut plots: Query<(Entity, &mut LingtianPlot)>,
+    mut life_records: Query<&mut LifeRecord>,
+    mut cultivations: Query<&mut Cultivation>,
     seeds: Res<SeedRegistry>,
     plant_registry: Res<PlantKindRegistry>,
     item_registry: Res<ItemRegistry>,
@@ -507,11 +555,7 @@ pub fn apply_completed_sessions(
     mut harvest_rng: ResMut<LingtianHarvestRng>,
     mut zone_qi: ResMut<ZoneQiAccount>,
     clock: Res<LingtianClock>,
-    mut till_completed: EventWriter<TillCompleted>,
-    mut renew_completed: EventWriter<RenewCompleted>,
-    mut planting_completed: EventWriter<PlantingCompleted>,
-    mut harvest_completed: EventWriter<HarvestCompleted>,
-    mut replenish_completed: EventWriter<ReplenishCompleted>,
+    mut writers: CompletionEventWriters,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -522,7 +566,7 @@ pub fn apply_completed_sessions(
                 let mut plot = LingtianPlot::new(s.pos, Some(player));
                 plot.plot_qi_cap = compute_plot_qi_cap(&s.environment);
                 commands.spawn(plot);
-                till_completed.send(TillCompleted {
+                writers.till.send(TillCompleted {
                     player,
                     pos: s.pos,
                     hoe: s.hoe,
@@ -535,7 +579,7 @@ pub fn apply_completed_sessions(
                 }
                 if let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| p.pos == s.pos) {
                     plot.renew();
-                    renew_completed.send(RenewCompleted {
+                    writers.renew.send(RenewCompleted {
                         player,
                         pos: s.pos,
                         hoe: s.hoe,
@@ -556,7 +600,7 @@ pub fn apply_completed_sessions(
                     &mut inventories,
                     &mut plots,
                     &seeds,
-                    &mut planting_completed,
+                    &mut writers.planting,
                 );
             }
             ActiveSession::Harvest(s) => {
@@ -566,11 +610,13 @@ pub fn apply_completed_sessions(
                     &s.plant_id,
                     &mut inventories,
                     &mut plots,
+                    &mut life_records,
                     &plant_registry,
                     &item_registry,
                     &mut allocator,
                     &mut harvest_rng,
-                    &mut harvest_completed,
+                    clock.lingtian_tick,
+                    &mut writers.harvest,
                 );
             }
             ActiveSession::Replenish(s) => {
@@ -582,7 +628,19 @@ pub fn apply_completed_sessions(
                     &mut plots,
                     &mut zone_qi,
                     &clock,
-                    &mut replenish_completed,
+                    &mut writers.replenish,
+                );
+            }
+            ActiveSession::DrainQi(s) => {
+                apply_drain_qi_completion(
+                    player,
+                    &s.pos,
+                    &mut plots,
+                    &mut cultivations,
+                    &mut life_records,
+                    &mut zone_qi,
+                    clock.lingtian_tick,
+                    &mut writers.drain_qi,
                 );
             }
         }
@@ -639,10 +697,12 @@ fn apply_harvest_completion(
     plant_id: &PlantId,
     inventories: &mut Query<&mut PlayerInventory>,
     plots: &mut Query<(Entity, &mut LingtianPlot)>,
+    life_records: &mut Query<&mut LifeRecord>,
     plant_registry: &PlantKindRegistry,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
     rng: &mut LingtianHarvestRng,
+    now_lingtian_tick: u64,
     harvest_completed: &mut EventWriter<HarvestCompleted>,
 ) {
     let Some(kind) = plant_registry.get(plant_id) else {
@@ -654,62 +714,89 @@ fn apply_harvest_completion(
     let Ok(mut inv) = inventories.get_mut(player) else {
         return;
     };
-    // 复验 plot 仍有 ripe crop（防 race / 双方同 tick 收获）
-    let Some((_e, mut plot)) = plots
-        .iter_mut()
-        .find(|(_, p)| &p.pos == pos && p.crop.as_ref().map(|c| c.is_ripe()).unwrap_or(false))
-    else {
-        tracing::warn!(
-            "[bong][lingtian] HarvestSession finished but plot at {pos:?} no longer ripe"
-        );
-        return;
-    };
 
-    // 1. 给作物 item（plant_id 同名）
-    let Some(plant_item_template) = item_registry.get(plant_id) else {
-        tracing::warn!(
-            "[bong][lingtian] no ItemTemplate for plant_id={plant_id} (need entry in herbs.toml)"
-        );
-        return;
-    };
-    if !award_item_to_inventory(&mut inv, plant_item_template, allocator) {
-        tracing::warn!(
-            "[bong][lingtian] inventory full; dropped 1× {plant_id} for player={player:?}"
-        );
-    }
-
-    // 2. 按 PlantRarity::seed_drop_rate 概率发种子
-    let drop_rate = kind.rarity.seed_drop_rate();
-    let roll = rng.next_f32();
-    let seed_dropped = if roll < drop_rate {
-        let seed_id = seed_id_for(plant_id);
-        if let Some(seed_template) = item_registry.get(&seed_id) {
-            if !award_item_to_inventory(&mut inv, seed_template, allocator) {
-                tracing::warn!(
-                    "[bong][lingtian] inventory full; dropped 1× {seed_id} for player={player:?}"
-                );
-            }
-            true
-        } else {
+    // 锁定 owner 在借用 plot 的局部作用域里读出
+    let plot_owner = {
+        let Some((_e, mut plot)) = plots
+            .iter_mut()
+            .find(|(_, p)| &p.pos == pos && p.crop.as_ref().map(|c| c.is_ripe()).unwrap_or(false))
+        else {
             tracing::warn!(
-                "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
+                "[bong][lingtian] HarvestSession finished but plot at {pos:?} no longer ripe"
             );
-            false
+            return;
+        };
+        let owner = plot.owner;
+
+        // 1. 给作物 item（plant_id 同名）
+        let Some(plant_item_template) = item_registry.get(plant_id) else {
+            tracing::warn!(
+                "[bong][lingtian] no ItemTemplate for plant_id={plant_id} (need entry in herbs.toml)"
+            );
+            return;
+        };
+        if !award_item_to_inventory(&mut inv, plant_item_template, allocator) {
+            tracing::warn!(
+                "[bong][lingtian] inventory full; dropped 1× {plant_id} for player={player:?}"
+            );
         }
-    } else {
-        false
+
+        // 2. 按 PlantRarity::seed_drop_rate 概率发种子
+        let drop_rate = kind.rarity.seed_drop_rate();
+        let roll = rng.next_f32();
+        let seed_dropped = if roll < drop_rate {
+            let seed_id = seed_id_for(plant_id);
+            if let Some(seed_template) = item_registry.get(&seed_id) {
+                if !award_item_to_inventory(&mut inv, seed_template, allocator) {
+                    tracing::warn!(
+                        "[bong][lingtian] inventory full; dropped 1× {seed_id} for player={player:?}"
+                    );
+                }
+                true
+            } else {
+                tracing::warn!(
+                    "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
+                );
+                false
+            }
+        } else {
+            false
+        };
+
+        // 3. plot 转为空田 + harvest_count++
+        plot.crop = None;
+        plot.harvest_count = plot.harvest_count.saturating_add(1);
+
+        harvest_completed.send(HarvestCompleted {
+            player,
+            pos: *pos,
+            plant_id: plant_id.clone(),
+            seed_dropped,
+        });
+
+        owner
     };
 
-    // 3. plot 转为空田 + harvest_count++
-    plot.crop = None;
-    plot.harvest_count = plot.harvest_count.saturating_add(1);
-
-    harvest_completed.send(HarvestCompleted {
-        player,
-        pos: *pos,
-        plant_id: plant_id.clone(),
-        seed_dropped,
-    });
+    // 4. 偷菜匿名记账（plan §1.7）：owner != player 时双方各记一条
+    if let Some(owner) = plot_owner {
+        if owner != player {
+            let pos_arr = [pos.x, pos.y, pos.z];
+            if let Ok(mut owner_lr) = life_records.get_mut(owner) {
+                owner_lr.push(BiographyEntry::PlotHarvestedByOther {
+                    plot_pos: pos_arr,
+                    plant_id: plant_id.clone(),
+                    tick: now_lingtian_tick,
+                });
+            }
+            if let Ok(mut player_lr) = life_records.get_mut(player) {
+                player_lr.push(BiographyEntry::PlotHarvestedFromOther {
+                    plot_pos: pos_arr,
+                    plant_id: plant_id.clone(),
+                    tick: now_lingtian_tick,
+                });
+            }
+        }
+    }
 }
 
 /// 把一个 1×1 item 加到玩家背包。
@@ -806,6 +893,74 @@ fn award_item_to_inventory(
 
 fn bump_revision(inv: &mut PlayerInventory) {
     inv.revision = crate::inventory::InventoryRevision(inv.revision.0.saturating_add(1));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_drain_qi_completion(
+    player: Entity,
+    pos: &valence::prelude::BlockPos,
+    plots: &mut Query<(Entity, &mut LingtianPlot)>,
+    cultivations: &mut Query<&mut Cultivation>,
+    life_records: &mut Query<&mut LifeRecord>,
+    zone_qi: &mut ZoneQiAccount,
+    now_lingtian_tick: u64,
+    drain_completed: &mut EventWriter<DrainQiCompleted>,
+) {
+    let (plot_owner, drained, to_player, to_zone) = {
+        let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
+            tracing::warn!("[bong][lingtian] DrainQiSession finished but plot at {pos:?} vanished");
+            return;
+        };
+        let drained = plot.plot_qi;
+        if drained <= 0.0 {
+            tracing::warn!(
+                "[bong][lingtian] DrainQiSession finished but plot at {pos:?} now empty"
+            );
+            return;
+        }
+        let owner = plot.owner;
+        plot.plot_qi = 0.0;
+        let to_player = drained * DRAIN_QI_TO_PLAYER_RATIO;
+        let to_zone = drained * DRAIN_QI_TO_ZONE_RATIO;
+        (owner, drained, to_player, to_zone)
+    };
+
+    // 注入操作者 cultivation.qi_current（cap at qi_max）
+    if let Ok(mut cult) = cultivations.get_mut(player) {
+        let room = (cult.qi_max - cult.qi_current).max(0.0);
+        cult.qi_current += (to_player as f64).min(room);
+    }
+    // 散逸 zone qi
+    *zone_qi.get_mut(DEFAULT_ZONE) += to_zone;
+
+    // 双方 LifeRecord 记账（仅 owner != player）
+    if let Some(owner) = plot_owner {
+        if owner != player {
+            let pos_arr = [pos.x, pos.y, pos.z];
+            if let Ok(mut owner_lr) = life_records.get_mut(owner) {
+                owner_lr.push(BiographyEntry::PlotQiDrainedByOther {
+                    plot_pos: pos_arr,
+                    amount_drained: drained,
+                    tick: now_lingtian_tick,
+                });
+            }
+            if let Ok(mut player_lr) = life_records.get_mut(player) {
+                player_lr.push(BiographyEntry::PlotQiDrainedFromOther {
+                    plot_pos: pos_arr,
+                    amount_drained: drained,
+                    tick: now_lingtian_tick,
+                });
+            }
+        }
+    }
+
+    drain_completed.send(DrainQiCompleted {
+        player,
+        pos: *pos,
+        plot_qi_drained: drained,
+        qi_to_player: to_player,
+        qi_to_zone: to_zone,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1130,6 +1285,8 @@ mod tests {
             .add_event::<HarvestCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<StartDrainQiRequest>()
+            .add_event::<DrainQiCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1137,6 +1294,7 @@ mod tests {
                     handle_start_renew,
                     handle_start_harvest,
                     handle_start_replenish,
+                    handle_start_drain_qi,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1621,6 +1779,8 @@ mod tests {
             .add_event::<HarvestCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<StartDrainQiRequest>()
+            .add_event::<DrainQiCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1629,6 +1789,7 @@ mod tests {
                     handle_start_planting,
                     handle_start_harvest,
                     handle_start_replenish,
+                    handle_start_drain_qi,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1849,6 +2010,8 @@ mod tests {
             .add_event::<PlantingCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<StartDrainQiRequest>()
+            .add_event::<DrainQiCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1857,6 +2020,7 @@ mod tests {
                     handle_start_planting,
                     handle_start_harvest,
                     handle_start_replenish,
+                    handle_start_drain_qi,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -2065,6 +2229,8 @@ mod tests {
             .add_event::<PlantingCompleted>()
             .add_event::<StartReplenishRequest>()
             .add_event::<ReplenishCompleted>()
+            .add_event::<StartDrainQiRequest>()
+            .add_event::<DrainQiCompleted>()
             .add_systems(
                 Update,
                 (
@@ -2411,6 +2577,8 @@ mod tests {
             .insert_resource(plant_registry)
             .insert_resource(tracker)
             .add_event::<ReplenishCompleted>()
+            .add_event::<StartDrainQiRequest>()
+            .add_event::<DrainQiCompleted>()
             .add_event::<ZonePressureCrossed>()
             .add_systems(
                 Update,
@@ -2540,5 +2708,234 @@ mod tests {
         assert!((PRESSURE_LOW - 0.3).abs() < 1e-6);
         assert!((PRESSURE_MID - 0.6).abs() < 1e-6);
         assert!((PRESSURE_HIGH - 1.0).abs() < 1e-6);
+    }
+
+    // ------------------------------------------------------------------------
+    // §1.7 偷菜匿名记账 e2e
+    // ------------------------------------------------------------------------
+
+    use crate::cultivation::life_record::{BiographyEntry as BE, LifeRecord};
+
+    fn count_biography_matching<F: Fn(&BE) -> bool>(lr: &LifeRecord, f: F) -> usize {
+        lr.biography.iter().filter(|e| f(e)).count()
+    }
+
+    /// build_harvest_app 已有；本 helper 在它基础上同时挂 LifeRecord 给 owner / operator
+    fn spawn_player_with_lifelog(app: &mut App, character_id: &str) -> Entity {
+        let inv = empty_inventory_8x8();
+        let lr = LifeRecord::new(character_id);
+        app.world_mut().spawn((inv, lr)).id()
+    }
+
+    fn spawn_owned_ripe_plot(
+        app: &mut App,
+        plant_id: &str,
+        pos: BlockPos,
+        owner: Option<Entity>,
+    ) -> Entity {
+        let mut p = LingtianPlot::new(pos, owner);
+        let mut crop = CropInstance::new(plant_id.into());
+        crop.growth = 1.0;
+        p.crop = Some(crop);
+        app.world_mut().spawn(p).id()
+    }
+
+    #[test]
+    fn self_harvest_records_no_steal_entries() {
+        let mut app = build_harvest_app();
+        let player = spawn_player_with_lifelog(&mut app, "alice");
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, Some(player));
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        let lr = app.world().get::<LifeRecord>(player).unwrap();
+        assert_eq!(
+            count_biography_matching(lr, |e| matches!(
+                e,
+                BE::PlotHarvestedByOther { .. } | BE::PlotHarvestedFromOther { .. }
+            )),
+            0,
+            "自家收不应记偷菜条目"
+        );
+    }
+
+    #[test]
+    fn stolen_harvest_records_both_sides() {
+        let mut app = build_harvest_app();
+        let owner = spawn_player_with_lifelog(&mut app, "alice");
+        let thief = spawn_player_with_lifelog(&mut app, "bob");
+        let pos = BlockPos::new(3, 64, 7);
+        spawn_owned_ripe_plot(&mut app, "ning_mai_cao", pos, Some(owner));
+        app.world_mut().send_event(StartHarvestRequest {
+            player: thief,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        let owner_lr = app.world().get::<LifeRecord>(owner).unwrap();
+        let thief_lr = app.world().get::<LifeRecord>(thief).unwrap();
+
+        assert_eq!(
+            count_biography_matching(owner_lr, |e| matches!(
+                e,
+                BE::PlotHarvestedByOther {
+                    plant_id, plot_pos, ..
+                } if plant_id == "ning_mai_cao" && plot_pos == &[3, 64, 7]
+            )),
+            1,
+            "owner 应记一条 PlotHarvestedByOther"
+        );
+        assert_eq!(
+            count_biography_matching(thief_lr, |e| matches!(
+                e,
+                BE::PlotHarvestedFromOther {
+                    plant_id, plot_pos, ..
+                } if plant_id == "ning_mai_cao" && plot_pos == &[3, 64, 7]
+            )),
+            1,
+            "operator 应记一条 PlotHarvestedFromOther"
+        );
+    }
+
+    #[test]
+    fn drain_qi_steals_into_player_and_zone_with_lifelog() {
+        use crate::cultivation::components::Cultivation;
+        use crate::lingtian::session::DRAIN_QI_TICKS;
+        let mut app = build_app();
+        let owner = app
+            .world_mut()
+            .spawn((empty_inventory_8x8(), LifeRecord::new("alice")))
+            .id();
+        let thief_cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let thief = app
+            .world_mut()
+            .spawn((empty_inventory_8x8(), LifeRecord::new("bob"), thief_cult))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let mut p = LingtianPlot::new(pos, Some(owner));
+        p.plot_qi = 0.5;
+        let plot = app.world_mut().spawn(p).id();
+
+        let zone_before = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player: thief, pos });
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
+
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!(p.plot_qi.abs() < 1e-6, "偷后 plot_qi 清零");
+
+        let cult = app.world().get::<Cultivation>(thief).unwrap();
+        assert!(
+            (cult.qi_current - 0.4).abs() < 1e-5,
+            "thief.qi_current={}",
+            cult.qi_current
+        );
+
+        let zone_after = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!(
+            (zone_after - zone_before - 0.1).abs() < 1e-5,
+            "zone qi delta={}",
+            zone_after - zone_before
+        );
+
+        let owner_lr = app.world().get::<LifeRecord>(owner).unwrap();
+        let thief_lr = app.world().get::<LifeRecord>(thief).unwrap();
+        assert_eq!(
+            count_biography_matching(owner_lr, |e| matches!(e, BE::PlotQiDrainedByOther { .. })),
+            1
+        );
+        assert_eq!(
+            count_biography_matching(thief_lr, |e| matches!(e, BE::PlotQiDrainedFromOther { .. })),
+            1
+        );
+    }
+
+    #[test]
+    fn drain_qi_caps_at_qi_max() {
+        use crate::cultivation::components::Cultivation;
+        use crate::lingtian::session::DRAIN_QI_TICKS;
+        let mut app = build_app();
+        // plot_qi=5.0 → drained 5.0 → to_player 4.0；qi_current=99 / qi_max=100 余 1
+        // → 注 1.0 → cap 100
+        let pos = BlockPos::new(0, 64, 0);
+        let mut p = LingtianPlot::new(pos, None);
+        p.plot_qi_cap = 5.0;
+        p.plot_qi = 5.0;
+        app.world_mut().spawn(p);
+        let cult = Cultivation {
+            qi_current: 99.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let player = app
+            .world_mut()
+            .spawn((empty_inventory_8x8(), LifeRecord::new("p"), cult))
+            .id();
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player, pos });
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
+        let cult = app.world().get::<Cultivation>(player).unwrap();
+        assert!(
+            (cult.qi_current - 100.0).abs() < 1e-5,
+            "应封顶 qi_max=100, 实得 {}",
+            cult.qi_current
+        );
+    }
+
+    #[test]
+    fn drain_qi_rejected_on_empty_plot() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn((empty_inventory_8x8(), LifeRecord::new("p")))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let mut p = LingtianPlot::new(pos, None);
+        p.plot_qi = 0.0;
+        app.world_mut().spawn(p);
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player, pos });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    #[test]
+    fn ownerless_harvest_records_neither_side() {
+        let mut app = build_harvest_app();
+        let player = spawn_player_with_lifelog(&mut app, "wanderer");
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, None); // 无主田
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        let lr = app.world().get::<LifeRecord>(player).unwrap();
+        assert_eq!(
+            count_biography_matching(lr, |e| matches!(
+                e,
+                BE::PlotHarvestedByOther { .. } | BE::PlotHarvestedFromOther { .. }
+            )),
+            0
+        );
     }
 }

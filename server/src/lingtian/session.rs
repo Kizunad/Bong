@@ -112,6 +112,53 @@ impl ReplenishSession {
 /// 上限 168h = 10080；本切片用下限固定，未来可加随机扰动。
 pub const REPLENISH_COOLDOWN_LINGTIAN_TICKS: u64 = 4320;
 
+/// plan §1.7 — 偷灵 2s（与"普通材料补灵"同档）。
+pub const DRAIN_QI_TICKS: u32 = 40;
+/// plan §1.7 — 偷灵流入操作者比例（其余 20% 散逸回 zone，保持灵气零和）。
+pub const DRAIN_QI_TO_PLAYER_RATIO: f32 = 0.8;
+pub const DRAIN_QI_TO_ZONE_RATIO: f32 = 0.2;
+
+#[derive(Debug, Clone)]
+pub struct DrainQiSession {
+    pub pos: BlockPos,
+    pub elapsed_ticks: u32,
+    pub state: SessionState,
+}
+
+impl DrainQiSession {
+    pub fn new(pos: BlockPos) -> Self {
+        Self {
+            pos,
+            elapsed_ticks: 0,
+            state: SessionState::Running,
+        }
+    }
+
+    pub fn target_ticks(&self) -> u32 {
+        DRAIN_QI_TICKS
+    }
+
+    pub fn tick(&mut self) {
+        if self.state != SessionState::Running {
+            return;
+        }
+        self.elapsed_ticks = self.elapsed_ticks.saturating_add(1);
+        if self.elapsed_ticks >= DRAIN_QI_TICKS {
+            self.state = SessionState::Finished;
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        if self.state == SessionState::Running {
+            self.state = SessionState::Cancelled;
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.state == SessionState::Finished
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionMode {
     Manual,

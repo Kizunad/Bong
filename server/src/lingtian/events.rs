@@ -126,3 +126,21 @@ pub struct ZonePressureCrossed {
     pub level: PressureLevel,
     pub raw_pressure: f32,
 }
+
+/// plan §1.7 — 偷灵：把目标 plot 的 plot_qi 全部抽走，80% 注入操作者，
+/// 20% 散逸到 zone（保持灵气零和）。本切片不限制 owner 自吸（无意义但允许）；
+/// 偷灵双方 LifeRecord 仅在 owner != player 时记。
+#[derive(Debug, Clone, Event)]
+pub struct StartDrainQiRequest {
+    pub player: Entity,
+    pub pos: BlockPos,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct DrainQiCompleted {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub plot_qi_drained: f32,
+    pub qi_to_player: f32,
+    pub qi_to_zone: f32,
+}

@@ -42,9 +42,9 @@ pub use pressure::{
 
 #[allow(unused_imports)]
 pub use events::{
-    HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
-    StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
-    TillCompleted, ZonePressureCrossed,
+    DrainQiCompleted, HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted,
+    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+    StartReplenishRequest, StartTillRequest, TillCompleted, ZonePressureCrossed,
 };
 #[allow(unused_imports)]
 pub use growth::{
@@ -63,9 +63,11 @@ pub use qi_account::{
 pub use seed::{seed_id_for, SeedRegistry};
 #[allow(unused_imports)]
 pub use session::{
-    HarvestSession, PlantingSession, RenewSession, ReplenishSession, ReplenishSource, SessionMode,
-    SessionState, TillSession, HARVEST_AUTO_TICKS, HARVEST_MANUAL_TICKS, PLANTING_TICKS,
-    RENEW_TICKS, REPLENISH_COOLDOWN_LINGTIAN_TICKS, TILL_AUTO_TICKS, TILL_MANUAL_TICKS,
+    DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
+    ReplenishSource, SessionMode, SessionState, TillSession, DRAIN_QI_TICKS,
+    DRAIN_QI_TO_PLAYER_RATIO, DRAIN_QI_TO_ZONE_RATIO, HARVEST_AUTO_TICKS, HARVEST_MANUAL_TICKS,
+    PLANTING_TICKS, RENEW_TICKS, REPLENISH_COOLDOWN_LINGTIAN_TICKS, TILL_AUTO_TICKS,
+    TILL_MANUAL_TICKS,
 };
 #[allow(unused_imports)]
 pub use systems::{ActiveLingtianSessions, ActiveSession, LingtianClock, LingtianHarvestRng};
@@ -110,7 +112,10 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestCompleted>();
     app.add_event::<StartReplenishRequest>();
     app.add_event::<ReplenishCompleted>();
+    app.add_event::<StartDrainQiRequest>();
+    app.add_event::<DrainQiCompleted>();
     app.add_event::<ZonePressureCrossed>();
+    // 11 systems — 用两段 .chain() 避开 Bevy IntoSystemConfigs 的 tuple 上限
     app.add_systems(
         Update,
         (
@@ -119,13 +124,21 @@ pub fn register(app: &mut App) {
             systems::handle_start_planting,
             systems::handle_start_harvest,
             systems::handle_start_replenish,
+            systems::handle_start_drain_qi,
             systems::tick_lingtian_sessions,
             systems::apply_completed_sessions,
+        )
+            .chain(),
+    );
+    app.add_systems(
+        Update,
+        (
             systems::lingtian_growth_tick,
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
             systems::record_replenish_to_pressure,
             systems::compute_zone_pressure_system,
         )
-            .chain(),
+            .chain()
+            .after(systems::apply_completed_sessions),
     );
 }
