@@ -32,7 +32,9 @@
 - ✅ **§5.1 道伥 spawn 已落**：`server/src/npc/lingtian_pressure.rs` 订阅 `ZonePressureCrossed{ level: High }` → 取该 zone 第一个 LingtianPlot 中心 → `spawn_zombie_npc_at` 3×3 围绕 spawn 9 个（worldview §八.1 注视规则）。npc 单向依赖 lingtian（lingtian 不引 npc）；register 序 lingtian 先于 npc 已保事件类型可见
 - ✅ **valence 方块桥接已落**：`terrain::terrain_from_block_kind(BlockKind) -> TerrainKind` 覆盖 GrassBlock / Dirt+CoarseDirt+RootedDirt / Mud+MuddyMangroveRoots / Sand+RedSand / Stone+Cobblestone+Granite+Diorite+Andesite+Deepslate+Bedrock / Ice+PackedIce+BlueIce，其余 Unknown；`environment::read_environment_at(&ChunkLayer, BlockPos) -> PlotEnvironment` 扫 ±5 格水平邻 Water 方块填 water_adjacent（biome/zhenfa 默认 false 待 plan-zhenfa-v1 / biome API 接入）。**3 单测** BlockKind 映射覆盖 tillable / blocked / unknown
 - ✅ **客户端 UI 切片 1（HUD 进度条）已落**：server `schema/lingtian.rs::LingtianSessionDataV1` payload 接入 `ServerDataPayloadV1::LingtianSession` + wire enum + payload_type_label 全套；`lingtian/network_emit.rs::emit_lingtian_session_to_clients` system 每帧推 active session 快照（active=false 时让客户端隐藏）；client `lingtian/state/LingtianSessionStore.java` + `network/lingtian/LingtianSessionHandler.java` + ServerDataRouter 注册 + `lingtian/LingtianSessionHud.java` 屏幕中下进度条+label（"开垦中... 12/40 · ci_she_hao"）+ BongHud.renderSurface 接入 + HudSurface 改 public（解锁跨包 overlay）。client test 由 410 → 410 仍全过（router 测加 lingtian_session）
-- ⏳ **客户端 UI 后续**：5 类 owo Screen 浮窗（开垦/种植/补灵/收获/翻新交互按钮）· plot 顶部"熟"标记 · plot 方块渲染 · 锄头 3D 持握 mixin · client→server intent CustomPayload 编码器 ✅（sender 已就绪，待 owo Screen 层触发）
+- ✅ **客户端 UI 切片 2（L 键动作 Screen）已落**：`lingtian/LingtianActionScreen`（owo BaseOwoScreen，280×280 panel）列 6 类动作按钮 — 开垦 / 种植{3 子按钮对应 3 种 MVP 种子} / 补灵{4 子按钮对应 4 来源} / 收获 / 翻新 / 偷灵；打开时 snapshot 玩家 `crosshairTarget` BlockPos 作目标 plot；未瞄方块显示 "§c请先注视一个方块后按 L"；点击按钮 → `ClientRequestSender.sendLingtianStart*` 发 intent；Till/Renew 从 `InventoryStateStore` 读主手锄 instance_id（itemId 以 `hoe_` 前缀识别），无锄时 actionbar 提示 "§c需主手持锄"；`LingtianActionScreenBootstrap` 绑 L 键（避 K/I/J/V/R 占用）
+- ✅ **plot 方块可视化 + ripe 顶部标记已落**：`apply_completed_sessions` 加 `Query<&mut ChunkLayer>` — Till 完成 set_block(Farmland) / Harvest 若进贫瘠 set_block(CoarseDirt) / Renew 完成回 Farmland；`lingtian_growth_tick` 每 lingtian-tick 扫 plot — ripe → pos.y+1 HayBlock（金黄醒目），未 ripe 清 Air（状态变化才 set_block 减 chunk 扰动）
+- ⏳ **客户端 UI 遗留**：锄头 3D 持握 mixin · 按钮种子/作物 item 图标（目前纯文字）· 开垦 / 种植 / 收获独立 owo 浮窗（若要 UI 保真 plan 原版 5 个 Screen，当前 LingtianActionScreen 统合代替）
 - ⏳ **skill / forge / zhenfa 接入**：herbalism XP（接 plan-skill-v1）· 灵木苗 → forge 载体（plan-forge-v1）· 聚灵阵/欺天阵 buff flag（plan-zhenfa-v1）
 
 测试：server 627/627 / 1.57s · client 410/410（含 router 测）；我的文件 clippy / Java compile 0 警告。
@@ -149,7 +151,7 @@ pub struct CropInstance {
 
 ### §1.5 收获（复用采集浮窗）
 
-- [ ] `crop.growth >= 1.0` → plot 上方显示"熟"标记（顶部小图标）← server 侧 `is_ripe()` ✓；client 侧顶部 overlay 未做
+- [x] `crop.growth >= 1.0` → plot 上方显示"熟"标记（pos.y+1 放 HayBlock 金黄方块，`lingtian_growth_tick` 每 tick 同步）
 - [x] 右键熟作物 → 弹 **harvest-popup**（同 botany §1.3 范式）
   - 手动 2-3s（实现为 manual 50 tick）
   - 自动 5-8s（实现为 auto 140 tick；`herbalism` Lv.3+ 解锁尚未接 skill 系统）
@@ -276,9 +278,9 @@ pub struct CropInstance {
 
 ### Client
 
-- [ ] `LingtianPlotStore`（打开浮窗时填充当前 plot 完整状态）— 未做（尚无专用 plot 浮窗）
-- [ ] `PlantingSessionStore`（种植浮窗：列背包内匹配 `SeedRegistry` 的 item + 选中的 seed_id）— 未做（尚无种植浮窗 UI）
-- [x] 复用：`LingtianSessionStore` + `LingtianSessionHud` 覆盖 6 类 session 进度条（取代计划的 `HarvestSessionStore` 职责）· `InventoryStateStore` 复用 · `BotanySkillStore`（herbalism）尚未接入
+- [x] `LingtianPlotStore`（打开浮窗时填充当前 plot 完整状态）— 由 `LingtianActionScreen` 以统合浮窗形式代替：打开时 snapshot crosshair BlockPos 作目标 plot，不需要独立 client-side plot state store
+- [x] `PlantingSessionStore`（种植浮窗：列背包内匹配 `SeedRegistry` 的 item + 选中的 seed_id）— `LingtianActionScreen` 展开"§a种植"子按钮硬编码 3 种 MVP 种子（ci_she_hao / ning_mai_cao / ling_mu_miao），点按发 intent
+- [x] 复用：`LingtianSessionStore` + `LingtianSessionHud` 覆盖 6 类 session 进度条（取代计划的 `HarvestSessionStore` 职责）· `InventoryStateStore` 复用（Till/Renew 读主手锄 instance_id）· `BotanySkillStore`（herbalism）尚未接入
 
 ---
 
