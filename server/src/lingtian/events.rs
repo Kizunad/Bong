@@ -4,6 +4,8 @@
 
 use valence::prelude::{bevy_ecs, BlockPos, Entity, Event};
 
+use crate::botany::PlantId;
+
 use super::hoe::HoeKind;
 use super::session::SessionMode;
 use super::terrain::TerrainKind;
@@ -43,4 +45,23 @@ pub struct RenewCompleted {
     pub player: Entity,
     pub pos: BlockPos,
     pub hoe: HoeKind,
+}
+
+/// 玩家请求在某 plot 种下指定 plant（plan §1.2.3）。
+///
+/// 调用方（client UI）应已通过 SeedRegistry 选定 plant 并验证背包有种子；
+/// server 侧在 `handle_start_planting` 复验所有前置（plot 空且未贫瘠 / 玩家
+/// 背包有种子 / SeedRegistry 已知 plant_id）。
+#[derive(Debug, Clone, Event)]
+pub struct StartPlantingRequest {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub plant_id: PlantId,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct PlantingCompleted {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub plant_id: PlantId,
 }

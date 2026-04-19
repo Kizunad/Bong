@@ -22,9 +22,10 @@
 - ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配 · 客户端 → server 路由（CustomPayload handler）
 - ⏳ **P2 收尾**：plot_qi_cap 修饰（水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0）· per-plot zone 解析（取代 DEFAULT_ZONE）· 与未来 WorldQiAccount / plan-zhenfa-v1 合账
 - ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI
-- ⏳ **P3+ 全未动**：种植 (PlantingSession) · 收获 · 补灵浮窗 · 偷菜偷灵 · 密度阈值 · 客户端 UI
+- ✅ **P3 种植已落**：`seed.rs`（SeedRegistry 由 PlantKindRegistry cultivable 子集派生 ↔ 双向映射 `{plant_id}_seed`）+ `assets/items/seeds.toml`（ci_she_hao_seed / ning_mai_cao_seed / ling_mu_miao_seed）+ `session.rs::PlantingSession`（1s = 20 tick）+ events `StartPlantingRequest` / `PlantingCompleted` + `systems::handle_start_planting`（验：无活 session / SeedRegistry 已知 plant_id / 背包有种子 / plot 空且未贫瘠）+ apply 完成路径（复验种子 + 复验 plot 空 → spawn CropInstance + consume_one_seed 扣 1）+ `consume_one_seed` template-id 风格扣减（容器 + hotbar 扫描，归零移除）+ 6 e2e 测覆盖正常种 / 最后一颗扣完空格 / 无种子拒 / plot 已有 crop 拒 / plot 贫瘠拒 / 非 cultivable plant_id 拒
+- ⏳ **P4+ 全未动**：补灵浮窗（4 来源）· 收获（接 harvest-popup）· herbalism XP · 偷菜偷灵 · 密度阈值 · 客户端 UI
 
-测试：569/569 全过（botany + lingtian 共 38 单测，10 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.14s。
+测试：580/580 全过（botany + lingtian 共 49 单测，16 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.12s。
 
 ---
 

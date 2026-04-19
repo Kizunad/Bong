@@ -11,6 +11,8 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::BlockPos;
 
+use crate::botany::PlantId;
+
 use super::hoe::HoeKind;
 
 /// plan §1.2.2 — 手动 2s / 自动 5s。tick = 1/20 s（valence 默认）。
@@ -19,6 +21,9 @@ pub const TILL_AUTO_TICKS: u32 = 100;
 
 /// plan §1.6 — 翻新 5s。
 pub const RENEW_TICKS: u32 = 100;
+
+/// plan §1.2.3 — 种植 1s。
+pub const PLANTING_TICKS: u32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionMode {
@@ -127,6 +132,49 @@ impl RenewSession {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PlantingSession {
+    pub pos: BlockPos,
+    pub plant_id: PlantId,
+    pub elapsed_ticks: u32,
+    pub state: SessionState,
+}
+
+impl PlantingSession {
+    pub fn new(pos: BlockPos, plant_id: PlantId) -> Self {
+        Self {
+            pos,
+            plant_id,
+            elapsed_ticks: 0,
+            state: SessionState::Running,
+        }
+    }
+
+    pub fn target_ticks(&self) -> u32 {
+        PLANTING_TICKS
+    }
+
+    pub fn tick(&mut self) {
+        if self.state != SessionState::Running {
+            return;
+        }
+        self.elapsed_ticks = self.elapsed_ticks.saturating_add(1);
+        if self.elapsed_ticks >= PLANTING_TICKS {
+            self.state = SessionState::Finished;
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        if self.state == SessionState::Running {
+            self.state = SessionState::Cancelled;
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.state == SessionState::Finished
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +245,28 @@ mod tests {
             s.tick();
         }
         assert!(!s.is_finished());
+    }
+
+    #[test]
+    fn planting_finishes_at_20_ticks() {
+        let mut s = PlantingSession::new(pos(), "ci_she_hao".into());
+        for _ in 0..PLANTING_TICKS - 1 {
+            s.tick();
+            assert!(!s.is_finished());
+        }
+        s.tick();
+        assert!(s.is_finished());
+    }
+
+    #[test]
+    fn planting_cancel_blocks_finish() {
+        let mut s = PlantingSession::new(pos(), "ci_she_hao".into());
+        s.tick();
+        s.cancel();
+        for _ in 0..200 {
+            s.tick();
+        }
+        assert!(!s.is_finished());
+        assert_eq!(s.state, SessionState::Cancelled);
     }
 }
