@@ -10,6 +10,7 @@ use super::combat_hud::{
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::inventory::{InventoryEventV1, InventorySnapshotV1};
+use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
 use super::world_state::PlayerPowerBreakdown;
 
@@ -51,6 +52,7 @@ pub enum ServerDataType {
     DefenseSync,
     WeaponEquipped,
     WeaponBroken,
+    LingtianSession,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +125,7 @@ pub enum ServerDataPayloadV1 {
     DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
+    LingtianSession(Box<LingtianSessionDataV1>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +254,10 @@ enum ServerDataPayloadWireV1 {
     WeaponBroken {
         #[serde(flatten)]
         weapon_broken: WeaponBrokenV1,
+    },
+    LingtianSession {
+        #[serde(flatten)]
+        lingtian_session: LingtianSessionDataV1,
     },
 }
 
@@ -439,6 +446,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::WeaponBroken { weapon_broken } => {
                 Ok(Self::WeaponBroken(weapon_broken))
             }
+            ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
+                Ok(Self::LingtianSession(Box::new(lingtian_session)))
+            }
         }
     }
 }
@@ -561,6 +571,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::WeaponBroken(b) => Self::WeaponBroken {
                 weapon_broken: b.clone(),
             },
+            ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
+                lingtian_session: (**s).clone(),
+            },
         }
     }
 }
@@ -672,6 +685,7 @@ impl ServerDataPayloadV1 {
             Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
+            Self::LingtianSession(..) => ServerDataType::LingtianSession,
         }
     }
 }

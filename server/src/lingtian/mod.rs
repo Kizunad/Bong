@@ -24,6 +24,7 @@ pub mod environment;
 pub mod events;
 pub mod growth;
 pub mod hoe;
+pub mod network_emit;
 pub mod plot;
 pub mod pressure;
 pub mod qi_account;
@@ -137,6 +138,8 @@ pub fn register(app: &mut App) {
             // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
             systems::record_replenish_to_pressure,
             systems::compute_zone_pressure_system,
+            // session emit 在 apply 后跑，client 拿到的是结算后状态
+            network_emit::emit_lingtian_session_to_clients,
         )
             .chain()
             .after(systems::apply_completed_sessions),

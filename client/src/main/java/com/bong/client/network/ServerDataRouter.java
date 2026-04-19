@@ -57,6 +57,8 @@ public final class ServerDataRouter {
         DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
+        com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
+            new com.bong.client.network.lingtian.LingtianSessionHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -91,6 +93,7 @@ public final class ServerDataRouter {
         handlers.put("defense_sync", defenseSyncHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
+        handlers.put("lingtian_session", lingtianSessionHandler);
         return new ServerDataRouter(handlers);
     }
 

@@ -31,9 +31,11 @@
 - ✅ **§1.7 偷菜 / 偷灵 + LifeRecord 匿名记账已落**：cultivation/life_record.rs::BiographyEntry 加 5 lingtian 变体（PlotHarvestedByOther / PlotHarvestedFromOther / PlotQiDrainedByOther / PlotQiDrainedFromOther / PlotDestroyedByOther）+ apply_harvest_completion 加 owner != player 双方记账钩子 + DrainQiSession（2s = 40 tick）+ events StartDrainQiRequest / DrainQiCompleted{ plot_qi_drained, qi_to_player, qi_to_zone } + apply_drain_qi_completion（清 plot.plot_qi → 80% 注入 cultivation.qi_current capped at qi_max → 20% 散逸 zone qi → owner != player 时双方 LifeRecord 各记一条）+ CompletionEventWriters SystemParam 合并 6 类完成事件（避开 Bevy 16 system-param 上限）+ 11 systems 拆两段 .chain() 接入 register。**6 e2e 测**：自家收无 LifeRecord 偷菜条目 / 偷收双方各记一条 / 无主田收两侧都无记 / 偷灵清 plot + 80%入操作者 + 20%入zone + 双方 LifeRecord / qi_max 封顶 / 空 plot 拒
 - ✅ **§5.1 道伥 spawn 已落**：`server/src/npc/lingtian_pressure.rs` 订阅 `ZonePressureCrossed{ level: High }` → 取该 zone 第一个 LingtianPlot 中心 → `spawn_zombie_npc_at` 3×3 围绕 spawn 9 个（worldview §八.1 注视规则）。npc 单向依赖 lingtian（lingtian 不引 npc）；register 序 lingtian 先于 npc 已保事件类型可见
 - ✅ **valence 方块桥接已落**：`terrain::terrain_from_block_kind(BlockKind) -> TerrainKind` 覆盖 GrassBlock / Dirt+CoarseDirt+RootedDirt / Mud+MuddyMangroveRoots / Sand+RedSand / Stone+Cobblestone+Granite+Diorite+Andesite+Deepslate+Bedrock / Ice+PackedIce+BlueIce，其余 Unknown；`environment::read_environment_at(&ChunkLayer, BlockPos) -> PlotEnvironment` 扫 ±5 格水平邻 Water 方块填 water_adjacent（biome/zhenfa 默认 false 待 plan-zhenfa-v1 / biome API 接入）。**3 单测** BlockKind 映射覆盖 tillable / blocked / unknown
-- ⏳ **P6+ 全未动**：herbalism XP（接 plan-skill-v1）· 客户端 UI
+- ✅ **客户端 UI 切片 1（HUD 进度条）已落**：server `schema/lingtian.rs::LingtianSessionDataV1` payload 接入 `ServerDataPayloadV1::LingtianSession` + wire enum + payload_type_label 全套；`lingtian/network_emit.rs::emit_lingtian_session_to_clients` system 每帧推 active session 快照（active=false 时让客户端隐藏）；client `lingtian/state/LingtianSessionStore.java` + `network/lingtian/LingtianSessionHandler.java` + ServerDataRouter 注册 + `lingtian/LingtianSessionHud.java` 屏幕中下进度条+label（"开垦中... 12/40 · ci_she_hao"）+ BongHud.renderSurface 接入 + HudSurface 改 public（解锁跨包 overlay）。client test 由 410 → 410 仍全过（router 测加 lingtian_session）
+- ⏳ **客户端 UI 后续**：5 类 owo Screen 浮窗（开垦/种植/补灵/收获/翻新交互按钮）· plot 顶部"熟"标记 · plot 方块渲染 · 锄头 3D 持握 mixin · client→server intent CustomPayload 路由
+- ⏳ **P6+ 全未动**：herbalism XP（接 plan-skill-v1）
 
-测试：627/627 全过（botany + lingtian 共 96 单测，含 47 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.57s。
+测试：server 627/627 / 1.57s · client 410/410（含 router 测）；我的文件 clippy / Java compile 0 警告。
 
 ---
 

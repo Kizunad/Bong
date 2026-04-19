@@ -166,6 +166,10 @@ public class BongHud {
         BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
         BongEventAlertOverlay.render(surface, snapshot.eventAlert());
         renderToast(surface, snapshot.toast());
+        com.bong.client.lingtian.LingtianSessionHud.render(
+            surface,
+            com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
+        );
     }
 
     /**
@@ -211,7 +215,7 @@ public class BongHud {
         surface.drawText(toast.text(), x, y, toast.color(), true);
     }
 
-    interface HudSurface {
+    public interface HudSurface {
         int windowWidth();
 
         int windowHeight();

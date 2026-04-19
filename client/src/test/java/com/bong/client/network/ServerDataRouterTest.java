@@ -52,7 +52,9 @@ public class ServerDataRouterTest {
             "defense_sync",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
-            "weapon_broken"
+            "weapon_broken",
+            // plan-lingtian-v1 §4 active session 推送。
+            "lingtian_session"
         ), router.registeredTypes());
     }
 
