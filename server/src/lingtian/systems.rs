@@ -16,14 +16,17 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, Commands, Entity, EventReader, EventWriter, Query, ResMut, Resource,
+    bevy_ecs, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut, Resource,
 };
 
+use crate::botany::PlantKindRegistry;
 use crate::inventory::PlayerInventory;
 
 use super::events::{RenewCompleted, StartRenewRequest, StartTillRequest, TillCompleted};
+use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
 use super::plot::LingtianPlot;
+use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
 use super::session::{RenewSession, TillSession};
 use super::terrain::classify_for_till;
 
@@ -278,6 +281,56 @@ pub fn cancel_player_session(
     player: Entity,
 ) -> Option<ActiveSession> {
     sessions.clear(player)
+}
+
+// ============================================================================
+// 生长 tick（plan §1.3 / §4 LingtianTick）
+// ============================================================================
+
+/// 每 Bevy tick 累一次；满 1200 触发一 lingtian-tick：迭代所有 plot，按
+/// `botany::PlantKindRegistry` 查 PlantKind，调 `advance_one_lingtian_tick`
+/// 推进 growth + plot_qi + zone qi。
+///
+/// zone 解析当前简化为 `DEFAULT_ZONE`（plan §1.3 注释：world::zone 真挂接
+/// 留 P3+，与 plan-zhenfa-v1 / WorldQiAccount 整合）。
+pub fn lingtian_growth_tick(
+    mut accumulator: ResMut<LingtianTickAccumulator>,
+    mut zone_qi: ResMut<ZoneQiAccount>,
+    registry: Res<PlantKindRegistry>,
+    mut plots: Query<&mut LingtianPlot>,
+) {
+    if !accumulator.step() {
+        return;
+    }
+    for mut plot in plots.iter_mut() {
+        advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+    }
+}
+
+/// 推一个 plot 一步：查 `PlantKind`、按 `DEFAULT_ZONE` 取 zone qi、调 growth 公式。
+///
+/// 把"找 kind / 找 zone / 调用 advance"封装在一处，便于：
+///   * `lingtian_growth_tick` system 在 Query 迭代里调
+///   * 测试代码绕开 1200 个 Bevy tick 直推
+pub fn advance_plot_one_lingtian_tick(
+    plot: &mut LingtianPlot,
+    registry: &PlantKindRegistry,
+    zone_qi: &mut ZoneQiAccount,
+) {
+    let kind_id = match plot.crop.as_ref().map(|c| c.kind.clone()) {
+        Some(id) => id,
+        None => return,
+    };
+    let Some(kind) = registry.get(&kind_id) else {
+        tracing::warn!(
+            "[bong][lingtian] plot at {:?} carries unknown plant_id={}",
+            plot.pos,
+            kind_id
+        );
+        return;
+    };
+    let zone_qi_ref = zone_qi.get_mut(DEFAULT_ZONE);
+    advance_one_lingtian_tick(plot, kind, zone_qi_ref);
 }
 
 // ============================================================================
@@ -546,6 +599,133 @@ mod tests {
         assert!(
             !inv.equipped.contains_key(MAIN_HAND_SLOT),
             "锄归零应从 equipped 移除"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // P2 生长 tick e2e
+    // ------------------------------------------------------------------------
+
+    use crate::botany::{GrowthCost, PlantKind, PlantKindRegistry, PlantRarity};
+    use crate::lingtian::plot::CropInstance;
+    use crate::lingtian::qi_account::BEVY_TICKS_PER_LINGTIAN_TICK;
+
+    fn ci_she_hao_kind() -> PlantKind {
+        PlantKind {
+            id: "ci_she_hao".into(),
+            display_name: "刺舌蒿".into(),
+            cultivable: true,
+            growth_cost: GrowthCost::Low,
+            growth_duration_ticks: 480,
+            rarity: PlantRarity::Common,
+            description: String::new(),
+        }
+    }
+
+    fn registry_with(kind: PlantKind) -> PlantKindRegistry {
+        let mut r = PlantKindRegistry::new();
+        r.insert(kind).unwrap();
+        r
+    }
+
+    fn build_growth_app(zone_qi: f32) -> App {
+        let mut app = App::new();
+        let mut acc = ZoneQiAccount::new();
+        acc.set(DEFAULT_ZONE, zone_qi);
+        app.insert_resource(LingtianTickAccumulator::new())
+            .insert_resource(acc)
+            .insert_resource(registry_with(ci_she_hao_kind()))
+            .add_systems(Update, lingtian_growth_tick);
+        app
+    }
+
+    fn spawn_planted_plot(app: &mut App, plot_qi: f32) -> Entity {
+        let mut p = LingtianPlot::new(BlockPos::new(0, 64, 0), None);
+        p.plot_qi = plot_qi;
+        p.crop = Some(CropInstance::new("ci_she_hao".into()));
+        app.world_mut().spawn(p).id()
+    }
+
+    // 注：1 lingtian-tick = 1200 Bevy tick；通过 `app.update()` 走完整路径
+    // 单测过慢（每 lingtian-tick ≥ 100ms）。其余生长测试改用
+    // `advance_n_lingtian_ticks_direct` 直推，accumulator 路径单独由
+    // `growth_tick_does_not_fire_before_1200_bevy_ticks` 守。
+
+    #[test]
+    fn growth_tick_does_not_fire_before_1200_bevy_ticks() {
+        let mut app = build_growth_app(0.0);
+        let plot = spawn_planted_plot(&mut app, 1000.0);
+        // plot_qi_cap 默认 1.0；为做"持续 baseline mult"，本测只关心: < 1200 tick 不动
+        for _ in 0..BEVY_TICKS_PER_LINGTIAN_TICK - 1 {
+            app.update();
+        }
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert_eq!(
+            p.crop.as_ref().unwrap().growth,
+            0.0,
+            "1200 - 1 个 Bevy tick 不应触发 lingtian-tick"
+        );
+    }
+
+    /// 直推 lingtian-tick，跳过 1200×N 个 Bevy update（accumulator 已有独立单测）。
+    fn advance_n_lingtian_ticks_direct(app: &mut App, n: u32) {
+        for _ in 0..n {
+            let world = app.world_mut();
+            let mut zone_qi = world.remove_resource::<ZoneQiAccount>().unwrap();
+            let registry = world.remove_resource::<PlantKindRegistry>().unwrap();
+            let mut state = world.query::<&mut LingtianPlot>();
+            for mut plot in state.iter_mut(world) {
+                advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+            }
+            world.insert_resource(zone_qi);
+            world.insert_resource(registry);
+        }
+    }
+
+    #[test]
+    fn ci_she_hao_ripens_in_480_lingtian_ticks_at_full_qi() {
+        let mut app = build_growth_app(0.0);
+        // plot_qi cap=1.0；每 lingtian-tick 扣 0.002（low）→ 480 tick 扣 0.96，不会枯。
+        // ratio 起始=1.0 → mult=1.5 → 应早于 480 tick 熟。
+        let plot = spawn_planted_plot(&mut app, 1.0);
+        advance_n_lingtian_ticks_direct(&mut app, 480);
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        let crop = p.crop.as_ref().unwrap();
+        assert!(crop.is_ripe(), "growth = {}", crop.growth);
+    }
+
+    #[test]
+    fn zone_leak_path_when_plot_qi_dry() {
+        let mut app = build_growth_app(2.0); // zone qi 充足
+        let plot = spawn_planted_plot(&mut app, 0.0);
+        advance_n_lingtian_ticks_direct(&mut app, 10);
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        let g = p.crop.as_ref().unwrap().growth;
+        // 漏吸 10 tick：每次 = 1/480 × 0.3 = 0.000625；累 10 = 0.00625
+        let expected = 10.0 * (1.0_f32 / 480.0) * 0.3;
+        assert!(
+            (g - expected).abs() < 1e-5,
+            "growth = {g}, expected ≈ {expected}"
+        );
+        let zone_left = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        // 漏吸 10 次：每次 0.002 × 0.2 = 0.0004；累 10 = 0.004
+        let zone_consumed = 10.0 * 0.002 * 0.2;
+        assert!(
+            (zone_left - (2.0 - zone_consumed)).abs() < 1e-5,
+            "zone_left = {zone_left}"
+        );
+    }
+
+    #[test]
+    fn stalls_when_plot_and_zone_both_dry() {
+        let mut app = build_growth_app(0.0);
+        let plot = spawn_planted_plot(&mut app, 0.0);
+        advance_n_lingtian_ticks_direct(&mut app, 50);
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert_eq!(
+            p.crop.as_ref().unwrap().growth,
+            0.0,
+            "双干 50 tick 不应有任何生长"
         );
     }
 }

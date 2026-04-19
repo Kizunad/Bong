@@ -17,12 +17,14 @@
 
 **进度**（2026-04-19，分支 `plan-lingtian-v1`）：
 - ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法）+ `register(&mut app)` 双双接入 main.rs
-- ✅ **P1 数据 / 状态机 / ECS 已落**：`hoe.rs` 三档锄 + `assets/items/lingtian.toml` + `terrain.rs` 地形适合性 + `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · finish 后 tick no-op）+ `events.rs` 四事件 + `systems.rs`（`ActiveLingtianSessions` Resource · `handle_start_till` / `handle_start_renew` 起 session 系统 · `tick_lingtian_sessions` · `apply_completed_sessions` spawn/reset Plot + 扣锄耐久 · 单 player 单 session · 锄归零自动从 equipped 移除）。**端到端 e2e 集成测覆盖：起 → 推 40t → plot spawn + 锄 -0.05；翻新 → plot 重置 + 锄 -0.01；锄归零移除装备**
-- ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配（实际方块种类读取，由上层适配层填 `StartTillRequest.terrain`）· 客户端 → server 的实际请求路由（CustomPayload / network handler 接入）
+- ✅ **P1 数据 / 状态机 / ECS 已落**：`hoe.rs` 三档锄 + `assets/items/lingtian.toml` + `terrain.rs` 地形适合性 + `session.rs`（TillSession 手动 40t / 自动 100t · RenewSession 100t · cancel · finish 后 tick no-op）+ `events.rs` 四事件 + `systems.rs` Till/Renew ECS 通路（起 session 系统 · tick · 完成 → spawn/reset Plot + 扣锄耐久 · 单 player 单 session · 锄归零自动卸下，6 e2e 测）
+- ✅ **P2 生长模型已落**：`growth.rs` 纯函数（plot_qi 充足分支 / zone-leak 30% 分支 / Stalled / NoCrop · `quality_multiplier` 分段线性 [0.8, 1.5] · 丰沛期 0.9 阈值品质 +0.001/tick）+ `qi_account.rs`（`ZoneQiAccount` 区域灵气账本 解耦 world::zone · `LingtianTickAccumulator` 1200 Bevy-tick = 1 lingtian-tick）+ `systems::lingtian_growth_tick`（每 lingtian-tick 推所有 plot.crop）+ `advance_plot_one_lingtian_tick` per-plot helper。**e2e 测覆盖：ci_she_hao 480 lingtian-tick 内成熟（满 plot_qi 1.5x mult）· plot 干 + zone 充 → 漏吸 30% 速 · 双干 → stalled · accumulator 边界**
+- ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配 · 客户端 → server 路由（CustomPayload handler）
+- ⏳ **P2 收尾**：plot_qi_cap 修饰（水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0）· per-plot zone 解析（取代 DEFAULT_ZONE）· 与未来 WorldQiAccount / plan-zhenfa-v1 合账
 - ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI
-- ⏳ **P2+ 全未动**：生长 tick / plot_qi / 区域漏吸 / 补灵浮窗 / 收获 / 偷菜偷灵 / 密度阈值 / 客户端 UI
+- ⏳ **P3+ 全未动**：种植 (PlantingSession) · 收获 · 补灵浮窗 · 偷菜偷灵 · 密度阈值 · 客户端 UI
 
-测试：553/553 全过（botany + lingtian 共 23 单测，含 6 个 ECS e2e）；我的文件 clippy 0 警告。
+测试：569/569 全过（botany + lingtian 共 38 单测，10 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.14s。
 
 ---
 
