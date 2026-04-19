@@ -25,6 +25,7 @@ use crate::inventory::{
     MAIN_PACK_CONTAINER_ID,
 };
 
+use super::environment::compute_plot_qi_cap;
 use super::events::{
     HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
     StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
@@ -231,7 +232,7 @@ pub fn handle_start_till(
             );
             continue;
         }
-        let session = TillSession::new(req.pos, kind, instance_id, req.mode);
+        let session = TillSession::new(req.pos, kind, instance_id, req.mode, req.environment);
         sessions.try_insert(req.player, ActiveSession::Till(session));
     }
 }
@@ -517,7 +518,9 @@ pub fn apply_completed_sessions(
                 if let Ok(mut inv) = inventories.get_mut(player) {
                     wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
                 }
-                commands.spawn(LingtianPlot::new(s.pos, Some(player)));
+                let mut plot = LingtianPlot::new(s.pos, Some(player));
+                plot.plot_qi_cap = compute_plot_qi_cap(&s.environment);
+                commands.spawn(plot);
                 till_completed.send(TillCompleted {
                     player,
                     pos: s.pos,
@@ -1084,6 +1087,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
         });
 
         // 第 1 次 update：handle_start_till 起 session + tick_lingtian_sessions 推 1
@@ -1133,6 +1137,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
@@ -1151,6 +1156,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Stone,
+            environment: PlotEnvironment::base(),
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
@@ -1208,6 +1214,7 @@ mod tests {
             hoe_instance_id: 2,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
@@ -1226,6 +1233,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
         });
         app.update();
         assert_eq!(app.world().resource::<ActiveLingtianSessions>().len(), 1);
@@ -1236,6 +1244,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Dirt,
+            environment: PlotEnvironment::base(),
         });
         app.update();
         assert_eq!(
@@ -1315,6 +1324,7 @@ mod tests {
             hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
         });
         for _ in 0..TILL_MANUAL_TICKS {
             app.update();
@@ -1331,6 +1341,7 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::botany::{GrowthCost, PlantKind, PlantKindRegistry, PlantRarity};
+    use crate::lingtian::environment::{PlotBiome, PlotEnvironment};
     use crate::lingtian::plot::CropInstance;
     use crate::lingtian::qi_account::BEVY_TICKS_PER_LINGTIAN_TICK;
 
@@ -2233,5 +2244,68 @@ mod tests {
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
         let p = app.world().get::<LingtianPlot>(plot).unwrap();
         assert!((p.plot_qi - 0.8).abs() < 1e-6);
+    }
+
+    // ------------------------------------------------------------------------
+    // P2 plot_qi_cap 修饰 e2e
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn till_with_combined_environment_yields_cap_2_8() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment {
+                water_adjacent: true,
+                biome: PlotBiome::Wetland,
+                zhenfa_jvling: true,
+            },
+        });
+        for _ in 0..TILL_MANUAL_TICKS {
+            app.update();
+        }
+        let plot = app
+            .world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+        // 1.0 + 0.3 + 0.5 + 1.0 = 2.8
+        assert!((plot.plot_qi_cap - 2.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn till_default_environment_keeps_cap_at_1_0() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        for _ in 0..TILL_MANUAL_TICKS {
+            app.update();
+        }
+        let plot = app
+            .world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+        assert!((plot.plot_qi_cap - 1.0).abs() < 1e-6);
     }
 }

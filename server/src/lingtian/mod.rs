@@ -20,6 +20,7 @@
 //! valence BlockKind ↔ TerrainKind 适配 + 真正的 BlockEntity 持久化留给
 //! 下游切片（与 plan-persistence-v1 联动）。
 
+pub mod environment;
 pub mod events;
 pub mod growth;
 pub mod hoe;
@@ -29,6 +30,9 @@ pub mod seed;
 pub mod session;
 pub mod systems;
 pub mod terrain;
+
+#[allow(unused_imports)]
+pub use environment::{compute_plot_qi_cap, PlotBiome, PlotEnvironment};
 
 #[allow(unused_imports)]
 pub use events::{

@@ -6,6 +6,7 @@ use valence::prelude::{bevy_ecs, BlockPos, Entity, Event};
 
 use crate::botany::PlantId;
 
+use super::environment::PlotEnvironment;
 use super::hoe::HoeKind;
 use super::session::{ReplenishSource, SessionMode};
 use super::terrain::TerrainKind;
@@ -26,6 +27,9 @@ pub struct StartTillRequest {
     pub hoe_instance_id: u64,
     pub mode: SessionMode,
     pub terrain: TerrainKind,
+    /// plot 环境修饰（plan §1.1：水源 / 湿地 / 聚灵阵）。Default 为 base
+    /// → cap 1.0。由 valence world ↔ env 适配层填，session 单测可省。
+    pub environment: PlotEnvironment,
 }
 
 /// 开垦完成（session.tick 完成后由 system 派发）。

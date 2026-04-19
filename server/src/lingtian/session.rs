@@ -13,6 +13,7 @@ use valence::prelude::BlockPos;
 
 use crate::botany::PlantId;
 
+use super::environment::PlotEnvironment;
 use super::hoe::HoeKind;
 
 /// plan §1.2.2 — 手动 2s / 自动 5s。tick = 1/20 s（valence 默认）。
@@ -133,17 +134,26 @@ pub struct TillSession {
     /// 会话开始时锁定的具体锄头 `ItemInstance.instance_id`；apply 路径按此扣耐久。
     pub hoe_instance_id: u64,
     pub mode: SessionMode,
+    /// 起手时锁定的环境修饰（决定 plot_qi_cap）。
+    pub environment: PlotEnvironment,
     pub elapsed_ticks: u32,
     pub state: SessionState,
 }
 
 impl TillSession {
-    pub fn new(pos: BlockPos, hoe: HoeKind, hoe_instance_id: u64, mode: SessionMode) -> Self {
+    pub fn new(
+        pos: BlockPos,
+        hoe: HoeKind,
+        hoe_instance_id: u64,
+        mode: SessionMode,
+        environment: PlotEnvironment,
+    ) -> Self {
         Self {
             pos,
             hoe,
             hoe_instance_id,
             mode,
+            environment,
             elapsed_ticks: 0,
             state: SessionState::Running,
         }
@@ -324,7 +334,13 @@ mod tests {
 
     #[test]
     fn till_manual_finishes_at_40_ticks() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
+        let mut s = TillSession::new(
+            pos(),
+            HoeKind::Iron,
+            1,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        );
         for _ in 0..TILL_MANUAL_TICKS - 1 {
             s.tick();
             assert!(!s.is_finished());
@@ -336,14 +352,34 @@ mod tests {
 
     #[test]
     fn till_auto_takes_longer_than_manual() {
-        let manual = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual).target_ticks();
-        let auto = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Auto).target_ticks();
+        let manual = TillSession::new(
+            pos(),
+            HoeKind::Iron,
+            1,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        )
+        .target_ticks();
+        let auto = TillSession::new(
+            pos(),
+            HoeKind::Iron,
+            1,
+            SessionMode::Auto,
+            PlotEnvironment::base(),
+        )
+        .target_ticks();
         assert!(auto > manual);
     }
 
     #[test]
     fn till_tick_after_finish_is_noop() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
+        let mut s = TillSession::new(
+            pos(),
+            HoeKind::Iron,
+            1,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        );
         for _ in 0..TILL_MANUAL_TICKS {
             s.tick();
         }
@@ -355,7 +391,13 @@ mod tests {
 
     #[test]
     fn till_cancel_blocks_finish() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
+        let mut s = TillSession::new(
+            pos(),
+            HoeKind::Iron,
+            1,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        );
         s.tick();
         s.cancel();
         for _ in 0..200 {
