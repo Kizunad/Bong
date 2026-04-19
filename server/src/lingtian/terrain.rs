@@ -3,6 +3,11 @@
 //! 适合：grass / dirt / swamp_mud。不适合：沙 / 石 / 冰 / 死域。
 //! 真实方块判定走 valence::block::BlockKind，但本模块用一个简洁的
 //! `TerrainKind` 抽象，允许 session 层免依赖 valence types 做单测。
+//!
+//! `terrain_from_block_kind` 适配 valence BlockKind → TerrainKind；网络
+//! handler 在收到 client till request 时调用以填 `StartTillRequest.terrain`。
+
+use valence::prelude::BlockKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerrainKind {
@@ -36,6 +41,25 @@ pub enum TillRejectReason {
     BlockedTerrain,
     /// 既非可开垦也非明确禁止 —— 比如树叶、水方块。UI 也应灰掉，但语义不同。
     UnsupportedTerrain,
+}
+
+/// 把 valence `BlockKind` 映射到 `TerrainKind`。未知 → Unknown。
+pub fn terrain_from_block_kind(kind: BlockKind) -> TerrainKind {
+    match kind {
+        BlockKind::GrassBlock => TerrainKind::Grass,
+        BlockKind::Dirt | BlockKind::CoarseDirt | BlockKind::RootedDirt => TerrainKind::Dirt,
+        BlockKind::Mud | BlockKind::MuddyMangroveRoots => TerrainKind::SwampMud,
+        BlockKind::Sand | BlockKind::RedSand => TerrainKind::Sand,
+        BlockKind::Stone
+        | BlockKind::Cobblestone
+        | BlockKind::Granite
+        | BlockKind::Diorite
+        | BlockKind::Andesite
+        | BlockKind::Deepslate
+        | BlockKind::Bedrock => TerrainKind::Stone,
+        BlockKind::Ice | BlockKind::PackedIce | BlockKind::BlueIce => TerrainKind::Ice,
+        _ => TerrainKind::Unknown,
+    }
 }
 
 pub fn classify_for_till(terrain: TerrainKind) -> Result<(), TillRejectReason> {
@@ -76,6 +100,58 @@ mod tests {
         assert_eq!(
             classify_for_till(TerrainKind::Unknown),
             Err(TillRejectReason::UnsupportedTerrain),
+        );
+    }
+
+    #[test]
+    fn block_kind_mapping_covers_tillable() {
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::GrassBlock),
+            TerrainKind::Grass
+        );
+        assert_eq!(terrain_from_block_kind(BlockKind::Dirt), TerrainKind::Dirt);
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::CoarseDirt),
+            TerrainKind::Dirt
+        );
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::Mud),
+            TerrainKind::SwampMud
+        );
+    }
+
+    #[test]
+    fn block_kind_mapping_covers_blocked() {
+        assert_eq!(terrain_from_block_kind(BlockKind::Sand), TerrainKind::Sand);
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::Stone),
+            TerrainKind::Stone
+        );
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::Deepslate),
+            TerrainKind::Stone
+        );
+        assert_eq!(terrain_from_block_kind(BlockKind::Ice), TerrainKind::Ice);
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::PackedIce),
+            TerrainKind::Ice
+        );
+    }
+
+    #[test]
+    fn block_kind_mapping_unknown_for_others() {
+        // 树叶 / 水 / 空气 / 树干都不映射，回到 Unknown → UnsupportedTerrain
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::Air),
+            TerrainKind::Unknown
+        );
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::Water),
+            TerrainKind::Unknown
+        );
+        assert_eq!(
+            terrain_from_block_kind(BlockKind::OakLeaves),
+            TerrainKind::Unknown
         );
     }
 }

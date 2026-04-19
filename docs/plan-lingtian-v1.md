@@ -30,9 +30,10 @@
 - ✅ **§5.1 密度阈值已落**：`pressure.rs`（PressureLevel 4 档 None/Low/Mid/High + ZonePressureState 7 天滚动 replenish 窗口 + ZonePressureTracker Resource + compute_zone_pressure 公式：Σ growth_cost × 作物 - natural_supply - replenish_recent_7d）+ events `ZonePressureCrossed{ zone, level, raw_pressure }`（仅"上升"边沿）+ systems：`record_replenish_to_pressure`（订阅 ReplenishCompleted 即记账）+ `compute_zone_pressure_system`（与 lingtian-tick 同节拍 prune + 重算 + 跨档发事件 + HIGH 进入清 zone 所有 plot_qi）。**7 e2e 测**：单 plot 不触发；25→51→85 plot 累加跨 LOW/MID/HIGH 边沿；HIGH 清 plot_qi；natural_supply 抵消 demand；7d replenish 抵消 demand；同档不重复发；常量与 plan §5.1 一致
 - ✅ **§1.7 偷菜 / 偷灵 + LifeRecord 匿名记账已落**：cultivation/life_record.rs::BiographyEntry 加 5 lingtian 变体（PlotHarvestedByOther / PlotHarvestedFromOther / PlotQiDrainedByOther / PlotQiDrainedFromOther / PlotDestroyedByOther）+ apply_harvest_completion 加 owner != player 双方记账钩子 + DrainQiSession（2s = 40 tick）+ events StartDrainQiRequest / DrainQiCompleted{ plot_qi_drained, qi_to_player, qi_to_zone } + apply_drain_qi_completion（清 plot.plot_qi → 80% 注入 cultivation.qi_current capped at qi_max → 20% 散逸 zone qi → owner != player 时双方 LifeRecord 各记一条）+ CompletionEventWriters SystemParam 合并 6 类完成事件（避开 Bevy 16 system-param 上限）+ 11 systems 拆两段 .chain() 接入 register。**6 e2e 测**：自家收无 LifeRecord 偷菜条目 / 偷收双方各记一条 / 无主田收两侧都无记 / 偷灵清 plot + 80%入操作者 + 20%入zone + 双方 LifeRecord / qi_max 封顶 / 空 plot 拒
 - ✅ **§5.1 道伥 spawn 已落**：`server/src/npc/lingtian_pressure.rs` 订阅 `ZonePressureCrossed{ level: High }` → 取该 zone 第一个 LingtianPlot 中心 → `spawn_zombie_npc_at` 3×3 围绕 spawn 9 个（worldview §八.1 注视规则）。npc 单向依赖 lingtian（lingtian 不引 npc）；register 序 lingtian 先于 npc 已保事件类型可见
-- ⏳ **P6+ 全未动**：herbalism XP（接 plan-skill-v1）· 客户端 UI · valence 真方块桥接
+- ✅ **valence 方块桥接已落**：`terrain::terrain_from_block_kind(BlockKind) -> TerrainKind` 覆盖 GrassBlock / Dirt+CoarseDirt+RootedDirt / Mud+MuddyMangroveRoots / Sand+RedSand / Stone+Cobblestone+Granite+Diorite+Andesite+Deepslate+Bedrock / Ice+PackedIce+BlueIce，其余 Unknown；`environment::read_environment_at(&ChunkLayer, BlockPos) -> PlotEnvironment` 扫 ±5 格水平邻 Water 方块填 water_adjacent（biome/zhenfa 默认 false 待 plan-zhenfa-v1 / biome API 接入）。**3 单测** BlockKind 映射覆盖 tillable / blocked / unknown
+- ⏳ **P6+ 全未动**：herbalism XP（接 plan-skill-v1）· 客户端 UI
 
-测试：624/624 全过（botany + lingtian 共 93 单测，含 47 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.12s。
+测试：627/627 全过（botany + lingtian 共 96 单测，含 47 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.57s。
 
 ---
 

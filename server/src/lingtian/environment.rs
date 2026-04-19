@@ -4,6 +4,7 @@
 //! 计算，单测无需 mock world。同 `TerrainKind` 设计原则。
 
 use serde::{Deserialize, Serialize};
+use valence::prelude::{BlockKind, BlockPos, ChunkLayer};
 
 use super::plot::{PLOT_QI_CAP_BASE, PLOT_QI_CAP_MAX};
 
@@ -33,6 +34,38 @@ impl PlotEnvironment {
             zhenfa_jvling: false,
         }
     }
+}
+
+/// 扫描 `pos` 周围 ±5 格水平范围（y 层不变）内是否有 Water 方块，用于
+/// `water_adjacent` 判定（plan §1.1）。半径 5 足够覆盖一个典型"近水田"。
+///
+/// biome / zhenfa_jvling 两项暂不自动派生：biome 需 valence biome 读取 API，
+/// zhenfa 要等 plan-zhenfa-v1 的阵法系统落地，目前默认 false。
+pub fn read_environment_at(layer: &ChunkLayer, pos: BlockPos) -> PlotEnvironment {
+    let water_adjacent = scan_water_near(layer, pos, 5);
+    PlotEnvironment {
+        water_adjacent,
+        biome: PlotBiome::Other,
+        zhenfa_jvling: false,
+    }
+}
+
+fn scan_water_near(layer: &ChunkLayer, center: BlockPos, radius: i32) -> bool {
+    for dx in -radius..=radius {
+        for dz in -radius..=radius {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            let probe = BlockPos::new(center.x + dx, center.y, center.z + dz);
+            if let Some(block) = layer.block(probe) {
+                let kind = block.state.to_kind();
+                if matches!(kind, BlockKind::Water) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// plan §1.1 — 由 `PlotEnvironment` 派生 `plot_qi_cap`。
