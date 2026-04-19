@@ -1,0 +1,34 @@
+[
+  {
+    "v": 1,
+    "char_id": 1001,
+    "skill": "herbalism",
+    "amount": 5,
+    "source": {
+      "type": "action",
+      "plan_id": "lingtian",
+      "action": "harvest_auto"
+    }
+  },
+  {
+    "v": 1,
+    "char_id": 1001,
+    "skill": "alchemy",
+    "amount": 500,
+    "source": {
+      "type": "scroll",
+      "scroll_id": "scroll:dan_jing_bie_lu_can",
+      "xp_grant": 500
+    }
+  },
+  {
+    "v": 1,
+    "char_id": 2002,
+    "skill": "forging",
+    "amount": 0,
+    "source": {
+      "type": "mentor",
+      "mentor_char": 9999
+    }
+  }
+]

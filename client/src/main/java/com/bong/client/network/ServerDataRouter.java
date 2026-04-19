@@ -95,6 +95,11 @@ public final class ServerDataRouter {
         handlers.put("defense_sync", defenseSyncHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
+        // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
+        handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
+        handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
+        handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
+        handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
         return new ServerDataRouter(handlers);
     }
 

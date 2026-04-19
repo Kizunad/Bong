@@ -22,6 +22,12 @@ import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
+import {
+  SkillCapChangedPayloadV1,
+  SkillLvUpPayloadV1,
+  SkillScrollUsedPayloadV1,
+  SkillXpGainPayloadV1,
+} from "../src/skill.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
 import {
@@ -236,6 +242,43 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("vfx-event.spawn-particle.sample.json");
     const result = validate(VfxEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+// plan-skill-v1 §8 IPC schema — 4 份 sample 均为"多案例数组"，每条都要过 validate。
+describe("skill IPC payload samples pass schema validation", () => {
+  function expectAllPass<S extends Parameters<typeof validate>[0]>(
+    sampleFile: string,
+    schema: S,
+  ): void {
+    const arr = loadSample(sampleFile);
+    expect(Array.isArray(arr), `${sampleFile} must be a JSON array`).toBe(true);
+    for (const [i, entry] of (arr as unknown[]).entries()) {
+      const result = validate(schema, entry);
+      expect(
+        result.ok,
+        `${sampleFile}[${i}] should pass: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  }
+
+  it("skill-xp-gain.sample.json", () => {
+    expectAllPass("skill-xp-gain.sample.json", SkillXpGainPayloadV1);
+  });
+
+  it("skill-lv-up.sample.json", () => {
+    expectAllPass("skill-lv-up.sample.json", SkillLvUpPayloadV1);
+  });
+
+  it("skill-cap-changed.sample.json", () => {
+    expectAllPass("skill-cap-changed.sample.json", SkillCapChangedPayloadV1);
+  });
+
+  it("skill-scroll-used.sample.json", () => {
+    expectAllPass(
+      "skill-scroll-used.sample.json",
+      SkillScrollUsedPayloadV1,
+    );
   });
 });
 

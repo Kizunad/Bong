@@ -16,5 +16,6 @@ pub mod cultivation;
 pub mod inventory;
 pub mod narration;
 pub mod server_data;
+pub mod skill;
 pub mod vfx_event;
 pub mod world_state;
