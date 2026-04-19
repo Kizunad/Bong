@@ -1,5 +1,8 @@
 package com.bong.client.lingtian;
 
+import com.bong.client.inventory.model.EquipSlotType;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
@@ -26,8 +29,8 @@ import net.minecraft.util.math.BlockPos;
  * {@link ClientRequestSender} 发对应 intent。server 端已有校验（plot 存在 / 空 /
  * 熟 / 冷却 / 库存），失败会 warn，进度 HUD 条由 {@code LingtianSessionHud} 展示。
  *
- * <p>未做：开垦/翻新需要主手锄 {@code instance_id}，当前传 0 占位（server 会拒绝，
- * 调试用 — 待 InventoryStateStore 读主手锄后补）。
+ * <p>开垦/翻新从 {@link InventoryStateStore} 读主手锄 {@code instance_id}（itemId
+ * 以 {@code hoe_} 前缀识别）；未持锄时两按钮不发 intent，actionbar 提示。
  */
 public final class LingtianActionScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("灵田动作");
@@ -71,14 +74,14 @@ public final class LingtianActionScreen extends BaseOwoScreen<FlowLayout> {
             LabelComponent hint = Components.label(Text.literal("§c请先注视一个方块后按 L"));
             panel.child(hint);
         } else {
-            panel.child(actionRow("§e开垦", "空地 → 空 plot", () -> send(() ->
-                ClientRequestSender.sendLingtianStartTill(target.getX(), target.getY(), target.getZ(), 0L, "manual"))));
+            panel.child(actionRow("§e开垦", "空地 → 空 plot (需主手持锄)", () -> sendWithHoe((hoe) ->
+                ClientRequestSender.sendLingtianStartTill(target.getX(), target.getY(), target.getZ(), hoe, "manual"))));
             panel.child(expandablePlanting());
             panel.child(expandableReplenish());
             panel.child(actionRow("§a收获", "熟作物 → 入背包", () -> send(() ->
                 ClientRequestSender.sendLingtianStartHarvest(target.getX(), target.getY(), target.getZ(), "manual"))));
-            panel.child(actionRow("§6翻新", "贫瘠 plot → 重置", () -> send(() ->
-                ClientRequestSender.sendLingtianStartRenew(target.getX(), target.getY(), target.getZ(), 0L))));
+            panel.child(actionRow("§6翻新", "贫瘠 plot → 重置 (需主手持锄)", () -> sendWithHoe((hoe) ->
+                ClientRequestSender.sendLingtianStartRenew(target.getX(), target.getY(), target.getZ(), hoe))));
             panel.child(actionRow("§c偷灵", "吸他人 plot_qi", () -> send(() ->
                 ClientRequestSender.sendLingtianStartDrainQi(target.getX(), target.getY(), target.getZ()))));
         }
@@ -183,9 +186,36 @@ public final class LingtianActionScreen extends BaseOwoScreen<FlowLayout> {
         try {
             action.run();
         } catch (RuntimeException e) {
-            // Sender.dispatch 在无 backend 时会 throw；调试用 log + 忽略。
             com.bong.client.BongClient.LOGGER.warn("[lingtian] intent send failed: {}", e.getMessage());
         }
         MinecraftClient.getInstance().setScreen(null);
+    }
+
+    /** 读主手锄 instance_id；主手非锄时不发 intent，actionbar 提示并关屏。 */
+    private void sendWithHoe(java.util.function.LongConsumer action) {
+        long hoe = readMainHandHoeInstance();
+        if (hoe < 0) {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc.player != null) {
+                mc.player.sendMessage(Text.literal("§c需主手持锄（铁 / 灵铁 / 玄铁锄）"), true);
+            }
+            mc.setScreen(null);
+            return;
+        }
+        try {
+            action.accept(hoe);
+        } catch (RuntimeException e) {
+            com.bong.client.BongClient.LOGGER.warn("[lingtian] intent send failed: {}", e.getMessage());
+        }
+        MinecraftClient.getInstance().setScreen(null);
+    }
+
+    /** 从 {@link InventoryStateStore} 读主手锄 instance_id；无锄返回 -1。 */
+    private static long readMainHandHoeInstance() {
+        InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+        if (main == null || main.isEmpty()) return -1L;
+        String id = main.itemId();
+        if (id == null || !id.startsWith("hoe_")) return -1L;
+        return main.instanceId();
     }
 }
