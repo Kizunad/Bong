@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 8;
+const CURRENT_USER_VERSION: i32 = 9;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -283,6 +283,14 @@ pub struct ZoneRuntimeRecord {
     pub danger_level: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ZoneOverlayRecord {
+    pub zone_id: String,
+    pub overlay_kind: String,
+    pub payload_json: String,
+    pub since_wall: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NpcPersistenceCapture {
     pub state: NpcStateRecord,
@@ -426,6 +434,12 @@ fn bootstrap_persistence_system(
         if let Err(error) = hydrate_zone_runtime(&settings, zone_registry) {
             tracing::warn!(
                 "[bong][persistence] failed to hydrate zone runtime from sqlite at {}: {error}",
+                settings.db_path().display()
+            );
+        }
+        if let Err(error) = hydrate_zone_overlays(&settings, zone_registry) {
+            tracing::warn!(
+                "[bong][persistence] failed to hydrate zone overlays from sqlite at {}: {error}",
                 settings.db_path().display()
             );
         }
@@ -874,6 +888,27 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 9 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS zone_overlays (
+                zone_id TEXT NOT NULL,
+                overlay_kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                since_wall INTEGER NOT NULL CHECK (since_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (zone_id, overlay_kind, since_wall)
+            );
+            PRAGMA user_version = 9;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
@@ -1040,12 +1075,46 @@ pub fn load_zone_runtime_snapshot(
     load_zone_runtime_snapshot_from_connection(&connection)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn persist_zone_overlays(
+    settings: &PersistenceSettings,
+    overlays: &[ZoneOverlayRecord],
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute("DELETE FROM zone_overlays", [])
+        .map_err(io::Error::other)?;
+    for overlay in overlays {
+        upsert_zone_overlay(&transaction, overlay, wall_clock)?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_zone_overlays(settings: &PersistenceSettings) -> io::Result<Vec<ZoneOverlayRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_zone_overlays_from_connection(&connection)
+}
+
 fn hydrate_zone_runtime(
     settings: &PersistenceSettings,
     zones: &mut crate::world::zone::ZoneRegistry,
 ) -> io::Result<()> {
     let runtime_rows = load_zone_runtime_snapshot(settings)?;
     zones.apply_runtime_records(&runtime_rows);
+    Ok(())
+}
+
+fn hydrate_zone_overlays(
+    settings: &PersistenceSettings,
+    zones: &mut crate::world::zone::ZoneRegistry,
+) -> io::Result<()> {
+    let overlay_rows = load_zone_overlays(settings)?;
+    zones
+        .apply_overlay_records(&overlay_rows)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(())
 }
 
@@ -2107,6 +2176,41 @@ fn upsert_zone_runtime(
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+fn upsert_zone_overlay(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &ZoneOverlayRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO zone_overlays (
+                zone_id,
+                overlay_kind,
+                payload_json,
+                since_wall,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(zone_id, overlay_kind, since_wall) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                record.zone_id,
+                record.overlay_kind,
+                record.payload_json,
+                record.since_wall,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn delete_npc_hot_rows(transaction: &rusqlite::Transaction<'_>, char_id: &str) -> io::Result<()> {
     transaction
         .execute("DELETE FROM npc_state WHERE char_id = ?1", params![char_id])
@@ -2168,6 +2272,36 @@ fn load_ascension_quota_from_connection(
             None => 0,
         },
     })
+}
+
+fn load_zone_overlays_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<ZoneOverlayRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT zone_id, overlay_kind, payload_json, since_wall
+            FROM zone_overlays
+            ORDER BY zone_id ASC, overlay_kind ASC, since_wall ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(ZoneOverlayRecord {
+                zone_id: row.get(0)?,
+                overlay_kind: row.get(1)?,
+                payload_json: row.get(2)?,
+                since_wall: row.get(3)?,
+            })
+        })
+        .map_err(io::Error::other)?;
+
+    let mut overlays = Vec::new();
+    for row in rows {
+        overlays.push(row.map_err(io::Error::other)?);
+    }
+    Ok(overlays)
 }
 
 fn load_zone_runtime_snapshot_from_connection(
@@ -3721,6 +3855,23 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task9_migrations_create_zone_overlays_table() {
+        let db_path = database_path("task9-zone-overlays");
+        bootstrap_sqlite(&db_path, "task9-zone-overlays").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'zone_overlays'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master zone_overlays query should succeed");
+        assert_eq!(exists.as_deref(), Some("zone_overlays"));
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -3832,6 +3983,87 @@ mod persistence_tests {
                 danger_level: 3,
             }]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_overlays_roundtrip_preserves_ordered_records() {
+        let (settings, root) = persistence_settings("zone-overlays-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let overlays = vec![
+            ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({"danger_level": 3}).to_string(),
+                since_wall: 10,
+            },
+            ZoneOverlayRecord {
+                zone_id: "blood_valley".to_string(),
+                overlay_kind: "ruins_discovered".to_string(),
+                payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
+                    .to_string(),
+                since_wall: 20,
+            },
+        ];
+
+        persist_zone_overlays(&settings, &overlays).expect("zone overlays should persist");
+        let loaded = load_zone_overlays(&settings).expect("zone overlays should load");
+        assert_eq!(
+            loaded,
+            vec![
+                ZoneOverlayRecord {
+                    zone_id: "blood_valley".to_string(),
+                    overlay_kind: "ruins_discovered".to_string(),
+                    payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
+                        .to_string(),
+                    since_wall: 20,
+                },
+                ZoneOverlayRecord {
+                    zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    overlay_kind: "collapsed".to_string(),
+                    payload_json: serde_json::json!({"danger_level": 3}).to_string(),
+                    since_wall: 10,
+                },
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bootstrap_hydrates_zone_overlays_into_registry() {
+        let (settings, root) = persistence_settings("zone-overlays-hydrate");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        persist_zone_overlays(
+            &settings,
+            &[ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({
+                    "danger_level": 4,
+                    "active_events": ["realm_collapse"],
+                    "blocked_tiles": [[7, 8]],
+                })
+                .to_string(),
+                since_wall: 100,
+            }],
+        )
+        .expect("zone overlays should persist");
+
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        hydrate_zone_overlays(&settings, &mut registry)
+            .expect("zone overlay hydration should succeed");
+        assert_eq!(registry.zones[0].danger_level, 4);
+        assert_eq!(
+            registry.zones[0].active_events,
+            vec!["realm_collapse".to_string()]
+        );
+        assert_eq!(registry.zones[0].blocked_tiles, vec![(7, 8)]);
 
         let _ = fs::remove_dir_all(root);
     }
