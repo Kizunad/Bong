@@ -44,16 +44,19 @@ pub enum SessionState {
 pub struct TillSession {
     pub pos: BlockPos,
     pub hoe: HoeKind,
+    /// 会话开始时锁定的具体锄头 `ItemInstance.instance_id`；apply 路径按此扣耐久。
+    pub hoe_instance_id: u64,
     pub mode: SessionMode,
     pub elapsed_ticks: u32,
     pub state: SessionState,
 }
 
 impl TillSession {
-    pub fn new(pos: BlockPos, hoe: HoeKind, mode: SessionMode) -> Self {
+    pub fn new(pos: BlockPos, hoe: HoeKind, hoe_instance_id: u64, mode: SessionMode) -> Self {
         Self {
             pos,
             hoe,
+            hoe_instance_id,
             mode,
             elapsed_ticks: 0,
             state: SessionState::Running,
@@ -93,15 +96,17 @@ impl TillSession {
 pub struct RenewSession {
     pub pos: BlockPos,
     pub hoe: HoeKind,
+    pub hoe_instance_id: u64,
     pub elapsed_ticks: u32,
     pub state: SessionState,
 }
 
 impl RenewSession {
-    pub fn new(pos: BlockPos, hoe: HoeKind) -> Self {
+    pub fn new(pos: BlockPos, hoe: HoeKind, hoe_instance_id: u64) -> Self {
         Self {
             pos,
             hoe,
+            hoe_instance_id,
             elapsed_ticks: 0,
             state: SessionState::Running,
         }
@@ -185,7 +190,7 @@ mod tests {
 
     #[test]
     fn till_manual_finishes_at_40_ticks() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, SessionMode::Manual);
+        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
         for _ in 0..TILL_MANUAL_TICKS - 1 {
             s.tick();
             assert!(!s.is_finished());
@@ -197,14 +202,14 @@ mod tests {
 
     #[test]
     fn till_auto_takes_longer_than_manual() {
-        let manual = TillSession::new(pos(), HoeKind::Iron, SessionMode::Manual).target_ticks();
-        let auto = TillSession::new(pos(), HoeKind::Iron, SessionMode::Auto).target_ticks();
+        let manual = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual).target_ticks();
+        let auto = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Auto).target_ticks();
         assert!(auto > manual);
     }
 
     #[test]
     fn till_tick_after_finish_is_noop() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, SessionMode::Manual);
+        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
         for _ in 0..TILL_MANUAL_TICKS {
             s.tick();
         }
@@ -216,7 +221,7 @@ mod tests {
 
     #[test]
     fn till_cancel_blocks_finish() {
-        let mut s = TillSession::new(pos(), HoeKind::Iron, SessionMode::Manual);
+        let mut s = TillSession::new(pos(), HoeKind::Iron, 1, SessionMode::Manual);
         s.tick();
         s.cancel();
         for _ in 0..200 {
@@ -228,7 +233,7 @@ mod tests {
 
     #[test]
     fn renew_finishes_at_100_ticks() {
-        let mut s = RenewSession::new(pos(), HoeKind::Xuantie);
+        let mut s = RenewSession::new(pos(), HoeKind::Xuantie, 1);
         for _ in 0..RENEW_TICKS - 1 {
             s.tick();
             assert!(!s.is_finished());
@@ -239,7 +244,7 @@ mod tests {
 
     #[test]
     fn renew_cancel_blocks_finish() {
-        let mut s = RenewSession::new(pos(), HoeKind::Iron);
+        let mut s = RenewSession::new(pos(), HoeKind::Iron, 1);
         s.cancel();
         for _ in 0..200 {
             s.tick();

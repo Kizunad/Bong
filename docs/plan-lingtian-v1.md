@@ -22,10 +22,11 @@
 - ⏳ **P1 收尾**：valence BlockKind ↔ TerrainKind 适配 · 客户端 → server 路由（CustomPayload handler）
 - ⏳ **P2 收尾**：plot_qi_cap 修饰（水源 +0.3 / 湿地 +0.5 / 聚灵阵 +1.0）· per-plot zone 解析（取代 DEFAULT_ZONE）· 与未来 WorldQiAccount / plan-zhenfa-v1 合账
 - ⏳ **P0/P1 共同收尾**：BlockEntity 真正方块持久化（依 plan-persistence-v1）· 玩家主动 cancel UI
+- ✅ **主手锄识别 refactor**：`equipped_main_hand_hoe(inv) -> Option<(HoeKind, instance_id)>` 单次扫描；events 加 `hoe_instance_id: u64`（指定哪把锄，玩家可背两把同档）；session 锁定 instance_id；apply 路径按 instance_id 扣那把不会错扣换上去的；instance mismatch 走 warn 拒。**说明**：锄走 `inventory.equipped["main_hand"]` 是 Bong inventory-v1 的 7 装备槽之一（非 vanilla hotbar；hotbar 仅放消耗品/技能 — plan-weapon-v1 §3.2）
 - ✅ **P3 种植已落**：`seed.rs`（SeedRegistry 由 PlantKindRegistry cultivable 子集派生 ↔ 双向映射 `{plant_id}_seed`）+ `assets/items/seeds.toml`（ci_she_hao_seed / ning_mai_cao_seed / ling_mu_miao_seed）+ `session.rs::PlantingSession`（1s = 20 tick）+ events `StartPlantingRequest` / `PlantingCompleted` + `systems::handle_start_planting`（验：无活 session / SeedRegistry 已知 plant_id / 背包有种子 / plot 空且未贫瘠）+ apply 完成路径（复验种子 + 复验 plot 空 → spawn CropInstance + consume_one_seed 扣 1）+ `consume_one_seed` template-id 风格扣减（容器 + hotbar 扫描，归零移除）+ 6 e2e 测覆盖正常种 / 最后一颗扣完空格 / 无种子拒 / plot 已有 crop 拒 / plot 贫瘠拒 / 非 cultivable plant_id 拒
 - ⏳ **P4+ 全未动**：补灵浮窗（4 来源）· 收获（接 harvest-popup）· herbalism XP · 偷菜偷灵 · 密度阈值 · 客户端 UI
 
-测试：580/580 全过（botany + lingtian 共 49 单测，16 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.12s。
+测试：583/583 全过（botany + lingtian 共 52 单测，含 18 个 ECS / e2e）；我的文件 clippy 0 警告；全套 1.19s。
 
 ---
 

@@ -15,11 +15,15 @@ use super::terrain::TerrainKind;
 /// `terrain` 由调用方（valence block ↔ TerrainKind 适配层）填入；session 层
 /// 拒绝不合规地形。本字段独立于 hoe / pos 的目的：把"读方块种类"职责留给
 /// 上层适配，本模块单测无需 mock valence world。
+///
+/// `hoe_instance_id` 指明用哪把具体锄头（玩家可能背两把同档不同耐久）；
+/// server 验"主手 ItemInstance.instance_id == hoe_instance_id"，否则拒。
+/// HoeKind 由该 instance 的 template_id 反查得出（无需 client 重复传）。
 #[derive(Debug, Clone, Event)]
 pub struct StartTillRequest {
     pub player: Entity,
     pub pos: BlockPos,
-    pub hoe: HoeKind,
+    pub hoe_instance_id: u64,
     pub mode: SessionMode,
     pub terrain: TerrainKind,
 }
@@ -30,14 +34,16 @@ pub struct TillCompleted {
     pub player: Entity,
     pub pos: BlockPos,
     pub hoe: HoeKind,
+    pub hoe_instance_id: u64,
 }
 
 /// 玩家请求翻新某 plot。仅当 plot.is_barren() 才生效。
+/// `hoe_instance_id` 同 [`StartTillRequest`]。
 #[derive(Debug, Clone, Event)]
 pub struct StartRenewRequest {
     pub player: Entity,
     pub pos: BlockPos,
-    pub hoe: HoeKind,
+    pub hoe_instance_id: u64,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -45,6 +51,7 @@ pub struct RenewCompleted {
     pub player: Entity,
     pub pos: BlockPos,
     pub hoe: HoeKind,
+    pub hoe_instance_id: u64,
 }
 
 /// 玩家请求在某 plot 种下指定 plant（plan §1.2.3）。

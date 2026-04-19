@@ -126,16 +126,14 @@ impl ActiveLingtianSessions {
 // 起 session
 // ============================================================================
 
-/// 验玩家主手是否持指定档锄。
+/// 单次扫描读出主手锄：返回 `(HoeKind, instance_id)`，否则 None。
 ///
-/// 命中策略：玩家 `equipped[main_hand]` 的 template_id 必须能反查出 `HoeKind`
-/// 且与请求声明的 hoe 一致。
-fn player_holds_hoe(inventory: &PlayerInventory, expected: HoeKind) -> bool {
-    inventory
-        .equipped
-        .get(MAIN_HAND_SLOT)
-        .and_then(|item| HoeKind::from_item_id(&item.template_id))
-        .is_some_and(|k| k == expected)
+/// 调用方法用：起 session 时验请求 `hoe_instance_id` 与主手实物匹配；
+/// apply 路径同样靠它定位锄实物再扣耐久。
+pub fn equipped_main_hand_hoe(inventory: &PlayerInventory) -> Option<(HoeKind, u64)> {
+    let item = inventory.equipped.get(MAIN_HAND_SLOT)?;
+    let kind = HoeKind::from_item_id(&item.template_id)?;
+    Some((kind, item.instance_id))
 }
 
 pub fn handle_start_till(
@@ -158,11 +156,19 @@ pub fn handle_start_till(
             );
             continue;
         };
-        if !player_holds_hoe(inv, req.hoe) {
+        let Some((kind, instance_id)) = equipped_main_hand_hoe(inv) else {
             tracing::warn!(
-                "[bong][lingtian] StartTillRequest rejected: player={:?} not holding {} in main hand",
+                "[bong][lingtian] StartTillRequest rejected: player={:?} main hand is not a hoe",
+                req.player
+            );
+            continue;
+        };
+        if instance_id != req.hoe_instance_id {
+            tracing::warn!(
+                "[bong][lingtian] StartTillRequest rejected: player={:?} main hand instance_id={} != requested {}",
                 req.player,
-                req.hoe
+                instance_id,
+                req.hoe_instance_id
             );
             continue;
         }
@@ -174,7 +180,7 @@ pub fn handle_start_till(
             );
             continue;
         }
-        let session = TillSession::new(req.pos, req.hoe, req.mode);
+        let session = TillSession::new(req.pos, kind, instance_id, req.mode);
         sessions.try_insert(req.player, ActiveSession::Till(session));
     }
 }
@@ -196,11 +202,19 @@ pub fn handle_start_renew(
         let Ok(inv) = inventories.get(req.player) else {
             continue;
         };
-        if !player_holds_hoe(inv, req.hoe) {
+        let Some((kind, instance_id)) = equipped_main_hand_hoe(inv) else {
             tracing::warn!(
-                "[bong][lingtian] StartRenewRequest rejected: player={:?} not holding {} in main hand",
+                "[bong][lingtian] StartRenewRequest rejected: player={:?} main hand is not a hoe",
+                req.player
+            );
+            continue;
+        };
+        if instance_id != req.hoe_instance_id {
+            tracing::warn!(
+                "[bong][lingtian] StartRenewRequest rejected: player={:?} main hand instance_id={} != requested {}",
                 req.player,
-                req.hoe
+                instance_id,
+                req.hoe_instance_id
             );
             continue;
         }
@@ -213,7 +227,7 @@ pub fn handle_start_renew(
             );
             continue;
         }
-        let session = RenewSession::new(req.pos, req.hoe);
+        let session = RenewSession::new(req.pos, kind, instance_id);
         sessions.try_insert(req.player, ActiveSession::Renew(session));
     }
 }
@@ -349,18 +363,19 @@ pub fn apply_completed_sessions(
         match finished {
             ActiveSession::Till(s) => {
                 if let Ok(mut inv) = inventories.get_mut(player) {
-                    wear_main_hand_hoe(&mut inv, s.hoe);
+                    wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
                 }
                 commands.spawn(LingtianPlot::new(s.pos, Some(player)));
                 till_completed.send(TillCompleted {
                     player,
                     pos: s.pos,
                     hoe: s.hoe,
+                    hoe_instance_id: s.hoe_instance_id,
                 });
             }
             ActiveSession::Renew(s) => {
                 if let Ok(mut inv) = inventories.get_mut(player) {
-                    wear_main_hand_hoe(&mut inv, s.hoe);
+                    wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
                 }
                 if let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| p.pos == s.pos) {
                     plot.renew();
@@ -368,6 +383,7 @@ pub fn apply_completed_sessions(
                         player,
                         pos: s.pos,
                         hoe: s.hoe,
+                        hoe_instance_id: s.hoe_instance_id,
                     });
                 } else {
                     tracing::warn!(
@@ -435,12 +451,26 @@ fn apply_planting_completion(
 }
 
 /// plan §1.2.1 / §1.6 — 主手锄扣 1 次耐久。归一化 [0, 1]。归零移除装备。
-fn wear_main_hand_hoe(inventory: &mut PlayerInventory, expected: HoeKind) {
+///
+/// `expected_instance_id` 锁定 session 起手时的具体锄实物：若玩家在 session
+/// 期间换了把锄（甚至同档不同实物），不应错扣给替换上去的那把。
+fn wear_main_hand_hoe(
+    inventory: &mut PlayerInventory,
+    expected: HoeKind,
+    expected_instance_id: u64,
+) {
     let cost = expected.use_durability_cost();
-    let entry = inventory.equipped.get_mut(MAIN_HAND_SLOT);
-    let Some(item) = entry else {
+    let Some(item) = inventory.equipped.get_mut(MAIN_HAND_SLOT) else {
         return;
     };
+    if item.instance_id != expected_instance_id {
+        tracing::warn!(
+            "[bong][lingtian] wear_main_hand_hoe: main hand instance changed during session (expected={}, found={})",
+            expected_instance_id,
+            item.instance_id
+        );
+        return;
+    }
     if HoeKind::from_item_id(&item.template_id) != Some(expected) {
         return;
     }
@@ -593,7 +623,7 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
         });
@@ -642,7 +672,7 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
         });
@@ -660,9 +690,66 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Stone,
+        });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    #[test]
+    fn equipped_main_hand_hoe_returns_kind_and_instance_id() {
+        let inv = make_inventory_with_hoe(HoeKind::Lingtie, 0.5);
+        let (kind, id) = equipped_main_hand_hoe(&inv).expect("should resolve");
+        assert_eq!(kind, HoeKind::Lingtie);
+        assert_eq!(id, 1, "make_hoe_instance 默认 instance_id=1");
+    }
+
+    #[test]
+    fn equipped_main_hand_hoe_returns_none_for_non_hoe() {
+        let mut equipped = HashMap::new();
+        equipped.insert(
+            MAIN_HAND_SLOT.to_string(),
+            ItemInstance {
+                instance_id: 99,
+                template_id: "rusted_blade".into(),
+                display_name: "rusted_blade".into(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.8,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 0.8,
+                durability: 1.0,
+            },
+        );
+        let inv = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![],
+            equipped,
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        };
+        assert!(equipped_main_hand_hoe(&inv).is_none());
+    }
+
+    #[test]
+    fn till_rejected_when_request_instance_id_mismatches_main_hand() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
+            .id();
+        // 主手 instance_id=1，但请求声 instance_id=2 → 应被拒
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 2,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
@@ -678,7 +765,7 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
         });
@@ -688,7 +775,7 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(1, 64, 0),
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Dirt,
         });
@@ -716,7 +803,7 @@ mod tests {
         app.world_mut().send_event(StartRenewRequest {
             player,
             pos,
-            hoe: HoeKind::Xuantie,
+            hoe_instance_id: 1,
         });
         for _ in 0..RENEW_TICKS {
             app.update();
@@ -749,7 +836,7 @@ mod tests {
         app.world_mut().send_event(StartRenewRequest {
             player,
             pos,
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
@@ -767,7 +854,7 @@ mod tests {
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
-            hoe: HoeKind::Iron,
+            hoe_instance_id: 1,
             mode: SessionMode::Manual,
             terrain: TerrainKind::Grass,
         });
