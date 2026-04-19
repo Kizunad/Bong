@@ -1124,6 +1124,7 @@ pub fn lingtian_growth_tick(
     mut zone_qi: ResMut<ZoneQiAccount>,
     registry: Res<PlantKindRegistry>,
     mut plots: Query<&mut LingtianPlot>,
+    mut layers: Query<&mut ChunkLayer>,
 ) {
     if !accumulator.step() {
         return;
@@ -1131,6 +1132,21 @@ pub fn lingtian_growth_tick(
     clock.lingtian_tick = clock.lingtian_tick.saturating_add(1);
     for mut plot in plots.iter_mut() {
         advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+    }
+    // plan §1.5 — 作物成熟在 plot 顶部放 HayBlock 作"熟"标记，空 / 未熟时 Air。
+    if let Ok(mut layer) = layers.get_single_mut() {
+        for plot in plots.iter() {
+            let top = valence::prelude::BlockPos::new(plot.pos.x, plot.pos.y + 1, plot.pos.z);
+            let ripe = plot.crop.as_ref().map(|c| c.is_ripe()).unwrap_or(false);
+            let desired = if ripe {
+                BlockState::HAY_BLOCK
+            } else {
+                BlockState::AIR
+            };
+            if layer.block(top).map(|b| b.state) != Some(desired) {
+                layer.set_block(top, desired);
+            }
+        }
     }
 }
 
