@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 9;
+const CURRENT_USER_VERSION: i32 = 10;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -288,6 +288,7 @@ pub struct ZoneOverlayRecord {
     pub zone_id: String,
     pub overlay_kind: String,
     pub payload_json: String,
+    pub payload_version: i32,
     pub since_wall: i64,
 }
 
@@ -904,6 +905,20 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 PRIMARY KEY (zone_id, overlay_kind, since_wall)
             );
             PRAGMA user_version = 9;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 10 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            ALTER TABLE zone_overlays
+            ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 1 CHECK (payload_version >= 1);
+            PRAGMA user_version = 10;
             ",
         )?;
         transaction.commit()?;
@@ -2189,12 +2204,14 @@ fn upsert_zone_overlay(
                 zone_id,
                 overlay_kind,
                 payload_json,
+                payload_version,
                 since_wall,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(zone_id, overlay_kind, since_wall) DO UPDATE SET
                 payload_json = excluded.payload_json,
+                payload_version = excluded.payload_version,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -2202,6 +2219,7 @@ fn upsert_zone_overlay(
                 record.zone_id,
                 record.overlay_kind,
                 record.payload_json,
+                record.payload_version,
                 record.since_wall,
                 CURRENT_SCHEMA_VERSION,
                 wall_clock,
@@ -2280,7 +2298,7 @@ fn load_zone_overlays_from_connection(
     let mut statement = connection
         .prepare(
             "
-            SELECT zone_id, overlay_kind, payload_json, since_wall
+            SELECT zone_id, overlay_kind, payload_json, payload_version, since_wall
             FROM zone_overlays
             ORDER BY zone_id ASC, overlay_kind ASC, since_wall ASC
             ",
@@ -2292,7 +2310,8 @@ fn load_zone_overlays_from_connection(
                 zone_id: row.get(0)?,
                 overlay_kind: row.get(1)?,
                 payload_json: row.get(2)?,
-                since_wall: row.get(3)?,
+                payload_version: row.get(3)?,
+                since_wall: row.get(4)?,
             })
         })
         .map_err(io::Error::other)?;
@@ -3872,6 +3891,27 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task10_migration_adds_zone_overlays_payload_version_column() {
+        let db_path = database_path("task10-zone-overlays-payload-version");
+        bootstrap_sqlite(&db_path, "task10-zone-overlays-payload-version")
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let mut statement = connection
+            .prepare("PRAGMA table_info(zone_overlays)")
+            .expect("table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("table_info rows should collect");
+        assert!(
+            columns.iter().any(|column| column == "payload_version"),
+            "zone_overlays should include payload_version after migration"
+        );
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -3998,6 +4038,7 @@ mod persistence_tests {
                 zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 overlay_kind: "collapsed".to_string(),
                 payload_json: serde_json::json!({"danger_level": 3}).to_string(),
+                payload_version: 1,
                 since_wall: 10,
             },
             ZoneOverlayRecord {
@@ -4005,6 +4046,7 @@ mod persistence_tests {
                 overlay_kind: "ruins_discovered".to_string(),
                 payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
                     .to_string(),
+                payload_version: 1,
                 since_wall: 20,
             },
         ];
@@ -4019,12 +4061,14 @@ mod persistence_tests {
                     overlay_kind: "ruins_discovered".to_string(),
                     payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
                         .to_string(),
+                    payload_version: 1,
                     since_wall: 20,
                 },
                 ZoneOverlayRecord {
                     zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                     overlay_kind: "collapsed".to_string(),
                     payload_json: serde_json::json!({"danger_level": 3}).to_string(),
+                    payload_version: 1,
                     since_wall: 10,
                 },
             ]
@@ -4050,6 +4094,7 @@ mod persistence_tests {
                     "blocked_tiles": [[7, 8]],
                 })
                 .to_string(),
+                payload_version: 1,
                 since_wall: 100,
             }],
         )
@@ -4066,6 +4111,25 @@ mod persistence_tests {
         assert_eq!(registry.zones[0].blocked_tiles, vec![(7, 8)]);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bootstrap_rejects_future_user_version() {
+        let db_path = database_path("future-user-version-rejected");
+        bootstrap_sqlite(&db_path, "future-user-version-rejected")
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 999;")
+            .expect("user_version override should succeed");
+
+        let error = bootstrap_sqlite(&db_path, "future-user-version-rejected")
+            .expect_err("future user_version should be rejected");
+        assert!(
+            matches!(error, rusqlite::Error::ExecuteReturnedResults),
+            "unexpected error when rejecting future user_version: {error:?}"
+        );
     }
 
     #[test]

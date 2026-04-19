@@ -670,6 +670,7 @@ mod zone_tests {
                         "blocked_tiles": [[1, 2], [3, 4]],
                     })
                     .to_string(),
+                    payload_version: 1,
                     since_wall: 100,
                 },
                 ZoneOverlayRecord {
@@ -679,6 +680,7 @@ mod zone_tests {
                         "active_events": ["qi_eye_formed"],
                     })
                     .to_string(),
+                    payload_version: 1,
                     since_wall: 101,
                 },
                 ZoneOverlayRecord {
@@ -689,6 +691,7 @@ mod zone_tests {
                         "blocked_tiles": [[5, 6]],
                     })
                     .to_string(),
+                    payload_version: 1,
                     since_wall: 102,
                 },
             ])
