@@ -32,8 +32,9 @@ pub mod terrain;
 
 #[allow(unused_imports)]
 pub use events::{
-    HarvestCompleted, PlantingCompleted, RenewCompleted, StartHarvestRequest, StartPlantingRequest,
-    StartRenewRequest, StartTillRequest, TillCompleted,
+    HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
+    StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
+    TillCompleted,
 };
 #[allow(unused_imports)]
 pub use growth::{
@@ -52,12 +53,12 @@ pub use qi_account::{
 pub use seed::{seed_id_for, SeedRegistry};
 #[allow(unused_imports)]
 pub use session::{
-    HarvestSession, PlantingSession, RenewSession, SessionMode, SessionState, TillSession,
-    HARVEST_AUTO_TICKS, HARVEST_MANUAL_TICKS, PLANTING_TICKS, RENEW_TICKS, TILL_AUTO_TICKS,
-    TILL_MANUAL_TICKS,
+    HarvestSession, PlantingSession, RenewSession, ReplenishSession, ReplenishSource, SessionMode,
+    SessionState, TillSession, HARVEST_AUTO_TICKS, HARVEST_MANUAL_TICKS, PLANTING_TICKS,
+    RENEW_TICKS, REPLENISH_COOLDOWN_LINGTIAN_TICKS, TILL_AUTO_TICKS, TILL_MANUAL_TICKS,
 };
 #[allow(unused_imports)]
-pub use systems::{ActiveLingtianSessions, ActiveSession, LingtianHarvestRng};
+pub use systems::{ActiveLingtianSessions, ActiveSession, LingtianClock, LingtianHarvestRng};
 #[allow(unused_imports)]
 pub use terrain::{classify_for_till, TerrainKind, TillRejectReason};
 
@@ -86,6 +87,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(seed_registry);
 
     app.insert_resource(LingtianHarvestRng::default());
+    app.insert_resource(LingtianClock::default());
 
     app.add_event::<StartTillRequest>();
     app.add_event::<TillCompleted>();
@@ -95,6 +97,8 @@ pub fn register(app: &mut App) {
     app.add_event::<PlantingCompleted>();
     app.add_event::<StartHarvestRequest>();
     app.add_event::<HarvestCompleted>();
+    app.add_event::<StartReplenishRequest>();
+    app.add_event::<ReplenishCompleted>();
     app.add_systems(
         Update,
         (
@@ -102,6 +106,7 @@ pub fn register(app: &mut App) {
             systems::handle_start_renew,
             systems::handle_start_planting,
             systems::handle_start_harvest,
+            systems::handle_start_replenish,
             systems::tick_lingtian_sessions,
             systems::apply_completed_sessions,
             systems::lingtian_growth_tick,

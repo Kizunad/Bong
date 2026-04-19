@@ -7,7 +7,7 @@ use valence::prelude::{bevy_ecs, BlockPos, Entity, Event};
 use crate::botany::PlantId;
 
 use super::hoe::HoeKind;
-use super::session::SessionMode;
+use super::session::{ReplenishSource, SessionMode};
 use super::terrain::TerrainKind;
 
 /// 玩家请求开垦某方块。
@@ -89,4 +89,23 @@ pub struct HarvestCompleted {
     pub plant_id: PlantId,
     /// 是否同时掉落 1 颗种子（按 PlantRarity::seed_drop_rate）。
     pub seed_dropped: bool,
+}
+
+/// 玩家请求补灵某 plot（plan §1.4）。
+#[derive(Debug, Clone, Event)]
+pub struct StartReplenishRequest {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub source: ReplenishSource,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct ReplenishCompleted {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub source: ReplenishSource,
+    /// 实际灌入 plot_qi 的量（cap 之内的部分）。
+    pub plot_qi_added: f32,
+    /// 溢出回馈到 zone qi 的量（plan §1.4：来源材料不退）。
+    pub overflow_to_zone: f32,
 }

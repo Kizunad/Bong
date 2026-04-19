@@ -29,6 +29,88 @@ pub const PLANTING_TICKS: u32 = 20;
 pub const HARVEST_MANUAL_TICKS: u32 = 50;
 pub const HARVEST_AUTO_TICKS: u32 = 140;
 
+/// plan §1.4 — 补灵 4 来源。各档 amount / duration 见 [`ReplenishSource`] 方法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplenishSource {
+    /// 区域抽吸：免材料但慢；从 zone qi 扣等量。
+    Zone,
+    /// 骨币 1 枚 → +0.8。
+    BoneCoin,
+    /// 异变兽核 1 个 → +2.0（直接拉满）。
+    BeastCore,
+    /// 灵水 1 瓶 → +0.3。
+    LingShui,
+}
+
+impl ReplenishSource {
+    /// plan §1.4 — 一次补灵注入的 plot_qi 量（绝对值，可超 cap，溢出回馈环境）。
+    pub fn plot_qi_amount(self) -> f32 {
+        match self {
+            Self::Zone => 0.5,
+            Self::BoneCoin => 0.8,
+            Self::BeastCore => 2.0,
+            Self::LingShui => 0.3,
+        }
+    }
+
+    /// session 时长（Bevy tick）：plan §1.4 "2-8s"。Zone 慢 8s = 160 tick；
+    /// 其它有材料 2s = 40 tick。
+    pub fn duration_ticks(self) -> u32 {
+        match self {
+            Self::Zone => 160,
+            _ => 40,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplenishSession {
+    pub pos: BlockPos,
+    pub source: ReplenishSource,
+    pub elapsed_ticks: u32,
+    pub state: SessionState,
+}
+
+impl ReplenishSession {
+    pub fn new(pos: BlockPos, source: ReplenishSource) -> Self {
+        Self {
+            pos,
+            source,
+            elapsed_ticks: 0,
+            state: SessionState::Running,
+        }
+    }
+
+    pub fn target_ticks(&self) -> u32 {
+        self.source.duration_ticks()
+    }
+
+    pub fn tick(&mut self) {
+        if self.state != SessionState::Running {
+            return;
+        }
+        self.elapsed_ticks = self.elapsed_ticks.saturating_add(1);
+        if self.elapsed_ticks >= self.target_ticks() {
+            self.state = SessionState::Finished;
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        if self.state == SessionState::Running {
+            self.state = SessionState::Cancelled;
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.state == SessionState::Finished
+    }
+}
+
+/// plan §1.4 — 同 plot 补灵冷却下限：72h 真实时间 = 72 × 60 = 4320 lingtian-tick。
+/// 上限 168h = 10080；本切片用下限固定，未来可加随机扰动。
+pub const REPLENISH_COOLDOWN_LINGTIAN_TICKS: u64 = 4320;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionMode {
     Manual,
@@ -353,5 +435,36 @@ mod tests {
             s.tick();
         }
         assert!(!s.is_finished());
+    }
+
+    #[test]
+    fn replenish_zone_takes_8s_others_take_2s() {
+        assert_eq!(ReplenishSource::Zone.duration_ticks(), 160);
+        for s in [
+            ReplenishSource::BoneCoin,
+            ReplenishSource::BeastCore,
+            ReplenishSource::LingShui,
+        ] {
+            assert_eq!(s.duration_ticks(), 40);
+        }
+    }
+
+    #[test]
+    fn replenish_amounts_match_plan() {
+        assert_eq!(ReplenishSource::Zone.plot_qi_amount(), 0.5);
+        assert_eq!(ReplenishSource::BoneCoin.plot_qi_amount(), 0.8);
+        assert_eq!(ReplenishSource::BeastCore.plot_qi_amount(), 2.0);
+        assert_eq!(ReplenishSource::LingShui.plot_qi_amount(), 0.3);
+    }
+
+    #[test]
+    fn replenish_session_ticks_to_finish() {
+        let mut s = ReplenishSession::new(pos(), ReplenishSource::BoneCoin);
+        for _ in 0..40 - 1 {
+            s.tick();
+            assert!(!s.is_finished());
+        }
+        s.tick();
+        assert!(s.is_finished());
     }
 }

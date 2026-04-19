@@ -26,16 +26,23 @@ use crate::inventory::{
 };
 
 use super::events::{
-    HarvestCompleted, PlantingCompleted, RenewCompleted, StartHarvestRequest, StartPlantingRequest,
-    StartRenewRequest, StartTillRequest, TillCompleted,
+    HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
+    StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
+    TillCompleted,
 };
 use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
 use super::plot::{CropInstance, LingtianPlot};
 use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
 use super::seed::{seed_id_for, SeedRegistry};
-use super::session::{HarvestSession, PlantingSession, RenewSession, TillSession};
+use super::session::{
+    HarvestSession, PlantingSession, RenewSession, ReplenishSession, ReplenishSource, TillSession,
+    REPLENISH_COOLDOWN_LINGTIAN_TICKS,
+};
 use super::terrain::classify_for_till;
+
+const LING_SHUI_ITEM_ID: &str = "ling_shui";
+const BEAST_CORE_ITEM_ID: &str = "mutant_beast_core";
 
 const MAIN_HAND_SLOT: &str = "main_hand";
 
@@ -45,6 +52,7 @@ pub enum ActiveSession {
     Renew(RenewSession),
     Planting(PlantingSession),
     Harvest(HarvestSession),
+    Replenish(ReplenishSession),
 }
 
 impl ActiveSession {
@@ -54,6 +62,7 @@ impl ActiveSession {
             ActiveSession::Renew(s) => s.tick(),
             ActiveSession::Planting(s) => s.tick(),
             ActiveSession::Harvest(s) => s.tick(),
+            ActiveSession::Replenish(s) => s.tick(),
         }
     }
 
@@ -63,8 +72,15 @@ impl ActiveSession {
             ActiveSession::Renew(s) => s.is_finished(),
             ActiveSession::Planting(s) => s.is_finished(),
             ActiveSession::Harvest(s) => s.is_finished(),
+            ActiveSession::Replenish(s) => s.is_finished(),
         }
     }
+}
+
+/// 累计的 lingtian-tick（lingtian_growth_tick 触发时 ++）。用于补灵冷却比对。
+#[derive(Debug, Default, Resource)]
+pub struct LingtianClock {
+    pub lingtian_tick: u64,
 }
 
 /// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
@@ -347,6 +363,68 @@ pub fn handle_start_harvest(
     }
 }
 
+pub fn handle_start_replenish(
+    mut events: EventReader<StartReplenishRequest>,
+    mut sessions: ResMut<ActiveLingtianSessions>,
+    clock: Res<LingtianClock>,
+    inventories: Query<&PlayerInventory>,
+    plots: Query<&LingtianPlot>,
+    zone_qi: Res<ZoneQiAccount>,
+) {
+    for req in events.read() {
+        if sessions.has_session(req.player) {
+            tracing::warn!(
+                "[bong][lingtian] StartReplenishRequest rejected: player={:?} already has active session",
+                req.player
+            );
+            continue;
+        }
+        let Some(plot) = plots.iter().find(|p| p.pos == req.pos) else {
+            tracing::warn!(
+                "[bong][lingtian] StartReplenishRequest rejected: no plot at {:?}",
+                req.pos
+            );
+            continue;
+        };
+        // 冷却检查：last_replenish_at = 0 视为从未补过（允许）
+        if plot.last_replenish_at != 0 {
+            let elapsed = clock.lingtian_tick.saturating_sub(plot.last_replenish_at);
+            if elapsed < REPLENISH_COOLDOWN_LINGTIAN_TICKS {
+                tracing::warn!(
+                    "[bong][lingtian] StartReplenishRequest rejected: plot at {:?} on cooldown ({elapsed}/{REPLENISH_COOLDOWN_LINGTIAN_TICKS} lingtian-ticks)",
+                    req.pos
+                );
+                continue;
+            }
+        }
+        // 来源材料检查
+        let material_ok = match req.source {
+            ReplenishSource::Zone => zone_qi.get(DEFAULT_ZONE) >= req.source.plot_qi_amount(),
+            ReplenishSource::BoneCoin => inventories
+                .get(req.player)
+                .map(|inv| inv.bone_coins >= 1)
+                .unwrap_or(false),
+            ReplenishSource::BeastCore => inventories
+                .get(req.player)
+                .map(|inv| inventory_has_template(inv, BEAST_CORE_ITEM_ID))
+                .unwrap_or(false),
+            ReplenishSource::LingShui => inventories
+                .get(req.player)
+                .map(|inv| inventory_has_template(inv, LING_SHUI_ITEM_ID))
+                .unwrap_or(false),
+        };
+        if !material_ok {
+            tracing::warn!(
+                "[bong][lingtian] StartReplenishRequest rejected: insufficient material for source={:?}",
+                req.source
+            );
+            continue;
+        }
+        let session = ReplenishSession::new(req.pos, req.source);
+        sessions.try_insert(req.player, ActiveSession::Replenish(session));
+    }
+}
+
 fn player_has_seed_for(inventory: &PlayerInventory, seeds: &SeedRegistry, plant_id: &str) -> bool {
     let Some(seed_id) = seeds.seed_for_plant(plant_id) else {
         return false;
@@ -425,10 +503,13 @@ pub fn apply_completed_sessions(
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut harvest_rng: ResMut<LingtianHarvestRng>,
+    mut zone_qi: ResMut<ZoneQiAccount>,
+    clock: Res<LingtianClock>,
     mut till_completed: EventWriter<TillCompleted>,
     mut renew_completed: EventWriter<RenewCompleted>,
     mut planting_completed: EventWriter<PlantingCompleted>,
     mut harvest_completed: EventWriter<HarvestCompleted>,
+    mut replenish_completed: EventWriter<ReplenishCompleted>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -486,6 +567,18 @@ pub fn apply_completed_sessions(
                     &mut allocator,
                     &mut harvest_rng,
                     &mut harvest_completed,
+                );
+            }
+            ActiveSession::Replenish(s) => {
+                apply_replenish_completion(
+                    player,
+                    &s.pos,
+                    s.source,
+                    &mut inventories,
+                    &mut plots,
+                    &mut zone_qi,
+                    &clock,
+                    &mut replenish_completed,
                 );
             }
         }
@@ -711,6 +804,96 @@ fn bump_revision(inv: &mut PlayerInventory) {
     inv.revision = crate::inventory::InventoryRevision(inv.revision.0.saturating_add(1));
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_replenish_completion(
+    player: Entity,
+    pos: &valence::prelude::BlockPos,
+    source: ReplenishSource,
+    inventories: &mut Query<&mut PlayerInventory>,
+    plots: &mut Query<(Entity, &mut LingtianPlot)>,
+    zone_qi: &mut ZoneQiAccount,
+    clock: &LingtianClock,
+    replenish_completed: &mut EventWriter<ReplenishCompleted>,
+) {
+    let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
+        tracing::warn!("[bong][lingtian] ReplenishSession finished but plot at {pos:?} vanished");
+        return;
+    };
+
+    // 复验 / 扣材料：plan §1.4 来源材料**不退**，若 session 期间被消耗也照付
+    let amount = source.plot_qi_amount();
+    let zone_key = DEFAULT_ZONE;
+    let mut paid = true;
+    match source {
+        ReplenishSource::Zone => {
+            let z = zone_qi.get_mut(zone_key);
+            if *z >= amount {
+                *z -= amount;
+            } else {
+                paid = false;
+            }
+        }
+        ReplenishSource::BoneCoin => {
+            if let Ok(mut inv) = inventories.get_mut(player) {
+                if inv.bone_coins >= 1 {
+                    inv.bone_coins -= 1;
+                    bump_revision(&mut inv);
+                } else {
+                    paid = false;
+                }
+            } else {
+                paid = false;
+            }
+        }
+        ReplenishSource::BeastCore => {
+            if let Ok(mut inv) = inventories.get_mut(player) {
+                if !consume_one_seed(&mut inv, BEAST_CORE_ITEM_ID) {
+                    paid = false;
+                }
+            } else {
+                paid = false;
+            }
+        }
+        ReplenishSource::LingShui => {
+            if let Ok(mut inv) = inventories.get_mut(player) {
+                if !consume_one_seed(&mut inv, LING_SHUI_ITEM_ID) {
+                    paid = false;
+                }
+            } else {
+                paid = false;
+            }
+        }
+    }
+
+    if !paid {
+        tracing::warn!(
+            "[bong][lingtian] ReplenishSession finished but material vanished mid-session (source={source:?}); aborted"
+        );
+        return;
+    }
+
+    // 注入 plot_qi，溢出回馈 zone（plan §1.4）
+    let cap_room = (plot.plot_qi_cap - plot.plot_qi).max(0.0);
+    let added = amount.min(cap_room);
+    let overflow = amount - added;
+    plot.plot_qi += added;
+    if overflow > 0.0 {
+        // 溢出回馈：Zone source 自身的 overflow 也回馈（plan 没明说 zone 来源
+        // 是否例外，本切片按"统一回馈环境"处理）
+        let z = zone_qi.get_mut(zone_key);
+        *z += overflow;
+    }
+    plot.last_replenish_at = clock.lingtian_tick.max(1);
+
+    replenish_completed.send(ReplenishCompleted {
+        player,
+        pos: *pos,
+        source,
+        plot_qi_added: added,
+        overflow_to_zone: overflow,
+    });
+}
+
 /// plan §1.2.1 / §1.6 — 主手锄扣 1 次耐久。归一化 [0, 1]。归零移除装备。
 ///
 /// `expected_instance_id` 锁定 session 起手时的具体锄实物：若玩家在 session
@@ -762,6 +945,7 @@ pub fn cancel_player_session(
 /// 留 P3+，与 plan-zhenfa-v1 / WorldQiAccount 整合）。
 pub fn lingtian_growth_tick(
     mut accumulator: ResMut<LingtianTickAccumulator>,
+    mut clock: ResMut<LingtianClock>,
     mut zone_qi: ResMut<ZoneQiAccount>,
     registry: Res<PlantKindRegistry>,
     mut plots: Query<&mut LingtianPlot>,
@@ -769,6 +953,7 @@ pub fn lingtian_growth_tick(
     if !accumulator.step() {
         return;
     }
+    clock.lingtian_tick = clock.lingtian_tick.saturating_add(1);
     for mut plot in plots.iter_mut() {
         advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
     }
@@ -858,6 +1043,8 @@ mod tests {
             .insert_resource(ItemRegistry::default())
             .insert_resource(InventoryInstanceIdAllocator::default())
             .insert_resource(LingtianHarvestRng::default())
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
             .add_event::<StartTillRequest>()
             .add_event::<TillCompleted>()
             .add_event::<StartRenewRequest>()
@@ -866,12 +1053,15 @@ mod tests {
             .add_event::<PlantingCompleted>()
             .add_event::<StartHarvestRequest>()
             .add_event::<HarvestCompleted>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<ReplenishCompleted>()
             .add_systems(
                 Update,
                 (
                     handle_start_till,
                     handle_start_renew,
                     handle_start_harvest,
+                    handle_start_replenish,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1167,6 +1357,7 @@ mod tests {
         let mut acc = ZoneQiAccount::new();
         acc.set(DEFAULT_ZONE, zone_qi);
         app.insert_resource(LingtianTickAccumulator::new())
+            .insert_resource(LingtianClock::default())
             .insert_resource(acc)
             .insert_resource(registry_with(ci_she_hao_kind()))
             .add_systems(Update, lingtian_growth_tick);
@@ -1335,6 +1526,8 @@ mod tests {
             .insert_resource(ItemRegistry::default())
             .insert_resource(InventoryInstanceIdAllocator::default())
             .insert_resource(LingtianHarvestRng::default())
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
             .add_event::<StartPlantingRequest>()
             .add_event::<PlantingCompleted>()
             .add_event::<StartTillRequest>()
@@ -1343,6 +1536,8 @@ mod tests {
             .add_event::<RenewCompleted>()
             .add_event::<StartHarvestRequest>()
             .add_event::<HarvestCompleted>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<ReplenishCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1350,6 +1545,7 @@ mod tests {
                     handle_start_renew,
                     handle_start_planting,
                     handle_start_harvest,
+                    handle_start_replenish,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1558,6 +1754,8 @@ mod tests {
             .insert_resource(registry_with_herb_and_seed_templates())
             .insert_resource(InventoryInstanceIdAllocator::default())
             .insert_resource(LingtianHarvestRng::new(0xDEAD_BEEF))
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
             .add_event::<StartHarvestRequest>()
             .add_event::<HarvestCompleted>()
             .add_event::<StartTillRequest>()
@@ -1566,6 +1764,8 @@ mod tests {
             .add_event::<RenewCompleted>()
             .add_event::<StartPlantingRequest>()
             .add_event::<PlantingCompleted>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<ReplenishCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1573,6 +1773,7 @@ mod tests {
                     handle_start_renew,
                     handle_start_planting,
                     handle_start_harvest,
+                    handle_start_replenish,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1769,6 +1970,8 @@ mod tests {
             .insert_resource(registry_with_herb_and_seed_templates())
             .insert_resource(InventoryInstanceIdAllocator::default())
             .insert_resource(LingtianHarvestRng::new(2))
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
             .add_event::<StartHarvestRequest>()
             .add_event::<HarvestCompleted>()
             .add_event::<StartTillRequest>()
@@ -1777,6 +1980,8 @@ mod tests {
             .add_event::<RenewCompleted>()
             .add_event::<StartPlantingRequest>()
             .add_event::<PlantingCompleted>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<ReplenishCompleted>()
             .add_systems(
                 Update,
                 (
@@ -1805,5 +2010,228 @@ mod tests {
             1,
             "RNG roll < 0.3 应掉种子"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // P5 补灵 e2e
+    // ------------------------------------------------------------------------
+
+    fn spawn_empty_plot(app: &mut App, pos: BlockPos) -> Entity {
+        let mut p = LingtianPlot::new(pos, None);
+        p.plot_qi = 0.0;
+        // plot_qi_cap 默认 1.0
+        app.world_mut().spawn(p).id()
+    }
+
+    fn make_inventory_with_bone_coins(coins: u64) -> PlayerInventory {
+        let mut inv = empty_inventory_8x8();
+        inv.bone_coins = coins;
+        inv
+    }
+
+    fn make_inventory_with_misc_stack(template_id: &str, stack: u32) -> PlayerInventory {
+        let mut inv = empty_inventory_8x8();
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: ItemInstance {
+                    instance_id: 5000,
+                    template_id: template_id.into(),
+                    display_name: template_id.into(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.3,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: stack,
+                    spirit_quality: 0.7,
+                    durability: 1.0,
+                },
+            });
+        inv
+    }
+
+    #[test]
+    fn replenish_zone_drains_zone_qi_and_fills_plot() {
+        let mut app = build_app();
+        // zone qi 充足
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 5.0);
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::Zone,
+        });
+        for _ in 0..ReplenishSource::Zone.duration_ticks() {
+            app.update();
+        }
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.5).abs() < 1e-6, "plot_qi 应 +0.5");
+        let z = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!((z - 4.5).abs() < 1e-6, "zone qi 应 -0.5");
+    }
+
+    #[test]
+    fn replenish_bone_coin_consumes_one_coin_and_adds_0_8() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_bone_coins(3))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        for _ in 0..ReplenishSource::BoneCoin.duration_ticks() {
+            app.update();
+        }
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.8).abs() < 1e-6);
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inv.bone_coins, 2);
+    }
+
+    #[test]
+    fn replenish_beast_core_overflows_to_zone_when_full() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        // plot_qi 已经在 0.5/1.0 → 注 2.0 → +0.5 满，溢出 1.5 回 zone
+        app.world_mut()
+            .get_mut::<LingtianPlot>(plot)
+            .unwrap()
+            .plot_qi = 0.5;
+        let zone_before = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BeastCore,
+        });
+        for _ in 0..ReplenishSource::BeastCore.duration_ticks() {
+            app.update();
+        }
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 1.0).abs() < 1e-6, "plot_qi 拉满 1.0");
+        let zone_after = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!(
+            (zone_after - zone_before - 1.5).abs() < 1e-6,
+            "1.5 应回馈 zone"
+        );
+        // 兽核应被消耗（从背包移除）
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, "mutant_beast_core"), 0);
+    }
+
+    #[test]
+    fn replenish_ling_shui_consumes_one_bottle() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_misc_stack("ling_shui", 2))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::LingShui,
+        });
+        for _ in 0..ReplenishSource::LingShui.duration_ticks() {
+            app.update();
+        }
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.3).abs() < 1e-6);
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, "ling_shui"), 1);
+    }
+
+    #[test]
+    fn replenish_rejected_when_no_material() {
+        let mut app = build_app();
+        // bone_coins=0，请求 BoneCoin → 拒
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    #[test]
+    fn replenish_rejected_when_in_cooldown() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_bone_coins(2))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        // 模拟"刚补过" — last_replenish_at 设到当前 clock
+        app.world_mut()
+            .resource_mut::<LingtianClock>()
+            .lingtian_tick = 1000;
+        app.world_mut()
+            .get_mut::<LingtianPlot>(plot)
+            .unwrap()
+            .last_replenish_at = 1000;
+
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+        // 骨币没扣
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inv.bone_coins, 2);
+    }
+
+    #[test]
+    fn replenish_allowed_after_cooldown_expires() {
+        let mut app = build_app();
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_bone_coins(2))
+            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut()
+            .resource_mut::<LingtianClock>()
+            .lingtian_tick = REPLENISH_COOLDOWN_LINGTIAN_TICKS + 100;
+        app.world_mut()
+            .get_mut::<LingtianPlot>(plot)
+            .unwrap()
+            .last_replenish_at = 50; // 距今 4370 lingtian-tick > 4320 冷却
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        for _ in 0..ReplenishSource::BoneCoin.duration_ticks() {
+            app.update();
+        }
+        // 应已结算
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.8).abs() < 1e-6);
     }
 }
