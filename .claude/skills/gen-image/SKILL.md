@@ -1,0 +1,138 @@
+---
+name: gen-image
+description: Bong 项目的图像生成。调 scripts/images/gen.py 按三档画风（item / particle / hud）生成物品图标、粒子 VFX 贴图、HUD overlay。cliproxy 优先，失败 fallback openai。用法：/gen-image <style> <描述>，或直接说"生成一张 xxx 图/贴图/图标"。
+argument-hint: <style=item|particle|hud> <物品或视觉描述>
+allowed-tools: Read Write Edit Bash Glob Grep
+---
+
+# Bong 图像生成流程
+
+你要替用户生图时走这套规范。生图入口统一在 `scripts/images/gen.py`，
+画风约束在 `scripts/images/style.py`（三档常量）+ `local_images/generation_guide.md`
+（细则文档）。
+
+## 1. 触发条件
+
+用户说到以下意图时走本 skill：
+
+- "生成一张 XX 图标" / "画一个 XX 物品图" → **style=item**
+- "生成一张 XX 粒子 / VFX 贴图" / "剑气 / 光柱 / 星屑 贴图" → **style=particle**
+- "生成一张 HUD overlay / 水墨边框 / 结霜角 / 符阵贴图" → **style=hud**
+
+不确定归哪档，**先问用户一句**，不要猜。
+
+## 2. 三档画风对照
+
+| style | 用途 | 背景默认 | 输出去处 | 后处理 |
+|-------|------|---------|---------|--------|
+| `item` | 物品图标（武器 / 药材 / 符牌 / 法宝） | `solid black / white / magenta` | `local_images/` 根 | `remove_bg.py` 抠纯色底 |
+| `particle` | MC 粒子 / VFX 贴图（Line / Ribbon / Sprite / GroundDecal） | 纯黑 `#000000` | `local_images/particles/` | `lum_to_alpha.py` 亮度转 alpha |
+| `hud` | HUD overlay（水墨边框 / 结霜 / 符阵） | `--transparent` 真 RGBA | `local_images/` 或 `client/.../textures/hud/` | 按需清白雾（RGB=0, alpha*=1-lum/255） |
+
+**关键**：三档的 prefix 由 `--style` 自动拼接，**你不需要手写** `dark xianxia game item icon...`
+这类 prefix 文案 —— 写描述文本即可，`gen.py` 会从 `style.py` 拼好。
+
+## 3. 调用命令模板
+
+### 3.1 物品图标
+
+```bash
+python scripts/images/gen.py \
+  "a cluster of three hair-thin bone needles coated in corrupted spiritual residue, sickly green and black discoloration crawling along the tips" \
+  --name 毒蛊飞针 \
+  --style item \
+  --save-prompt
+```
+
+**背景色决策**：
+- 物品深色（骨器、铁器、黑石）：默认 `solid black background`，无需改
+- 物品浅色（丝、白玉、白药）：手动在描述里替换成 `solid white background`
+- 需要极精确抠图（毛发 / 细丝）：描述里写 `solid magenta background`
+
+### 3.2 粒子 VFX 贴图
+
+```bash
+python scripts/images/gen.py \
+  "a horizontal streak of concentrated sword qi, razor-thin filament of pure white light at the center spine, semi-translucent luminous haze feathering outward, left end solid hot white right end tapering into mist" \
+  --name sword_qi_trail \
+  --style particle \
+  --transparent \
+  --size 1536x1024 \
+  --out local_images/particles/ \
+  --save-prompt
+```
+
+生成完 **必须** 跑后处理：
+
+```bash
+python scripts/images/lum_to_alpha.py local_images/particles/sword_qi_trail.png
+# → 得到 sword_qi_trail_alpha.png（RGBA, alpha=亮度, RGB=纯白可染色）
+```
+
+符文类（固定色不染色）加 `--no-tint`：
+
+```bash
+python scripts/images/lum_to_alpha.py local_images/particles/rune_char_dao.png --no-tint
+```
+
+**尺寸约定**（`local_images/generation_guide.md` §1.1）：
+- Line（streak / beam） 128×32 或 256×32
+- Ribbon（拖尾） 256×32，左右接缝无感
+- GroundDecal（俯视圆环） 128×128 或 256×256
+- Sprite（单体） 32×32 或 64×64
+- 生成时用 `--size 1536x1024` 或 `1024x1024`，后续用 PIL 缩小
+
+### 3.3 HUD Overlay
+
+```bash
+python scripts/images/gen.py \
+  "four-corner Chinese ink wash (水墨) splashes, center 60% strictly fully transparent (alpha=0), irregular sumi-e brush strokes at corners only, soft bleeding edges, no rectangular frame" \
+  --name ink_wash_vignette \
+  --style hud \
+  --transparent \
+  --size 1536x1024 \
+  --out local_images/particles/
+```
+
+**HUD 常见坑**：gpt-image 生的"透明 PNG" 边缘半透明像素 RGB 其实是白色（从白底抠），
+叠到游戏场景上会产生白雾。生完必须清：
+
+```python
+from PIL import Image
+import numpy as np
+img = np.array(Image.open("xxx.png").convert("RGBA")).astype(np.float32)
+rgb, alpha = img[:,:,:3], img[:,:,3]
+lum = 0.299*rgb[:,:,0] + 0.587*rgb[:,:,1] + 0.114*rgb[:,:,2]
+new_alpha = np.clip(alpha * (1.0 - lum / 255.0), 0, 255).astype(np.uint8)
+out = np.zeros_like(img, dtype=np.uint8); out[:,:,3] = new_alpha
+Image.fromarray(out).save("xxx.png")
+```
+
+## 4. 文件放置约定
+
+- **生成物**：`local_images/`（整个目录在 `.gitignore`，不进 repo）
+- **prompt 归档**：每次加 `--save-prompt`，写 `<name>_prompt.md` 到同目录
+- **接入客户端**：手动把最终 PNG 拷到：
+  - 粒子 → `client/src/main/resources/assets/bong-client/textures/particle/<name>.png`（去掉 `_alpha` 后缀）
+  - HUD → `client/src/main/resources/assets/bong-client/textures/hud/<name>.png`
+  - 物品 → `client/src/main/resources/assets/bong/textures/item/<name>/<variant>.png`
+
+## 5. Backend
+
+`gen.py --backend auto`（默认）先走 cliproxy；**只有**网络错误或空返回时 **自动 fallback openai**
+（需要 `scripts/images/.env` 里有 `OPENAI_API_KEY`）。
+
+强制某一端 `--backend cliproxy|openai`。
+
+## 6. 完成后
+
+- 给用户列出保存路径
+- 如果是粒子 / HUD，提示下一步的后处理命令
+- 如果图可能有画风偏移（AI 加了奇怪元素 / 背景不纯 / 颜色不对），**主动读一遍
+  `local_images/generation_guide.md` §常见问题**再给出调整建议
+
+## 7. 参考
+
+- `scripts/images/README.md` — 工具链速览
+- `scripts/images/style.py` — 三档 prefix 常量 source
+- `local_images/generation_guide.md` — 画风细则（物品 + 粒子九档 + 符文）
