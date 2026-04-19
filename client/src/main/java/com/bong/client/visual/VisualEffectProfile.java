@@ -159,6 +159,16 @@ enum VisualEffectProfile {
         150L,
         0,
         null
+    ),
+    // 水墨边框：入定/回忆常态，四角墨晕贴图（中心透明），替代 MEDITATION_CALM 的纯色 vignette 走沉浸视觉
+    MEDITATION_INK_WASH(
+        VisualEffectState.EffectType.MEDITATION_INK_WASH,
+        0xFFFFFF,
+        0.7,
+        20_000L,
+        1_500L,
+        200,
+        null
     );
 
     private final VisualEffectState.EffectType effectType;
@@ -209,6 +219,7 @@ enum VisualEffectProfile {
             case NEAR_DEATH_VIGNETTE -> NEAR_DEATH_VIGNETTE;
             case PRESSURE_JITTER -> PRESSURE_JITTER;
             case HIT_PUSHBACK -> HIT_PUSHBACK;
+            case MEDITATION_INK_WASH -> MEDITATION_INK_WASH;
             case NONE -> null;
         };
     }
