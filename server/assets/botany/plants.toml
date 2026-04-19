@@ -1,0 +1,45 @@
+# plan-botany-v1 §1 / plan-lingtian-v1 §2 表
+#
+# 物种 id 对齐正典（docs/library/ecology/末法药材十七种.json + 辛草试毒录.json）。
+# 本文件仅含 P0 测试三作物（§3.1）+ 一个野生 only 样本（用于回归测试）。
+# 后续切片按 §2 表逐步补齐。
+
+# ─── 测试三作物（§3.1）─────────────────────────────────────────────
+
+[[plant]]
+id = "ci_she_hao"
+display_name = "刺舌蒿"
+cultivable = true
+growth_cost = "low"
+growth_duration_ticks = 480       # 8h × 60min
+rarity = "common"
+description = "微辛。生于初醒原外围。凝脉散引 / 临时提速辅料。"
+
+[[plant]]
+id = "ning_mai_cao"
+display_name = "凝脉草"
+cultivable = true
+growth_cost = "mid"
+growth_duration_ticks = 960       # 16h × 60min
+rarity = "common"
+description = "馈赠区灵气 0.4 之地。凝脉散主料。验证 plot_qi 管理。"
+
+[[plant]]
+id = "ling_mu_miao"
+display_name = "灵木苗"
+cultivable = true
+growth_cost = "high"
+growth_duration_ticks = 28800     # 480h × 60min（20 天）
+rarity = "rare"
+description = "LingquanMarsh 静态点。极慢线，验证补灵节奏 + forge 载体。"
+
+# ─── 野生 only 样本（cultivable=false 回归用，§2 表 noncultivable）────
+
+[[plant]]
+id = "shi_mai_gen"
+display_name = "噬脉根"
+cultivable = false
+growth_cost = "high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "负灵域裂缝。剧毒。无种子，不可人工种植。"

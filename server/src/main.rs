@@ -1,11 +1,15 @@
 #[allow(dead_code)]
 mod alchemy;
+#[allow(dead_code)]
+mod botany;
 mod combat;
 #[allow(dead_code)]
 mod cultivation;
 #[allow(dead_code)]
 mod forge;
 mod inventory;
+#[allow(dead_code)]
+mod lingtian;
 mod network;
 mod npc;
 mod player;
@@ -44,9 +48,11 @@ fn main() {
     player::register(&mut app);
     inventory::register(&mut app);
     cultivation::register(&mut app);
+    botany::register(&mut app);
     alchemy::register(&mut app);
     combat::register(&mut app);
     forge::register(&mut app);
+    lingtian::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);
 

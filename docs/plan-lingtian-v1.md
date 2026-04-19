@@ -15,6 +15,11 @@
 
 **交叉引用**：`plan-botany-v1.md`（PlantKind + 浮窗）· `plan-alchemy-v1.md`（作物 → 丹方材料）· `plan-skill-v1.md`（herbalism）· `plan-zhenfa-v1.md`（欺天阵保田）· `plan-inventory-v1.md`（锄头 / 骨币 / 兽核 item）。
 
+**进度**（2026-04-19，分支 `plan-lingtian-v1`）：
+- ✅ **P0 骨架已落**：`server/src/botany/`（PlantKindRegistry + plants.toml 含 §3.1 测试三作物 + 1 野生 only 回归样本）+ `server/src/lingtian/plot.rs`（LingtianPlot Component + CropInstance + 翻新方法 + 5 单测）+ `register(&mut app)` 双双接入 main.rs · 534/534 tests · clippy 无新增问题
+- ⏳ **P0 收尾未做**：BlockEntity 持久化（需 plan-persistence-v1 落地）· 方块放置 e2e 验收
+- ⏳ **P1+ 全未动**：session（Till/Plant/Replenish/Renew）· tick · IPC channel · client UI · §2 表剩余作物入库
+
 ---
 
 ## §0 设计轴心
@@ -71,7 +76,7 @@ pub struct CropInstance {
 
 #### §1.2.3 种植流程（空 plot → 有作物）
 
-空 plot 右键（不需要主手锄头）→ 弹**种植浮窗**（详见 §1.2.4 UI）：
+空 plot 右键（不需要主手锄头）→ 弹**种植浮窗**（UI 见 `docs/svg/lingtian-planting.svg`，种子 item 定义见 §1.2.4）：
 
 1. 浮窗列出玩家背包内所有"种子 item"（从 `SeedRegistry` 匹配）
 2. 玩家选 1 种种子 → 点击"播种"（1s session，可取消）
