@@ -120,9 +120,7 @@ pub fn complete_harvest_for_player(
         BotanyHarvestMode::Manual => MANUAL_SKILL_XP,
         BotanyHarvestMode::Auto => AUTO_SKILL_XP,
     };
-    let xp = base_xp
-        .saturating_add_signed(variant.xp_delta())
-        .max(0) as u64;
+    let xp = base_xp.saturating_add_signed(variant.xp_delta()).max(0) as u64;
     let new_skill = store.add_skill_xp(player_id, xp);
     skill_events.send(BotanySkillChangedEvent {
         client_entity: session.client_entity,
@@ -306,8 +304,7 @@ fn trample_seed_for(
     let target_bits = target_entity.map(|e| e.to_bits()).unwrap_or(0);
     let cause_bit = (u64::from(hit)) | (u64::from(moved) << 1);
 
-    now_tick
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    now_tick.wrapping_mul(0x9E37_79B9_7F4A_7C15)
         ^ player_hash.wrapping_mul(0xBF58_476D_1CE4_E5B9)
         ^ target_bits.wrapping_mul(0x94D0_49BB_1331_11EB)
         ^ cause_bit
@@ -538,7 +535,11 @@ mod tests {
             .resource_mut::<Events<HarvestTerminalEvent>>()
             .drain()
             .collect();
-        assert_eq!(frames.len(), 1, "interrupt should send one HarvestTerminalEvent");
+        assert_eq!(
+            frames.len(),
+            1,
+            "interrupt should send one HarvestTerminalEvent"
+        );
         let frame = &frames[0];
         assert!(frame.interrupted && !frame.completed);
         assert!(

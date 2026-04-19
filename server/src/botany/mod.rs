@@ -255,12 +255,13 @@ mod tests {
     fn ensure_primitives_accepts_all_registered_kinds() {
         use crate::inventory::{load_item_registry, InventoryInstanceIdAllocator};
 
-        let item_registry = load_item_registry()
-            .expect("shipped assets must produce valid ItemRegistry");
+        let item_registry =
+            load_item_registry().expect("shipped assets must produce valid ItemRegistry");
         let kind_registry = BotanyKindRegistry::default();
         let mut allocator = InventoryInstanceIdAllocator::default();
 
-        let result = ensure_botany_inventory_primitives(&item_registry, &kind_registry, &mut allocator);
+        let result =
+            ensure_botany_inventory_primitives(&item_registry, &kind_registry, &mut allocator);
         assert!(
             result.is_ok(),
             "startup validation should pass for shipped assets, got {result:?}"
@@ -269,16 +270,23 @@ mod tests {
 
     #[test]
     fn ensure_primitives_fails_when_kind_item_missing() {
-        use crate::inventory::{ItemRegistry, InventoryInstanceIdAllocator};
+        use crate::inventory::{InventoryInstanceIdAllocator, ItemRegistry};
 
         let item_registry = ItemRegistry::default();
         let kind_registry = BotanyKindRegistry::default();
         let mut allocator = InventoryInstanceIdAllocator::default();
 
-        let err = ensure_botany_inventory_primitives(&item_registry, &kind_registry, &mut allocator)
-            .expect_err("empty ItemRegistry must fail");
-        assert!(err.contains("ci_she_hao"), "error should list missing kinds, got `{err}`");
-        assert!(err.contains("kong_shou_hen"), "error should list kong_shou_hen, got `{err}`");
+        let err =
+            ensure_botany_inventory_primitives(&item_registry, &kind_registry, &mut allocator)
+                .expect_err("empty ItemRegistry must fail");
+        assert!(
+            err.contains("ci_she_hao"),
+            "error should list missing kinds, got `{err}`"
+        );
+        assert!(
+            err.contains("kong_shou_hen"),
+            "error should list kong_shou_hen, got `{err}`"
+        );
     }
 
     #[test]

@@ -324,7 +324,9 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
         }
         RedisOutbound::BotanyEcology(snapshot) => {
             let payload = serde_json::to_string(&snapshot).map_err(|error| {
-                ValidationError::new(format!("failed to serialize BotanyEcologySnapshotV1: {error}"))
+                ValidationError::new(format!(
+                    "failed to serialize BotanyEcologySnapshotV1: {error}"
+                ))
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BOTANY_ECOLOGY,

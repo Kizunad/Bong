@@ -79,9 +79,7 @@ pub fn spawn_event_triggered_plants_on_death(
 }
 
 fn event_spawn_seed(now_tick: u64, target_bits: u64) -> u64 {
-    now_tick
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ target_bits.wrapping_mul(0xBF58_476D_1CE4_E5B9)
+    now_tick.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ target_bits.wrapping_mul(0xBF58_476D_1CE4_E5B9)
 }
 
 fn event_should_spawn(seed: u64, chance_inverse: u32) -> bool {
@@ -131,10 +129,7 @@ mod tests {
     #[test]
     fn death_event_spawns_kong_shou_hen_when_roll_hits() {
         let mut app = make_app();
-        let victim = app
-            .world_mut()
-            .spawn(Position::new([0.0, 64.0, 0.0]))
-            .id();
+        let victim = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
 
         app.world_mut()
             .resource_mut::<Events<DeathEvent>>()
@@ -187,10 +182,7 @@ mod tests {
     fn zero_chance_never_spawns() {
         let mut app = make_app();
         app.insert_resource(BotanyEventSpawnRoll { chance_inverse: 0 });
-        let victim = app
-            .world_mut()
-            .spawn(Position::new([0.0, 64.0, 0.0]))
-            .id();
+        let victim = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
 
         app.world_mut()
             .resource_mut::<Events<DeathEvent>>()
@@ -210,7 +202,7 @@ mod tests {
     #[test]
     fn kong_shou_hen_survives_lifecycle_tick_in_any_zone() {
         // 放到没有 Marsh/Plains 标签的 zone，确认 event-kind 豁免 unsupported 检查
-        use crate::botany::components::{PlantStaticPointStore, PlantLifecycleClock};
+        use crate::botany::components::{PlantLifecycleClock, PlantStaticPointStore};
         use crate::botany::lifecycle::run_botany_lifecycle_tick;
 
         let mut app = App::new();

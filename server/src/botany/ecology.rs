@@ -165,7 +165,11 @@ mod tests {
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::None),
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::Thunder),
             make_plant(BotanyPlantId::NingMaiCao, "spawn", PlantVariant::None),
-            make_plant(BotanyPlantId::ChiSuiCao, "blood_valley", PlantVariant::Tainted),
+            make_plant(
+                BotanyPlantId::ChiSuiCao,
+                "blood_valley",
+                PlantVariant::Tainted,
+            ),
         ];
 
         let snap = aggregate(1200, &zones, plants.iter());
@@ -185,7 +189,10 @@ mod tests {
         // variant 排序 key：None(0) < Thunder(1)
         assert_eq!(spawn_eco.variant_counts[0].variant, BotanyVariantV1::None);
         assert_eq!(spawn_eco.variant_counts[0].count, 3);
-        assert_eq!(spawn_eco.variant_counts[1].variant, BotanyVariantV1::Thunder);
+        assert_eq!(
+            spawn_eco.variant_counts[1].variant,
+            BotanyVariantV1::Thunder
+        );
         assert_eq!(spawn_eco.variant_counts[1].count, 1);
 
         let bv_eco = &snap.zones[1];

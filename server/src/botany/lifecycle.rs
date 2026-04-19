@@ -41,7 +41,10 @@ fn zone_center_position(zone: &Zone) -> [f64; 3] {
 fn zone_sampled_position(seed: u64, zone: &Zone) -> [f64; 3] {
     let x_span = (zone.bounds.1.x - zone.bounds.0.x).max(0.0);
     let z_span = (zone.bounds.1.z - zone.bounds.0.z).max(0.0);
-    let (hx, hz) = (splitmix(seed), splitmix(seed.wrapping_add(0xA2D9_D6E1_4CA5_A73F)));
+    let (hx, hz) = (
+        splitmix(seed),
+        splitmix(seed.wrapping_add(0xA2D9_D6E1_4CA5_A73F)),
+    );
     let fx = (hx % 10_000) as f64 / 10_000.0;
     let fz = (hz % 10_000) as f64 / 10_000.0;
     [
@@ -64,8 +67,7 @@ fn spawn_seed(now_tick: u64, kind: BotanyPlantId, spawn_idx: u32) -> u64 {
     let mut hasher = DefaultHasher::new();
     kind.as_str().hash(&mut hasher);
     let kind_seed = hasher.finish();
-    now_tick
-        .wrapping_mul(0xA342_3F3A_1E8B_C11D)
+    now_tick.wrapping_mul(0xA342_3F3A_1E8B_C11D)
         ^ kind_seed.wrapping_mul(0xD1B5_4A32_D192_ED03)
         ^ u64::from(spawn_idx)
 }
@@ -620,7 +622,10 @@ mod tests {
             blocked_tiles: vec![],
         };
         let cfg = BotanyVariantRoll { chance_inverse: 1 };
-        assert_eq!(roll_variant_for_zone(&zone, 42, &cfg), PlantVariant::Tainted);
+        assert_eq!(
+            roll_variant_for_zone(&zone, 42, &cfg),
+            PlantVariant::Tainted
+        );
     }
 
     #[test]
