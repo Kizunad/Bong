@@ -29,11 +29,12 @@ use super::environment::compute_plot_qi_cap;
 use super::events::{
     HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
     StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
-    TillCompleted,
+    TillCompleted, ZonePressureCrossed,
 };
 use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
 use super::plot::{CropInstance, LingtianPlot};
+use super::pressure::{compute_zone_pressure, PressureLevel, ZonePressureTracker};
 use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
@@ -959,6 +960,77 @@ pub fn lingtian_growth_tick(
     clock.lingtian_tick = clock.lingtian_tick.saturating_add(1);
     for mut plot in plots.iter_mut() {
         advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+    }
+}
+
+/// plan §5.1 — 收到 `ReplenishCompleted` 就把 `plot_qi_added + overflow_to_zone`
+/// 记到 `ZonePressureTracker`（因为代价已付，全量计入"补灵贡献"）。
+/// 本系统单 zone 简化：全部 plot 算作 `DEFAULT_ZONE`。
+pub fn record_replenish_to_pressure(
+    mut events: EventReader<ReplenishCompleted>,
+    clock: Res<LingtianClock>,
+    mut tracker: ResMut<ZonePressureTracker>,
+) {
+    for e in events.read() {
+        let total = e.plot_qi_added + e.overflow_to_zone;
+        tracker
+            .state_mut(DEFAULT_ZONE)
+            .record_replenish(clock.lingtian_tick, total);
+    }
+}
+
+/// plan §5.1 — 每 lingtian-tick 后（通过读 `LingtianTickAccumulator` 刚归零）
+/// 重算 zone pressure、prune 7d 窗口、跨档上升时发 `ZonePressureCrossed`
+/// 事件；HIGH 进入时清 zone 所有 plot_qi（道伥 spawn 由下游 npc 系统接）。
+pub fn compute_zone_pressure_system(
+    accumulator: Res<LingtianTickAccumulator>,
+    clock: Res<LingtianClock>,
+    mut tracker: ResMut<ZonePressureTracker>,
+    registry: Res<PlantKindRegistry>,
+    mut plots: Query<&mut LingtianPlot>,
+    mut events: EventWriter<ZonePressureCrossed>,
+) {
+    // 与 lingtian_growth_tick 同节拍：accumulator 刚在同一 Update 归零
+    // → 本 tick 刚跑过一 lingtian-tick，现在是对齐点。
+    if accumulator.raw() != 0 {
+        return;
+    }
+    let zone = DEFAULT_ZONE.to_string();
+    let now = clock.lingtian_tick;
+    tracker.state_mut(&zone).prune(now);
+
+    // 借用拆分：读出 pressure 先丢作用域，再改 state
+    let pressure = {
+        let plots_iter = plots.iter().map(|m| -> &LingtianPlot { m });
+        compute_zone_pressure(&zone, plots_iter, &registry, &tracker)
+    };
+    let new_level = PressureLevel::classify(pressure);
+    let old_level = tracker
+        .state(&zone)
+        .map(|s| s.last_level)
+        .unwrap_or(PressureLevel::None);
+
+    {
+        let state = tracker.state_mut(&zone);
+        state.last_pressure = pressure;
+        state.last_level = new_level;
+    }
+
+    if new_level.is_higher_than(old_level) {
+        events.send(ZonePressureCrossed {
+            zone: zone.clone(),
+            level: new_level,
+            raw_pressure: pressure,
+        });
+        if matches!(new_level, PressureLevel::High) {
+            // plan §5.1 — HIGH 触发 zone plot_qi 瞬时清零
+            for mut plot in plots.iter_mut() {
+                plot.plot_qi = 0.0;
+            }
+            tracing::warn!(
+                "[bong][lingtian] zone `{zone}` pressure HIGH (raw={pressure:.3}); cleared plot_qi"
+            );
+        }
     }
 }
 
@@ -2307,5 +2379,166 @@ mod tests {
             .next()
             .unwrap();
         assert!((plot.plot_qi_cap - 1.0).abs() < 1e-6);
+    }
+
+    // ------------------------------------------------------------------------
+    // §5.1 密度阈值 e2e
+    // ------------------------------------------------------------------------
+
+    use crate::lingtian::pressure::{
+        PressureLevel as PL, PRESSURE_HIGH, PRESSURE_LOW, PRESSURE_MID,
+    };
+
+    fn build_pressure_app(natural_supply: f32) -> App {
+        let mut app = App::new();
+        let mut tracker = ZonePressureTracker::new();
+        tracker.set_natural_supply(DEFAULT_ZONE, natural_supply);
+        let mut plant_registry = PlantKindRegistry::new();
+        plant_registry
+            .insert(PlantKind {
+                id: "ling_mu_miao".into(),
+                display_name: "灵木苗".into(),
+                cultivable: true,
+                growth_cost: GrowthCost::High, // 0.012 / tick
+                growth_duration_ticks: 28800,
+                rarity: PlantRarity::Rare,
+                description: String::new(),
+            })
+            .unwrap();
+        app.insert_resource(LingtianTickAccumulator::new())
+            .insert_resource(LingtianClock::default())
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(plant_registry)
+            .insert_resource(tracker)
+            .add_event::<ReplenishCompleted>()
+            .add_event::<ZonePressureCrossed>()
+            .add_systems(
+                Update,
+                (
+                    lingtian_growth_tick,
+                    record_replenish_to_pressure,
+                    compute_zone_pressure_system,
+                )
+                    .chain(),
+            );
+        app
+    }
+
+    fn spawn_high_cost_planted(app: &mut App, n: u32) {
+        for i in 0..n {
+            let mut p = LingtianPlot::new(BlockPos::new(i as i32, 64, 0), None);
+            p.plot_qi = 1.0;
+            p.crop = Some(CropInstance::new("ling_mu_miao".into()));
+            app.world_mut().spawn(p);
+        }
+    }
+
+    fn step_one_lingtian_tick(app: &mut App) {
+        for _ in 0..BEVY_TICKS_PER_LINGTIAN_TICK {
+            app.update();
+        }
+    }
+
+    fn collect_pressure_events(app: &mut App) -> Vec<(PL, f32)> {
+        let world = app.world_mut();
+        let events = world.resource::<bevy_ecs::event::Events<ZonePressureCrossed>>();
+        let mut reader = events.get_reader();
+        reader
+            .read(events)
+            .map(|e| (e.level, e.raw_pressure))
+            .collect()
+    }
+
+    #[test]
+    fn no_event_when_pressure_below_low() {
+        let mut app = build_pressure_app(0.0);
+        spawn_high_cost_planted(&mut app, 1);
+        step_one_lingtian_tick(&mut app);
+        assert!(collect_pressure_events(&mut app).is_empty());
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        assert_eq!(
+            tracker.state(DEFAULT_ZONE).map(|s| s.last_level),
+            Some(PL::None)
+        );
+    }
+
+    #[test]
+    fn rises_through_low_mid_high_with_increasing_plot_count() {
+        let mut app = build_pressure_app(0.0);
+        // demand 0.012 × N。f32 累加噪音 ~1e-7：用整除留 5% 余量
+        // LOW: 26 × 0.012 ≈ 0.312
+        spawn_high_cost_planted(&mut app, 26);
+        step_one_lingtian_tick(&mut app);
+        let evts = collect_pressure_events(&mut app);
+        assert_eq!(evts.len(), 1);
+        assert_eq!(evts[0].0, PL::Low);
+
+        // 加到 51（demand ≈ 0.612 → MID）
+        spawn_high_cost_planted(&mut app, 25);
+        step_one_lingtian_tick(&mut app);
+        let evts = collect_pressure_events(&mut app);
+        assert_eq!(evts.last().map(|(l, _)| *l), Some(PL::Mid));
+
+        // 加到 85（demand ≈ 1.020 → HIGH）
+        spawn_high_cost_planted(&mut app, 34);
+        step_one_lingtian_tick(&mut app);
+        let evts = collect_pressure_events(&mut app);
+        assert_eq!(evts.last().map(|(l, _)| *l), Some(PL::High));
+    }
+
+    #[test]
+    fn high_pressure_clears_zone_plot_qi() {
+        let mut app = build_pressure_app(0.0);
+        spawn_high_cost_planted(&mut app, 100); // demand ~1.2 → HIGH
+        step_one_lingtian_tick(&mut app);
+        let any_nonzero = app
+            .world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .any(|p| p.plot_qi > 0.0);
+        assert!(!any_nonzero, "HIGH 应清掉所有 plot_qi");
+    }
+
+    #[test]
+    fn natural_supply_offsets_demand() {
+        let mut app = build_pressure_app(0.5);
+        spawn_high_cost_planted(&mut app, 50); // demand 0.6
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let p = tracker.state(DEFAULT_ZONE).unwrap().last_pressure;
+        assert!((p - 0.1).abs() < 1e-3);
+        assert_eq!(tracker.state(DEFAULT_ZONE).unwrap().last_level, PL::None);
+    }
+
+    #[test]
+    fn replenish_recent_7d_offsets_demand() {
+        let mut app = build_pressure_app(0.0);
+        spawn_high_cost_planted(&mut app, 50); // demand 0.6 → MID
+        app.world_mut()
+            .resource_mut::<ZonePressureTracker>()
+            .state_mut(DEFAULT_ZONE)
+            .record_replenish(0, 0.5);
+        step_one_lingtian_tick(&mut app);
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        assert_eq!(tracker.state(DEFAULT_ZONE).unwrap().last_level, PL::None);
+    }
+
+    #[test]
+    fn no_duplicate_event_when_pressure_stays_at_same_level() {
+        let mut app = build_pressure_app(0.0);
+        spawn_high_cost_planted(&mut app, 26); // LOW (>= 0.30 with f32 margin)
+        step_one_lingtian_tick(&mut app);
+        let evts1 = collect_pressure_events(&mut app);
+        assert_eq!(evts1.len(), 1);
+        step_one_lingtian_tick(&mut app);
+        let evts2 = collect_pressure_events(&mut app);
+        assert!(evts2.is_empty(), "档位未上升不该重复发");
+    }
+
+    #[test]
+    fn thresholds_match_plan_constants() {
+        assert!((PRESSURE_LOW - 0.3).abs() < 1e-6);
+        assert!((PRESSURE_MID - 0.6).abs() < 1e-6);
+        assert!((PRESSURE_HIGH - 1.0).abs() < 1e-6);
     }
 }

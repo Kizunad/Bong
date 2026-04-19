@@ -8,6 +8,7 @@ use crate::botany::PlantId;
 
 use super::environment::PlotEnvironment;
 use super::hoe::HoeKind;
+use super::pressure::PressureLevel;
 use super::session::{ReplenishSource, SessionMode};
 use super::terrain::TerrainKind;
 
@@ -112,4 +113,16 @@ pub struct ReplenishCompleted {
     pub plot_qi_added: f32,
     /// 溢出回馈到 zone qi 的量（plan §1.4：来源材料不退）。
     pub overflow_to_zone: f32,
+}
+
+/// plan §5.1 — zone_pressure 跨入更高档时由 lingtian 发出（仅"上升"边沿，
+/// 不发"回落"事件，避免噪音）。下游（npc/agent）按 level 接：
+///   * Low  → 天道 narration
+///   * Mid  → 异变兽刷新率 +30%
+///   * High → 该 zone plot_qi 已被本系统清零；下游可加 spawn 道伥
+#[derive(Debug, Clone, Event)]
+pub struct ZonePressureCrossed {
+    pub zone: String,
+    pub level: PressureLevel,
+    pub raw_pressure: f32,
 }

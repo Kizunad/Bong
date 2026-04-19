@@ -25,6 +25,7 @@ pub mod events;
 pub mod growth;
 pub mod hoe;
 pub mod plot;
+pub mod pressure;
 pub mod qi_account;
 pub mod seed;
 pub mod session;
@@ -33,12 +34,17 @@ pub mod terrain;
 
 #[allow(unused_imports)]
 pub use environment::{compute_plot_qi_cap, PlotBiome, PlotEnvironment};
+#[allow(unused_imports)]
+pub use pressure::{
+    compute_zone_pressure, PressureLevel, ZonePressureState, ZonePressureTracker, PRESSURE_HIGH,
+    PRESSURE_LOW, PRESSURE_MID, REPLENISH_WINDOW_LINGTIAN_TICKS,
+};
 
 #[allow(unused_imports)]
 pub use events::{
     HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted, StartHarvestRequest,
     StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
-    TillCompleted,
+    TillCompleted, ZonePressureCrossed,
 };
 #[allow(unused_imports)]
 pub use growth::{
@@ -92,6 +98,7 @@ pub fn register(app: &mut App) {
 
     app.insert_resource(LingtianHarvestRng::default());
     app.insert_resource(LingtianClock::default());
+    app.insert_resource(ZonePressureTracker::new());
 
     app.add_event::<StartTillRequest>();
     app.add_event::<TillCompleted>();
@@ -103,6 +110,7 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestCompleted>();
     app.add_event::<StartReplenishRequest>();
     app.add_event::<ReplenishCompleted>();
+    app.add_event::<ZonePressureCrossed>();
     app.add_systems(
         Update,
         (
@@ -114,6 +122,9 @@ pub fn register(app: &mut App) {
             systems::tick_lingtian_sessions,
             systems::apply_completed_sessions,
             systems::lingtian_growth_tick,
+            // pressure 必须在 growth_tick 之后（共享 accumulator 节拍 + 用 clock 即时值）
+            systems::record_replenish_to_pressure,
+            systems::compute_zone_pressure_system,
         )
             .chain(),
     );
