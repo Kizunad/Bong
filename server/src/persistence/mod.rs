@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 5;
+const CURRENT_USER_VERSION: i32 = 6;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
 pub const WORLD_MODEL_STATE_FIELD_CURRENT_ERA: &str = "current_era";
@@ -252,6 +252,14 @@ pub struct AgentWorldModelSnapshotRecord {
     pub last_tick: Option<i64>,
     #[serde(default)]
     pub last_state_ts: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveTribulationRecord {
+    pub char_id: String,
+    pub wave_current: u32,
+    pub waves_total: u32,
+    pub started_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -748,6 +756,26 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
 
     ensure_agent_world_model_table(connection)?;
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 6 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS tribulations_active (
+                char_id TEXT PRIMARY KEY,
+                wave_current INTEGER NOT NULL CHECK (wave_current >= 0),
+                waves_total INTEGER NOT NULL CHECK (waves_total > 0),
+                started_tick INTEGER NOT NULL CHECK (started_tick >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 6;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
@@ -825,6 +853,37 @@ pub fn load_agent_world_model_snapshot(
     let snapshot = serde_json::from_str::<AgentWorldModelSnapshotRecord>(&snapshot_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(Some(snapshot))
+}
+
+pub fn persist_active_tribulation(
+    settings: &PersistenceSettings,
+    record: &ActiveTribulationRecord,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_active_tribulation(&transaction, record, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_active_tribulation(
+    settings: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<Option<ActiveTribulationRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_active_tribulation_from_connection(&connection, char_id)
+}
+
+pub fn delete_active_tribulation(settings: &PersistenceSettings, char_id: &str) -> io::Result<()> {
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "DELETE FROM tribulations_active WHERE char_id = ?1",
+            params![char_id],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
 }
 
 fn record_bootstrap_event(connection: &Connection, server_run_id: &str) -> rusqlite::Result<()> {
@@ -1786,6 +1845,42 @@ fn upsert_npc_deceased_index(
     Ok(())
 }
 
+fn upsert_active_tribulation(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &ActiveTribulationRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO tribulations_active (
+                char_id,
+                wave_current,
+                waves_total,
+                started_tick,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(char_id) DO UPDATE SET
+                wave_current = excluded.wave_current,
+                waves_total = excluded.waves_total,
+                started_tick = excluded.started_tick,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                record.char_id,
+                i64::from(record.wave_current),
+                i64::from(record.waves_total),
+                tick_to_sql(record.started_tick)?,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn delete_npc_hot_rows(transaction: &rusqlite::Transaction<'_>, char_id: &str) -> io::Result<()> {
     transaction
         .execute("DELETE FROM npc_state WHERE char_id = ?1", params![char_id])
@@ -1797,6 +1892,35 @@ fn delete_npc_hot_rows(transaction: &rusqlite::Transaction<'_>, char_id: &str) -
         )
         .map_err(io::Error::other)?;
     Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn load_active_tribulation_from_connection(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Option<ActiveTribulationRecord>> {
+    let row: Option<(i64, i64, i64)> = connection
+        .query_row(
+            "
+            SELECT wave_current, waves_total, started_tick
+            FROM tribulations_active
+            WHERE char_id = ?1
+            ",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((wave_current, waves_total, started_tick)) = row else {
+        return Ok(None);
+    };
+
+    Ok(Some(ActiveTribulationRecord {
+        char_id: char_id.to_string(),
+        wave_current: sql_to_u32(wave_current)?,
+        waves_total: sql_to_u32(waves_total)?,
+        started_tick: sql_to_tick(started_tick)?,
+    }))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -3238,6 +3362,51 @@ mod persistence_tests {
                 .expect("sqlite_master query should succeed");
             assert_eq!(exists.as_deref(), Some(table_name));
         }
+    }
+
+    #[test]
+    fn task6_migrations_create_tribulations_active_table() {
+        let db_path = database_path("task6-tribulations-active");
+        bootstrap_sqlite(&db_path, "task6-tribulations-active").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tribulations_active'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master tribulations_active query should succeed");
+        assert_eq!(exists.as_deref(), Some("tribulations_active"));
+    }
+
+    #[test]
+    fn active_tribulation_roundtrip_and_delete() {
+        let (settings, root) = persistence_settings("tribulation-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = ActiveTribulationRecord {
+            char_id: "offline:Azure".to_string(),
+            wave_current: 2,
+            waves_total: 5,
+            started_tick: 1440,
+        };
+        persist_active_tribulation(&settings, &record).expect("active tribulation should persist");
+
+        let loaded = load_active_tribulation(&settings, record.char_id.as_str())
+            .expect("active tribulation query should succeed")
+            .expect("active tribulation row should exist");
+        assert_eq!(loaded, record);
+
+        delete_active_tribulation(&settings, record.char_id.as_str())
+            .expect("active tribulation delete should succeed");
+        let deleted = load_active_tribulation(&settings, record.char_id.as_str())
+            .expect("post-delete active tribulation query should succeed");
+        assert!(deleted.is_none());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
