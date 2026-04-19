@@ -51,6 +51,15 @@ class SequenceRuntimeRedis implements RuntimeRedis {
   public readonly connect = vi.fn(async () => {});
   public readonly disconnect = vi.fn(async () => {});
   public readonly drainPlayerChat = vi.fn(async (): Promise<ChatMessageV1[]> => []);
+  public readonly loadWorldModelState = vi.fn(async (): Promise<WorldModelSnapshot | null> => {
+    if (this.worldModelSnapshots.length === 0) {
+      return null;
+    }
+
+    const picked = this.worldModelSnapshots[Math.min(this.worldModelSnapshotIndex, this.worldModelSnapshots.length - 1)] ?? null;
+    this.worldModelSnapshotIndex += 1;
+    return picked;
+  });
   public readonly publishCommands = vi.fn(async (_request: CommandPublishRequest) => {});
   public readonly publishNarrations = vi.fn(async (_request: NarrationPublishRequest) => {});
   public readonly publishAgentWorldModel = vi.fn(
@@ -61,14 +70,30 @@ class SequenceRuntimeRedis implements RuntimeRedis {
     }) => {},
   );
   private index = 0;
+  private worldModelSnapshotIndex = 0;
 
-  constructor(private readonly states: Array<ReturnType<typeof createTestWorldState> | null>) {}
+  constructor(
+    private readonly states: Array<ReturnType<typeof createTestWorldState> | null>,
+    private readonly worldModelSnapshots: Array<WorldModelSnapshot | null> = [],
+  ) {}
 
   getLatestState() {
     const picked = this.states[Math.min(this.index, this.states.length - 1)] ?? null;
     this.index += 1;
     return picked;
   }
+}
+
+function createMirrorSnapshot(overrides: Partial<WorldModelSnapshot> = {}): WorldModelSnapshot {
+  return {
+    currentEra: null,
+    zoneHistory: {},
+    lastDecisions: {},
+    playerFirstSeenTick: {},
+    lastTick: null,
+    lastStateTs: null,
+    ...overrides,
+  };
 }
 
 class FailingPublishRuntimeRedis extends SequenceRuntimeRedis {
@@ -1141,6 +1166,125 @@ describe("runRuntime", () => {
     expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastStateTs).toBe(freshState.ts);
   });
 
+  it("restores world model from redis mirror on startup without using local snapshot files", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const worldModel = new WorldModel();
+    const redis = new SequenceRuntimeRedis([null], [
+      createMirrorSnapshot({
+        currentEra: {
+          name: "末法纪",
+          sinceTick: 188,
+          globalEffect: "灵机渐枯",
+        },
+        zoneHistory: {
+          blood_valley: [
+            {
+              name: "blood_valley",
+              spirit_qi: 0.45,
+              danger_level: 2,
+              active_events: ["tribulation"],
+              player_count: 3,
+            },
+          ],
+        },
+        lastDecisions: {
+          mutation: {
+            commands: [],
+            narrations: [],
+            reasoning: "restore-from-mirror",
+          },
+        },
+        playerFirstSeenTick: {
+          "offline:test-player": 188,
+        },
+        lastTick: 188,
+        lastStateTs: 1_711_111_188,
+      }),
+    ]);
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "idle" })],
+        sleep: vi.fn(async () => {}),
+        logger,
+        worldModel,
+        maxLoopIterations: 1,
+      },
+    );
+
+    expect(worldModel.currentEra?.name).toBe("末法纪");
+    expect(worldModel.lastTick).toBe(188);
+    expect(redis.publishAgentWorldModel).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith(
+      "[tiandao] restored world model from redis mirror tick=188, era: 末法纪 (startup)",
+    );
+  });
+
+  it("does not restore older redis mirror over fresher in-memory world model", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const worldModel = new WorldModel();
+    worldModel.restoreFromJSON(
+      createMirrorSnapshot({
+        currentEra: {
+          name: "新纪",
+          sinceTick: 400,
+          globalEffect: "灵脉复涌",
+        },
+        lastTick: 400,
+        lastStateTs: 1_711_444_400,
+      }),
+    );
+    const redis = new SequenceRuntimeRedis([null], [
+      createMirrorSnapshot({
+        currentEra: {
+          name: "末法纪",
+          sinceTick: 188,
+          globalEffect: "灵机渐枯",
+        },
+        lastTick: 188,
+        lastStateTs: 1_711_111_188,
+      }),
+    ]);
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "idle" })],
+        sleep: vi.fn(async () => {}),
+        logger,
+        worldModel,
+        maxLoopIterations: 1,
+      },
+    );
+
+    expect(worldModel.currentEra?.name).toBe("新纪");
+    expect(worldModel.lastTick).toBe(400);
+    expect(logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining("restored world model from redis mirror"),
+    );
+  });
+
   it("does not auto-restore startup state from local disk snapshot files", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "tiandao-runtime-snapshot-restore-"));
     const previousCwd = process.cwd();
@@ -1424,6 +1568,68 @@ describe("runRuntime", () => {
     expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
     expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(300);
     expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(301);
+  });
+
+  it("periodically reconciles newer redis mirror state after prolonged stale-state idle", async () => {
+    const staleState = createTestWorldState();
+    staleState.tick = 300;
+    staleState.ts = 1_711_333_300;
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const redis = new SequenceRuntimeRedis(
+      [staleState],
+      [
+        null,
+        createMirrorSnapshot({
+          currentEra: {
+            name: "新纪",
+            sinceTick: 320,
+            globalEffect: "灵脉复涌",
+          },
+          zoneHistory: {
+            starter_zone: [
+              {
+                name: "starter_zone",
+                spirit_qi: 0.66,
+                danger_level: 1,
+                active_events: [],
+                player_count: 2,
+              },
+            ],
+          },
+          lastTick: 320,
+          lastStateTs: 1_711_333_320,
+        }),
+      ],
+    );
+    const worldModel = new WorldModel();
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "idle" })],
+        sleep: vi.fn(async () => {}),
+        logger,
+        worldModel,
+        maxLoopIterations: 61,
+      },
+    );
+
+    expect(worldModel.currentEra?.name).toBe("新纪");
+    expect(worldModel.lastTick).toBe(320);
+    expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(1);
+    expect(logger.log).toHaveBeenCalledWith(
+      "[tiandao] restored world model from redis mirror tick=320, era: 新纪 (reconcile)",
+    );
   });
 
   it("ignores corrupted local snapshot file at startup and continues with fresh tick", async () => {

@@ -54,6 +54,8 @@ const SNAPSHOT_INTERVAL_TICKS = 100;
 const SNAPSHOT_KEEP_COUNT = 5;
 const SNAPSHOT_FILE_PREFIX = "tiandao-snapshot-";
 const SNAPSHOT_FILE_SUFFIX = ".json";
+const WORLD_MODEL_RECONCILE_INTERVAL_MS = 300_000;
+const WORLD_MODEL_RECONCILE_INTERVAL_LOOPS = Math.max(1, Math.floor(WORLD_MODEL_RECONCILE_INTERVAL_MS / TICK_INTERVAL_MS));
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
@@ -103,6 +105,7 @@ export interface TickAgent {
 export interface RuntimeRedis {
   connect(): Promise<void>;
   getLatestState(): WorldStateV1 | null;
+  loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
@@ -723,6 +726,7 @@ export async function runRuntime(
   let pendingReconnectCount = 0;
   let pendingBackoffCount = 0;
   let pendingStaleSkip = false;
+  let idleLoopsSinceFreshState = 0;
 
   const shutdown = () => {
     logger.log("\n[tiandao] shutting down...");
@@ -743,15 +747,24 @@ export async function runRuntime(
       try {
         if (!connected) {
           await redis.connect();
+          const isReconnect = hasConnectedAtLeastOnce;
           if (hasConnectedAtLeastOnce) {
             pendingReconnectCount += 1;
           }
           hasConnectedAtLeastOnce = true;
           connected = true;
           logger.log(`[tiandao] connected to Redis at ${redactRedisUrlForLog(config.redisUrl)}`);
+          await restoreWorldModelFromMirror({
+            redis,
+            worldModel,
+            logger,
+            reason: isReconnect ? "reconnect" : "startup",
+          });
+          idleLoopsSinceFreshState = 0;
 
         }
 
+        let processedFreshState = false;
         const drainedChat = await redis.drainPlayerChat({
           maxItems: CHAT_DRAIN_WINDOW,
           logger,
@@ -823,9 +836,25 @@ export async function runRuntime(
               tick: state.tick,
               ts: state.ts,
             };
+            processedFreshState = true;
             pendingReconnectCount = 0;
             pendingBackoffCount = 0;
             pendingStaleSkip = false;
+          }
+        }
+
+        if (processedFreshState) {
+          idleLoopsSinceFreshState = 0;
+        } else {
+          idleLoopsSinceFreshState += 1;
+          if (idleLoopsSinceFreshState >= WORLD_MODEL_RECONCILE_INTERVAL_LOOPS) {
+            await restoreWorldModelFromMirror({
+              redis,
+              worldModel,
+              logger,
+              reason: "reconcile",
+            });
+            idleLoopsSinceFreshState = 0;
           }
         }
 
@@ -885,6 +914,62 @@ function isStaleWorldState(state: WorldStateV1, cursor: WorldStateCursor | null)
   }
 
   return state.tick <= cursor.tick;
+}
+
+async function restoreWorldModelFromMirror(args: {
+  redis: RuntimeRedis;
+  worldModel: WorldModel;
+  logger: Pick<typeof console, "log" | "warn">;
+  reason: "startup" | "reconnect" | "reconcile";
+}): Promise<boolean> {
+  const { redis, worldModel, logger, reason } = args;
+  const snapshot = await redis.loadWorldModelState?.({ logger });
+  if (!snapshot) {
+    return false;
+  }
+
+  const normalizedSnapshot = WorldModel.fromJSON(snapshot).toJSON();
+  if (normalizedSnapshot.lastTick === null) {
+    return false;
+  }
+
+  const currentSnapshot = worldModel.toJSON();
+  if (compareWorldModelPersistenceCursor(normalizedSnapshot, currentSnapshot) <= 0) {
+    return false;
+  }
+
+  worldModel.restoreFromJSON(normalizedSnapshot);
+  const eraSuffix = normalizedSnapshot.currentEra ? `, era: ${normalizedSnapshot.currentEra.name}` : "";
+  logger.log(
+    `[tiandao] restored world model from redis mirror tick=${normalizedSnapshot.lastTick}${eraSuffix} (${reason})`,
+  );
+  return true;
+}
+
+function compareWorldModelPersistenceCursor(
+  left: Pick<WorldModelSnapshot, "lastTick" | "lastStateTs">,
+  right: Pick<WorldModelSnapshot, "lastTick" | "lastStateTs">,
+): number {
+  const leftTick = left.lastTick ?? -1;
+  const rightTick = right.lastTick ?? -1;
+
+  if (left.lastStateTs !== null && right.lastStateTs !== null && left.lastStateTs !== right.lastStateTs) {
+    return left.lastStateTs - right.lastStateTs;
+  }
+
+  if (leftTick !== rightTick) {
+    return leftTick - rightTick;
+  }
+
+  if (left.lastStateTs !== null && right.lastStateTs === null) {
+    return 1;
+  }
+
+  if (left.lastStateTs === null && right.lastStateTs !== null) {
+    return -1;
+  }
+
+  return 0;
 }
 
 async function persistWorldModelAfterFreshTick(args: {
