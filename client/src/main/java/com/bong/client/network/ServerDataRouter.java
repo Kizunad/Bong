@@ -24,6 +24,39 @@ public final class ServerDataRouter {
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
+        com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
+            new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
+        com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
+            new com.bong.client.network.alchemy.AlchemySessionHandler();
+        com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler alchemyForecastHandler =
+            new com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler();
+        com.bong.client.network.alchemy.AlchemyRecipeBookHandler alchemyRecipeBookHandler =
+            new com.bong.client.network.alchemy.AlchemyRecipeBookHandler();
+        com.bong.client.network.alchemy.AlchemyContaminationHandler alchemyContaminationHandler =
+            new com.bong.client.network.alchemy.AlchemyContaminationHandler();
+        com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler alchemyOutcomeResolvedHandler =
+            new com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler();
+        com.bong.client.combat.handler.CombatEventHandler combatEventHandler =
+            new com.bong.client.combat.handler.CombatEventHandler();
+        com.bong.client.combat.handler.StatusSnapshotHandler statusSnapshotHandler =
+            new com.bong.client.combat.handler.StatusSnapshotHandler();
+        com.bong.client.combat.handler.DerivedAttrsHandler derivedAttrsHandler =
+            new com.bong.client.combat.handler.DerivedAttrsHandler();
+        com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
+            new com.bong.client.combat.handler.DeathScreenHandler();
+        com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
+            new com.bong.client.combat.handler.TerminateScreenHandler();
+        com.bong.client.combat.handler.WoundsSnapshotHandler woundsSnapshotHandler =
+            new com.bong.client.combat.handler.WoundsSnapshotHandler();
+        com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
+            new com.bong.client.combat.handler.TribulationBroadcastHandler();
+        CombatHudStateHandler combatHudStateHandler = new CombatHudStateHandler();
+        DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
+        CastSyncHandler castSyncHandler = new CastSyncHandler();
+        QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
+        UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
+        EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
+        DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -38,6 +71,26 @@ public final class ServerDataRouter {
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
         handlers.put("botany_skill", botanySkillHandler);
+        handlers.put("alchemy_furnace", alchemyFurnaceHandler);
+        handlers.put("alchemy_session", alchemySessionHandler);
+        handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);
+        handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);
+        handlers.put("alchemy_contamination", alchemyContaminationHandler);
+        handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
+        handlers.put("combat_event", combatEventHandler);
+        handlers.put("status_snapshot", statusSnapshotHandler);
+        handlers.put("derived_attrs_sync", derivedAttrsHandler);
+        handlers.put("death_screen", deathScreenHandler);
+        handlers.put("terminate_screen", terminateScreenHandler);
+        handlers.put("wounds_snapshot", woundsSnapshotHandler);
+        handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
+        handlers.put("combat_hud_state", combatHudStateHandler);
+        handlers.put("defense_window", defenseWindowHandler);
+        handlers.put("cast_sync", castSyncHandler);
+        handlers.put("quickslot_config", quickSlotConfigHandler);
+        handlers.put("unlocks_sync", unlocksSyncHandler);
+        handlers.put("event_stream_push", eventStreamPushHandler);
+        handlers.put("defense_sync", defenseSyncHandler);
         return new ServerDataRouter(handlers);
     }
 

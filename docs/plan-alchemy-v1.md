@@ -300,17 +300,23 @@ can_take(pill) = Contamination.entries
 
 ### §3.3 交互 UI（MVP，B 层硬编码 Screen）
 
-> 详见 `docs/svg/alchemy-furnace.svg` 草图。
+> 详见 `docs/svg/alchemy-furnace.svg` 草图（草图为放大示意，实际尺寸以代码为准）。
 
 - [ ] 层级：**BaseOwoScreen&lt;FlowLayout&gt;**（B 层，硬编码，右键炉方块打开）
-- [ ] 三列布局（1560×900 居中，留边给 MC 世界）：
-  - 左：**方子手札**（卷轴底纹 + 手抄文案 + ◀▶ 翻页 + 拖【丹方残卷】入卷学新方）
-  - 中：炉体可视化 + 4 个通用投料槽（drop target） + 温度滑块 + F 注真元
-  - 右：**复用塔科夫背包**（`BackpackGridPanel` 5×7 + 多 tab + `ItemTooltipPanel`）
-- [ ] 底栏：五结果桶实时概率 + 丹毒预警（Mellow / Violent 双色条）
+- [ ] **紧凑面板 600×340**（panel padding 6 / gap 4），目标 UI scale 3 完整可见：
+  - 1080p · scale 3 → GUI 640×360 ✓
+  - 2K · scale 3 → GUI 853×480 ✓ 充裕
+  - 历史教训：1560×900 旧版在 scale 3 下只能看见 ~2/3，已弃用
+- [ ] 三列布局（高 244）：
+  - 左 150：**方子手札**（◀ 标题 ▶ + 副标题 + 正文 140 高 + 残卷拖入区 46 高）
+  - 中 220：4 投料槽行 + 状态行 + 进度条 + 温度条 + qi 条 + 干预 log（截 2 条）+ 炉信息一行
+  - 右 212：**复用塔科夫背包** `BackpackGridPanel` 5×7（196×140）+ 重量条
+- [ ] 底栏 60：5 个 36×36 outcome 方块（perf/good/flaw/wast/boom）+ Mellow/Violent 双色丹毒条
+- [ ] **删除项**（旧版冗余）：炉体 ASCII 可视化（lid/body/flame/base 共 200 高）· 多 tab 行 · hotbar 预览 · 大 tooltip 占位框 · 键位提示框 · 各种 plan §X.Y meta-label
 - [ ] **不做**火候曲线编辑器（留 v2）
 - [ ] **不做**品阶显示（只显示 quality %）
 - [ ] **不做**配方匹配校验 UI（投错自然走残缺 / waste / explode）
+- [ ] 尺寸常量集中在 `AlchemyScreen.PANEL_W/PANEL_H/LEFT_W/MID_W/RIGHT_W/BODY_H/BOTTOM_H`，方便后续调参
 
 ---
 

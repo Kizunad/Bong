@@ -9,7 +9,12 @@
 //!
 //! P1/P5：本文件只定义状态机 + 事件；真实天劫伤害由战斗 plan 实施。
 
-use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Query};
+use valence::prelude::{
+    bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Position, Query,
+};
+
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
@@ -52,6 +57,8 @@ pub fn start_tribulation_system(
     mut announce: EventWriter<TribulationAnnounce>,
     mut players: Query<&Cultivation>,
     mut commands: valence::prelude::Commands,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for ev in events.read() {
         if let Ok(c) = players.get_mut(ev.entity) {
@@ -74,6 +81,22 @@ pub fn start_tribulation_system(
                 ev.entity,
                 ev.waves_total
             );
+            // plan-particle-system-v1 §4.4：渡劫开场一道预警雷。
+            if let Ok(pos) = positions.get(ev.entity) {
+                let p = pos.get();
+                vfx_events.send(VfxEventRequest::new(
+                    p,
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id: "bong:tribulation_lightning".to_string(),
+                        origin: [p.x, p.y, p.z],
+                        direction: None,
+                        color: Some("#D0C8FF".to_string()),
+                        strength: Some(1.0),
+                        count: Some(3),
+                        duration_ticks: Some(14),
+                    },
+                ));
+            }
         }
     }
 }

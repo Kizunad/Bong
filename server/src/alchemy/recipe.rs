@@ -1,0 +1,427 @@
+//! 配方系统（plan-alchemy-v1 §1.1）— 纯数据，JSON 加载。
+//!
+//! 启动期扫 `server/assets/alchemy/recipes/*.json` → `RecipeRegistry` resource。
+//! NPC / agent 未来可读同一张表做自动炼丹。
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use valence::prelude::Resource;
+
+use crate::cultivation::components::ColorKind;
+
+/// 单个配方 ID — 与 JSON `id` 字段一致。
+pub type RecipeId = String;
+
+/// 配方段（plan §1.3 中途投料）。`at_tick=0` 即起炉投料。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecipeStage {
+    pub at_tick: u32,
+    pub required: Vec<IngredientSpec>,
+    /// window=0 表示该段必须在首 tick（起炉时）投入；否则在 `[at_tick, at_tick+window]` 内投。
+    #[serde(default)]
+    pub window: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct IngredientSpec {
+    pub material: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToleranceSpec {
+    pub temp_band: f64,
+    pub duration_band: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FireProfile {
+    pub target_temp: f64,
+    pub target_duration_ticks: u32,
+    pub qi_cost: f64,
+    pub tolerance: ToleranceSpec,
+}
+
+/// 五结果桶中的一个成丹桶（perfect/good/flawed 共用此 shape）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PillOutcome {
+    pub pill: String,
+    pub quality: f64,
+    pub toxin_amount: f64,
+    pub toxin_color: ColorKind,
+    /// 可选：服下后恢复的 qi（plan §3.2 回元丹用）。
+    #[serde(default)]
+    pub qi_gain: Option<f64>,
+}
+
+/// 炸炉后果。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExplodeOutcome {
+    pub damage: f64,
+    pub meridian_crack: f64,
+}
+
+/// 完整 outcomes 桶 — waste/explode 是 null-able 的（plan §1.3）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Outcomes {
+    #[serde(default)]
+    pub perfect: Option<PillOutcome>,
+    #[serde(default)]
+    pub good: Option<PillOutcome>,
+    #[serde(default)]
+    pub flawed: Option<PillOutcome>,
+    /// waste 始终 null（配方里也写 null）— 材料全失，无产出。
+    #[serde(default)]
+    pub waste: Option<serde_json::Value>,
+    #[serde(default)]
+    pub explode: Option<ExplodeOutcome>,
+}
+
+/// 副作用池条目（plan §1.3 残缺匹配抽取）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SideEffect {
+    pub tag: String,
+    /// duration=0 表示瞬发 / 一次性。
+    #[serde(default)]
+    pub duration_s: u32,
+    #[serde(default)]
+    pub weight: u32,
+    /// 永久效果标记（如 qi_cap_perm_minus_1）。
+    #[serde(default)]
+    pub perm: bool,
+    /// 可选：指定施加的真元色（如 random_color_shift）。
+    #[serde(default)]
+    pub color: Option<ColorKind>,
+    #[serde(default)]
+    pub amount: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FlawedFallback {
+    pub pill: String,
+    pub quality_scale: f64,
+    pub toxin_scale: f64,
+    #[serde(default)]
+    pub side_effect_pool: Vec<SideEffect>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Recipe {
+    pub id: RecipeId,
+    pub name: String,
+    pub furnace_tier_min: u8,
+    pub stages: Vec<RecipeStage>,
+    pub fire_profile: FireProfile,
+    pub outcomes: Outcomes,
+    #[serde(default)]
+    pub flawed_fallback: Option<FlawedFallback>,
+}
+
+impl Recipe {
+    /// 配方首 tick（at_tick=0）所需材料的聚合视图。
+    /// 投料精确匹配用。
+    pub fn stage0_ingredients(&self) -> HashMap<String, u32> {
+        let mut map = HashMap::new();
+        if let Some(stage) = self.stages.iter().find(|s| s.at_tick == 0) {
+            for ing in &stage.required {
+                *map.entry(ing.material.clone()).or_insert(0) += ing.count;
+            }
+        }
+        map
+    }
+
+    /// 全阶段材料总需求（plan §1.3 残缺匹配用）。
+    pub fn all_ingredients(&self) -> HashMap<String, u32> {
+        let mut map = HashMap::new();
+        for stage in &self.stages {
+            for ing in &stage.required {
+                *map.entry(ing.material.clone()).or_insert(0) += ing.count;
+            }
+        }
+        map
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RecipeRegistry {
+    recipes: HashMap<RecipeId, Recipe>,
+}
+
+impl Resource for RecipeRegistry {}
+
+impl RecipeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, recipe: Recipe) -> Result<(), String> {
+        let id = recipe.id.clone();
+        if self.recipes.insert(id.clone(), recipe).is_some() {
+            return Err(format!("duplicate recipe id `{id}`"));
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Recipe> {
+        self.recipes.get(id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.recipes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.recipes.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Recipe> {
+        self.recipes.values()
+    }
+
+    /// plan §1.3 精确匹配：材料集合 == stage0 需求。
+    pub fn match_exact(&self, staged: &HashMap<String, u32>) -> Option<&Recipe> {
+        self.recipes
+            .values()
+            .find(|r| r.stage0_ingredients() == *staged)
+    }
+
+    /// plan §1.3 残缺匹配：投入是配方 stage0 的严格子集，且存在 flawed_fallback。
+    /// 返回命中的 recipe + 缺失比例（0..1，越大越残缺）。
+    pub fn match_flawed(&self, staged: &HashMap<String, u32>) -> Option<(&Recipe, f64)> {
+        if staged.is_empty() {
+            return None;
+        }
+        let mut best: Option<(&Recipe, f64)> = None;
+        for recipe in self.recipes.values() {
+            if recipe.flawed_fallback.is_none() {
+                continue;
+            }
+            let need = recipe.stage0_ingredients();
+            if need.is_empty() {
+                continue;
+            }
+            // staged 必须是 need 的 (材料, count) 子集
+            let mut is_subset = true;
+            let mut matched_count: u32 = 0;
+            let mut total_need: u32 = 0;
+            for (mat, &n) in &need {
+                total_need += n;
+                match staged.get(mat) {
+                    Some(&s) if s > n => {
+                        is_subset = false;
+                        break;
+                    }
+                    Some(&s) => matched_count += s,
+                    None => {}
+                }
+            }
+            if !is_subset {
+                continue;
+            }
+            // staged 里不能有 need 之外的材料
+            if staged.keys().any(|k| !need.contains_key(k)) {
+                continue;
+            }
+            if matched_count == total_need {
+                // 实际是精确匹配，不走残缺
+                continue;
+            }
+            let missing_ratio = 1.0 - (matched_count as f64 / total_need as f64);
+            match best {
+                None => best = Some((recipe, missing_ratio)),
+                Some((_, cur)) if missing_ratio < cur => best = Some((recipe, missing_ratio)),
+                _ => {}
+            }
+        }
+        best
+    }
+}
+
+const DEFAULT_RECIPES_DIR: &str = "assets/alchemy/recipes";
+
+pub fn load_recipe_registry() -> Result<RecipeRegistry, String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_RECIPES_DIR);
+    load_recipe_registry_from_dir(path)
+}
+
+pub fn load_recipe_registry_from_dir(path: impl AsRef<Path>) -> Result<RecipeRegistry, String> {
+    let path = path.as_ref();
+    let entries = fs::read_dir(path).map_err(|error| {
+        format!(
+            "failed to read alchemy recipe directory {}: {error}",
+            path.display()
+        )
+    })?;
+
+    let mut json_paths: Vec<PathBuf> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_path = entry.path();
+            let is_json = file_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+            is_json.then_some(file_path)
+        })
+        .collect();
+    json_paths.sort();
+
+    if json_paths.is_empty() {
+        return Err(format!(
+            "alchemy recipe directory {} contains no *.json files",
+            path.display()
+        ));
+    }
+
+    let mut registry = RecipeRegistry::new();
+    for json_path in json_paths {
+        let content = fs::read_to_string(&json_path)
+            .map_err(|error| format!("failed to read {}: {error}", json_path.display()))?;
+        let recipe: Recipe = serde_json::from_str(&content)
+            .map_err(|error| format!("failed to parse recipe {}: {error}", json_path.display()))?;
+        registry.insert(recipe).map_err(|error| {
+            format!(
+                "failed to register recipe from {}: {error}",
+                json_path.display()
+            )
+        })?;
+    }
+    Ok(registry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_recipe() -> Recipe {
+        Recipe {
+            id: "test_pill".into(),
+            name: "测试丹".into(),
+            furnace_tier_min: 1,
+            stages: vec![RecipeStage {
+                at_tick: 0,
+                required: vec![
+                    IngredientSpec {
+                        material: "a".into(),
+                        count: 2,
+                    },
+                    IngredientSpec {
+                        material: "b".into(),
+                        count: 1,
+                    },
+                ],
+                window: 0,
+            }],
+            fire_profile: FireProfile {
+                target_temp: 0.5,
+                target_duration_ticks: 100,
+                qi_cost: 10.0,
+                tolerance: ToleranceSpec {
+                    temp_band: 0.1,
+                    duration_band: 10,
+                },
+            },
+            outcomes: Outcomes {
+                perfect: Some(PillOutcome {
+                    pill: "test_pill".into(),
+                    quality: 1.0,
+                    toxin_amount: 0.2,
+                    toxin_color: ColorKind::Mellow,
+                    qi_gain: None,
+                }),
+                good: None,
+                flawed: None,
+                waste: None,
+                explode: None,
+            },
+            flawed_fallback: Some(FlawedFallback {
+                pill: "test_pill_flawed".into(),
+                quality_scale: 0.5,
+                toxin_scale: 1.5,
+                side_effect_pool: vec![],
+            }),
+        }
+    }
+
+    #[test]
+    fn registry_insert_rejects_duplicate_id() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        assert!(r.insert(sample_recipe()).is_err());
+    }
+
+    #[test]
+    fn match_exact_hits_when_ingredients_equal() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        let mut staged = HashMap::new();
+        staged.insert("a".to_string(), 2);
+        staged.insert("b".to_string(), 1);
+        assert_eq!(
+            r.match_exact(&staged).map(|x| x.id.as_str()),
+            Some("test_pill")
+        );
+    }
+
+    #[test]
+    fn match_exact_misses_on_missing_ingredient() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        let mut staged = HashMap::new();
+        staged.insert("a".to_string(), 2);
+        assert!(r.match_exact(&staged).is_none());
+    }
+
+    #[test]
+    fn match_flawed_hits_when_subset() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        let mut staged = HashMap::new();
+        staged.insert("a".to_string(), 2); // missing "b"
+        let (hit, ratio) = r.match_flawed(&staged).expect("should match flawed");
+        assert_eq!(hit.id, "test_pill");
+        assert!(ratio > 0.0 && ratio < 1.0);
+    }
+
+    #[test]
+    fn match_flawed_rejects_superset() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        let mut staged = HashMap::new();
+        staged.insert("a".to_string(), 5); // 超量
+        staged.insert("b".to_string(), 1);
+        assert!(r.match_flawed(&staged).is_none());
+    }
+
+    #[test]
+    fn match_flawed_rejects_unknown_material() {
+        let mut r = RecipeRegistry::new();
+        r.insert(sample_recipe()).unwrap();
+        let mut staged = HashMap::new();
+        staged.insert("a".to_string(), 1);
+        staged.insert("z".to_string(), 1); // unknown
+        assert!(r.match_flawed(&staged).is_none());
+    }
+
+    #[test]
+    fn load_registry_from_default_dir() {
+        let registry = load_recipe_registry()
+            .expect("production recipes under server/assets/alchemy/recipes must load");
+        // plan §3.2 — three test recipes shipped
+        assert!(registry.len() >= 3);
+        assert!(registry.get("kai_mai_pill_v0").is_some());
+        assert!(registry.get("hui_yuan_pill_v0").is_some());
+        assert!(registry.get("du_ming_san_v0").is_some());
+    }
+
+    #[test]
+    fn du_ming_san_has_three_stages() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("du_ming_san_v0").unwrap();
+        assert_eq!(recipe.stages.len(), 3);
+        assert_eq!(recipe.stages[2].at_tick, 160);
+    }
+}

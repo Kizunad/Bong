@@ -1928,6 +1928,516 @@
           "type": "integer"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_id",
+        "tier",
+        "integrity",
+        "integrity_max",
+        "owner_name",
+        "has_session"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_furnace",
+          "type": "string"
+        },
+        "furnace_id": {
+          "type": "string"
+        },
+        "tier": {
+          "minimum": 1,
+          "maximum": 9,
+          "type": "integer"
+        },
+        "integrity": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "integrity_max": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "owner_name": {
+          "type": "string"
+        },
+        "has_session": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "recipe_id",
+        "active",
+        "elapsed_ticks",
+        "target_ticks",
+        "temp_current",
+        "temp_target",
+        "temp_band",
+        "qi_injected",
+        "qi_target",
+        "status_label",
+        "stages",
+        "interventions_recent"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_session",
+          "type": "string"
+        },
+        "recipe_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "elapsed_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "temp_current": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "temp_target": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "temp_band": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "qi_injected": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "qi_target": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "status_label": {
+          "type": "string"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "at_tick",
+              "window",
+              "summary",
+              "completed",
+              "missed"
+            ],
+            "properties": {
+              "at_tick": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "window": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "missed": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "interventions_recent": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "perfect_pct",
+        "good_pct",
+        "flawed_pct",
+        "waste_pct",
+        "explode_pct",
+        "perfect_note",
+        "good_note",
+        "flawed_note"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_outcome_forecast",
+          "type": "string"
+        },
+        "perfect_pct": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "good_pct": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "flawed_pct": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "waste_pct": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "explode_pct": {
+          "minimum": 0,
+          "maximum": 100,
+          "type": "number"
+        },
+        "perfect_note": {
+          "type": "string"
+        },
+        "good_note": {
+          "type": "string"
+        },
+        "flawed_note": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "bucket",
+        "recipe_id",
+        "flawed_path"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_outcome_resolved",
+          "type": "string"
+        },
+        "bucket": {
+          "description": "plan §1.3 结果分桶",
+          "anyOf": [
+            {
+              "const": "perfect",
+              "type": "string"
+            },
+            {
+              "const": "good",
+              "type": "string"
+            },
+            {
+              "const": "flawed",
+              "type": "string"
+            },
+            {
+              "const": "waste",
+              "type": "string"
+            },
+            {
+              "const": "explode",
+              "type": "string"
+            }
+          ]
+        },
+        "recipe_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pill": {
+          "type": "string"
+        },
+        "quality": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "toxin_amount": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "toxin_color": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "qi_gain": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "side_effect_tag": {
+          "type": "string"
+        },
+        "flawed_path": {
+          "type": "boolean"
+        },
+        "damage": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "meridian_crack": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "learned",
+        "current_index"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_recipe_book",
+          "type": "string"
+        },
+        "learned": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "body_text",
+              "author",
+              "era",
+              "max_known"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "body_text": {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "era": {
+                "type": "string"
+              },
+              "max_known": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "current_index": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "levels",
+        "metabolism_note"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_contamination",
+          "type": "string"
+        },
+        "levels": {
+          "minItems": 0,
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "color",
+              "current",
+              "max",
+              "ok"
+            ],
+            "properties": {
+              "color": {
+                "description": "十种真元染色",
+                "anyOf": [
+                  {
+                    "const": "Sharp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Mellow",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Intricate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Gentle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Insidious",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Violent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Turbid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "current": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "max": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "ok": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "metabolism_note": {
+          "type": "string"
+        }
+      }
     }
   ]
 }

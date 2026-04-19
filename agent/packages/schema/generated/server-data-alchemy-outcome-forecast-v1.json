@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "perfect_pct",
+    "good_pct",
+    "flawed_pct",
+    "waste_pct",
+    "explode_pct",
+    "perfect_note",
+    "good_note",
+    "flawed_note"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_outcome_forecast",
+      "type": "string"
+    },
+    "perfect_pct": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "good_pct": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "flawed_pct": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "waste_pct": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "explode_pct": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "perfect_note": {
+      "type": "string"
+    },
+    "good_note": {
+      "type": "string"
+    },
+    "flawed_note": {
+      "type": "string"
+    }
+  }
+}

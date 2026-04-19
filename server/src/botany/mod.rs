@@ -83,7 +83,7 @@ fn emit_botany_inventory_snapshots(
     mut clients: Query<BotanyInventoryEmitQueryItem<'_>, With<valence::prelude::Client>>,
 ) {
     use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
-    use crate::network::inventory_snapshot_emit::build_inventory_snapshot_for_network;
+    use crate::network::inventory_snapshot_emit::build_inventory_snapshot;
 
     let pending: Vec<_> = events.read().copied().collect();
     if pending.is_empty() {
@@ -96,7 +96,7 @@ fn emit_botany_inventory_snapshots(
             continue;
         };
 
-        let snapshot = build_inventory_snapshot_for_network(inventory, player_state);
+        let snapshot = build_inventory_snapshot(inventory, player_state);
         let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {

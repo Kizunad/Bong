@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ServerDataRouterTest {
     @Test
-    void defaultRouterRegistersExactlyTwelveTypes() {
+    void defaultRouterRegistersAllExpectedTypes() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
         assertEquals(Set.of(
@@ -27,8 +27,32 @@ public class ServerDataRouterTest {
             "cultivation_detail",
             "inventory_snapshot",
             "inventory_event",
+            // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
-            "botany_skill"
+            "botany_skill",
+            // Combat UI handlers (plan-combat-ui §U1–U7).
+            "combat_event",
+            "status_snapshot",
+            "derived_attrs_sync",
+            "death_screen",
+            "terminate_screen",
+            "wounds_snapshot",
+            "tribulation_broadcast",
+            // Alchemy handlers (plan-alchemy-v1 §4).
+            "alchemy_furnace",
+            "alchemy_session",
+            "alchemy_outcome_forecast",
+            "alchemy_recipe_book",
+            "alchemy_contamination",
+            "alchemy_outcome_resolved",
+            // HUD state push (plan-HUD-v1 §11.4).
+            "combat_hud_state",
+            "defense_window",
+            "cast_sync",
+            "quickslot_config",
+            "unlocks_sync",
+            "event_stream_push",
+            "defense_sync"
         ), router.registeredTypes());
     }
 

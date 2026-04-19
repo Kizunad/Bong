@@ -1,5 +1,13 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
+use super::alchemy::{
+    AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
+    AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
+};
+use super::combat_hud::{
+    CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
+    QuickSlotConfigV1, UnlocksSyncV1, WoundsSnapshotV1,
+};
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::inventory::{InventoryEventV1, InventorySnapshotV1};
 use super::narration::Narration;
@@ -29,6 +37,20 @@ pub enum ServerDataType {
     InventoryEvent,
     BotanyHarvestProgress,
     BotanySkill,
+    AlchemyFurnace,
+    AlchemySession,
+    AlchemyOutcomeForecast,
+    AlchemyOutcomeResolved,
+    AlchemyRecipeBook,
+    AlchemyContamination,
+    CombatHudState,
+    WoundsSnapshot,
+    DefenseWindow,
+    CastSync,
+    QuickSlotConfig,
+    UnlocksSync,
+    EventStreamPush,
+    DefenseSync,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +127,20 @@ pub enum ServerDataPayloadV1 {
         xp_to_next_level: u64,
         auto_unlock_level: u64,
     },
+    AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
+    AlchemySession(Box<AlchemySessionDataV1>),
+    AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
+    AlchemyOutcomeResolved(Box<AlchemyOutcomeResolvedDataV1>),
+    AlchemyRecipeBook(Box<AlchemyRecipeBookDataV1>),
+    AlchemyContamination(Box<AlchemyContaminationDataV1>),
+    CombatHudState(CombatHudStateV1),
+    WoundsSnapshot(WoundsSnapshotV1),
+    DefenseWindow(DefenseWindowV1),
+    CastSync(CastSyncV1),
+    QuickSlotConfig(QuickSlotConfigV1),
+    UnlocksSync(UnlocksSyncV1),
+    EventStreamPush(EventStreamPushV1),
+    DefenseSync(DefenseSyncV1),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +223,65 @@ enum ServerDataPayloadWireV1 {
         xp: u64,
         xp_to_next_level: u64,
         auto_unlock_level: u64,
+    },
+    AlchemyFurnace {
+        #[serde(flatten)]
+        data: Box<AlchemyFurnaceDataV1>,
+    },
+    AlchemySession {
+        #[serde(flatten)]
+        data: Box<AlchemySessionDataV1>,
+    },
+    AlchemyOutcomeForecast {
+        #[serde(flatten)]
+        data: Box<AlchemyOutcomeForecastDataV1>,
+    },
+    AlchemyOutcomeResolved {
+        #[serde(flatten)]
+        data: Box<AlchemyOutcomeResolvedDataV1>,
+    },
+    AlchemyRecipeBook {
+        #[serde(flatten)]
+        data: Box<AlchemyRecipeBookDataV1>,
+    },
+    AlchemyContamination {
+        #[serde(flatten)]
+        data: Box<AlchemyContaminationDataV1>,
+    },
+    CombatHudState {
+        #[serde(flatten)]
+        state: CombatHudStateV1,
+    },
+    WoundsSnapshot {
+        #[serde(flatten)]
+        snapshot: WoundsSnapshotV1,
+    },
+    DefenseWindow {
+        #[serde(flatten)]
+        window: DefenseWindowV1,
+    },
+    CastSync {
+        #[serde(flatten)]
+        state: CastSyncV1,
+    },
+    // 显式 rename 因为默认 snake_case 会得到 "quick_slot_config"，
+    // 但 plan §11.4 / client handler 注册的是无下划线 "quickslot_config"。
+    #[serde(rename = "quickslot_config")]
+    QuickSlotConfig {
+        #[serde(flatten)]
+        config: QuickSlotConfigV1,
+    },
+    UnlocksSync {
+        #[serde(flatten)]
+        unlocks: UnlocksSyncV1,
+    },
+    EventStreamPush {
+        #[serde(flatten)]
+        event: EventStreamPushV1,
+    },
+    DefenseSync {
+        #[serde(flatten)]
+        state: DefenseSyncV1,
     },
 }
 
@@ -381,6 +476,32 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 xp_to_next_level,
                 auto_unlock_level,
             }),
+            ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
+            ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
+            ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
+                Ok(Self::AlchemyOutcomeForecast(data))
+            }
+            ServerDataPayloadWireV1::AlchemyOutcomeResolved { data } => {
+                Ok(Self::AlchemyOutcomeResolved(data))
+            }
+            ServerDataPayloadWireV1::AlchemyRecipeBook { data } => {
+                Ok(Self::AlchemyRecipeBook(data))
+            }
+            ServerDataPayloadWireV1::AlchemyContamination { data } => {
+                Ok(Self::AlchemyContamination(data))
+            }
+            ServerDataPayloadWireV1::CombatHudState { state } => Ok(Self::CombatHudState(state)),
+            ServerDataPayloadWireV1::WoundsSnapshot { snapshot } => {
+                Ok(Self::WoundsSnapshot(snapshot))
+            }
+            ServerDataPayloadWireV1::DefenseWindow { window } => Ok(Self::DefenseWindow(window)),
+            ServerDataPayloadWireV1::CastSync { state } => Ok(Self::CastSync(state)),
+            ServerDataPayloadWireV1::QuickSlotConfig { config } => {
+                Ok(Self::QuickSlotConfig(config))
+            }
+            ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
+            ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
+            ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
         }
     }
 }
@@ -503,6 +624,38 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 xp_to_next_level: *xp_to_next_level,
                 auto_unlock_level: *auto_unlock_level,
             },
+            ServerDataPayloadV1::AlchemyFurnace(data) => {
+                Self::AlchemyFurnace { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemySession(data) => {
+                Self::AlchemySession { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyOutcomeForecast(data) => {
+                Self::AlchemyOutcomeForecast { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyOutcomeResolved(data) => {
+                Self::AlchemyOutcomeResolved { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyRecipeBook(data) => {
+                Self::AlchemyRecipeBook { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyContamination(data) => {
+                Self::AlchemyContamination { data: data.clone() }
+            }
+            ServerDataPayloadV1::CombatHudState(state) => Self::CombatHudState { state: *state },
+            ServerDataPayloadV1::WoundsSnapshot(snapshot) => Self::WoundsSnapshot {
+                snapshot: snapshot.clone(),
+            },
+            ServerDataPayloadV1::DefenseWindow(window) => Self::DefenseWindow { window: *window },
+            ServerDataPayloadV1::CastSync(state) => Self::CastSync { state: *state },
+            ServerDataPayloadV1::QuickSlotConfig(config) => Self::QuickSlotConfig {
+                config: config.clone(),
+            },
+            ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
+            ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::DefenseSync(state) => Self::DefenseSync { state: *state },
         }
     }
 }
@@ -600,6 +753,20 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
+            Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
+            Self::AlchemySession(..) => ServerDataType::AlchemySession,
+            Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
+            Self::AlchemyOutcomeResolved(..) => ServerDataType::AlchemyOutcomeResolved,
+            Self::AlchemyRecipeBook(..) => ServerDataType::AlchemyRecipeBook,
+            Self::AlchemyContamination(..) => ServerDataType::AlchemyContamination,
+            Self::CombatHudState(..) => ServerDataType::CombatHudState,
+            Self::WoundsSnapshot(..) => ServerDataType::WoundsSnapshot,
+            Self::DefenseWindow(..) => ServerDataType::DefenseWindow,
+            Self::CastSync(..) => ServerDataType::CastSync,
+            Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
+            Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
+            Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
+            Self::DefenseSync(..) => ServerDataType::DefenseSync,
         }
     }
 }
@@ -607,6 +774,69 @@ impl ServerDataPayloadV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::agent_bridge::payload_type_label;
+
+    /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
+    /// (would have routed `quick_slot_config` while client expected `quickslot_config`).
+    #[test]
+    fn hud_payload_wire_type_matches_label() {
+        use crate::schema::combat_hud::*;
+        let cases: Vec<ServerDataPayloadV1> = vec![
+            ServerDataPayloadV1::CombatHudState(CombatHudStateV1 {
+                hp_percent: 1.0,
+                qi_percent: 1.0,
+                stamina_percent: 1.0,
+                derived: DerivedAttrFlagsV1::default(),
+            }),
+            ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 { wounds: vec![] }),
+            ServerDataPayloadV1::DefenseWindow(DefenseWindowV1 {
+                duration_ms: 200,
+                started_at_ms: 0,
+                expires_at_ms: 200,
+            }),
+            ServerDataPayloadV1::CastSync(CastSyncV1 {
+                phase: CastPhaseV1::Idle,
+                slot: 0,
+                duration_ms: 0,
+                started_at_ms: 0,
+                outcome: CastOutcomeV1::None,
+            }),
+            ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            }),
+            ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
+            ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
+                channel: EventChannelV1::Combat,
+                priority: EventPriorityV1::P1Important,
+                source_tag: String::new(),
+                text: "x".to_string(),
+                color: 0,
+                created_at_ms: 0,
+            }),
+            ServerDataPayloadV1::DefenseSync(DefenseSyncV1 {
+                stance: DefenseStanceV1::None,
+                fake_skin_layers: 0,
+                vortex_active: false,
+                vortex_ready_at_ms: 0,
+            }),
+        ];
+
+        for payload in cases {
+            let label = payload_type_label(payload.payload_type());
+            let envelope = ServerDataV1::new(payload);
+            let bytes = serde_json::to_vec(&envelope).expect("serialize");
+            let value: serde_json::Value = serde_json::from_slice(&bytes).expect("decode");
+            let wire_type = value
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            assert_eq!(
+                wire_type, label,
+                "wire type {wire_type} does not match payload_type_label {label}"
+            );
+        }
+    }
 
     #[test]
     fn cultivation_detail_roundtrip_and_size_budget() {
@@ -672,6 +902,24 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-furnace.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-session.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-forecast.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-resolved.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-recipe-book.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
             ),
         ];
 

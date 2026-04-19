@@ -116,6 +116,7 @@ public final class BongHudOrchestrator {
                 combatSnapshot.quickSlotConfig(),
                 combatSnapshot.selectedHotbarSlot(),
                 combatSnapshot.castState(),
+                com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),
                 nowMillis,
                 screenWidth,
                 screenHeight
@@ -146,6 +147,23 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            commands.addAll(StaminaBarHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(ThroughputPeakHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(NearDeathOverlayPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
+            // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
+            // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));
         }
         if (BongClientFeatures.ENABLE_BOTANY_HUD) {
             commands.addAll(BotanyHudPlanner.buildCommands(

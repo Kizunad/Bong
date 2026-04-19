@@ -6,15 +6,13 @@ use valence::prelude::{
     EntityLayerId, IntoSystemConfigs, Position, PostStartup, Query, With,
 };
 
-use crate::combat::components::{
-    CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, WoundKind, Wounds,
-};
+use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
 use crate::npc::brain::{
-    canonical_npc_id, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, MeleeAttackAction,
-    MeleeRangeScorer,
+    AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, MeleeAttackAction,
+    MeleeRangeScorer, RetireAction,
 };
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -169,6 +167,7 @@ pub fn register(app: &mut App) {
 fn startup_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
+        .when(AgeingScorer, RetireAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(DashScorer, DashAction)
         .when(ChaseTargetScorer, ChaseAction)
@@ -189,19 +188,25 @@ fn spawn_single_zombie_npc_on_startup(
     );
 }
 
-fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
+pub fn spawn_zombie_npc_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    patrol_target: DVec3,
+) -> Entity {
     let entity = commands
         .spawn((
             ZombieEntityBundle {
                 kind: EntityKind::ZOMBIE,
                 layer: EntityLayerId(layer),
-                position: Position::new(NPC_SPAWN_POSITION),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
                 ..Default::default()
             },
             Transform::from_xyz(
-                NPC_SPAWN_POSITION[0] as f32,
-                NPC_SPAWN_POSITION[1] as f32,
-                NPC_SPAWN_POSITION[2] as f32,
+                spawn_position.x as f32,
+                spawn_position.y as f32,
+                spawn_position.z as f32,
             ),
             GlobalTransform::default(),
             NpcMarker,
@@ -209,38 +214,39 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             NpcCombatLoadout::default(),
             NpcCombatLoadout::default().melee_archetype,
             NpcCombatLoadout::default().melee_profile(),
+            NpcArchetype::Zombie,
             Navigator::new(),
             MovementController::new(),
             NpcCombatLoadout::default().movement_capabilities,
             MovementCooldowns::default(),
-            NpcPatrol::new(
-                DEFAULT_SPAWN_ZONE_NAME,
-                DVec3::new(
-                    NPC_SPAWN_POSITION[0],
-                    NPC_SPAWN_POSITION[1],
-                    NPC_SPAWN_POSITION[2],
-                ),
-            ),
+            NpcPatrol::new(home_zone, patrol_target),
             startup_npc_thinker(),
         ))
         .id();
 
-    commands.entity(entity).insert((
-        Cultivation::default(),
-        MeridianSystem::default(),
-        Contamination::default(),
-        Wounds::default(),
-        Stamina::default(),
-        CombatState::default(),
-        StatusEffects::default(),
-        DerivedAttrs::default(),
-        Lifecycle {
-            character_id: canonical_npc_id(entity),
-            ..Default::default()
-        },
-    ));
+    commands
+        .entity(entity)
+        .insert(npc_runtime_bundle(entity, NpcArchetype::Zombie));
 
     entity
+}
+
+fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
+    spawn_zombie_npc_at(
+        commands,
+        layer,
+        DEFAULT_SPAWN_ZONE_NAME,
+        DVec3::new(
+            NPC_SPAWN_POSITION[0],
+            NPC_SPAWN_POSITION[1],
+            NPC_SPAWN_POSITION[2],
+        ),
+        DVec3::new(
+            NPC_SPAWN_POSITION[0],
+            NPC_SPAWN_POSITION[1],
+            NPC_SPAWN_POSITION[2],
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -258,8 +264,10 @@ fn log_npc_marker_count(query: Query<Entity, With<NpcMarker>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::StatusEffects;
     use crate::combat::events::AttackIntent;
     use crate::npc::brain;
+    use crate::npc::lifecycle::NpcLifespan;
     use crate::npc::movement::GameTick;
     use big_brain::prelude::{BigBrainPlugin, HasThinker, ThinkerBuilder};
     use valence::client::ClientMarker;
@@ -419,6 +427,19 @@ mod tests {
             .get::<ThinkerBuilder>(npc_entity)
             .expect("NPC should have a Thinker builder attached at spawn time");
 
+        let npc_archetype = app
+            .world()
+            .get::<NpcArchetype>(npc_entity)
+            .expect("NPC should include shared NpcArchetype component");
+        assert_eq!(*npc_archetype, NpcArchetype::Zombie);
+
+        let lifespan = app
+            .world()
+            .get::<NpcLifespan>(npc_entity)
+            .expect("NPC should include shared lifespan component");
+        assert_eq!(lifespan.age_ticks, 0.0);
+        assert!(lifespan.max_age_ticks > 0.0);
+
         let has_thinker = app
             .world()
             .get::<HasThinker>(npc_entity)
@@ -433,6 +454,7 @@ mod tests {
     #[test]
     fn startup_spawned_npc_default_thinker_emits_attack_intent_in_melee_range() {
         let mut app = App::new();
+        crate::npc::lifecycle::register(&mut app);
         brain::register(&mut app);
         app.insert_resource(CapturedAttackIntents::default());
         app.insert_resource(GameTick(120));

@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "alchemy_furnace",
+  "furnace_id": "block_-12_64_38",
+  "tier": 1,
+  "integrity": 92.0,
+  "integrity_max": 100.0,
+  "owner_name": "alice",
+  "has_session": true
+}

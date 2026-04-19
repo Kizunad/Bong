@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "pill_item_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_take_pill",
+      "type": "string"
+    },
+    "pill_item_id": {
+      "type": "string"
+    }
+  }
+}

@@ -10,6 +10,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
+import { AlchemyInterventionV1 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
@@ -67,11 +68,108 @@ export const BotanyHarvestRequestV1 = Type.Object(
 );
 export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
 
+// ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
+
+export const AlchemyOpenFurnaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_open_furnace"),
+    /** 炉的逻辑 ID（BlockEntity 位置 hash 或 Entity ID 字符串化）。 */
+    furnace_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyOpenFurnaceRequestV1 = Static<typeof AlchemyOpenFurnaceRequestV1>;
+
+export const AlchemyFeedSlotRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_feed_slot"),
+    /** 槽位 0..3（plan §3.3 四投料槽）。 */
+    slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
+    material: Type.String(),
+    count: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyFeedSlotRequestV1 = Static<typeof AlchemyFeedSlotRequestV1>;
+
+export const AlchemyTakeBackRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_take_back"),
+    slot_idx: Type.Integer({ minimum: 0, maximum: 7 }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyTakeBackRequestV1 = Static<typeof AlchemyTakeBackRequestV1>;
+
+export const AlchemyIgniteRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_ignite"),
+    /** 起炉绑定的配方 — 决定 fire_profile / stages。 */
+    recipe_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyIgniteRequestV1 = Static<typeof AlchemyIgniteRequestV1>;
+
+export const AlchemyInterventionRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_intervention"),
+    intervention: AlchemyInterventionV1,
+  },
+  { additionalProperties: false },
+);
+export type AlchemyInterventionRequestV1 = Static<typeof AlchemyInterventionRequestV1>;
+
+export const AlchemyTurnPageRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_turn_page"),
+    /** -1 / +1 翻页；其他绝对偏移由服务端 mod。 */
+    delta: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyTurnPageRequestV1 = Static<typeof AlchemyTurnPageRequestV1>;
+
+export const AlchemyLearnRecipeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_learn_recipe"),
+    /** 残卷 item 上承载的 recipe_id（client 已从 itemId 提取）。 */
+    recipe_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyLearnRecipeRequestV1 = Static<typeof AlchemyLearnRecipeRequestV1>;
+
+export const AlchemyTakePillRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_take_pill"),
+    pill_item_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyTakePillRequestV1 = Static<typeof AlchemyTakePillRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
   BotanyHarvestRequestV1,
+  AlchemyOpenFurnaceRequestV1,
+  AlchemyFeedSlotRequestV1,
+  AlchemyTakeBackRequestV1,
+  AlchemyIgniteRequestV1,
+  AlchemyInterventionRequestV1,
+  AlchemyTurnPageRequestV1,
+  AlchemyLearnRecipeRequestV1,
+  AlchemyTakePillRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

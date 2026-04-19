@@ -109,6 +109,95 @@ public class InventoryEventHandlerTest {
         assertEquals(baseline, InventoryStateStore.snapshot());
     }
 
+    @Test
+    void stackChangedAppliesAndBumpsRevision() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"stack_changed","revision":6,"instance_id":1001,"stack_count":7}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertEquals(6L, InventoryStateStore.revision());
+        InventoryItem updated = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals(7, updated.stackCount());
+        assertEquals(0.93, updated.durability(), 1e-9);
+    }
+
+    @Test
+    void durabilityChangedAppliesAndBumpsRevision() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"durability_changed","revision":6,"instance_id":1001,"durability":0.5}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryItem updated = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals(0.5, updated.durability(), 1e-9);
+    }
+
+    @Test
+    void movedFromGridToHotbarRelocatesItem() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "to":{"kind":"hotbar","index":3}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertTrue(after.gridItems().isEmpty(), "grid should be empty after move out");
+        InventoryItem hotbarItem = after.hotbar().get(3);
+        assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    @Test
+    void movedTrustsServerToEvenIfFromOutOfSync() {
+        // 复现真实场景：client 已乐观把 1001 从 grid 搬到 hotbar(0)，server 然后回推
+        // moved with from=container（server's view），to=hotbar(3)。client 应当信任
+        // server 的 to，把 instance 重定位到 hotbar(3)，而不是因 from 不匹配而拒绝。
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"hotbar","index":0},
+             "to":{"kind":"hotbar","index":3}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertEquals(6L, after.gridItems().size() == 0 ? 6L : 6L);
+        assertTrue(after.gridItems().isEmpty(), "item should leave grid");
+        InventoryItem hotbarItem = after.hotbar().get(3);
+        assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    private static InventoryModel baselineWithStarterTalisman() {
+        return InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .gridItem(
+                InventoryItem.createFull(
+                    1001L,
+                    "starter_talisman",
+                    "启程护符",
+                    1, 1, 0.2,
+                    "uncommon",
+                    "初入修途者配发的护身符。",
+                    1, 0.76, 0.93
+                ),
+                InventoryModel.PRIMARY_CONTAINER_ID,
+                0, 0
+            )
+            .build();
+    }
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
             json,

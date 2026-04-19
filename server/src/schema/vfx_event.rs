@@ -30,15 +30,28 @@ pub const VFX_PARTICLE_DURATION_TICKS_MAX: u16 = 200;
 #[derive(Debug)]
 pub enum VfxEventBuildError {
     Json(serde_json::Error),
-    Oversize { size: usize, max: usize },
-    PriorityOutOfRange { priority: u16 },
-    FadeTicksOutOfRange { ticks: u8 },
+    Oversize {
+        size: usize,
+        max: usize,
+    },
+    PriorityOutOfRange {
+        priority: u16,
+    },
+    FadeTicksOutOfRange {
+        ticks: u8,
+    },
     /// 粒子 `count` 越界（0 或 > `VFX_PARTICLE_COUNT_MAX`）。
-    ParticleCountOutOfRange { count: u16 },
+    ParticleCountOutOfRange {
+        count: u16,
+    },
     /// 粒子 `duration_ticks` 越界。
-    ParticleDurationOutOfRange { ticks: u16 },
+    ParticleDurationOutOfRange {
+        ticks: u16,
+    },
     /// 粒子 `strength` 非有限或超出 `[0, 1]` 区间。
-    ParticleStrengthOutOfRange { strength: f32 },
+    ParticleStrengthOutOfRange {
+        strength: f32,
+    },
     /// 粒子 `origin`/`direction` 含 NaN / inf。
     ParticleVectorNotFinite,
     /// 粒子 `color` 不是 `#RRGGBB` 6-hex 形态。
@@ -494,15 +507,8 @@ mod tests {
 
     #[test]
     fn spawn_particle_rejects_zero_count() {
-        let event = VfxEventV1::spawn_particle(
-            "bong:x",
-            [0.0, 0.0, 0.0],
-            None,
-            None,
-            None,
-            Some(0),
-            None,
-        );
+        let event =
+            VfxEventV1::spawn_particle("bong:x", [0.0, 0.0, 0.0], None, None, None, Some(0), None);
         assert!(matches!(
             event.to_json_bytes_checked(),
             Err(VfxEventBuildError::ParticleCountOutOfRange { count: 0 })

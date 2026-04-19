@@ -8,7 +8,10 @@
 //! 化虚渡劫为特殊流程（§3.2）：不走本 system 的 try_breakthrough，而是
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Res};
+use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res};
+
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
@@ -213,6 +216,8 @@ pub fn breakthrough_system(
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
     let now = clock.tick;
@@ -235,10 +240,28 @@ pub fn breakthrough_system(
         );
 
         match &res {
-            Ok(success) => life.push(BiographyEntry::BreakthroughSucceeded {
-                realm: success.to,
-                tick: now,
-            }),
+            Ok(success) => {
+                life.push(BiographyEntry::BreakthroughSucceeded {
+                    realm: success.to,
+                    tick: now,
+                });
+                // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
+                if let Ok(pos) = positions.get(req.entity) {
+                    let p = pos.get();
+                    vfx_events.send(VfxEventRequest::new(
+                        p,
+                        VfxEventPayloadV1::SpawnParticle {
+                            event_id: "bong:breakthrough_pillar".to_string(),
+                            origin: [p.x, p.y, p.z],
+                            direction: None,
+                            color: Some("#FFE8A0".to_string()),
+                            strength: Some(1.0),
+                            count: Some(12),
+                            duration_ticks: Some(60),
+                        },
+                    ));
+                }
+            }
             Err(BreakthroughError::RolledFailure { severity }) => {
                 if let Some(target) = next_realm(from) {
                     life.push(BiographyEntry::BreakthroughFailed {

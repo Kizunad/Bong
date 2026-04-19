@@ -17,25 +17,26 @@ import java.util.List;
  * is trivially unit-testable without touching the Minecraft draw context.
  */
 public final class MiniBodyHudPlanner {
-    static final int MARGIN_X = 10;
-    static final int MARGIN_Y = 10;
-    static final int PANEL_W = 140;
-    static final int PANEL_H = 160;
+    static final int MARGIN_X = 6;
+    static final int MARGIN_Y = 6;
+    // §2.1 mini body 整体缩到 1/2 尺寸（140×160 → 70×80）。
+    static final int PANEL_W = 70;
+    static final int PANEL_H = 80;
     static final int PANEL_BG_COLOR = 0x52000000; // opacity 0.32
 
-    // Silhouette layout (80x150 logical box; we place rects proportionally)
-    static final int BODY_X_OFFSET = 6;
-    static final int BODY_Y_OFFSET = 6;
-    static final int BODY_W = 60;
-    static final int BODY_H = 150;
+    // Silhouette layout (40×75 logical box).
+    static final int BODY_X_OFFSET = 3;
+    static final int BODY_Y_OFFSET = 3;
+    static final int BODY_W = 30;
+    static final int BODY_H = 75;
     static final int BODY_COLOR = 0xCC808080;
 
-    // Vertical bars (20x130 each, to the right of silhouette)
-    static final int BAR_W = 16;
-    static final int BAR_H = 130;
-    static final int BAR_GAP = 4;
-    static final int BAR_X_OFFSET = BODY_X_OFFSET + BODY_W + 8;
-    static final int BAR_Y_OFFSET = 18;
+    // Vertical bars (8×65 each, to the right of silhouette).
+    static final int BAR_W = 8;
+    static final int BAR_H = 65;
+    static final int BAR_GAP = 2;
+    static final int BAR_X_OFFSET = BODY_X_OFFSET + BODY_W + 4;
+    static final int BAR_Y_OFFSET = 9;
     static final int BAR_TRACK_COLOR = 0xCC202020;
     static final int QI_FILL_COLOR = 0xCC40C0E0;
     static final int STAMINA_FILL_COLOR = 0xCCE0C040;
@@ -89,7 +90,7 @@ public final class MiniBodyHudPlanner {
         int by = anchorY + BODY_Y_OFFSET;
 
         // Head (top circle emulated by square — silhouette stays legible at HUD scale).
-        int headSize = 16;
+        int headSize = 8;
         out.add(HudRenderCommand.rect(
             HudRenderLayer.MINI_BODY,
             bx + (BODY_W - headSize) / 2,
@@ -100,19 +101,19 @@ public final class MiniBodyHudPlanner {
         ));
 
         // Torso
-        int torsoX = bx + 18;
-        int torsoY = by + 18;
-        int torsoW = 24;
-        int torsoH = 50;
+        int torsoX = bx + 9;
+        int torsoY = by + 9;
+        int torsoW = 12;
+        int torsoH = 25;
         out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, torsoX, torsoY, torsoW, torsoH, BODY_COLOR));
 
         // Arms
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 6, by + 20, 10, 44, BODY_COLOR));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 44, by + 20, 10, 44, BODY_COLOR));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 3, by + 10, 5, 22, BODY_COLOR));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 22, by + 10, 5, 22, BODY_COLOR));
 
         // Legs
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 18, by + 70, 10, 70, BODY_COLOR));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 32, by + 70, 10, 70, BODY_COLOR));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 9, by + 35, 5, 35, BODY_COLOR));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 16, by + 35, 5, 35, BODY_COLOR));
 
         if (body == null) {
             return;
@@ -138,25 +139,25 @@ public final class MiniBodyHudPlanner {
         }
     }
 
-    // Wound marker positions (relative to silhouette top-left).
+    // Wound marker positions (relative to silhouette top-left). 全部按 1/2 缩放。
     private static int[] locatePart(int bx, int by, BodyPart part) {
         return switch (part) {
-            case HEAD -> new int[]{bx + BODY_W / 2, by + 8};
-            case NECK -> new int[]{bx + BODY_W / 2, by + 18};
-            case CHEST -> new int[]{bx + BODY_W / 2, by + 34};
-            case ABDOMEN -> new int[]{bx + BODY_W / 2, by + 56};
-            case LEFT_UPPER_ARM -> new int[]{bx + 11, by + 28};
-            case LEFT_FOREARM -> new int[]{bx + 11, by + 46};
-            case LEFT_HAND -> new int[]{bx + 11, by + 62};
-            case RIGHT_UPPER_ARM -> new int[]{bx + 49, by + 28};
-            case RIGHT_FOREARM -> new int[]{bx + 49, by + 46};
-            case RIGHT_HAND -> new int[]{bx + 49, by + 62};
-            case LEFT_THIGH -> new int[]{bx + 23, by + 82};
-            case LEFT_CALF -> new int[]{bx + 23, by + 108};
-            case LEFT_FOOT -> new int[]{bx + 23, by + 132};
-            case RIGHT_THIGH -> new int[]{bx + 37, by + 82};
-            case RIGHT_CALF -> new int[]{bx + 37, by + 108};
-            case RIGHT_FOOT -> new int[]{bx + 37, by + 132};
+            case HEAD -> new int[]{bx + BODY_W / 2, by + 4};
+            case NECK -> new int[]{bx + BODY_W / 2, by + 9};
+            case CHEST -> new int[]{bx + BODY_W / 2, by + 17};
+            case ABDOMEN -> new int[]{bx + BODY_W / 2, by + 28};
+            case LEFT_UPPER_ARM -> new int[]{bx + 6, by + 14};
+            case LEFT_FOREARM -> new int[]{bx + 6, by + 23};
+            case LEFT_HAND -> new int[]{bx + 6, by + 31};
+            case RIGHT_UPPER_ARM -> new int[]{bx + 24, by + 14};
+            case RIGHT_FOREARM -> new int[]{bx + 24, by + 23};
+            case RIGHT_HAND -> new int[]{bx + 24, by + 31};
+            case LEFT_THIGH -> new int[]{bx + 11, by + 41};
+            case LEFT_CALF -> new int[]{bx + 11, by + 54};
+            case LEFT_FOOT -> new int[]{bx + 11, by + 66};
+            case RIGHT_THIGH -> new int[]{bx + 18, by + 41};
+            case RIGHT_CALF -> new int[]{bx + 18, by + 54};
+            case RIGHT_FOOT -> new int[]{bx + 18, by + 66};
         };
     }
 

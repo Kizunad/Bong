@@ -308,6 +308,251 @@
           ]
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_open_furnace",
+          "type": "string"
+        },
+        "furnace_id": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slot_idx",
+        "material",
+        "count"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_feed_slot",
+          "type": "string"
+        },
+        "slot_idx": {
+          "minimum": 0,
+          "maximum": 7,
+          "type": "integer"
+        },
+        "material": {
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slot_idx"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_take_back",
+          "type": "string"
+        },
+        "slot_idx": {
+          "minimum": 0,
+          "maximum": 7,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "recipe_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_ignite",
+          "type": "string"
+        },
+        "recipe_id": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "intervention"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_intervention",
+          "type": "string"
+        },
+        "intervention": {
+          "description": "plan §1.3 Intervention",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "temp"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "adjust_temp",
+                  "type": "string"
+                },
+                "temp": {
+                  "minimum": 0,
+                  "maximum": 1,
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "qi"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "inject_qi",
+                  "type": "string"
+                },
+                "qi": {
+                  "minimum": 0,
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "profile_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "auto_profile",
+                  "type": "string"
+                },
+                "profile_id": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "delta"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_turn_page",
+          "type": "string"
+        },
+        "delta": {
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "recipe_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_learn_recipe",
+          "type": "string"
+        },
+        "recipe_id": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "pill_item_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_take_pill",
+          "type": "string"
+        },
+        "pill_item_id": {
+          "type": "string"
+        }
+      }
     }
   ]
 }

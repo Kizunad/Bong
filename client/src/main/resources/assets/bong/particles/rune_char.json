@@ -1,0 +1,24 @@
+{
+    "textures": [
+        "bong:particle/rune_char_6555_kai",
+        "bong:particle/rune_char_6555_xing",
+        "bong:particle/rune_char_6555_cao",
+        "bong:particle/rune_char_6555_cang",
+        "bong:particle/rune_char_4ee4_kai",
+        "bong:particle/rune_char_4ee4_xing",
+        "bong:particle/rune_char_4ee4_cao",
+        "bong:particle/rune_char_4ee4_cang",
+        "bong:particle/rune_char_5c01_kai",
+        "bong:particle/rune_char_5c01_xing",
+        "bong:particle/rune_char_5c01_cao",
+        "bong:particle/rune_char_5c01_cang",
+        "bong:particle/rune_char_7834_kai",
+        "bong:particle/rune_char_7834_xing",
+        "bong:particle/rune_char_7834_cao",
+        "bong:particle/rune_char_7834_cang",
+        "bong:particle/rune_char_9053_kai",
+        "bong:particle/rune_char_9053_xing",
+        "bong:particle/rune_char_9053_cao",
+        "bong:particle/rune_char_9053_cang"
+    ]
+}

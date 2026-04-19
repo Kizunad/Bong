@@ -10,8 +10,10 @@ import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
+import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
+import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
@@ -29,11 +31,14 @@ public class BongClient implements ClientModInitializer {
         HudRenderCallback.EVENT.register(BongHud::render);
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
+        AlchemyScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
         BongVfxCommand.register();
         // 粒子事件通过 client.execute 派发到主线程（BongNetworkHandler 里），在第一次 tick 之前
         // 注册完 VfxRegistry 即可；放在这里不依赖 channel register 的时序。
+        BongParticles.register();
+        BongParticles.registerClient();
         VfxBootstrap.registerDefaults();
         BongAnimations.bootstrap();
         BongAnimationPlayer.init();

@@ -90,6 +90,11 @@ public final class SwordQiSlashPlayer implements VfxPlayer {
             particle.setColor(r, g, b);
             particle.setAlphaPublic(alpha);
             particle.setMaxAgePublic(maxAge);
+            if (BongParticles.swordQiTrailSprites != null) {
+                particle.setSpritePublic(
+                    BongParticles.swordQiTrailSprites.getSprite(world.random)
+                );
+            }
 
             client.particleManager.addParticle(particle);
         }

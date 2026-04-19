@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "alchemy_intervention",
+  "intervention": {
+    "kind": "inject_qi",
+    "qi": 1.0
+  }
+}

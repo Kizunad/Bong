@@ -1,47 +1,101 @@
-max_weight = 45.0
-bone_coins = 57
+# 末法残土 · 醒灵期散修起手装备。
+# worldview §四：「你唯一的优势是会死很多次」—— 起手装备简陋实用，
+# 仅一颗保命丹、一颗辅修丹、几片草药、5 枚骨币、一根骨刺自卫。
+# 所有 template_id 必须在 server/assets/items/*.toml 已注册且有对应 client PNG。
 
+max_weight = 45.0
+bone_coins = 7
+
+# ─── 主背包 5×7 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "main_pack"
 name = "主背包"
 rows = 5
 cols = 7
 
+  # 灵草 ×3 — 凝脉散原料
   [[containers.items]]
   row = 0
   col = 0
-  template_id = "starter_talisman"
-  stack_count = 1
+  template_id = "spirit_grass"
+  stack_count = 3
 
+  # 凝脉散 ×2 — 治疗经脉裂痕
   [[containers.items]]
   row = 0
   col = 1
-  template_id = "guyuan_pill"
+  template_id = "ningmai_powder"
   stack_count = 2
 
+  # 固元丹 ×1 — 突破辅助
+  [[containers.items]]
+  row = 0
+  col = 2
+  template_id = "guyuan_pill"
+  stack_count = 1
+
+  # 封灵骨币 ×5 — 应急通货（每月折半，别囤）
+  [[containers.items]]
+  row = 0
+  col = 3
+  template_id = "fengling_bone_coin"
+  stack_count = 5
+
+  # 骨刺 1×2 — 暗器流入门武器
+  [[containers.items]]
+  row = 1
+  col = 0
+  template_id = "bone_spike"
+  stack_count = 1
+
+  # 拟态灰烬蛛丝 — 替尸流伪灵皮原料
+  [[containers.items]]
+  row = 1
+  col = 2
+  template_id = "ash_spider_silk"
+  stack_count = 1
+
+# ─── 小口袋 3×3 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "small_pouch"
 name = "小口袋"
 rows = 3
 cols = 3
 
+  # 灵木 1×2 — 备用真元载体
   [[containers.items]]
   row = 0
   col = 0
-  template_id = "healing_herb_bundle"
-  stack_count = 3
+  template_id = "spirit_wood"
+  stack_count = 1
 
+# ─── 前挂包 3×4 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "front_satchel"
 name = "前挂包"
 rows = 3
 cols = 4
 
-[[equip]]
-slot = "main_hand"
-template_id = "rusted_blade"
-durability = 0.85
+  # 噬元鼠膨胀鼠尾 ×2 — 炼器辅料（路边随手摸来的）
+  [[containers.items]]
+  row = 0
+  col = 0
+  template_id = "rat_tail"
+  stack_count = 2
 
+# ─── 装备 ─────────────────────────────────────────────────────────────────
+# 醒灵期散修没有正经武器，只有一件破伪灵皮护胸（替尸流入门）
+[[equip]]
+slot = "chest"
+template_id = "fake_spirit_hide"
+durability = 0.7
+
+# ─── 战斗 hotbar 1-9（plan-HUD-v1 §2.2 下层） ───────────────────────────
+# 起手放：左手凝脉散应急 + 右手骨刺自卫
 [[hotbar]]
 index = 0
-template_id = "starter_talisman"
+template_id = "ningmai_powder"
+
+[[hotbar]]
+index = 1
+template_id = "bone_spike"

@@ -24,9 +24,10 @@ public final class InspectScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(InspectScreenBootstrap::onEndClientTick);
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
-            client.execute(InspectScreenBootstrap::beginAuthoritativeLoading)
-        );
+        // 不在 JOIN 时清空 store —— 否则会与网络线程并发处理的 inventory_snapshot
+        // 形成竞态：JOIN callback 经 client.execute 排队到主线程，期间快照已经到达
+        // 并写入 store；queued task 一执行就把刚到的权威数据 reset 回 loading 态。
+        // disconnect 已经清空，重新连接前 store 是 empty / revision=-1，不需要再清。
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(InspectScreenBootstrap::clearInventorySnapshot)
         );
@@ -70,10 +71,6 @@ public final class InspectScreenBootstrap {
 
     static boolean shouldOpenInspectScreen(Screen currentScreen) {
         return !(currentScreen instanceof InspectScreen);
-    }
-
-    static void beginAuthoritativeLoading() {
-        InventoryStateStore.replace(null);
     }
 
     static void clearInventorySnapshot() {

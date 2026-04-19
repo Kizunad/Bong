@@ -542,6 +542,8 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       pos: [...player.pos],
       recent_kills: player.recent_kills,
       recent_deaths: player.recent_deaths,
+      cultivation: player.cultivation ? { ...player.cultivation } : undefined,
+      life_record: player.life_record ? { ...player.life_record } : undefined,
     })),
     npcs: state.npcs.map((npc) => ({
       id: npc.id,
@@ -549,6 +551,27 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       pos: [...npc.pos],
       state: npc.state,
       blackboard: { ...npc.blackboard },
+      digest: npc.digest
+        ? {
+            ...npc.digest,
+            disciple: npc.digest.disciple
+              ? {
+                  ...npc.digest.disciple,
+                  lineage: npc.digest.disciple.lineage
+                    ? { ...npc.digest.disciple.lineage }
+                    : undefined,
+                  mission_queue: npc.digest.disciple.mission_queue
+                    ? { ...npc.digest.disciple.mission_queue }
+                    : undefined,
+                }
+              : undefined,
+          }
+        : undefined,
+    })),
+    factions: state.factions?.map((faction) => ({
+      ...faction,
+      leader_lineage: faction.leader_lineage ? { ...faction.leader_lineage } : undefined,
+      mission_queue: faction.mission_queue ? { ...faction.mission_queue } : undefined,
     })),
     zones: state.zones.map(cloneZoneSnapshot),
     recent_events: state.recent_events.map((event) => ({

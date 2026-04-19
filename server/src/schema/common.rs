@@ -17,6 +17,9 @@ pub const MAX_PAYLOAD_BYTES: usize = 8192;
 #[serde(rename_all = "snake_case")]
 pub enum CommandType {
     SpawnEvent,
+    SpawnNpc,
+    DespawnNpc,
+    FactionEvent,
     ModifyZone,
     NpcBehavior,
 }

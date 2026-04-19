@@ -1,0 +1,131 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "bucket",
+    "recipe_id",
+    "flawed_path"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_outcome_resolved",
+      "type": "string"
+    },
+    "bucket": {
+      "description": "plan §1.3 结果分桶",
+      "anyOf": [
+        {
+          "const": "perfect",
+          "type": "string"
+        },
+        {
+          "const": "good",
+          "type": "string"
+        },
+        {
+          "const": "flawed",
+          "type": "string"
+        },
+        {
+          "const": "waste",
+          "type": "string"
+        },
+        {
+          "const": "explode",
+          "type": "string"
+        }
+      ]
+    },
+    "recipe_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pill": {
+      "type": "string"
+    },
+    "quality": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "toxin_amount": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "toxin_color": {
+      "description": "十种真元染色",
+      "anyOf": [
+        {
+          "const": "Sharp",
+          "type": "string"
+        },
+        {
+          "const": "Heavy",
+          "type": "string"
+        },
+        {
+          "const": "Mellow",
+          "type": "string"
+        },
+        {
+          "const": "Solid",
+          "type": "string"
+        },
+        {
+          "const": "Light",
+          "type": "string"
+        },
+        {
+          "const": "Intricate",
+          "type": "string"
+        },
+        {
+          "const": "Gentle",
+          "type": "string"
+        },
+        {
+          "const": "Insidious",
+          "type": "string"
+        },
+        {
+          "const": "Violent",
+          "type": "string"
+        },
+        {
+          "const": "Turbid",
+          "type": "string"
+        }
+      ]
+    },
+    "qi_gain": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "side_effect_tag": {
+      "type": "string"
+    },
+    "flawed_path": {
+      "type": "boolean"
+    },
+    "damage": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "meridian_crack": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

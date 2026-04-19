@@ -8,7 +8,6 @@ import {
   validateAgentCommandV1Contract,
 } from "../src/agent-command.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
-import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
@@ -21,6 +20,7 @@ import {
 } from "../src/common.js";
 import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
+import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
@@ -51,14 +51,6 @@ function expectContractAccepts(name: string, validator: ContractValidation, data
 function expectContractRejects(name: string, validator: ContractValidation, data: unknown): void {
   const result = validator(data);
   expect(result.ok, `${name} should be rejected`).toBe(false);
-}
-
-function loadPackageJson(): {
-  exports?: Record<string, unknown>;
-} {
-  return JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")) as {
-    exports?: Record<string, unknown>;
-  };
 }
 
 type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
@@ -162,6 +154,60 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.alchemy-furnace.sample.json", () => {
+    const data = loadSample("server-data.alchemy-furnace.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-session.sample.json", () => {
+    const data = loadSample("server-data.alchemy-session.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-outcome-forecast.sample.json", () => {
+    const data = loadSample("server-data.alchemy-outcome-forecast.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-outcome-resolved.sample.json", () => {
+    const data = loadSample("server-data.alchemy-outcome-resolved.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-recipe-book.sample.json", () => {
+    const data = loadSample("server-data.alchemy-recipe-book.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.alchemy-contamination.sample.json", () => {
+    const data = loadSample("server-data.alchemy-contamination.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-feed-slot.sample.json", () => {
+    const data = loadSample("client-request.alchemy-feed-slot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-ignite.sample.json", () => {
+    const data = loadSample("client-request.alchemy-ignite.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.alchemy-intervention.sample.json", () => {
+    const data = loadSample("client-request.alchemy-intervention.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("combat-event.realtime.sample.json", () => {
     const data = loadSample("combat-event.realtime.sample.json");
     const result = validate(CombatRealtimeEventV1, data);
@@ -246,11 +292,74 @@ describe("schema rejects invalid data", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("accepts optional faction and disciple summaries", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    expectContractAccepts(
+      "WorldStateV1 optional faction/disciple summaries",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
+  it("accepts legacy-compatible world state without faction summaries", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    delete data.factions;
+    const npc = (data.npcs as Array<Record<string, unknown>>)[0];
+    const digest = npc.digest as Record<string, unknown>;
+    delete digest.disciple;
+
+    expectContractAccepts(
+      "WorldStateV1 legacy-compatible optional faction fields",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
   it("accepts arbiter as agent-command source", () => {
     const data = loadObjectSample("agent-command.sample.json");
     data.source = "arbiter";
     const result = validate(AgentCommandV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts spawn_npc command rows", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.commands = [{ type: "spawn_npc", target: "spawn", params: { archetype: "zombie" } }];
+    expectContractAccepts(
+      "AgentCommandV1 spawn_npc parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
+  });
+
+  it("accepts despawn_npc command rows", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.commands = [{ type: "despawn_npc", target: "npc_2v1", params: {} }];
+    expectContractAccepts(
+      "AgentCommandV1 despawn_npc parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
+  });
+
+  it("accepts faction_event command rows", () => {
+    const data = loadObjectSample("agent-command.sample.json");
+    data.commands = [
+      {
+        type: "faction_event",
+        target: "neutral",
+        params: {
+          kind: "enqueue_mission",
+          faction_id: "neutral",
+          mission_id: "mission:hold_spawn_gate",
+        },
+      },
+    ];
+    expectContractAccepts(
+      "AgentCommandV1 faction_event parity gate",
+      validateAgentCommandV1Contract,
+      data,
+    );
   });
 
   it("rejects command with more than five commands", () => {

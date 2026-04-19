@@ -13,5 +13,11 @@ public enum HudRenderLayer {
     DERIVED_ATTR,
     TOAST,
     VISUAL,
-    EDGE_FEEDBACK
+    EDGE_FEEDBACK,
+    STATUS_EFFECTS,
+    STAMINA_BAR,
+    DAMAGE_FLOATER,
+    FLIGHT_HUD,
+    TRIBULATION,
+    NEAR_DEATH
 }

@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "levels",
+    "metabolism_note"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_contamination",
+      "type": "string"
+    },
+    "levels": {
+      "minItems": 0,
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "color",
+          "current",
+          "max",
+          "ok"
+        ],
+        "properties": {
+          "color": {
+            "description": "十种真元染色",
+            "anyOf": [
+              {
+                "const": "Sharp",
+                "type": "string"
+              },
+              {
+                "const": "Heavy",
+                "type": "string"
+              },
+              {
+                "const": "Mellow",
+                "type": "string"
+              },
+              {
+                "const": "Solid",
+                "type": "string"
+              },
+              {
+                "const": "Light",
+                "type": "string"
+              },
+              {
+                "const": "Intricate",
+                "type": "string"
+              },
+              {
+                "const": "Gentle",
+                "type": "string"
+              },
+              {
+                "const": "Insidious",
+                "type": "string"
+              },
+              {
+                "const": "Violent",
+                "type": "string"
+              },
+              {
+                "const": "Turbid",
+                "type": "string"
+              }
+            ]
+          },
+          "current": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "max": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "metabolism_note": {
+      "type": "string"
+    }
+  }
+}

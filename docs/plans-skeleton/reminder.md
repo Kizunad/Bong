@@ -6,6 +6,21 @@
 
 ## plan-alchemy-v1
 
+### ✅ 已落地（2026-04-15，server P0–P5）
+- `server/src/alchemy/`（recipe / session / outcome / resolver / pill / learned / furnace）全部建模
+- 3 份测试 recipe JSON 加载通过（kai_mai / hui_yuan / du_ming）
+- 精确匹配 + 残缺 fallback + side_effect_pool 决定性抽取 + LifeRecord `AlchemyAttempt`
+- 服药 → `ContamSource` 注入（`attacker_id=None`）复用 `contamination_tick`；同色阈值 1.0 禁服
+- 50 个单测全绿，集成测试验证 "起炉 → 结算 → 服药 → 污染" 全流程
+
+### 仍延后（本次没做）
+- **客户端 Screen**（plan §3.3 三列 owo-lib UI）— 需要 DragState 扩展 `FURNACE_SLOT` + 新 store + 炉方块右键打开流程
+- **Redis channel** `bong:alchemy/*` + agent `@bong/schema/src/alchemy-recipe.ts` TypeBox 对齐
+- **BlockEntity 持久化**（plan §1.3 离线持续性）— 需 plan-persistence-v1 对接
+- **炉方块放置 + 右键 → `StartAlchemyRequest`**（需要 world/block 侧接入）
+- **炸炉真正结算**（ResolvedOutcome::Explode 的 damage / meridian_crack 应用到 caster 实体）
+- **skill XP 事件**（plan-skill-v1 §7）
+
 ### 依赖外部 plan 尚未立项
 
 - [ ] **plan-botany-v1**（植物/采集）未立 — alchemy §3 的材料全是 placeholder ID (`kai_mai_cao` / `ling_shui` / `xue_cao` / `shou_gu` / `huo_jing` / `bai_cao`)。botany 落地后需替换为真实 item registry，并定义"灵气 > 0.3 才生长"接入。

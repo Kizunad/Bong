@@ -1,13 +1,19 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
-use valence::prelude::{Entity, Query, ResMut, Resource, With};
+use valence::prelude::{Commands, Despawned, Entity, Query, ResMut, Resource, With, Without};
 
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
+use crate::npc::faction::{
+    FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind, FactionId,
+    FactionStore,
+};
+use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
+use crate::npc::spawn::spawn_zombie_npc_at;
 use crate::npc::spawn::NpcMarker;
 use crate::schema::agent_command::{AgentCommandV1, Command};
-use crate::schema::common::{CommandType, MAX_COMMANDS_PER_TICK};
+use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::ZoneRegistry;
 
@@ -47,6 +53,18 @@ pub struct CommandExecutorResource {
 }
 
 impl Resource for CommandExecutorResource {}
+
+type LayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    Entity,
+    (
+        With<valence::prelude::ChunkLayer>,
+        With<valence::prelude::EntityLayer>,
+    ),
+>;
+
+type LiveNpcQuery<'w, 's> = Query<'w, 's, Entity, (With<NpcMarker>, Without<Despawned>)>;
 
 impl CommandExecutorResource {
     pub fn enqueue_batch(&mut self, batch: AgentCommandV1) -> BatchEnqueueOutcome {
@@ -103,14 +121,20 @@ impl CommandExecutorResource {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn execute_agent_commands(
+    mut commands: Commands,
     mut executor: ResMut<CommandExecutorResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
+    mut npc_registry: Option<ResMut<NpcRegistry>>,
+    mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
-    npc_entities: Query<Entity, With<NpcMarker>>,
+    layers: LayerQuery<'_, '_>,
+    npc_entities: LiveNpcQuery<'_, '_>,
 ) {
     let mut remaining_budget = MAX_COMMANDS_PER_TICK;
+    let mut pending_despawn_targets = HashSet::new();
 
     while remaining_budget > 0 {
         let Some(mut batch) = executor.pending_batches.pop_front() else {
@@ -126,10 +150,15 @@ pub fn execute_agent_commands(
                 &batch.commands[consumed],
                 batch_id.as_str(),
                 batch_source.as_deref(),
+                &mut commands,
                 &mut zone_registry,
                 &mut active_events,
+                &mut npc_registry,
+                &mut faction_store,
                 &mut npc_behavior,
+                &layers,
                 &npc_entities,
+                &mut pending_despawn_targets,
             );
             consumed += 1;
             remaining_budget -= 1;
@@ -149,14 +178,20 @@ pub fn execute_agent_commands(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_single_command(
     command: &Command,
     batch_id: &str,
     source: Option<&str>,
+    commands: &mut Commands,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
+    npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
-    npc_entities: &Query<Entity, With<NpcMarker>>,
+    layers: &LayerQuery<'_, '_>,
+    npc_entities: &LiveNpcQuery<'_, '_>,
+    pending_despawn_targets: &mut HashSet<String>,
 ) {
     let command_type = command_type_label(&command.command_type);
 
@@ -170,7 +205,16 @@ fn execute_single_command(
 
     let result = match command.command_type {
         CommandType::ModifyZone => execute_modify_zone(command, zone_registry),
-        CommandType::NpcBehavior => execute_npc_behavior(command, npc_behavior, npc_entities),
+        CommandType::SpawnNpc => {
+            execute_spawn_npc(command, commands, zone_registry, npc_registry, layers)
+        }
+        CommandType::DespawnNpc => {
+            execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
+        }
+        CommandType::FactionEvent => execute_faction_event(command, faction_store, active_events),
+        CommandType::NpcBehavior => {
+            execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
+        }
         CommandType::SpawnEvent => execute_spawn_event(command, zone_registry, active_events),
     };
 
@@ -187,8 +231,159 @@ fn execute_single_command(
 fn command_type_label(command_type: &CommandType) -> &'static str {
     match command_type {
         CommandType::ModifyZone => "modify_zone",
+        CommandType::SpawnNpc => "spawn_npc",
+        CommandType::DespawnNpc => "despawn_npc",
+        CommandType::FactionEvent => "faction_event",
         CommandType::NpcBehavior => "npc_behavior",
         CommandType::SpawnEvent => "spawn_event",
+    }
+}
+
+fn execute_faction_event(
+    command: &Command,
+    faction_store: &mut Option<ResMut<FactionStore>>,
+    active_events: &mut Option<ResMut<ActiveEventsResource>>,
+) -> &'static str {
+    let Some(faction_store) = faction_store.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network] cannot execute faction_event for `{}` because FactionStore resource is missing",
+            command.target
+        );
+        return "rejected_missing_faction_store";
+    };
+
+    let Some(event_command) = parse_faction_event_command(command) else {
+        tracing::warn!(
+            "[bong][network] faction_event target `{}` has invalid faction params",
+            command.target
+        );
+        return "rejected_invalid_faction_event";
+    };
+
+    match faction_store.apply_event(event_command) {
+        Ok(applied) => {
+            if let Some(active_events) = active_events.as_deref_mut() {
+                active_events.record_recent_event(build_faction_recent_event(applied));
+            }
+            "ok"
+        }
+        Err(error) => match error {
+            FactionEventError::UnknownFaction(_) => "rejected_unknown_faction",
+            FactionEventError::MissingSubjectId
+            | FactionEventError::MissingMissionId
+            | FactionEventError::MissingLoyaltyDelta => "rejected_invalid_faction_event",
+        },
+    }
+}
+
+fn execute_despawn_npc(
+    command: &Command,
+    commands: &mut Commands,
+    npc_entities: &LiveNpcQuery<'_, '_>,
+    pending_despawn_targets: &mut HashSet<String>,
+) -> &'static str {
+    let Some((entity, target_id)) = resolve_live_npc_target(
+        command.target.as_str(),
+        npc_entities,
+        pending_despawn_targets,
+    ) else {
+        return reject_unknown_or_invalid_npc_target(command.target.as_str(), "despawn_npc");
+    };
+
+    commands.entity(entity).insert(Despawned);
+    pending_despawn_targets.insert(target_id);
+    "ok"
+}
+
+fn execute_spawn_npc(
+    command: &Command,
+    commands: &mut Commands,
+    zone_registry: &mut Option<ResMut<ZoneRegistry>>,
+    npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    layers: &LayerQuery<'_, '_>,
+) -> &'static str {
+    let Some(archetype) = command.params.get("archetype").and_then(Value::as_str) else {
+        tracing::warn!(
+            "[bong][network] spawn_npc target `{}` missing/invalid `archetype`",
+            command.target
+        );
+        return "rejected_invalid_spawn_params";
+    };
+
+    let archetype = match archetype {
+        "zombie" => NpcArchetype::Zombie,
+        _ => {
+            tracing::warn!(
+                "[bong][network] spawn_npc target `{}` uses unsupported archetype `{}`",
+                command.target,
+                archetype
+            );
+            return "rejected_unsupported_archetype";
+        }
+    };
+
+    let Some(zone_registry) = zone_registry.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network] cannot execute spawn_npc for `{}` because ZoneRegistry resource is missing",
+            command.target
+        );
+        return "rejected_missing_zone_registry";
+    };
+
+    let Some(zone) = zone_registry
+        .find_zone_by_name(command.target.as_str())
+        .cloned()
+    else {
+        tracing::warn!(
+            "[bong][network] spawn_npc target `{}` does not match any known zone",
+            command.target
+        );
+        return "rejected_unknown_zone";
+    };
+
+    let Some(layer) = layers.iter().next() else {
+        tracing::warn!(
+            "[bong][network] spawn_npc target `{}` cannot resolve an entity layer",
+            command.target
+        );
+        return "rejected_missing_entity_layer";
+    };
+
+    let Some(registry) = npc_registry.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network] cannot execute spawn_npc for `{}` because NpcRegistry resource is missing",
+            command.target
+        );
+        return "rejected_missing_npc_registry";
+    };
+
+    if registry.reserve_spawn_batch(1) == 0 {
+        tracing::info!(
+            "[bong][network] spawn_npc target `{}` rejected because npc registry budget is exhausted",
+            command.target
+        );
+        return "rejected_spawn_budget_exhausted";
+    }
+
+    let spawn_position = zone
+        .patrol_anchors
+        .first()
+        .copied()
+        .unwrap_or_else(|| zone.center());
+    let patrol_target = zone.center();
+
+    match archetype {
+        NpcArchetype::Zombie => {
+            spawn_zombie_npc_at(
+                commands,
+                layer,
+                zone.name.as_str(),
+                spawn_position,
+                patrol_target,
+            );
+            "ok"
+        }
+        _ => "rejected_unsupported_archetype",
     }
 }
 
@@ -264,7 +459,8 @@ fn execute_modify_zone(
 fn execute_npc_behavior(
     command: &Command,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
-    npc_entities: &Query<Entity, With<NpcMarker>>,
+    npc_entities: &LiveNpcQuery<'_, '_>,
+    pending_despawn_targets: &HashSet<String>,
 ) -> &'static str {
     let Some(flee_threshold) = param_as_f64(&command.params, "flee_threshold") else {
         tracing::warn!(
@@ -276,24 +472,13 @@ fn execute_npc_behavior(
 
     let flee_threshold = flee_threshold.clamp(0.0, 1.0) as f32;
 
-    let Some(target_id) = parse_npc_id(command.target.as_str()) else {
-        tracing::warn!(
-            "[bong][network] npc_behavior target `{}` is not a canonical npc id (`npc_{{index}}v{{generation}}`)",
-            command.target
-        );
-        return "rejected_invalid_npc_target";
+    let Some(target_id) = resolve_live_npc_canonical_id(
+        command.target.as_str(),
+        npc_entities,
+        pending_despawn_targets,
+    ) else {
+        return reject_unknown_or_invalid_npc_target(command.target.as_str(), "npc_behavior");
     };
-
-    let target_exists = npc_entities
-        .iter()
-        .any(|entity| canonical_npc_id(entity) == target_id);
-    if !target_exists {
-        tracing::warn!(
-            "[bong][network] npc_behavior target `{}` does not map to a live NPC",
-            command.target
-        );
-        return "rejected_unknown_npc";
-    }
 
     apply_flee_threshold(npc_behavior, flee_threshold, target_id.as_str())
 }
@@ -334,6 +519,107 @@ fn parse_npc_id(target: &str) -> Option<String> {
     let canonical_id = format!("npc_{index}v{generation}");
 
     (canonical_id == target).then_some(canonical_id)
+}
+
+fn parse_faction_event_command(command: &Command) -> Option<FactionEventCommand> {
+    let kind = command.params.get("kind").and_then(Value::as_str)?;
+    let faction_id = command.params.get("faction_id").and_then(Value::as_str)?;
+
+    Some(FactionEventCommand {
+        faction_id: FactionId::from_str_name(faction_id)?,
+        kind: FactionEventKind::from_str_name(kind)?,
+        subject_id: command
+            .params
+            .get("subject_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        mission_id: command
+            .params
+            .get("mission_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        loyalty_delta: command.params.get("loyalty_delta").and_then(Value::as_f64),
+    })
+}
+
+fn build_faction_recent_event(
+    applied: FactionEventApplied,
+) -> crate::schema::world_state::GameEvent {
+    let mut details = HashMap::new();
+    details.insert(
+        "faction_id".to_string(),
+        Value::String(applied.faction_id.as_str().to_string()),
+    );
+    details.insert(
+        "kind".to_string(),
+        Value::String(applied.kind.as_str().to_string()),
+    );
+    details.insert(
+        "loyalty_bias".to_string(),
+        Value::from(applied.loyalty_bias),
+    );
+    details.insert(
+        "mission_queue_size".to_string(),
+        Value::from(applied.mission_queue_size as u64),
+    );
+    if let Some(leader_id) = applied.leader_id {
+        details.insert("leader_id".to_string(), Value::String(leader_id));
+    }
+
+    crate::schema::world_state::GameEvent {
+        event_type: GameEventType::EventTriggered,
+        tick: 0,
+        player: None,
+        target: Some(format!("faction:{}", applied.faction_id.as_str())),
+        zone: None,
+        details: Some(details),
+    }
+}
+
+fn resolve_live_npc_canonical_id(
+    target: &str,
+    npc_entities: &LiveNpcQuery<'_, '_>,
+    pending_despawn_targets: &HashSet<String>,
+) -> Option<String> {
+    let target_id = parse_npc_id(target)?;
+    if pending_despawn_targets.contains(&target_id) {
+        return None;
+    }
+    npc_entities
+        .iter()
+        .find(|entity| canonical_npc_id(*entity) == target_id)
+        .map(canonical_npc_id)
+}
+
+fn resolve_live_npc_target(
+    target: &str,
+    npc_entities: &LiveNpcQuery<'_, '_>,
+    pending_despawn_targets: &HashSet<String>,
+) -> Option<(Entity, String)> {
+    let target_id = parse_npc_id(target)?;
+    if pending_despawn_targets.contains(&target_id) {
+        return None;
+    }
+    npc_entities
+        .iter()
+        .find(|entity| canonical_npc_id(*entity) == target_id)
+        .map(|entity| (entity, target_id))
+}
+
+fn reject_unknown_or_invalid_npc_target(target: &str, command_type: &str) -> &'static str {
+    if parse_npc_id(target).is_none() {
+        tracing::warn!(
+            "[bong][network] {command_type} target `{}` is not a canonical npc id (`npc_{{index}}v{{generation}}`)",
+            target
+        );
+        "rejected_invalid_npc_target"
+    } else {
+        tracing::warn!(
+            "[bong][network] {command_type} target `{}` does not map to a live NPC",
+            target
+        );
+        "rejected_unknown_npc"
+    }
 }
 
 fn param_as_f64(params: &HashMap<String, Value>, key: &str) -> Option<f64> {
@@ -379,9 +665,11 @@ mod command_executor_tests {
     use std::collections::HashMap;
 
     use serde_json::json;
-    use valence::prelude::{App, DVec3, Update};
+    use valence::prelude::{App, DVec3, EntityKind, Position, Update};
+    use valence::testing::ScenarioSingleClient;
 
     use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
+    use crate::npc::faction::FactionStore;
     use crate::schema::agent_command::Command;
     use crate::world::events::{ActiveEventsResource, EVENT_THUNDER_TRIBULATION};
 
@@ -403,13 +691,348 @@ mod command_executor_tests {
     }
 
     fn setup_executor_app() -> App {
-        let mut app = App::new();
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(NpcBehaviorConfig::default());
+        app.insert_resource(NpcRegistry::default());
+        app.insert_resource(FactionStore::default());
         app.add_systems(Update, execute_agent_commands);
         app
+    }
+
+    #[test]
+    fn faction_event_updates_store_and_records_recent_event() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("kind".to_string(), json!("enqueue_mission"));
+        params.insert("faction_id".to_string(), json!("neutral"));
+        params.insert("mission_id".to_string(), json!("mission:hold_spawn_gate"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_faction_event_ok",
+                vec![command(CommandType::FactionEvent, "neutral", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let store = app.world().resource::<FactionStore>();
+        let neutral = store
+            .iter()
+            .find(|faction| faction.id == FactionId::Neutral)
+            .expect("neutral faction should exist");
+        assert_eq!(neutral.mission_queue.pending_count(), 1);
+        assert_eq!(
+            neutral.mission_queue.top_mission_id(),
+            Some("mission:hold_spawn_gate")
+        );
+
+        let events = app.world().resource::<ActiveEventsResource>();
+        let recent = events.recent_events_snapshot();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].event_type, GameEventType::EventTriggered);
+        assert_eq!(recent[0].target.as_deref(), Some("faction:neutral"));
+        assert_eq!(
+            recent[0]
+                .details
+                .as_ref()
+                .and_then(|details| details.get("kind"))
+                .and_then(Value::as_str),
+            Some("enqueue_mission")
+        );
+    }
+
+    #[test]
+    fn faction_event_rejects_invalid_or_unknown_faction_inputs() {
+        let mut app = setup_executor_app();
+
+        let mut commands = Vec::new();
+
+        let mut invalid_kind = HashMap::new();
+        invalid_kind.insert("kind".to_string(), json!("invent_new_faction_law"));
+        invalid_kind.insert("faction_id".to_string(), json!("neutral"));
+        commands.push(command(CommandType::FactionEvent, "neutral", invalid_kind));
+
+        let mut unknown_faction = HashMap::new();
+        unknown_faction.insert("kind".to_string(), json!("enqueue_mission"));
+        unknown_faction.insert("faction_id".to_string(), json!("sky"));
+        unknown_faction.insert("mission_id".to_string(), json!("mission:unknown"));
+        commands.push(command(CommandType::FactionEvent, "sky", unknown_faction));
+
+        let mut missing_payload = HashMap::new();
+        missing_payload.insert("kind".to_string(), json!("adjust_loyalty_bias"));
+        missing_payload.insert("faction_id".to_string(), json!("neutral"));
+        commands.push(command(
+            CommandType::FactionEvent,
+            "neutral",
+            missing_payload,
+        ));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch("cmd_faction_event_rejects", commands));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let store = app.world().resource::<FactionStore>();
+        let neutral = store
+            .iter()
+            .find(|faction| faction.id == FactionId::Neutral)
+            .expect("neutral faction should exist");
+        assert_eq!(neutral.mission_queue.pending_count(), 0);
+        assert!((neutral.loyalty_bias - 0.5).abs() < 1e-9);
+
+        let events = app.world().resource::<ActiveEventsResource>();
+        assert!(events.recent_events_snapshot().is_empty());
+    }
+
+    #[test]
+    fn despawn_npc_marks_live_target_as_despawned() {
+        let mut app = setup_executor_app();
+
+        let npc = app.world_mut().spawn(NpcMarker).id();
+        let npc_id = canonical_npc_id(npc);
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_despawn_npc_ok",
+                vec![command(
+                    CommandType::DespawnNpc,
+                    npc_id.as_str(),
+                    HashMap::new(),
+                )],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let live_npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, (With<NpcMarker>, Without<Despawned>)>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert!(live_npcs.is_empty());
+    }
+
+    #[test]
+    fn despawn_npc_rejects_invalid_or_unknown_targets() {
+        let mut app = setup_executor_app();
+        let live_npc = app.world_mut().spawn(NpcMarker).id();
+        let live_npc_id = canonical_npc_id(live_npc);
+        let missing_npc_id = format!("npc_{}v1", live_npc.index() + 99_999);
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_despawn_npc_rejects",
+                vec![
+                    command(CommandType::DespawnNpc, "npc_123", HashMap::new()),
+                    command(
+                        CommandType::DespawnNpc,
+                        missing_npc_id.as_str(),
+                        HashMap::new(),
+                    ),
+                ],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let live_npcs_after_rejects = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, (With<NpcMarker>, Without<Despawned>)>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert_eq!(live_npcs_after_rejects, vec![live_npc]);
+
+        let mut behavior_params = HashMap::new();
+        behavior_params.insert("flee_threshold".to_string(), json!(0.2));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_despawn_npc_then_behavior",
+                vec![
+                    command(
+                        CommandType::DespawnNpc,
+                        live_npc_id.as_str(),
+                        HashMap::new(),
+                    ),
+                    command(
+                        CommandType::NpcBehavior,
+                        live_npc_id.as_str(),
+                        behavior_params,
+                    ),
+                ],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let live_npcs_after_despawn = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, (With<NpcMarker>, Without<Despawned>)>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert!(live_npcs_after_despawn.is_empty());
+
+        let behavior = app.world().resource::<NpcBehaviorConfig>();
+        assert_eq!(
+            behavior.threshold_for_npc_id(live_npc_id.as_str()),
+            DEFAULT_FLEE_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn spawn_npc_creates_zombie_in_requested_zone() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("zombie"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_ok",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert_eq!(npcs.len(), 1);
+
+        let npc = npcs[0];
+        let npc_archetype = app
+            .world()
+            .get::<NpcArchetype>(npc)
+            .expect("spawned npc should have archetype");
+        assert_eq!(*npc_archetype, NpcArchetype::Zombie);
+
+        let spawn_zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone should exist")
+            .clone();
+
+        let patrol = app
+            .world()
+            .get::<crate::npc::patrol::NpcPatrol>(npc)
+            .expect("spawned npc should have patrol state");
+        assert_eq!(patrol.home_zone, "spawn");
+        assert!(patrol.current_target.distance_squared(spawn_zone.center()) < 1e-9);
+
+        let position = app
+            .world()
+            .get::<Position>(npc)
+            .expect("spawned npc should have position");
+        assert!(spawn_zone.contains(position.get()));
+        let expected_spawn = spawn_zone
+            .patrol_anchors
+            .first()
+            .copied()
+            .unwrap_or_else(|| spawn_zone.center());
+        assert!(position.get().distance_squared(expected_spawn) < 1e-9);
+
+        let kind = app
+            .world()
+            .get::<EntityKind>(npc)
+            .expect("spawned npc should have entity kind");
+        assert_eq!(*kind, EntityKind::ZOMBIE);
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(registry.live_npc_count, 1);
+    }
+
+    #[test]
+    fn spawn_npc_rejects_unknown_zone_unsupported_archetype_and_exhausted_budget() {
+        let mut app = setup_executor_app();
+
+        let mut commands = Vec::new();
+
+        let mut bad_zone = HashMap::new();
+        bad_zone.insert("archetype".to_string(), json!("zombie"));
+        commands.push(command(CommandType::SpawnNpc, "missing_zone", bad_zone));
+
+        let mut bad_archetype = HashMap::new();
+        bad_archetype.insert("archetype".to_string(), json!("rogue"));
+        commands.push(command(CommandType::SpawnNpc, "spawn", bad_archetype));
+
+        {
+            let mut registry = app.world_mut().resource_mut::<NpcRegistry>();
+            registry.live_npc_count = registry.max_npc_count;
+            registry.spawn_paused = true;
+        }
+
+        let mut exhausted_budget = HashMap::new();
+        exhausted_budget.insert("archetype".to_string(), json!("zombie"));
+        commands.push(command(CommandType::SpawnNpc, "spawn", exhausted_budget));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch("cmd_spawn_npc_rejects", commands));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert!(npcs.is_empty());
+    }
+
+    #[test]
+    fn spawn_npc_rejects_missing_archetype_param() {
+        let mut app = setup_executor_app();
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_missing_archetype",
+                vec![command(CommandType::SpawnNpc, "spawn", HashMap::new())],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).collect::<Vec<_>>()
+        };
+        assert!(npcs.is_empty());
     }
 
     #[test]
@@ -647,6 +1270,14 @@ mod command_executor_tests {
 
         let mut commands = Vec::new();
 
+        let mut bad_spawn_npc_params = HashMap::new();
+        bad_spawn_npc_params.insert("archetype".to_string(), json!("zombie"));
+        commands.push(command(
+            CommandType::SpawnNpc,
+            "unknown_zone",
+            bad_spawn_npc_params,
+        ));
+
         let mut bad_zone_params = HashMap::new();
         bad_zone_params.insert("spirit_qi_delta".to_string(), json!(0.1));
         commands.push(command(
@@ -661,6 +1292,12 @@ mod command_executor_tests {
             CommandType::NpcBehavior,
             "npc_999999v1",
             bad_npc_params,
+        ));
+
+        commands.push(command(
+            CommandType::DespawnNpc,
+            "npc_999999v1",
+            HashMap::new(),
         ));
 
         let mut bad_event_params = HashMap::new();
@@ -710,6 +1347,13 @@ mod command_executor_tests {
             behavior.threshold_for_npc_id("npc_999999v1"),
             DEFAULT_FLEE_THRESHOLD
         );
+
+        let npc_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(npc_count, 0);
     }
 
     #[test]

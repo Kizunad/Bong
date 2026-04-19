@@ -30,3 +30,6 @@ export * from "./cultivation.js";
 export * from "./forge-event.js";
 export * from "./insight-offer.js";
 export * from "./insight-request.js";
+
+// 炼丹 (plan-alchemy-v1 §4)
+export * from "./alchemy.js";

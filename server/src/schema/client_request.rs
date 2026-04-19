@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::alchemy::AlchemyInterventionV1;
+use super::inventory::InventoryLocationV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
 
@@ -35,6 +37,76 @@ pub enum ClientRequestV1 {
         v: u8,
         session_id: String,
         mode: crate::schema::botany::BotanyHarvestModeV1,
+    },
+    // ─── 炼丹（plan-alchemy-v1 §4） ─────────────────────────
+    AlchemyOpenFurnace {
+        v: u8,
+        furnace_id: String,
+    },
+    AlchemyFeedSlot {
+        v: u8,
+        slot_idx: u8,
+        material: String,
+        count: u32,
+    },
+    AlchemyTakeBack {
+        v: u8,
+        slot_idx: u8,
+    },
+    AlchemyIgnite {
+        v: u8,
+        recipe_id: String,
+    },
+    AlchemyIntervention {
+        v: u8,
+        intervention: AlchemyInterventionV1,
+    },
+    AlchemyTurnPage {
+        v: u8,
+        delta: i32,
+    },
+    AlchemyLearnRecipe {
+        v: u8,
+        recipe_id: String,
+    },
+    AlchemyTakePill {
+        v: u8,
+        pill_item_id: String,
+    },
+    /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
+    /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
+    InventoryMoveIntent {
+        v: u8,
+        instance_id: u64,
+        from: InventoryLocationV1,
+        to: InventoryLocationV1,
+    },
+    /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
+    /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
+    /// 并回推 `defense_window` payload 让 client 渲染红环。
+    Jiemai {
+        v: u8,
+    },
+    /// plan-HUD-v1 §4 / §11.3 触发 F1-F9 快捷使用槽。
+    /// server 校验后插入 `Casting` Component，回推 `cast_sync(Casting)`；
+    /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。
+    UseQuickSlot {
+        v: u8,
+        slot: u8,
+    },
+    /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
+    /// `item_id` 为 None 表示清空槽位。
+    QuickSlotBind {
+        v: u8,
+        slot: u8,
+        item_id: Option<String>,
+    },
+    /// plan-HUD-v1 §7.3 / §11.3 切换防御姿态。`stance` 一个：
+    /// "JIEMAI" / "TISHI" / "JUELING" / "NONE"（与 client `Stance.name()` 对齐）。
+    /// server 校验 UnlockedStyles 后写入 DefenseStance Component。
+    SwitchDefenseStance {
+        v: u8,
+        stance: String,
     },
 }
 
@@ -151,6 +223,75 @@ mod tests {
                 ));
             }
             other => panic!("expected BotanyHarvestRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_open_furnace_roundtrip() {
+        let json = r#"{"type":"alchemy_open_furnace","v":1,"furnace_id":"block_-12_64_38"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyOpenFurnace { v, furnace_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(furnace_id, "block_-12_64_38");
+            }
+            other => panic!("expected AlchemyOpenFurnace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_feed_slot_roundtrip() {
+        let json =
+            r#"{"type":"alchemy_feed_slot","v":1,"slot_idx":0,"material":"kai_mai_cao","count":3}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyFeedSlot {
+                slot_idx,
+                material,
+                count,
+                ..
+            } => {
+                assert_eq!(slot_idx, 0);
+                assert_eq!(material, "kai_mai_cao");
+                assert_eq!(count, 3);
+            }
+            other => panic!("expected AlchemyFeedSlot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_intervention_inject_qi_roundtrip() {
+        let json =
+            r#"{"type":"alchemy_intervention","v":1,"intervention":{"kind":"inject_qi","qi":1.0}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyIntervention { intervention, .. } => match intervention {
+                super::AlchemyInterventionV1::InjectQi { qi } => assert!((qi - 1.0).abs() < 1e-9),
+                other => panic!("expected InjectQi, got {other:?}"),
+            },
+            other => panic!("expected AlchemyIntervention, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_turn_page_roundtrip() {
+        let json = r#"{"type":"alchemy_turn_page","v":1,"delta":-1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyTurnPage { delta, .. } => assert_eq!(delta, -1),
+            other => panic!("expected AlchemyTurnPage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_ignite_roundtrip() {
+        let json = r#"{"type":"alchemy_ignite","v":1,"recipe_id":"kai_mai_pill_v0"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyIgnite { recipe_id, .. } => {
+                assert_eq!(recipe_id, "kai_mai_pill_v0");
+            }
+            other => panic!("expected AlchemyIgnite, got {other:?}"),
         }
     }
 }

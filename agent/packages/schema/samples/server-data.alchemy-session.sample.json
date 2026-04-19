@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "type": "alchemy_session",
+  "recipe_id": "kai_mai_pill_v0",
+  "active": true,
+  "elapsed_ticks": 120,
+  "target_ticks": 200,
+  "temp_current": 0.58,
+  "temp_target": 0.6,
+  "temp_band": 0.1,
+  "qi_injected": 9.2,
+  "qi_target": 15.0,
+  "status_label": "容差带内",
+  "stages": [
+    {
+      "at_tick": 0,
+      "window": 0,
+      "summary": "起炉投料 · kai_mai_cao×3 + ling_shui×1",
+      "completed": true,
+      "missed": false
+    }
+  ],
+  "interventions_recent": [
+    "§7[t+58]  InjectQi(2.5)",
+    "§7[t+94]  AdjustTemp(-0.08)",
+    "§d[t+118] InjectQi(1.0) ← 刚刚"
+  ]
+}

@@ -75,6 +75,15 @@ public final class HudRenderCommand {
         return new HudRenderCommand(layer, Kind.TEXTURED_RECT, "", x, y, width, height, color, texturePath);
     }
 
+    /**
+     * Draw an item PNG at {@code bong-client:textures/gui/items/{itemId}.png}
+     * scaled into a {@code size×size} box with top-left at {@code (x, y)}.
+     * Source PNG is assumed 128×128 (matches {@code GridSlotComponent}).
+     */
+    public static HudRenderCommand itemTexture(HudRenderLayer layer, String itemId, int x, int y, int size) {
+        return new HudRenderCommand(layer, Kind.ITEM_TEXTURE, itemId == null ? "" : itemId, x, y, size, size, 0, null);
+    }
+
     public HudRenderLayer layer() {
         return layer;
     }
@@ -131,6 +140,10 @@ public final class HudRenderCommand {
         return kind == Kind.TEXTURED_RECT;
     }
 
+    public boolean isItemTexture() {
+        return kind == Kind.ITEM_TEXTURE;
+    }
+
     public String texturePath() {
         return texturePath;
     }
@@ -141,6 +154,7 @@ public final class HudRenderCommand {
         EDGE_VIGNETTE,
         TOAST,
         RECT,
-        TEXTURED_RECT
+        TEXTURED_RECT,
+        ITEM_TEXTURE
     }
 }

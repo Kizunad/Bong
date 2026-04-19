@@ -65,6 +65,13 @@ public final class MockInventoryData {
             // 骨币改用物品格表达（不再占底栏计数）。灵石不是正式设定，唯一硬通货是封灵骨币。
             .gridItem(InventoryItem.createFull(7, "fengling_bone_coin", "封灵骨币", 1, 1, 0.1, "rare",
                 "刻有封灵阵法的骨质钱币", 57, 1.0, 1.0), 2, 0)
+            // 丹方残卷（plan-alchemy-v1 P6 —— 拖入炼丹界面 §丹方残卷 区即可悟方）
+            .gridItem(InventoryItem.create("recipe_scroll_qixue_pill",
+                "丹方残卷·气血丹", 1, 1, 0.05, "uncommon",
+                "古拙纸页，记载气血丹粗略火候"), 4, 0)
+            .gridItem(InventoryItem.create("recipe_scroll_huiyuan_pill",
+                "丹方残卷·回元丹", 1, 1, 0.05, "uncommon",
+                "边角焦黑，仍可辨识回元丹方"), 4, 1)
             // Stats
             .weight(12.4, 50.0)
             .cultivation("炼气三层", 78.0, 100.0, 0.45)

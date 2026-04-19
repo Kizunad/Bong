@@ -282,6 +282,41 @@ describe("Arbiter", () => {
     expect(result.commands.some((command) => command.type === "modify_zone")).toBe(true);
   });
 
+  it("keeps spawn_npc commands without folding them into zone conflict resolution", () => {
+    const result = runMerge([
+      {
+        source: "calamity",
+        decision: {
+          commands: [
+            {
+              type: "spawn_npc",
+              target: "starter_zone",
+              params: { archetype: "zombie" },
+            },
+            {
+              type: "spawn_event",
+              target: "starter_zone",
+              params: { event: "beast_tide", intensity: 0.5 },
+            },
+            {
+              type: "modify_zone",
+              target: "starter_zone",
+              params: { spirit_qi_delta: -0.1 },
+            },
+          ],
+          narrations: [],
+          reasoning: "spawn npc alongside existing zone commands",
+        },
+      },
+    ]);
+
+    expect(result.commands.map((command) => command.type)).toEqual([
+      "spawn_npc",
+      "spawn_event",
+      "modify_zone",
+    ]);
+  });
+
   it("materializes an era decree into currentEra and uniform global modify_zone commands", () => {
     const state = createTestWorldState();
     state.tick = 888;

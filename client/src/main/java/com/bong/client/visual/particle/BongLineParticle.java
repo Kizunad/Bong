@@ -58,6 +58,14 @@ public class BongLineParticle extends SpriteBillboardParticle {
         return this;
     }
 
+    /** 暴露 SpriteBillboardParticle#setSprite（受保护），供 VfxPlayer 手动注入 atlas sprite。 */
+    public BongLineParticle setSpritePublic(net.minecraft.client.texture.Sprite sprite) {
+        if (sprite != null) {
+            this.setSprite(sprite);
+        }
+        return this;
+    }
+
     /** 暴露 maxAge 写入（vanilla 的 setMaxAge 本来就是 public，这里加链式 for 统一风格）。 */
     public BongLineParticle setMaxAgePublic(int maxAge) {
         this.maxAge = maxAge;

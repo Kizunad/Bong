@@ -248,6 +248,120 @@ pub struct StatusEffects {
     pub active: Vec<ActiveStatusEffect>,
 }
 
+/// plan-HUD-v1 §4 玩家正在 cast F1-F9 快捷槽时挂在 Player 实体上。
+/// 完成 / 中断后移除。
+#[derive(Debug, Clone, Component)]
+pub struct Casting {
+    pub slot: u8,
+    pub started_at_tick: u64,
+    pub duration_ticks: u64,
+    /// 推 `cast_sync` 给 client 时直接用 unix ms，避免 client 反推 tick 时间。
+    pub started_at_ms: u64,
+    pub duration_ms: u32,
+    /// 完成时要消耗的 item instance_id（绑定时刻快照），cast 期间该物品丢出
+    /// 背包则 complete 时找不到 → 视同失败（v1 不报错）。
+    pub bound_instance_id: Option<u64>,
+    /// 开始 cast 时玩家位置（plan §4.3 移动中断阈值用）。
+    pub start_position: valence::prelude::DVec3,
+    /// 完成成功后写到 QuickSlotBindings 的冷却 tick 数（中断走另一个固定值）。
+    pub complete_cooldown_ticks: u64,
+}
+
+/// plan-HUD-v1 §3.4 / §11.4 玩家当前防御姿态 + 流派状态指示。
+/// `stance` 同时受 `UnlockedStyles` 门禁约束（switch 时校验）。
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct DefenseStance {
+    pub stance: DefenseStanceKind,
+    /// 替尸流剩余伪皮层数（被攻击替死后递减）。
+    pub fake_skin_layers: u32,
+    /// 绝灵涡流是否激活中。
+    pub vortex_active: bool,
+    /// 涡流冷却结束 server tick；0 表示无冷却。
+    pub vortex_ready_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefenseStanceKind {
+    None,
+    Jiemai,
+    Tishi,
+    Jueling,
+}
+
+impl Default for DefenseStance {
+    fn default() -> Self {
+        Self {
+            stance: DefenseStanceKind::None,
+            fake_skin_layers: 0,
+            vortex_active: false,
+            vortex_ready_at_tick: 0,
+        }
+    }
+}
+
+/// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制三个流派指示器
+/// （截脉环 / 替尸层数 / 绝灵涡流）的条件渲染门禁——未解锁完全不渲染（§1.4）。
+///
+/// v1 默认全部解锁以便观察 HUD；后续接入修炼系统按真实解锁条件 mutate。
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct UnlockedStyles {
+    pub jiemai: bool,
+    pub tishi: bool,
+    pub jueling: bool,
+}
+
+impl Default for UnlockedStyles {
+    fn default() -> Self {
+        Self {
+            jiemai: true,
+            tishi: true,
+            jueling: true,
+        }
+    }
+}
+
+/// plan-HUD-v1 §10.4 玩家 F1-F9 快捷槽 → 物品 instance_id 绑定。
+/// 由 `quick_slot_bind` 客户端 intent 写入，`use_quick_slot` 时按 slot 取 instance。
+/// 同时跟踪每个 slot 的 cooldown（plan §4.4）。
+#[derive(Debug, Clone, Component, Default)]
+pub struct QuickSlotBindings {
+    pub slots: [Option<u64>; 9],
+    /// 每个 slot 下次可用的 server tick；0 表示无冷却。
+    pub cooldown_until_tick: [u64; 9],
+}
+
+impl QuickSlotBindings {
+    pub const SLOT_COUNT: usize = 9;
+
+    pub fn get(&self, slot: u8) -> Option<u64> {
+        if slot as usize >= Self::SLOT_COUNT {
+            return None;
+        }
+        self.slots[slot as usize]
+    }
+
+    pub fn set(&mut self, slot: u8, instance_id: Option<u64>) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.slots[slot as usize] = instance_id;
+        true
+    }
+
+    pub fn is_on_cooldown(&self, slot: u8, now_tick: u64) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.cooldown_until_tick[slot as usize] > now_tick
+    }
+
+    pub fn set_cooldown(&mut self, slot: u8, until_tick: u64) {
+        if (slot as usize) < Self::SLOT_COUNT {
+            self.cooldown_until_tick[slot as usize] = until_tick;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
