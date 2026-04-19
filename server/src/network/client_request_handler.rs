@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, Client, Commands, EventReader, EventWriter, Query, Res, ResMut, Resource, Username,
+    bevy_ecs, ChunkLayer, Client, Commands, EventReader, EventWriter, Query, Res, ResMut, Resource,
+    Username,
 };
 
 use crate::alchemy::{
@@ -33,6 +34,14 @@ use crate::inventory::{
     ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
+use crate::lingtian::environment::read_environment_at;
+use crate::lingtian::events::{
+    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+    StartReplenishRequest, StartTillRequest,
+};
+use crate::lingtian::session::{ReplenishSource, SessionMode};
+use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
+use crate::lingtian::PlotEnvironment;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -68,6 +77,20 @@ pub struct CombatRequestParams<'w, 's> {
     pub item_registry: Res<'w, ItemRegistry>,
 }
 
+/// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
+/// SystemParam 16 上限。`layers` 用于 `StartTill` 时读 chunk 派生真实
+/// `TerrainKind` + `PlotEnvironment`，避免客户端伪造地形。
+#[derive(SystemParam)]
+pub struct LingtianRequestParams<'w, 's> {
+    pub till_tx: EventWriter<'w, StartTillRequest>,
+    pub renew_tx: EventWriter<'w, StartRenewRequest>,
+    pub planting_tx: EventWriter<'w, StartPlantingRequest>,
+    pub harvest_tx: EventWriter<'w, StartHarvestRequest>,
+    pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
+    pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
+    pub layers: Query<'w, 's, &'static ChunkLayer>,
+}
+
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 
@@ -87,6 +110,7 @@ pub fn handle_client_request_payloads(
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
     mut combat_params: CombatRequestParams,
+    mut lingtian_tx: LingtianRequestParams,
     recipe_registry: Res<RecipeRegistry>,
 ) {
     for ev in events.read() {
@@ -138,7 +162,13 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
-            | ClientRequestV1::SwitchDefenseStance { v, .. } => *v,
+            | ClientRequestV1::SwitchDefenseStance { v, .. }
+            | ClientRequestV1::LingtianStartTill { v, .. }
+            | ClientRequestV1::LingtianStartRenew { v, .. }
+            | ClientRequestV1::LingtianStartPlanting { v, .. }
+            | ClientRequestV1::LingtianStartHarvest { v, .. }
+            | ClientRequestV1::LingtianStartReplenish { v, .. }
+            | ClientRequestV1::LingtianStartDrainQi { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -307,7 +337,135 @@ pub fn handle_client_request_payloads(
                     &combat_params.unlocked_q,
                 );
             }
+            // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
+            ClientRequestV1::LingtianStartTill {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                mode,
+                ..
+            } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                // plan §1.2.2 — terrain / environment 由 server 从 chunk_layer 派生，
+                // 避免客户端伪造；session 再按 `TerrainKind::is_tillable` 决定放行。
+                let (terrain, environment) = match lingtian_tx.layers.get_single() {
+                    Ok(layer) => {
+                        let terrain = layer
+                            .block(pos)
+                            .map(|b| terrain_from_block_kind(b.state.to_kind()))
+                            .unwrap_or(TerrainKind::Unknown);
+                        (terrain, read_environment_at(layer, pos))
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "[bong][network] lingtian_start_till: chunk layer unavailable ({err:?}); \
+                             falling back to Unknown terrain — session will reject."
+                        );
+                        (TerrainKind::Unknown, PlotEnvironment::base())
+                    }
+                };
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} terrain={terrain:?}",
+                    ev.client
+                );
+                lingtian_tx.till_tx.send(StartTillRequest {
+                    player: ev.client,
+                    pos,
+                    hoe_instance_id,
+                    mode: parse_session_mode(&mode),
+                    terrain,
+                    environment,
+                });
+            }
+            ClientRequestV1::LingtianStartRenew {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id}",
+                    ev.client
+                );
+                lingtian_tx.renew_tx.send(StartRenewRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    hoe_instance_id,
+                });
+            }
+            ClientRequestV1::LingtianStartPlanting {
+                x, y, z, plant_id, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id}",
+                    ev.client
+                );
+                lingtian_tx.planting_tx.send(StartPlantingRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    plant_id,
+                });
+            }
+            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode}",
+                    ev.client
+                );
+                lingtian_tx.harvest_tx.send(StartHarvestRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    mode: parse_session_mode(&mode),
+                });
+            }
+            ClientRequestV1::LingtianStartReplenish {
+                x, y, z, source, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source}",
+                    ev.client
+                );
+                let Some(parsed) = parse_replenish_source(&source) else {
+                    tracing::warn!(
+                        "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
+                    );
+                    continue;
+                };
+                lingtian_tx.replenish_tx.send(StartReplenishRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    source: parsed,
+                });
+            }
+            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                lingtian_tx.drain_qi_tx.send(StartDrainQiRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                });
+            }
         }
+    }
+}
+
+fn parse_session_mode(raw: &str) -> SessionMode {
+    match raw.to_ascii_lowercase().as_str() {
+        "auto" => SessionMode::Auto,
+        _ => SessionMode::Manual,
+    }
+}
+
+fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
+    match raw.to_ascii_lowercase().as_str() {
+        "zone" => Some(ReplenishSource::Zone),
+        "bone_coin" => Some(ReplenishSource::BoneCoin),
+        "beast_core" => Some(ReplenishSource::BeastCore),
+        "ling_shui" => Some(ReplenishSource::LingShui),
+        _ => None,
     }
 }
 

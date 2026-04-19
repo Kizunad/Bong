@@ -225,6 +225,68 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
+
+    /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */
+    public static String encodeLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
+        JsonObject obj = envelope("lingtian_start_till");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("hoe_instance_id", hoeInstanceId);
+        obj.addProperty("mode", mode);
+        return obj.toString();
+    }
+
+    /** plan §1.6 — 起翻新 session。 */
+    public static String encodeLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
+        JsonObject obj = envelope("lingtian_start_renew");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("hoe_instance_id", hoeInstanceId);
+        return obj.toString();
+    }
+
+    /** plan §1.2.3 — 起种植 session（背包内须有该 plant_id 的种子）。 */
+    public static String encodeLingtianStartPlanting(int x, int y, int z, String plantId) {
+        JsonObject obj = envelope("lingtian_start_planting");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("plant_id", plantId);
+        return obj.toString();
+    }
+
+    /** plan §1.5 — 起收获 session。{@code mode} = "manual" | "auto"。 */
+    public static String encodeLingtianStartHarvest(int x, int y, int z, String mode) {
+        JsonObject obj = envelope("lingtian_start_harvest");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("mode", mode);
+        return obj.toString();
+    }
+
+    /** plan §1.4 — 起补灵 session。{@code source} = "zone" | "bone_coin" | "beast_core" | "ling_shui"。 */
+    public static String encodeLingtianStartReplenish(int x, int y, int z, String source) {
+        JsonObject obj = envelope("lingtian_start_replenish");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("source", source);
+        return obj.toString();
+    }
+
+    /** plan §1.7 — 起偷灵 session。 */
+    public static String encodeLingtianStartDrainQi(int x, int y, int z) {
+        JsonObject obj = envelope("lingtian_start_drain_qi");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
     /** 通用请求编码（combat UI 系列使用）。payload 可为 {@code null}。 */
     public static String encodeGeneric(String type, JsonObject payload) {
         JsonObject obj = envelope(type);
