@@ -8,6 +8,7 @@ import {
   AlchemyRecipeEntryV1,
   AlchemyStageHintV1,
 } from "./alchemy.js";
+import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
@@ -29,6 +30,7 @@ import {
   AlchemyTakeBackRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
+  BotanyHarvestRequestV1,
   BreakthroughRequestV1,
   ClientRequestV1,
   ForgeRequestV1,
@@ -49,6 +51,8 @@ import {
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemySessionV1,
+  ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanySkillV1,
   ServerDataV1,
 } from "./server-data.js";
 import { VfxEventV1 } from "./vfx-event.js";
@@ -83,6 +87,10 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
+  serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
+  serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
   alchemyOutcomeBucket: AlchemyOutcomeBucket,
@@ -137,6 +145,13 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-botany-harvest-v1.json":
+    SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
+  "server-data-botany-harvest-progress-v1.json":
+    SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
+  "server-data-botany-skill-v1.json":
+    SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
   "alchemy-outcome-bucket.json": SCHEMA_REGISTRY.alchemyOutcomeBucket,

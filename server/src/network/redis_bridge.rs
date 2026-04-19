@@ -4,10 +4,11 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
+use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT,
+    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -43,6 +44,7 @@ pub enum RedisOutbound {
     ForgeEvent(ForgeEventV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
+    BotanyEcology(BotanyEcologySnapshotV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -317,6 +319,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_INSIGHT_REQUEST,
+                payload,
+            })
+        }
+        RedisOutbound::BotanyEcology(snapshot) => {
+            let payload = serde_json::to_string(&snapshot).map_err(|error| {
+                ValidationError::new(format!("failed to serialize BotanyEcologySnapshotV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BOTANY_ECOLOGY,
                 payload,
             })
         }

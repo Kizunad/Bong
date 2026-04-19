@@ -53,6 +53,19 @@ public final class BongHudOrchestrator {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(snapshot, combat, nowMillis, widthMeasurer, maxTextWidth, screenWidth, screenHeight, null);
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         int normalizedWidth = normalizeWidth(maxTextWidth);
@@ -151,6 +164,14 @@ public final class BongHudOrchestrator {
             // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
             // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
             // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));
+        }
+        if (BongClientFeatures.ENABLE_BOTANY_HUD) {
+            commands.addAll(BotanyHudPlanner.buildCommands(
+                widthMeasurer,
+                screenWidth,
+                screenHeight,
+                botanyAnchor
+            ));
         }
 
         return List.copyOf(commands);

@@ -6,6 +6,7 @@ export * from "./channels.js";
 
 // Message schemas
 export * from "./agent-command.js";
+export * from "./botany.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";

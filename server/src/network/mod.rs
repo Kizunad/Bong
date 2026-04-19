@@ -2775,6 +2775,8 @@ mod tests {
                     "Gatherer",
                     GameplayAction::Gather(GatherAction {
                         resource: "spirit_herb".to_string(),
+                        target_entity: None,
+                        mode: None,
                     }),
                 );
 

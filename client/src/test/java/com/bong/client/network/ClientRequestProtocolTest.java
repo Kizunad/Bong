@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.botany.BotanyHarvestMode;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,6 +44,15 @@ public class ClientRequestProtocolTest {
         );
         assertEquals(
             "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"Du\",\"axis\":\"Capacity\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodesBotanyHarvestRequest() {
+        String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
+        assertEquals(
+            "{\"type\":\"botany_harvest_request\",\"v\":1,\"session_id\":\"session-botany-01\",\"mode\":\"auto\"}",
             json
         );
     }

@@ -4,6 +4,7 @@
 
 pub mod agent_command;
 pub mod alchemy;
+pub mod botany;
 pub mod channels;
 pub mod chat_message;
 pub mod client_payload;

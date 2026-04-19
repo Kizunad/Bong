@@ -9,6 +9,7 @@ public enum HudRenderLayer {
     EVENT_STREAM,
     JIEMAI_RING,
     SPELL_VOLUME,
+    BOTANY,
     DERIVED_ATTR,
     TOAST,
     VISUAL,

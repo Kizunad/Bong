@@ -22,6 +22,8 @@ public final class ServerDataRouter {
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
+        BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -67,6 +69,8 @@ public final class ServerDataRouter {
         handlers.put("cultivation_detail", cultivationDetailHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
+        handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);
         handlers.put("alchemy_session", alchemySessionHandler);
         handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);

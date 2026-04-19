@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.google.gson.JsonObject;
 
@@ -87,6 +88,19 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("forge_request");
         obj.addProperty("meridian", meridian.name());
         obj.addProperty("axis", axis.name());
+        return obj.toString();
+    }
+
+    public static String encodeBotanyHarvestRequest(String sessionId, BotanyHarvestMode mode) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId must not be blank");
+        }
+        if (mode == null) {
+            throw new IllegalArgumentException("mode must not be null");
+        }
+        JsonObject obj = envelope("botany_harvest_request");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("mode", mode.wireName());
         return obj.toString();
     }
 

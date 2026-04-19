@@ -35,6 +35,12 @@ export const CHANNELS = {
 
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
+
+  /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
+  BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
+
+  /** Server → Agent: botany 生态快照 (plan-botany-v1 §7 · 定时聚合 zone spirit_qi + 植物密度 + variant 分布) */
+  BOTANY_ECOLOGY: "bong:botany/ecology",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -49,6 +55,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CULTIVATION_DEATH,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.BOTANY_HARVEST_PROGRESS,
+  CHANNELS.BOTANY_ECOLOGY,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

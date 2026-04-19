@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "tick",
+    "zones"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "zones": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "zone",
+          "spirit_qi",
+          "plant_counts",
+          "variant_counts"
+        ],
+        "properties": {
+          "zone": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "spirit_qi": {
+            "minimum": -1,
+            "maximum": 1,
+            "type": "number"
+          },
+          "plant_counts": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "count"
+              ],
+              "properties": {
+                "kind": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "variant_counts": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "variant",
+                "count"
+              ],
+              "properties": {
+                "variant": {
+                  "anyOf": [
+                    {
+                      "const": "none",
+                      "type": "string"
+                    },
+                    {
+                      "const": "thunder",
+                      "type": "string"
+                    },
+                    {
+                      "const": "tainted",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

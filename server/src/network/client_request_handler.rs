@@ -42,7 +42,8 @@ use crate::network::cast_emit::{
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
-use crate::player::state::PlayerState;
+use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
+use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::client_request::ClientRequestV1;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
@@ -74,6 +75,7 @@ const SUPPORTED_VERSION: u8 = 1;
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
+    mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
     mut breakthrough_tx: EventWriter<BreakthroughRequest>,
     mut forge_tx: EventWriter<ForgeRequest>,
     mut insight_tx: EventWriter<InsightChosen>,
@@ -126,6 +128,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::ForgeRequest { v, .. }
             | ClientRequestV1::InsightDecision { v, .. }
+            | ClientRequestV1::BotanyHarvestRequest { v, .. }
             | ClientRequestV1::AlchemyOpenFurnace { v, .. }
             | ClientRequestV1::AlchemyFeedSlot { v, .. }
             | ClientRequestV1::AlchemyTakeBack { v, .. }
@@ -198,6 +201,35 @@ pub fn handle_client_request_payloads(
                     meridian,
                     axis,
                 });
+            }
+            ClientRequestV1::BotanyHarvestRequest {
+                session_id, mode, ..
+            } => {
+                let Some(queue) = gameplay_queue.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
+                    );
+                    continue;
+                };
+                let player_key = clients
+                    .get(ev.client)
+                    .map(|(username, _)| canonical_player_id(username.0.as_str()))
+                    .unwrap_or_else(|_| format!("offline:{:?}", ev.client));
+                queue.enqueue(
+                    player_key,
+                    GameplayAction::Gather(GatherAction {
+                        resource: session_id,
+                        target_entity: None,
+                        mode: Some(match mode {
+                            crate::schema::botany::BotanyHarvestModeV1::Manual => {
+                                crate::botany::components::BotanyHarvestMode::Manual
+                            }
+                            crate::schema::botany::BotanyHarvestModeV1::Auto => {
+                                crate::botany::components::BotanyHarvestMode::Auto
+                            }
+                        }),
+                    }),
+                );
             }
             // ── 炼丹请求 ECS dispatch (plan-alchemy-v1 §4) ──────────────────
             ClientRequestV1::AlchemyTurnPage { delta, .. } => {

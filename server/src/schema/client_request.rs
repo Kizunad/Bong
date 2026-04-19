@@ -33,6 +33,11 @@ pub enum ClientRequestV1 {
         trigger_id: String,
         choice_idx: Option<u32>,
     },
+    BotanyHarvestRequest {
+        v: u8,
+        session_id: String,
+        mode: crate::schema::botany::BotanyHarvestModeV1,
+    },
     // ─── 炼丹（plan-alchemy-v1 §4） ─────────────────────────
     AlchemyOpenFurnace {
         v: u8,
@@ -198,6 +203,27 @@ mod tests {
     fn rejects_unknown_type() {
         let json = r#"{"type":"nuke_world","v":1}"#;
         assert!(serde_json::from_str::<ClientRequestV1>(json).is_err());
+    }
+
+    #[test]
+    fn botany_harvest_request_roundtrip() {
+        let json = r#"{"type":"botany_harvest_request","v":1,"session_id":"session-botany-01","mode":"manual"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::BotanyHarvestRequest {
+                v,
+                session_id,
+                mode,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(session_id, "session-botany-01");
+                assert!(matches!(
+                    mode,
+                    crate::schema::botany::BotanyHarvestModeV1::Manual
+                ));
+            }
+            other => panic!("expected BotanyHarvestRequest, got {other:?}"),
+        }
     }
 
     #[test]
