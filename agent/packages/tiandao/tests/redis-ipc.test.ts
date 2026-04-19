@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RedisIpc } from "../src/redis-ipc.js";
+import { RedisIpc, WORLD_MODEL_STATE_FIELDS, WORLD_MODEL_STATE_KEY } from "../src/redis-ipc.js";
 import { CHANNELS } from "@bong/schema";
 
 const { AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, WORLD_STATE } = CHANNELS;
@@ -413,5 +413,173 @@ describe("redis-ipc", () => {
     expect(envelope.id).toContain("world_model_t123_arbiter_");
     expect(envelope.snapshot.lastTick).toBe(123);
     expect(envelope.snapshot.lastStateTs).toBe(1710000100);
+  });
+
+  it("loads world model snapshot from redis mirror hash", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const logger = { warn: vi.fn() };
+
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
+        name: "末法纪",
+        sinceTick: 188,
+        globalEffect: "灵机渐枯",
+      }),
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({
+        blood_valley: [
+          {
+            name: "blood_valley",
+            spirit_qi: 0.45,
+            danger_level: 2,
+            active_events: ["tribulation"],
+            player_count: 3,
+          },
+        ],
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      }),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({
+        "offline:test-player": 188,
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "188",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "",
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const snapshot = await ipc.loadWorldModelState({ logger });
+
+    expect(snapshot).toEqual({
+      currentEra: {
+        name: "末法纪",
+        sinceTick: 188,
+        globalEffect: "灵机渐枯",
+      },
+      zoneHistory: {
+        blood_valley: [
+          {
+            name: "blood_valley",
+            spirit_qi: 0.45,
+            danger_level: 2,
+            active_events: ["tribulation"],
+            player_count: 3,
+          },
+        ],
+      },
+      lastDecisions: {
+        mutation: {
+          commands: [],
+          narrations: [],
+          reasoning: "ok",
+        },
+      },
+      playerFirstSeenTick: {
+        "offline:test-player": 188,
+      },
+      lastTick: 188,
+      lastStateTs: null,
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("returns null when world model mirror hash is missing", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const logger = { warn: vi.fn() };
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const snapshot = await ipc.loadWorldModelState({ logger });
+    expect(snapshot).toBeNull();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("fails soft when world model mirror has malformed json", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const logger = { warn: vi.fn() };
+
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: "{broken",
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "188",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1711111188",
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const snapshot = await ipc.loadWorldModelState({ logger });
+    expect(snapshot).toBeNull();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("fails soft when world model mirror is missing required fields", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const logger = { warn: vi.fn() };
+
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: "null",
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "188",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1711111188",
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    const snapshot = await ipc.loadWorldModelState({ logger });
+    expect(snapshot).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("missing world model mirror fields"),
+    );
   });
 });
