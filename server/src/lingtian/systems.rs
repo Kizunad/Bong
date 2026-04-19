@@ -20,18 +20,21 @@ use valence::prelude::{
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
-use crate::inventory::PlayerInventory;
+use crate::inventory::{
+    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
+    MAIN_PACK_CONTAINER_ID,
+};
 
 use super::events::{
-    PlantingCompleted, RenewCompleted, StartPlantingRequest, StartRenewRequest, StartTillRequest,
-    TillCompleted,
+    HarvestCompleted, PlantingCompleted, RenewCompleted, StartHarvestRequest, StartPlantingRequest,
+    StartRenewRequest, StartTillRequest, TillCompleted,
 };
 use super::growth::advance_one_lingtian_tick;
 use super::hoe::HoeKind;
 use super::plot::{CropInstance, LingtianPlot};
 use super::qi_account::{LingtianTickAccumulator, ZoneQiAccount, DEFAULT_ZONE};
-use super::seed::SeedRegistry;
-use super::session::{PlantingSession, RenewSession, TillSession};
+use super::seed::{seed_id_for, SeedRegistry};
+use super::session::{HarvestSession, PlantingSession, RenewSession, TillSession};
 use super::terrain::classify_for_till;
 
 const MAIN_HAND_SLOT: &str = "main_hand";
@@ -41,6 +44,7 @@ pub enum ActiveSession {
     Till(TillSession),
     Renew(RenewSession),
     Planting(PlantingSession),
+    Harvest(HarvestSession),
 }
 
 impl ActiveSession {
@@ -49,6 +53,7 @@ impl ActiveSession {
             ActiveSession::Till(s) => s.tick(),
             ActiveSession::Renew(s) => s.tick(),
             ActiveSession::Planting(s) => s.tick(),
+            ActiveSession::Harvest(s) => s.tick(),
         }
     }
 
@@ -57,7 +62,37 @@ impl ActiveSession {
             ActiveSession::Till(s) => s.is_finished(),
             ActiveSession::Renew(s) => s.is_finished(),
             ActiveSession::Planting(s) => s.is_finished(),
+            ActiveSession::Harvest(s) => s.is_finished(),
         }
+    }
+}
+
+/// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
+#[derive(Debug, Resource)]
+pub struct LingtianHarvestRng {
+    state: u64,
+}
+
+impl LingtianHarvestRng {
+    pub fn new(seed: u64) -> Self {
+        Self { state: seed.max(1) }
+    }
+
+    pub fn next_f32(&mut self) -> f32 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        // 取低 24 位避免 f32 精度噪音 → [0, 1)
+        ((x & 0x00FF_FFFF) as f32) / (0x0100_0000_u32 as f32)
+    }
+}
+
+impl Default for LingtianHarvestRng {
+    fn default() -> Self {
+        // 某个磨过的"魔数"，只要每次启动一致即可
+        Self::new(0x9E37_79B9_7F4A_7C15)
     }
 }
 
@@ -281,6 +316,37 @@ pub fn handle_start_planting(
     }
 }
 
+pub fn handle_start_harvest(
+    mut events: EventReader<StartHarvestRequest>,
+    mut sessions: ResMut<ActiveLingtianSessions>,
+    plots: Query<&LingtianPlot>,
+) {
+    for req in events.read() {
+        if sessions.has_session(req.player) {
+            tracing::warn!(
+                "[bong][lingtian] StartHarvestRequest rejected: player={:?} already has active session",
+                req.player
+            );
+            continue;
+        }
+        let plant_id = plots
+            .iter()
+            .find(|p| p.pos == req.pos)
+            .and_then(|p| p.crop.as_ref())
+            .filter(|c| c.is_ripe())
+            .map(|c| c.kind.clone());
+        let Some(plant_id) = plant_id else {
+            tracing::warn!(
+                "[bong][lingtian] StartHarvestRequest rejected: no ripe crop at {:?}",
+                req.pos
+            );
+            continue;
+        };
+        let session = HarvestSession::new(req.pos, plant_id, req.mode);
+        sessions.try_insert(req.player, ActiveSession::Harvest(session));
+    }
+}
+
 fn player_has_seed_for(inventory: &PlayerInventory, seeds: &SeedRegistry, plant_id: &str) -> bool {
     let Some(seed_id) = seeds.seed_for_plant(plant_id) else {
         return false;
@@ -355,9 +421,14 @@ pub fn apply_completed_sessions(
     mut inventories: Query<&mut PlayerInventory>,
     mut plots: Query<(Entity, &mut LingtianPlot)>,
     seeds: Res<SeedRegistry>,
+    plant_registry: Res<PlantKindRegistry>,
+    item_registry: Res<ItemRegistry>,
+    mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut harvest_rng: ResMut<LingtianHarvestRng>,
     mut till_completed: EventWriter<TillCompleted>,
     mut renew_completed: EventWriter<RenewCompleted>,
     mut planting_completed: EventWriter<PlantingCompleted>,
+    mut harvest_completed: EventWriter<HarvestCompleted>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -401,6 +472,20 @@ pub fn apply_completed_sessions(
                     &mut plots,
                     &seeds,
                     &mut planting_completed,
+                );
+            }
+            ActiveSession::Harvest(s) => {
+                apply_harvest_completion(
+                    player,
+                    &s.pos,
+                    &s.plant_id,
+                    &mut inventories,
+                    &mut plots,
+                    &plant_registry,
+                    &item_registry,
+                    &mut allocator,
+                    &mut harvest_rng,
+                    &mut harvest_completed,
                 );
             }
         }
@@ -448,6 +533,182 @@ fn apply_planting_completion(
         pos: *pos,
         plant_id: plant_id.clone(),
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_harvest_completion(
+    player: Entity,
+    pos: &valence::prelude::BlockPos,
+    plant_id: &PlantId,
+    inventories: &mut Query<&mut PlayerInventory>,
+    plots: &mut Query<(Entity, &mut LingtianPlot)>,
+    plant_registry: &PlantKindRegistry,
+    item_registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    rng: &mut LingtianHarvestRng,
+    harvest_completed: &mut EventWriter<HarvestCompleted>,
+) {
+    let Some(kind) = plant_registry.get(plant_id) else {
+        tracing::warn!(
+            "[bong][lingtian] HarvestSession finished but plant_id={plant_id} no longer in registry"
+        );
+        return;
+    };
+    let Ok(mut inv) = inventories.get_mut(player) else {
+        return;
+    };
+    // 复验 plot 仍有 ripe crop（防 race / 双方同 tick 收获）
+    let Some((_e, mut plot)) = plots
+        .iter_mut()
+        .find(|(_, p)| &p.pos == pos && p.crop.as_ref().map(|c| c.is_ripe()).unwrap_or(false))
+    else {
+        tracing::warn!(
+            "[bong][lingtian] HarvestSession finished but plot at {pos:?} no longer ripe"
+        );
+        return;
+    };
+
+    // 1. 给作物 item（plant_id 同名）
+    let Some(plant_item_template) = item_registry.get(plant_id) else {
+        tracing::warn!(
+            "[bong][lingtian] no ItemTemplate for plant_id={plant_id} (need entry in herbs.toml)"
+        );
+        return;
+    };
+    if !award_item_to_inventory(&mut inv, plant_item_template, allocator) {
+        tracing::warn!(
+            "[bong][lingtian] inventory full; dropped 1× {plant_id} for player={player:?}"
+        );
+    }
+
+    // 2. 按 PlantRarity::seed_drop_rate 概率发种子
+    let drop_rate = kind.rarity.seed_drop_rate();
+    let roll = rng.next_f32();
+    let seed_dropped = if roll < drop_rate {
+        let seed_id = seed_id_for(plant_id);
+        if let Some(seed_template) = item_registry.get(&seed_id) {
+            if !award_item_to_inventory(&mut inv, seed_template, allocator) {
+                tracing::warn!(
+                    "[bong][lingtian] inventory full; dropped 1× {seed_id} for player={player:?}"
+                );
+            }
+            true
+        } else {
+            tracing::warn!(
+                "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
+            );
+            false
+        }
+    } else {
+        false
+    };
+
+    // 3. plot 转为空田 + harvest_count++
+    plot.crop = None;
+    plot.harvest_count = plot.harvest_count.saturating_add(1);
+
+    harvest_completed.send(HarvestCompleted {
+        player,
+        pos: *pos,
+        plant_id: plant_id.clone(),
+        seed_dropped,
+    });
+}
+
+/// 把一个 1×1 item 加到玩家背包。
+///
+/// 策略（最简）：
+///   1. 在 `main_pack` 里找同 template_id 的栈 → stack += 1
+///   2. 否则在 `main_pack` 里找首个空 (row, col) 1×1 槽 → spawn 新 instance（allocator 给 id）
+///   3. 没空位 → 返回 false（调用方 warn 丢弃）
+///
+/// 仅支持 1×1 item（herbs / seeds 是 1×1）。多格 item 走另一路径（未实装，
+/// 留 P5+ 通用 inventory placement helper）。
+fn award_item_to_inventory(
+    inv: &mut PlayerInventory,
+    template: &ItemTemplate,
+    allocator: &mut InventoryInstanceIdAllocator,
+) -> bool {
+    if template.grid_w != 1 || template.grid_h != 1 {
+        tracing::warn!(
+            "[bong][lingtian] award_item_to_inventory: only 1×1 supported (template={} is {}×{})",
+            template.id,
+            template.grid_w,
+            template.grid_h,
+        );
+        return false;
+    }
+    let Some(main_pack) = inv
+        .containers
+        .iter_mut()
+        .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+    else {
+        tracing::warn!("[bong][lingtian] award_item_to_inventory: no main_pack container");
+        return false;
+    };
+
+    // 1. stack
+    if let Some(slot) = main_pack
+        .items
+        .iter_mut()
+        .find(|p| p.instance.template_id == template.id)
+    {
+        slot.instance.stack_count = slot.instance.stack_count.saturating_add(1);
+        bump_revision(inv);
+        return true;
+    }
+
+    // 2. 找首个空 (row, col)
+    let (rows, cols) = (main_pack.rows, main_pack.cols);
+    let mut occupied = vec![vec![false; usize::from(cols)]; usize::from(rows)];
+    for placed in &main_pack.items {
+        for dr in 0..placed.instance.grid_h {
+            for dc in 0..placed.instance.grid_w {
+                let r = usize::from(placed.row + dr);
+                let c = usize::from(placed.col + dc);
+                if r < occupied.len() && c < occupied[0].len() {
+                    occupied[r][c] = true;
+                }
+            }
+        }
+    }
+    for r in 0..rows {
+        for c in 0..cols {
+            if !occupied[usize::from(r)][usize::from(c)] {
+                let Ok(instance_id) = allocator.next_id() else {
+                    tracing::warn!(
+                        "[bong][lingtian] award_item_to_inventory: instance_id allocator exhausted"
+                    );
+                    return false;
+                };
+                let instance = ItemInstance {
+                    instance_id,
+                    template_id: template.id.clone(),
+                    display_name: template.display_name.clone(),
+                    grid_w: template.grid_w,
+                    grid_h: template.grid_h,
+                    weight: template.base_weight,
+                    rarity: template.rarity,
+                    description: template.description.clone(),
+                    stack_count: 1,
+                    spirit_quality: template.spirit_quality_initial,
+                    durability: 1.0,
+                };
+                main_pack.items.push(crate::inventory::PlacedItemState {
+                    row: r,
+                    col: c,
+                    instance,
+                });
+                bump_revision(inv);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn bump_revision(inv: &mut PlayerInventory) {
+    inv.revision = crate::inventory::InventoryRevision(inv.revision.0.saturating_add(1));
 }
 
 /// plan §1.2.1 / §1.6 — 主手锄扣 1 次耐久。归一化 [0, 1]。归零移除装备。
@@ -593,17 +854,24 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(ActiveLingtianSessions::new())
             .insert_resource(SeedRegistry::new())
+            .insert_resource(PlantKindRegistry::new())
+            .insert_resource(ItemRegistry::default())
+            .insert_resource(InventoryInstanceIdAllocator::default())
+            .insert_resource(LingtianHarvestRng::default())
             .add_event::<StartTillRequest>()
             .add_event::<TillCompleted>()
             .add_event::<StartRenewRequest>()
             .add_event::<RenewCompleted>()
             .add_event::<StartPlantingRequest>()
             .add_event::<PlantingCompleted>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<HarvestCompleted>()
             .add_systems(
                 Update,
                 (
                     handle_start_till,
                     handle_start_renew,
+                    handle_start_harvest,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1064,18 +1332,24 @@ mod tests {
         app.insert_resource(ActiveLingtianSessions::new())
             .insert_resource(registry)
             .insert_resource(seeds)
+            .insert_resource(ItemRegistry::default())
+            .insert_resource(InventoryInstanceIdAllocator::default())
+            .insert_resource(LingtianHarvestRng::default())
             .add_event::<StartPlantingRequest>()
             .add_event::<PlantingCompleted>()
             .add_event::<StartTillRequest>()
             .add_event::<TillCompleted>()
             .add_event::<StartRenewRequest>()
             .add_event::<RenewCompleted>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<HarvestCompleted>()
             .add_systems(
                 Update,
                 (
                     handle_start_till,
                     handle_start_renew,
                     handle_start_planting,
+                    handle_start_harvest,
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
@@ -1218,5 +1492,318 @@ mod tests {
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // P4 收获 e2e
+    // ------------------------------------------------------------------------
+
+    use crate::inventory::{ItemCategory, ItemEffect};
+    use crate::lingtian::session::HARVEST_MANUAL_TICKS;
+
+    fn herb_template(id: &str, display: &str) -> ItemTemplate {
+        ItemTemplate {
+            id: id.into(),
+            display_name: display.into(),
+            category: ItemCategory::Herb,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.85,
+            description: String::new(),
+            effect: None as Option<ItemEffect>,
+            cast_duration_ms: 1500,
+            cooldown_ms: 1500,
+            weapon_spec: None,
+        }
+    }
+
+    fn seed_template(id: &str) -> ItemTemplate {
+        ItemTemplate {
+            id: id.into(),
+            display_name: id.into(),
+            category: ItemCategory::Misc,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.05,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.7,
+            description: String::new(),
+            effect: None as Option<ItemEffect>,
+            cast_duration_ms: 1500,
+            cooldown_ms: 1500,
+            weapon_spec: None,
+        }
+    }
+
+    fn registry_with_herb_and_seed_templates() -> ItemRegistry {
+        let mut m = HashMap::new();
+        for id in ["ci_she_hao", "ning_mai_cao", "ling_mu_miao"] {
+            m.insert(id.to_string(), herb_template(id, id));
+        }
+        for id in ["ci_she_hao_seed", "ning_mai_cao_seed", "ling_mu_miao_seed"] {
+            m.insert(id.to_string(), seed_template(id));
+        }
+        ItemRegistry::from_map(m)
+    }
+
+    fn build_harvest_app() -> App {
+        let mut app = App::new();
+        let plant_registry = registry_with_three_test_plants();
+        let seeds = SeedRegistry::from_plant_registry(&plant_registry);
+        app.insert_resource(ActiveLingtianSessions::new())
+            .insert_resource(plant_registry)
+            .insert_resource(seeds)
+            .insert_resource(registry_with_herb_and_seed_templates())
+            .insert_resource(InventoryInstanceIdAllocator::default())
+            .insert_resource(LingtianHarvestRng::new(0xDEAD_BEEF))
+            .add_event::<StartHarvestRequest>()
+            .add_event::<HarvestCompleted>()
+            .add_event::<StartTillRequest>()
+            .add_event::<TillCompleted>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<RenewCompleted>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<PlantingCompleted>()
+            .add_systems(
+                Update,
+                (
+                    handle_start_till,
+                    handle_start_renew,
+                    handle_start_planting,
+                    handle_start_harvest,
+                    tick_lingtian_sessions,
+                    apply_completed_sessions,
+                )
+                    .chain(),
+            );
+        app
+    }
+
+    fn empty_inventory_8x8() -> PlayerInventory {
+        let main_pack = ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.into(),
+            name: "main".into(),
+            rows: 8,
+            cols: 8,
+            items: vec![],
+        };
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![main_pack],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 999.0,
+        }
+    }
+
+    fn spawn_ripe_plot(app: &mut App, plant_id: &str, pos: BlockPos) -> Entity {
+        let mut p = LingtianPlot::new(pos, None);
+        let mut crop = CropInstance::new(plant_id.into());
+        crop.growth = 1.0;
+        p.crop = Some(crop);
+        app.world_mut().spawn(p).id()
+    }
+
+    fn count_in_main_pack(inv: &PlayerInventory, template_id: &str) -> u32 {
+        inv.containers
+            .iter()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .map(|c| {
+                c.items
+                    .iter()
+                    .filter(|p| p.instance.template_id == template_id)
+                    .map(|p| p.instance.stack_count)
+                    .sum::<u32>()
+            })
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn harvest_e2e_drops_plant_and_clears_plot() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(2, 64, 2);
+        let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!(p.crop.is_none(), "plot 应空");
+        assert_eq!(p.harvest_count, 1, "harvest_count 应 +1");
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, "ci_she_hao"), 1, "应得 1 株作物");
+    }
+
+    #[test]
+    fn harvest_rejected_when_crop_not_ripe() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let mut p = LingtianPlot::new(pos, None);
+        let mut crop = CropInstance::new("ci_she_hao".into());
+        crop.growth = 0.5;
+        p.crop = Some(crop);
+        app.world_mut().spawn(p);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    #[test]
+    fn harvest_rejected_when_no_crop() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        app.world_mut().spawn(LingtianPlot::new(pos, None));
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        app.update();
+        assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    #[test]
+    fn five_harvests_make_plot_barren() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(3, 64, 3);
+        // 收 N_RENEW 次：每次都重新种熟（手动设 growth=1）
+        let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        for i in 0..crate::lingtian::plot::N_RENEW {
+            app.world_mut().send_event(StartHarvestRequest {
+                player,
+                pos,
+                mode: SessionMode::Manual,
+            });
+            for _ in 0..HARVEST_MANUAL_TICKS {
+                app.update();
+            }
+            // 复种（绕过 PlantingSession，直接重熟）
+            let mut p = app.world_mut().get_mut::<LingtianPlot>(plot).unwrap();
+            assert_eq!(p.harvest_count, i + 1);
+            if i + 1 < crate::lingtian::plot::N_RENEW {
+                let mut crop = CropInstance::new("ci_she_hao".into());
+                crop.growth = 1.0;
+                p.crop = Some(crop);
+            }
+        }
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!(p.is_barren(), "5 次收获后应贫瘠");
+    }
+
+    #[test]
+    fn harvest_stack_increments_existing_stack() {
+        let mut app = build_harvest_app();
+        // 玩家先有一摞 ci_she_hao = 3
+        let mut inv = empty_inventory_8x8();
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: ItemInstance {
+                    instance_id: 999,
+                    template_id: "ci_she_hao".into(),
+                    display_name: "ci_she_hao".into(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.1,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 3,
+                    spirit_quality: 0.85,
+                    durability: 1.0,
+                },
+            });
+        let player = app.world_mut().spawn(inv).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, "ci_she_hao"), 4, "原 3 → 4");
+        // 校验"叠到原摞而非新建" — 数 ci_she_hao 的 PlacedItemState 数量
+        // （种子可能另起一摞，所以不能数总 items.len）
+        let ci_she_hao_stacks = inv.containers[0]
+            .items
+            .iter()
+            .filter(|p| p.instance.template_id == "ci_she_hao")
+            .count();
+        assert_eq!(ci_she_hao_stacks, 1, "应叠到原 ci_she_hao 摞");
+    }
+
+    #[test]
+    fn harvest_drops_seed_when_rng_under_drop_rate() {
+        // 先确认：seed=2 的第一 roll < 0.30（Common 掉率），otherwise 测试无意义
+        let mut probe = LingtianHarvestRng::new(2);
+        let roll = probe.next_f32();
+        assert!(roll < 0.30, "seed 2 第一 roll = {roll} 应 < 0.30");
+
+        let mut app = App::new();
+        let plant_registry = registry_with_three_test_plants();
+        let seeds = SeedRegistry::from_plant_registry(&plant_registry);
+        app.insert_resource(ActiveLingtianSessions::new())
+            .insert_resource(plant_registry)
+            .insert_resource(seeds)
+            .insert_resource(registry_with_herb_and_seed_templates())
+            .insert_resource(InventoryInstanceIdAllocator::default())
+            .insert_resource(LingtianHarvestRng::new(2))
+            .add_event::<StartHarvestRequest>()
+            .add_event::<HarvestCompleted>()
+            .add_event::<StartTillRequest>()
+            .add_event::<TillCompleted>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<RenewCompleted>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<PlantingCompleted>()
+            .add_systems(
+                Update,
+                (
+                    handle_start_harvest,
+                    tick_lingtian_sessions,
+                    apply_completed_sessions,
+                )
+                    .chain(),
+            );
+
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(count_in_main_pack(inv, "ci_she_hao"), 1);
+        assert_eq!(
+            count_in_main_pack(inv, "ci_she_hao_seed"),
+            1,
+            "RNG roll < 0.3 应掉种子"
+        );
     }
 }

@@ -25,6 +25,10 @@ pub const RENEW_TICKS: u32 = 100;
 /// plan §1.2.3 — 种植 1s。
 pub const PLANTING_TICKS: u32 = 20;
 
+/// plan §1.5 — 收获 manual 2.5s / auto 7s（与采集浮窗范式同档）。
+pub const HARVEST_MANUAL_TICKS: u32 = 50;
+pub const HARVEST_AUTO_TICKS: u32 = 140;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionMode {
     Manual,
@@ -122,6 +126,54 @@ impl RenewSession {
         }
         self.elapsed_ticks = self.elapsed_ticks.saturating_add(1);
         if self.elapsed_ticks >= RENEW_TICKS {
+            self.state = SessionState::Finished;
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        if self.state == SessionState::Running {
+            self.state = SessionState::Cancelled;
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.state == SessionState::Finished
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HarvestSession {
+    pub pos: BlockPos,
+    pub plant_id: PlantId,
+    pub mode: SessionMode,
+    pub elapsed_ticks: u32,
+    pub state: SessionState,
+}
+
+impl HarvestSession {
+    pub fn new(pos: BlockPos, plant_id: PlantId, mode: SessionMode) -> Self {
+        Self {
+            pos,
+            plant_id,
+            mode,
+            elapsed_ticks: 0,
+            state: SessionState::Running,
+        }
+    }
+
+    pub fn target_ticks(&self) -> u32 {
+        match self.mode {
+            SessionMode::Manual => HARVEST_MANUAL_TICKS,
+            SessionMode::Auto => HARVEST_AUTO_TICKS,
+        }
+    }
+
+    pub fn tick(&mut self) {
+        if self.state != SessionState::Running {
+            return;
+        }
+        self.elapsed_ticks = self.elapsed_ticks.saturating_add(1);
+        if self.elapsed_ticks >= self.target_ticks() {
             self.state = SessionState::Finished;
         }
     }
@@ -273,5 +325,33 @@ mod tests {
         }
         assert!(!s.is_finished());
         assert_eq!(s.state, SessionState::Cancelled);
+    }
+
+    #[test]
+    fn harvest_manual_finishes_at_50_ticks() {
+        let mut s = HarvestSession::new(pos(), "ci_she_hao".into(), SessionMode::Manual);
+        for _ in 0..HARVEST_MANUAL_TICKS - 1 {
+            s.tick();
+            assert!(!s.is_finished());
+        }
+        s.tick();
+        assert!(s.is_finished());
+    }
+
+    #[test]
+    fn harvest_auto_takes_longer_than_manual() {
+        let m = HarvestSession::new(pos(), "ci_she_hao".into(), SessionMode::Manual).target_ticks();
+        let a = HarvestSession::new(pos(), "ci_she_hao".into(), SessionMode::Auto).target_ticks();
+        assert!(a > m);
+    }
+
+    #[test]
+    fn harvest_cancel_blocks_finish() {
+        let mut s = HarvestSession::new(pos(), "ci_she_hao".into(), SessionMode::Manual);
+        s.cancel();
+        for _ in 0..500 {
+            s.tick();
+        }
+        assert!(!s.is_finished());
     }
 }

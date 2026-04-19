@@ -72,3 +72,21 @@ pub struct PlantingCompleted {
     pub pos: BlockPos,
     pub plant_id: PlantId,
 }
+
+/// 玩家请求收获某熟 plot（plan §1.5）。`mode` 控制 manual 2.5s / auto 7s。
+/// auto 模式在 client 层应已校验 herbalism Lv.3+；server 信任请求。
+#[derive(Debug, Clone, Event)]
+pub struct StartHarvestRequest {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub mode: SessionMode,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct HarvestCompleted {
+    pub player: Entity,
+    pub pos: BlockPos,
+    pub plant_id: PlantId,
+    /// 是否同时掉落 1 颗种子（按 PlantRarity::seed_drop_rate）。
+    pub seed_dropped: bool,
+}
