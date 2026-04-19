@@ -53,8 +53,8 @@ fn xp_to_next(lv: u8) -> u32 {
 // Lv.9 → 10: 10_000 XP (累计 38_500)
 ```
 
-- [ ] Lv.3 通常是"解锁自动化动作"的门槛（botany/lingtian 已采用）
-- [ ] Lv.10 是硬上限，不可超
+- [x] Lv.3 通常是"解锁自动化动作"的门槛（botany/lingtian 已采用）
+- [x] Lv.10 是硬上限，不可超
 
 ### §2.2 XP 来源类型
 
@@ -139,20 +139,20 @@ pub struct SkillScroll {
 > 草图 `docs/svg/inspect-skill.svg`。整体 1920×1080，三列 380 + 1020 + 420。
 
 **InspectScreen 级约定**（跨所有 tab 一致）：
-- [ ] **右侧常驻背包**：任何 tab 选中，右侧 420 列始终渲染塔科夫式背包（多容器 tab：主 5×7 / 小口袋 3×3 / 前挂 3×4 / 腰包 v2+）
-- [ ] **左侧换 tab 内容**：装备 / 修仙 / 伤口 / 状态 / **技艺** 切换只刷新左侧
-- [ ] **DragState 跨 tab 持续**：拖拽中切 tab 不重置，松开时按目标 tab 的当前 drop target 判定合法性（残卷槽只在技艺 tab 内存在 → 切到其他 tab 拖拽相当于无目标 → 回弹原位）
+- [x] **右侧常驻背包**：任何 tab 选中，右侧 420 列始终渲染塔科夫式背包（多容器 tab：主 5×7 / 小口袋 3×3 / 前挂 3×4 / 腰包 v2+）
+- [x] **左侧换 tab 内容**：装备 / 修仙 / 伤口 / 状态 / **技艺** 切换只刷新左侧
+- [x] **DragState 跨 tab 持续**：拖拽中切 tab 不重置，松开时按目标 tab 的当前 drop target 判定合法性（残卷槽只在技艺 tab 内存在 → 切到其他 tab 拖拽相当于无目标 → 回弹原位）
 
 **技艺 tab 三列**：
-- [ ] **左 380**：skill 列表 · 每行 `{ 图标 · 中文名 · Lv.X / cap Y · XP 进度条 · 最近 +XP }`；**灰显未学**（v2+ 战斗武学 / 阵法 / 师承）；底部**残卷拖入槽**（单格 1×2 容纳珍本）
+- [x] **左 380**：skill 列表 · 每行 `{ 图标 · 中文名 · Lv.X / cap Y · XP 进度条 · 最近 +XP }`；**灰显未学**（v2+ 战斗武学 / 阵法 / 师承）；底部**残卷拖入槽**（单格 1×2 容纳珍本）
 - [ ] **中 1020**：选中 skill 详情 · 四象限：XP 累计曲线 / Lv 效果表（当前 Lv 行高亮）/ 近期流水 / 里程碑 · 底部"当前 Lv 实际生效"大横条 + 品质分布 mini 对比
-- [ ] **右 420**：常驻背包（见上）
+- [x] **右 420**：常驻背包（见上）
 
 **自定义组件**（非通用）：
-- [ ] `SkillRowComponent`（左列每行）
+- [x] `SkillRowComponent`（左列每行）
 - [ ] `SkillCurveComponent`（XP 曲线，Canvas）
 - [ ] `SkillMilestoneListComponent`（里程碑条目）
-- [ ] 背包仍复用 `BackpackGridPanel`
+- [x] 背包仍复用 `BackpackGridPanel`
 
 ### §5.2 场景浮窗就地显示
 
@@ -184,9 +184,9 @@ fn interp(lv: u8, pts: &[(u8, f32)]) -> f32 {
 }
 ```
 
-- [ ] 示例：herbalism Lv.4 自动采时长 = interp(4, [(3, 8.0), (5, 6.0)]) = **7.0s**
+- [x] 示例：herbalism Lv.4 自动采时长 = interp(4, [(3, 8.0), (5, 6.0)]) = **7.0s**
 - [ ] 未显式写端点的项，Lv.0 为"基础无加成"（自动 ✗ / 时长 +0 / 率 +0）
-- [ ] cap 压制：`effective_lv = min(real_lv, cap)`，实际生效用 effective_lv 插值
+- [x] cap 压制：`effective_lv = min(real_lv, cap)`，实际生效用 effective_lv 插值
 
 ### §6.1 herbalism
 
@@ -324,20 +324,20 @@ pub enum XpGainSource {
 }
 ```
 
-- [ ] `SkillSet` 挂玩家 entity，BlockEntity 不需要
+- [x] `SkillSet` 挂玩家 entity，BlockEntity 不需要
 - [ ] `LifeRecord.skill_milestones: Vec<SkillMilestone>`（每升一级记一笔，亡者博物馆可见）
-- [ ] Events：
+- [x] Events：
   - `SkillXpGain { char, skill, amount, source: XpGainSource }`
   - `SkillLvUp { char, skill, new_lv, narration }`
   - `SkillCapChanged { char, skill, new_cap }`（境界突破/跌落触发）
   - `SkillScrollUsed { char, scroll_id, skill, xp_granted, was_duplicate: bool }`
-- [ ] Channel：`bong:skill/xp_gain` · `bong:skill/lv_up` · `bong:skill/cap_changed` · `bong:skill/scroll_used`
-- [ ] IPC Schema（agent/packages/schema）：`SkillId` enum + `XpGainSource` tagged union · 为 agent 读 NPC skill 画像 + 生成升级 narration 准备
+- [x] Channel：`bong:skill/xp_gain` · `bong:skill/lv_up` · `bong:skill/cap_changed` · `bong:skill/scroll_used`
+- [x] IPC Schema（agent/packages/schema）：`SkillId` enum + `XpGainSource` tagged union · 为 agent 读 NPC skill 画像 + 生成升级 narration 准备
 
 ### Client
 
-- [ ] `SkillSetStore`（完整 SkillSet 快照，InspectScreen 技艺 tab 消费）
-- [ ] `BotanySkillStore` **deprecated** → 改为从 `SkillSetStore` 派生 `herbalism` 单项视图（不独立同步）
+- [x] `SkillSetStore`（完整 SkillSet 快照，InspectScreen 技艺 tab 消费）
+- [x] `BotanySkillStore` **deprecated** → 改为从 `SkillSetStore` 派生 `herbalism` 单项视图（不独立同步）
 - [ ] 复用：`InventoryStateStore`（skill_scroll 拖拽源）· `DragState`
 
 ---
@@ -359,7 +359,7 @@ pub enum XpGainSource {
 
 ## §10 跨 plan 钩子
 
-- [ ] **plan-botany-v1 / plan-lingtian-v1**：`BotanySkillStore` 被本 plan 替代（`SkillSetStore` 派生）；XP 数值表全部从本 plan §7.1 抓取
+- [x] **plan-botany-v1 / plan-lingtian-v1**：`BotanySkillStore` 被本 plan 替代（`SkillSetStore` 派生）；XP 数值表全部从本 plan §7.1 抓取
 - [ ] **plan-alchemy-v1**：§6.2 效果表代入 `fire_profile.tolerance` 计算；炸炉 +1 XP 写入炉结算逻辑
 - [ ] **plan-forge-v1**：§6.3 代入 Tempering 命中窗口；`LearnedBlueprints` 与本 plan `SkillSet` 互补（图谱是配方，skill 是手艺）
 - [ ] **plan-inventory-v1**：`skill_scroll` item 独立 1×1 类型（与丹方残卷/图谱残卷并列）

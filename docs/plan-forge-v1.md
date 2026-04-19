@@ -358,7 +358,7 @@ pub struct LearnedBlueprints {
 - [ ] **plan-botany-v1**（待立）：灵木采集
 - [ ] **plan-npc-ai-v1**：散修 NPC 使用武器时读 quality/color；worldview §九 "游商傀儡"未来可作为 NPC 铁匠
 - [ ] **plan-HUD-v1**：武器 tooltip 扩展（quality / color / side_effects 显示）见 `weapon-treasure.svg`
-- [ ] **plan-cultivation-v1**：开光步骤要求 `min_realm`（通灵+）才能打道器
+- [x] **plan-cultivation-v1**：开光步骤要求 `min_realm`（通灵+）才能打道器
 
 ---
 

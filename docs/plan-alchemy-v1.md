@@ -110,7 +110,7 @@ pub enum Intervention {
 #### 中途投料
 
 - [x] `stages[]` 定义多阶段投料窗口：`{ at_tick: 80, required: [{material, count}], window: 20 }`
-- [ ] 到 tick 时 UI 提示"该下 X 了"（投料槽闪烁）
+- [x] 到 tick 时 UI 提示"该下 X 了"（投料槽闪烁）
 - [x] window 内未投 / 投错 → 走残缺匹配或失败
 
 #### 离线 / 持续性
@@ -130,7 +130,7 @@ pub struct LearnedRecipes {
 ```
 
 - [x] 初始玩家无已学方子（或仅"开脉丹"作为教学）
-- [ ] **学习**：从背包拖【丹方残卷】item 到卷轴区 → `LearnedRecipes.ids.push(id)` + 残卷消耗
+- [x] **学习**：从背包拖【丹方残卷】item 到卷轴区 → `LearnedRecipes.ids.push(id)` + 残卷消耗
 - [x] **翻页**：卷轴 UI 左右箭头切换 `current_index`
 - [x] 重复残卷（已学）→ 提示"此方已悟"，不消耗
 - [ ] 残卷内容损坏（未来扩展）→ 只能学到残缺版，进残缺匹配池
@@ -358,8 +358,8 @@ can_take(pill) = Contamination.entries
 
 ## §6 跨 plan 钩子
 
-- [ ] **plan-botany-v1**（待立）：替换 §3.2 的 placeholder 材料，接入真实灵草采集
-- [ ] **plan-forge-v1**（待立）：炼器走同一炉体抽象？或独立？留待 forge plan 决策
+- [x] **plan-botany-v1**（待立）：替换 §3.2 的 placeholder 材料，接入真实灵草采集
+- [x] **plan-forge-v1**（待立）：炼器走同一炉体抽象？或独立？留待 forge plan 决策
 - [ ] **plan-cultivation-v1**：`open_pill_progress` 字段或事件，让开脉丹推进经脉进度
 - [ ] **plan-HUD-v1 §10**：快捷使用栏消费 pill item
 - [ ] **plan-inventory-v1**：

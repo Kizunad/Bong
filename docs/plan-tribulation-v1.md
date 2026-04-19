@@ -10,7 +10,7 @@
 
 ## §0 设计轴心
 
-- [ ] **唯一境界天劫 = 渡虚劫**（通灵→化虚）；其他境界突破无天劫
+- [x] **唯一境界天劫 = 渡虚劫**（通灵→化虚）；其他境界突破无天劫
 - [ ] **全服广播 + 地点公开**——"有人在渡虚劫"；所有玩家获地理坐标，鼓励截胡
 - [ ] **高风险高回报 · 无辅助 · 无捷径**（worldview line 130）
 - [ ] **天道激烈手段**分三类：渡虚劫（玩家主动）/ 域崩（区域事件）/ 定向天罚（天道精准打击高消耗修士）
@@ -210,7 +210,7 @@ pub struct DuXuResult {
 **Phase 0 — 数据层 + 名额**
 - [ ] `TribulationState` / `TribulationKind` / `DuXuResult` schema
 - [ ] `AscensionQuotaStore`（server 全局，读 player count）
-- [ ] 与 plan-death §7 `LifespanEvent` 对齐（渡虚失败不扣寿标记）
+- [x] 与 plan-death §7 `LifespanEvent` 对齐（渡虚失败不扣寿标记）
 
 **Phase 1 — 渡虚劫核心流程**
 - [ ] 起劫菜单（cultivation 面板"奇经八脉全通"后解锁按钮）

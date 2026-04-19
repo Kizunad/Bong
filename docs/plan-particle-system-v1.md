@@ -62,7 +62,7 @@
 
 - [x] 禁用任何点/星/方块贴图
 - [x] 规范：符文（汉字、卦象）、花瓣、墨迹、光球（带 alpha 光晕）、剑形剪影
-- [ ] 尺寸：32×32 / 64×64，必须带 alpha
+- [x] 尺寸：32×32 / 64×64，必须带 alpha
 
 ---
 
@@ -266,7 +266,7 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 ### 5.2 Phase 1 — 三个渲染基类 + 最小端到端链路
 
 - [x] §1 三个基类（Line/Ribbon/GroundDecal）原型 + 单元测试渲染
-- [ ] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
+- [x] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
 
 ### 5.3 Phase 2 — 首批资产与扩展
 
