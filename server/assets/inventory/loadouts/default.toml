@@ -62,6 +62,34 @@ cols = 7
   template_id = "iron_sword"
   stack_count = 1
 
+  # 铁锄 1×2 — 开垦 / 翻新入门（plan-lingtian-v1 §1.2.1）
+  [[containers.items]]
+  row = 3
+  col = 0
+  template_id = "hoe_iron"
+  stack_count = 1
+
+  # 刺舌蒿种子 ×4 — MVP 短周期作物（§3.1）
+  [[containers.items]]
+  row = 3
+  col = 2
+  template_id = "ci_she_hao_seed"
+  stack_count = 4
+
+  # 凝脉草种子 ×4 — MVP 需补灵作物（§3.1）
+  [[containers.items]]
+  row = 3
+  col = 3
+  template_id = "ning_mai_cao_seed"
+  stack_count = 4
+
+  # 灵木苗种子 ×1 — MVP 极长线（§3.1）
+  [[containers.items]]
+  row = 3
+  col = 4
+  template_id = "ling_mu_miao_seed"
+  stack_count = 1
+
 # ─── 小口袋 3×3 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "small_pouch"
