@@ -22,6 +22,12 @@ pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
 pub const CH_BOTANY_HARVEST_PROGRESS: &str = "bong:botany/harvest_progress";
 pub const CH_BOTANY_ECOLOGY: &str = "bong:botany/ecology";
 
+// 子技能 (plan-skill-v1 §8)：server → agent，agent 消费生成升级 narration / NPC skill 画像
+pub const CH_SKILL_XP_GAIN: &str = "bong:skill/xp_gain";
+pub const CH_SKILL_LV_UP: &str = "bong:skill/lv_up";
+pub const CH_SKILL_CAP_CHANGED: &str = "bong:skill/cap_changed";
+pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,5 +42,9 @@ mod tests {
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
+        assert_eq!(CH_SKILL_XP_GAIN, "bong:skill/xp_gain");
+        assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
+        assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
+        assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
     }
 }

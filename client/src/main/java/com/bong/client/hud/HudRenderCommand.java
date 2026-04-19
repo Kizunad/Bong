@@ -48,7 +48,8 @@ public final class HudRenderCommand {
     }
 
     public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
-        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color);
+        // NOTE(plan-skill-v1 P2): 一字修 — 原 commit 051479fa 漏了 texturePath 参数，阻塞全量 build。
+        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color, null);
     }
 
     public static HudRenderCommand toast(HudRenderLayer layer) {

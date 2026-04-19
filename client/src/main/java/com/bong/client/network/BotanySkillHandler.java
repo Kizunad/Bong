@@ -1,13 +1,19 @@
 package com.bong.client.network;
 
-import com.bong.client.botany.BotanySkillStore;
-import com.bong.client.botany.BotanySkillViewModel;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 import java.util.regex.Pattern;
 
+/**
+ * plan-skill-v1 §9 P2：保留老通道 {@code botany_skill} 做向后兼容（server 现有发送者尚未迁移）；
+ * 收到 payload 后镜像到 {@link SkillSetStore} 的 {@link SkillId#HERBALISM} 条目，
+ * 让 InspectScreen 技艺 tab 也能看到采药 skill。P7 将删除本 handler + 通道。
+ */
 public final class BotanySkillHandler implements ServerDataHandler {
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
 
@@ -25,16 +31,21 @@ public final class BotanySkillHandler implements ServerDataHandler {
             );
         }
 
-        BotanySkillViewModel snapshot = BotanySkillViewModel.create(
+        // 镜像到 SkillSetStore 的 herbalism 条目 —— BotanySkillStore 改为派生视图，不再独立持有。
+        SkillSetSnapshot.Entry cur = SkillSetStore.snapshot().get(SkillId.HERBALISM);
+        SkillSetSnapshot.Entry next = new SkillSetSnapshot.Entry(
             level,
             xp,
             xpToNextLevel,
-            autoUnlockLevel == null ? 3 : autoUnlockLevel
+            Math.max(cur.totalXp(), xp),
+            cur.cap(),
+            cur.recentGainXp(),
+            cur.recentGainMillis()
         );
-        BotanySkillStore.replace(snapshot);
+        SkillSetStore.updateEntry(SkillId.HERBALISM, next);
         return ServerDataDispatch.handled(
             envelope.type(),
-            "Applied botany_skill level " + snapshot.level() + " to BotanySkillStore"
+            "Applied botany_skill level " + level + " to SkillSetStore (herbalism)"
         );
     }
 

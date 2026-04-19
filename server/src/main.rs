@@ -12,6 +12,8 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
+#[allow(dead_code)]
+mod skill;
 mod world;
 
 use crossbeam_channel::unbounded;
