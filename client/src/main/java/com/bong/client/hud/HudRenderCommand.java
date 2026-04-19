@@ -52,6 +52,10 @@ public final class HudRenderCommand {
         return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color, null);
     }
 
+    public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
+        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color);
+    }
+
     public static HudRenderCommand toast(HudRenderLayer layer) {
         return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0, null);
     }

@@ -2,6 +2,10 @@ package com.bong.client.mixin;
 
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.inventory.model.EquipSlotType;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.lingtian.HoeVanillaIconMap;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
 import net.minecraft.client.render.item.HeldItemRenderer;
@@ -60,6 +64,16 @@ public abstract class MixinHeldItemRenderer {
         if (bongOff != null && this.offHand.isEmpty()) {
             ItemStack fake = WeaponVanillaIconMap.createStackFor(bongOff.templateId());
             if (fake != null) this.offHand = fake;
+        }
+
+        // plan-lingtian-v1 §1.2.1 — 无 Bong 武器 + 主手装备槽是 Bong 锄头时，合成 fake
+        // vanilla HOE stack 让 HeldItemRenderer 画原生锄头 FP（三档材质区分铁/灵铁/玄铁）。
+        if (bongMain == null && this.mainHand.isEmpty()) {
+            InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+            if (main != null && !main.isEmpty() && HoeVanillaIconMap.isHoe(main.itemId())) {
+                ItemStack fake = HoeVanillaIconMap.createStackFor(main.itemId());
+                if (fake != null) this.mainHand = fake;
+            }
         }
     }
 }

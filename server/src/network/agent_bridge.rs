@@ -59,6 +59,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::DefenseSync => "defense_sync",
         ServerDataType::WeaponEquipped => "weapon_equipped",
         ServerDataType::WeaponBroken => "weapon_broken",
+        ServerDataType::LingtianSession => "lingtian_session",
     }
 }
 

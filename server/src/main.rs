@@ -7,6 +7,8 @@ mod cultivation;
 #[allow(dead_code)]
 mod forge;
 mod inventory;
+#[allow(dead_code)]
+mod lingtian;
 mod network;
 mod npc;
 mod player;
@@ -51,6 +53,7 @@ fn main() {
     alchemy::register(&mut app);
     combat::register(&mut app);
     forge::register(&mut app);
+    lingtian::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);
 

@@ -178,6 +178,11 @@ pub fn register(app: &mut App) {
             combat_bridge::publish_combat_realtime_events
                 .after(crate::combat::resolve::resolve_attack_intents),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             cultivation_bridge::publish_breakthrough_events,
             cultivation_bridge::publish_forge_events,
             cultivation_bridge::publish_cultivation_death_events,

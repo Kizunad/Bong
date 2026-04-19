@@ -108,6 +108,58 @@ pub enum ClientRequestV1 {
         v: u8,
         stance: String,
     },
+    // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
+    /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
+    /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
+    LingtianStartTill {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        hoe_instance_id: u64,
+        /// "manual" / "auto"（auto 需 herbalism Lv.3+，server 暂不校验）。
+        mode: String,
+    },
+    /// plan §1.6 — 起翻新 session。
+    LingtianStartRenew {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        hoe_instance_id: u64,
+    },
+    /// plan §1.2.3 — 起种植 session（背包内须有该 plant 的种子）。
+    LingtianStartPlanting {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        plant_id: String,
+    },
+    /// plan §1.5 — 起收获 session（plot.crop 须 ripe）。
+    LingtianStartHarvest {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        mode: String,
+    },
+    /// plan §1.4 — 起补灵 session。
+    LingtianStartReplenish {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        /// "zone" / "bone_coin" / "beast_core" / "ling_shui"。
+        source: String,
+    },
+    /// plan §1.7 — 起偷灵 session。
+    LingtianStartDrainQi {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
 }
 
 #[cfg(test)]

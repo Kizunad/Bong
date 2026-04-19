@@ -1,8 +1,94 @@
-use serde::{Deserialize, Serialize};
+//! plan-botany-v1 §1 — 双 registry：
+//!  * `PlantKindRegistry` + TOML loader（lingtian / 可种植子集）
+//!  * `BotanyKindRegistry` + 22 种正典静态表（野生采集 / ecology 事件触发）
+//!
+//! 两者独立：lingtian 走 `PlantKindRegistry`（由 `assets/botany/plants.toml` 驱动）；
+//! botany 野生 lifecycle / harvest / ecology 走 `BotanyKindRegistry`（静态 22 种）。
+
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
 use valence::prelude::Resource;
 
+use super::plant_kind::{PlantId, PlantKind};
 use crate::world::zone::{BotanyZoneTag, Zone};
+
+const DEFAULT_PLANTS_PATH: &str = "assets/botany/plants.toml";
+
+// ============================================================================
+// lingtian 侧：PlantKindRegistry（TOML 驱动，cultivable 标签过滤）
+// ============================================================================
+
+#[derive(Debug, Default)]
+pub struct PlantKindRegistry {
+    plants: HashMap<PlantId, PlantKind>,
+}
+
+impl Resource for PlantKindRegistry {}
+
+impl PlantKindRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, plant: PlantKind) -> Result<(), String> {
+        if self.plants.contains_key(&plant.id) {
+            return Err(format!("duplicate plant id: {}", plant.id));
+        }
+        self.plants.insert(plant.id.clone(), plant);
+        Ok(())
+    }
+
+    pub fn get(&self, id: &str) -> Option<&PlantKind> {
+        self.plants.get(id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.plants.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.plants.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&PlantId, &PlantKind)> {
+        self.plants.iter()
+    }
+
+    /// plan-lingtian-v1 §4 — `SeedRegistry` 由可种植子集派生。
+    pub fn cultivable_ids(&self) -> impl Iterator<Item = &PlantId> {
+        self.plants
+            .iter()
+            .filter_map(|(id, kind)| kind.cultivable.then_some(id))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PlantsFile {
+    #[serde(default)]
+    plant: Vec<PlantKind>,
+}
+
+pub fn load_plant_kind_registry() -> Result<PlantKindRegistry, String> {
+    load_plant_kind_registry_from(Path::new(DEFAULT_PLANTS_PATH))
+}
+
+pub fn load_plant_kind_registry_from(path: &Path) -> Result<PlantKindRegistry, String> {
+    let raw = fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let parsed: PlantsFile =
+        toml::from_str(&raw).map_err(|e| format!("parse {}: {}", path.display(), e))?;
+    let mut registry = PlantKindRegistry::new();
+    for plant in parsed.plant {
+        registry.insert(plant)?;
+    }
+    Ok(registry)
+}
+
+// ============================================================================
+// botany 野生侧：BotanyKindRegistry（22 种正典静态表）
+// ============================================================================
 
 // 已有 6 种（MVP 初始）
 pub const CI_SHE_HAO: &str = "ci_she_hao";
@@ -539,6 +625,27 @@ pub fn zone_supports(kind: &BotanyPlantKind, zone: &Zone) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_default_assets_with_test_trio() {
+        let registry = load_plant_kind_registry().expect("default plants.toml should load");
+        assert!(
+            registry.get("ci_she_hao").is_some(),
+            "ci_she_hao 是 §3.1 测试三作物之一"
+        );
+        assert!(registry.get("ning_mai_cao").is_some());
+        assert!(registry.get("ling_mu_miao").is_some());
+    }
+
+    #[test]
+    fn cultivable_filter_excludes_wild_only() {
+        let registry = load_plant_kind_registry().unwrap();
+        let cultivable: Vec<_> = registry.cultivable_ids().cloned().collect();
+        assert!(cultivable.iter().any(|id| id == "ci_she_hao"));
+        if let Some(plant) = registry.get("shi_mai_gen") {
+            assert!(!plant.cultivable, "shi_mai_gen 必须 cultivable=false");
+        }
+    }
 
     #[test]
     fn canonical_registry_rejects_non_canonical_ids() {

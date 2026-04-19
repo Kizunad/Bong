@@ -13,6 +13,7 @@ import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
+import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
@@ -35,6 +36,7 @@ public class BongClient implements ClientModInitializer {
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
         AlchemyScreenBootstrap.register();
+        LingtianActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
         BongVfxCommand.register();

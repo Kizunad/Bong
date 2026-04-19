@@ -14,6 +14,7 @@ pub mod combat_hud;
 pub mod common;
 pub mod cultivation;
 pub mod inventory;
+pub mod lingtian;
 pub mod narration;
 pub mod server_data;
 pub mod skill;

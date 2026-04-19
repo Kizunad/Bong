@@ -1,10 +1,24 @@
+//! plan-botany-v1 — 植物物种 registry（野生 + 灵田共用）+ 野生 lifecycle/harvest。
+//!
+//! 本模块同时托管两条链：
+//!   * `PlantKind` / `PlantKindRegistry` + TOML loader — lingtian（可种植子集）
+//!   * `BotanyKindRegistry` + lifecycle/harvest/ecology — 野生采集
+//!
+//! 两套 registry 共用相同 canonical id（22 种正典），但数据结构与 spawn 路径独立。
+
 pub mod components;
 pub mod ecology;
 pub mod events;
 pub mod harvest;
 pub mod integration;
 pub mod lifecycle;
+pub mod plant_kind;
 pub mod registry;
+
+#[allow(unused_imports)]
+pub use plant_kind::{GrowthCost, PlantId, PlantKind, PlantRarity};
+#[allow(unused_imports)]
+pub use registry::{load_plant_kind_registry, PlantKindRegistry};
 
 use valence::prelude::{App, EventReader, IntoSystemConfigs, Query, Res, Startup, Update, With};
 
@@ -25,6 +39,18 @@ use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
 use registry::BotanyKindRegistry;
 
 pub fn register(app: &mut App) {
+    // lingtian 侧 registry：TOML 驱动的 cultivable 集合
+    let plant_kind_registry = load_plant_kind_registry().unwrap_or_else(|error| {
+        panic!("[bong][botany] failed to load plant kind registry: {error}");
+    });
+    tracing::info!(
+        "[bong][botany] loaded {} plant kind(s) from assets/botany/plants.toml ({} cultivable)",
+        plant_kind_registry.len(),
+        plant_kind_registry.cultivable_ids().count(),
+    );
+    app.insert_resource(plant_kind_registry);
+
+    // 野生侧 registry + 生命周期 / harvest / ecology
     app.insert_resource(BotanyKindRegistry::default());
     app.insert_resource(PlantLifecycleClock::default());
     app.insert_resource(PlantStaticPointStore::default());
@@ -297,6 +323,7 @@ mod tests {
         use valence::prelude::Events;
 
         assert!(app.world().contains_resource::<BotanyKindRegistry>());
+        assert!(app.world().contains_resource::<PlantKindRegistry>());
         assert!(app.world().contains_resource::<PlantLifecycleClock>());
         assert!(app.world().contains_resource::<PlantStaticPointStore>());
         assert!(app.world().contains_resource::<HarvestSessionStore>());
