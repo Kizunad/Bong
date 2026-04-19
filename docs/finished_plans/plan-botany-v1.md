@@ -23,11 +23,11 @@
 
 ## §0 设计轴心
 
-- [ ] **零和生态**：植物生长消耗 `zone.spirit_qi`，死亡才归还
-- [ ] **采集 ≠ 归还灵气**：采走植物 = 灵气被玩家带走（离开区域），只有**原地凋零死亡**才归还
-- [ ] 混合生长模型：通用草本按区域刷新 · 稀有灵草固定点位 + 缓慢再生
-- [ ] 采集是一次短 session（可打断，踩踏有概率弄死植物）
-- [ ] 动物 / 异变兽骨**不在本 plan**（等 `plan-fauna-v1`，见 §7）
+- [x] **零和生态**：植物生长消耗 `zone.spirit_qi`，死亡才归还
+- [x] **采集 ≠ 归还灵气**：采走植物 = 灵气被玩家带走（离开区域），只有**原地凋零死亡**才归还
+- [x] 混合生长模型：通用草本按区域刷新 · 稀有灵草固定点位 + 缓慢再生
+- [x] 采集是一次短 session（可打断，踩踏有概率弄死植物）
+- [x] 动物 / 异变兽骨**不在本 plan**（等 `plan-fauna-v1`，见 §7）
 
 ---
 
@@ -66,9 +66,9 @@ if delta > 0 AND zone.spirit_qi >= plant_kind.growth_cost:
         zone.spirit_qi -= plant_kind.growth_cost
 ```
 
-- [ ] 生成位置：白天优先草地/沼泽表面，洞穴有少量阴性植物
-- [ ] `growth_cost` 典型 0.001-0.005（百株才扣 0.1 灵气）
-- [ ] 区域灵气不足 → 不再生长（目标计数压不满是常态）
+- [x] 生成位置：白天优先草地/沼泽表面，洞穴有少量阴性植物
+- [x] `growth_cost` 典型 0.001-0.005（百株才扣 0.1 灵气）
+- [x] 区域灵气不足 → 不再生长（目标计数压不满是常态）
 
 #### §1.2.2 区域专属（混合）
 
@@ -94,9 +94,9 @@ if delta > 0 AND zone.spirit_qi >= plant_kind.growth_cost:
           plant dies → zone.spirit_qi += plant_kind.growth_cost × RESTORE_RATIO
 ```
 
-- [ ] `RESTORE_RATIO` 典型 0.8（死亡归还 80%，体现"生长有浪费"）
-- [ ] 自然寿命：达到 `plant_kind.max_age` 也触发凋零
-- [ ] **关键**：只有**死亡**才归还，被玩家采走的不归还 → 玩家活跃度直接造成灵气流出
+- [x] `RESTORE_RATIO` 典型 0.8（死亡归还 80%，体现"生长有浪费"）
+- [x] 自然寿命：达到 `plant_kind.max_age` 也触发凋零
+- [x] **关键**：只有**死亡**才归还，被玩家采走的不归还 → 玩家活跃度直接造成灵气流出
 
 ### §1.3 采集交互（短 session，小浮窗）
 
@@ -109,12 +109,12 @@ if delta > 0 AND zone.spirit_qi >= plant_kind.growth_cost:
 | **手动采集** | 2-3s | 任意玩家 | WASD/ESC/受击立即断 | 基础（+1~2）| 随节奏抖动 |
 | **自动采集** | 5-8s | 采药经验 ≥ 阈值（默认 Lv.3）| 仅受击断；可慢速走动 | 熟练加成（+3~6，数倍于手动）| 稳定（不抖动）|
 
-- [ ] **浮窗 modal 但非阻塞**：同时只能开一个，场景仍可见，不暂停游戏
-- [ ] **按键**：E 手动 / R 自动（自动未解锁时 R 置灰）
-- [ ] **采药经验系统**：以击杀/炼丹等通用 XP 体系分叉出的子技能（`BotanySkillStore`），每次完成采集 +XP；等级决定自动解锁门槛、手动时长、品质分布
-- [ ] **踩踏判定**：玩家/实体路径经过植物方块 → 5% 概率植物死（触发 §1.2.4 归还）；浮窗打开期间踩到**目标植物**同样生效
+- [x] **浮窗 modal 但非阻塞**：同时只能开一个，场景仍可见，不暂停游戏
+- [x] **按键**：E 手动 / R 自动（自动未解锁时 R 置灰）
+- [x] **采药经验系统**：以击杀/炼丹等通用 XP 体系分叉出的子技能（`BotanySkillStore`），每次完成采集 +XP；等级决定自动解锁门槛、手动时长、品质分布
+- [x] **踩踏判定**：玩家/实体路径经过植物方块 → 5% 概率植物死（触发 §1.2.4 归还）；浮窗打开期间踩到**目标植物**同样生效
 - [ ] **工具钩子**：右键时检测主手 item，有采药刀 / 灵铲时走工具路径 —— 工具系统未立，见 reminder.md
-- [ ] 采集 session 是**轻量**的，不持久化到 BlockEntity（和炼丹/锻造对比）
+- [x] 采集 session 是**轻量**的，不持久化到 BlockEntity（和炼丹/锻造对比）
 
 **为什么"自动 = 高 XP 不是懒人奖励"**：自动需要先练到门槛（新手只能手动磨经验），且自动要求环境安全（受击仍断）。在安全区用自动等于"熟手懒得专注，但仍承担 5s 不能跑的风险"，合理。
 
@@ -144,8 +144,8 @@ pub struct Plant {
 }
 ```
 
-- [ ] PlantKind 注册表：server/assets/botany/plants/*.json 或编译期常量表
-- [ ] 不直接读 terrain_profiles（Python 侧）；只消费 server 侧已有的 `ZoneInfo { biome, spirit_qi }`
+- [x] PlantKind 注册表：server/assets/botany/plants/*.json 或编译期常量表
+- [x] 不直接读 terrain_profiles（Python 侧）；只消费 server 侧已有的 `ZoneInfo { biome, spirit_qi }`
 
 ---
 
@@ -197,10 +197,10 @@ zone.spirit_qi
 
 ### §3.3 交互 MVP
 
-- [ ] 右键植物方块 → 2s 进度条 HUD（A 层最简，不走 DynamicXmlScreen）
-- [ ] 打断：移动 / 受击
-- [ ] 踩踏：5% 概率植物死亡（走 §1.2.4 归还）
-- [ ] drop 走现有 `InventoryStateStore` 收入背包
+- [x] 右键植物方块 → 2s 进度条 HUD（A 层最简，不走 DynamicXmlScreen）
+- [x] 打断：移动 / 受击
+- [x] 踩踏：5% 概率植物死亡（走 §1.2.4 归还）
+- [x] drop 走现有 `InventoryStateStore` 收入背包
 
 ---
 
@@ -208,21 +208,21 @@ zone.spirit_qi
 
 ### Server 侧
 
-- [ ] `PlantKindRegistry` resource（启动期加载）
-- [ ] `Plant` component（挂方块 / 轻 entity）
-- [ ] `StaticPlantPoint` resource（静态点位表 + 再生倒计时）
-- [ ] `BotanyTick` system（定期刷新 + 凋零检查）
-- [ ] `HarvestSession` resource（进行中的采集，map: player_id → session）
-- [ ] Events：`PlantSpawn` / `PlantWither` / `HarvestStart` / `HarvestComplete` / `HarvestInterrupt`
-- [ ] Channel：`bong:botany/harvest_progress`（玩家维度） · `bong:botany/ecology`（zone 聚合，每 30s；覆盖原 spawn/wither 用途——每株高频推对 agent 不友好）
-- [ ] 接入 `zone.spirit_qi` 双向流动（生长扣 / 死亡归还）
+- [x] `PlantKindRegistry` resource（启动期加载）
+- [x] `Plant` component（挂方块 / 轻 entity）
+- [x] `StaticPlantPoint` resource（静态点位表 + 再生倒计时）
+- [x] `BotanyTick` system（定期刷新 + 凋零检查）
+- [x] `HarvestSession` resource（进行中的采集，map: player_id → session）
+- [x] Events：`PlantSpawn` / `PlantWither` / `HarvestStart` / `HarvestComplete` / `HarvestInterrupt`
+- [x] Channel：`bong:botany/harvest_progress`（玩家维度） · `bong:botany/ecology`（zone 聚合，每 30s；覆盖原 spawn/wither 用途——每株高频推对 agent 不友好）
+- [x] 接入 `zone.spirit_qi` 双向流动（生长扣 / 死亡归还）
 
 ### Client 侧
 
-- [ ] `HarvestSessionStore`（当前采集进度 + mode: Manual/Auto，HUD 渲染用）
-- [ ] `BotanySkillStore`（采药经验 Lv + XP + 解锁门槛）
-- [ ] 植物方块贴图（MVP 占位色块）
-- [ ] 复用：`InventoryStateStore`（drop 入包）
+- [x] `HarvestSessionStore`（当前采集进度 + mode: Manual/Auto，HUD 渲染用）
+- [x] `BotanySkillStore`（采药经验 Lv + XP + 解锁门槛）
+- [x] 植物方块贴图（MVP 占位色块）
+- [x] 复用：`InventoryStateStore`（drop 入包）
 
 ---
 
@@ -245,7 +245,7 @@ zone.spirit_qi
 - [ ] **plan-forge-v1 §3.2**：灵木 / 异兽骨（本 plan 只管植物，骨骼归 fauna）等载体材料
 - [ ] **plan-lingtian-v1**：人工田块作物 = PlantKind 亚种（`cultivable: true`）· 共用 PlantKindRegistry + harvest-popup + BotanySkill · 混合灵气模型（plot_qi 为主 + 区域漏吸兜底，详见 lingtian §1.3）
 - [ ] **plan-inventory-v1**：植物 item 定义（尺寸 / 堆叠 / 操作磨损）
-- [ ] **plan-worldgen-v3.1.md**：worldgen 只负责 biome 标签，不管植物分布
+- [x] **plan-worldgen-v3.1.md**：worldgen 只负责 biome 标签，不管植物分布
 - [ ] **plan-npc-ai-v1**：散修 NPC 采集行为（共用 HarvestSession）
 - [ ] **plan-tribulation-v1**：天劫遗址触发 kong_shou_hen / 雷霆竹生成（或新增 library 正典专用雷击植）
 
