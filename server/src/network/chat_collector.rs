@@ -183,6 +183,8 @@ fn parse_gameplay_action(message: &str) -> Option<GameplayAction> {
         (Some("/bong"), Some("gather"), Some(resource), None, None) => {
             Some(GameplayAction::Gather(GatherAction {
                 resource: resource.to_string(),
+                target_entity: None,
+                mode: None,
             }))
         }
         (Some("/bong"), Some("breakthrough"), None, None, None) => {
@@ -553,6 +555,8 @@ mod chat_collector_tests {
                     player: "offline:Alice".to_string(),
                     action: GameplayAction::Gather(GatherAction {
                         resource: "spirit_herb".to_string(),
+                        target_entity: None,
+                        mode: None,
                     }),
                 },
                 QueuedGameplayAction {

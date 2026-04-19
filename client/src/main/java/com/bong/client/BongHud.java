@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import com.bong.client.botany.HarvestSessionStore;
+import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DefenseStanceStore;
@@ -11,9 +13,12 @@ import com.bong.client.combat.UnlockedStylesStore;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.client.render.Camera;
+import net.minecraft.util.math.Vec3d;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.InkWashVignetteRenderer;
@@ -56,6 +61,8 @@ public class BongHud {
 
         CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
 
+        BotanyProjection.Anchor botanyAnchor = computeBotanyAnchor(client);
+
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateStore.snapshot(),
             combatSnapshot,
@@ -63,7 +70,8 @@ public class BongHud {
             client.textRenderer::getWidth,
             HUD_TEXT_MAX_WIDTH,
             client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight()
+            client.getWindow().getScaledHeight(),
+            botanyAnchor
         );
 
         if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
@@ -79,6 +87,19 @@ public class BongHud {
             }
             if (command.isRect()) {
                 context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+                continue;
+            }
+            if (command.isTexturedRect()) {
+                Identifier tex = parseIdentifier(command.texturePath());
+                if (tex != null) {
+                    context.drawTexture(
+                        tex,
+                        command.x(), command.y(),
+                        0.0f, 0.0f,
+                        command.width(), command.height(),
+                        command.width(), command.height()
+                    );
+                }
                 continue;
             }
             if (command.isItemTexture()) {
@@ -107,6 +128,39 @@ public class BongHud {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+    }
+
+    private static Identifier parseIdentifier(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        try {
+            return new Identifier(path);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static BotanyProjection.Anchor computeBotanyAnchor(MinecraftClient client) {
+        HarvestSessionViewModel session = HarvestSessionStore.snapshot();
+        if (!session.hasTargetPos() || client.gameRenderer == null) {
+            return null;
+        }
+        Camera camera = client.gameRenderer.getCamera();
+        if (camera == null) {
+            return null;
+        }
+        Vec3d camPos = camera.getPos();
+        double[] pos = session.targetPos();
+        double fov = client.options.getFov().getValue().doubleValue();
+        return BotanyProjection.project(
+            pos[0], pos[1], pos[2],
+            camPos.x, camPos.y, camPos.z,
+            camera.getYaw(), camera.getPitch(),
+            fov,
+            client.getWindow().getScaledWidth(),
+            client.getWindow().getScaledHeight()
+        );
     }
 
     private static CombatHudSnapshot captureCombatSnapshot(MinecraftClient client) {

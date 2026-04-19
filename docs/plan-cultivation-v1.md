@@ -88,8 +88,8 @@
 **剩余 TODO**：
 - ✅ 顿悟决定 C2S 回传通道：`ClientRequestV1::InsightDecision { trigger_id, choice_idx: Option<u32> }` 双端对齐；服务端 handler 发 `InsightChosen` Event；客户端 `ClientRequestInsightDispatcher` 从 offer 快照把 choiceId 解析为 idx（stale/未知 id 降级为 null=拒绝）；Rust+TS+Java 测试齐备
 - ⏳ 战斗 plan 联调（见上）
-- ⏳ 服务端 `BreakthroughRequest.material_bonus` 接入玩家背包派生（当前客户端请求固定 0.0 占位）
-- 🟡 `CultivationDetail` 扩展：已接入 realm / open_progress / cracks_count / contamination_total（SoA 4 字段），客户端 handler 向前兼容可选字段，未打通经脉 `open_progress → healProgress`；仍待接入 UI 裂痕可视化 + dantians（server 尚无 Dantian Component）
+- ✅ 服务端 `BreakthroughRequest.material_bonus` 通过 buff 聚合接入：吃丹（`AlchemyTakePill`）→ `StatusEffects` 挂 `BreakthroughBoost` buff（5 min / 6000 tick）→ `breakthrough_system` 聚合 magnitude 作 bonus（clamp 0.30）→ 成败后一次性清空。UI 吃丹入口在 `.worktree/inventory` 进行
+- 🟡 `CultivationDetail` 扩展：已接入 realm / open_progress / cracks_count / contamination_total（SoA 4 字段），客户端 handler 向前兼容可选字段，`open_progress → healProgress` 已 wired；仍待接入 UI 裂痕可视化
 
 ---
 

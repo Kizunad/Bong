@@ -32,7 +32,7 @@
 选阵图 → 选点 → 消耗材料 → 布阵动画 → 阵成（阵旗/阵眼实体）
 ```
 
-- [ ] DynamicXmlScreen 布阵 UI
+- [x] DynamicXmlScreen 布阵 UI
 - [ ] 阵旗 / 阵眼实体（server ECS）
 - [ ] 布阵者权限（owner-only 配置）
 - [ ] 阵法本身的灵气权重计入天道阈值

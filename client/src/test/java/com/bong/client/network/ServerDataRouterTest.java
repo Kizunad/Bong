@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ServerDataRouterTest {
     @Test
-    void defaultRouterRegistersExactlyTenTypes() {
+    void defaultRouterRegistersAllExpectedTypes() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
         assertEquals(Set.of(
@@ -27,6 +27,9 @@ public class ServerDataRouterTest {
             "cultivation_detail",
             "inventory_snapshot",
             "inventory_event",
+            // Botany handlers (plan-botany-v1 §4).
+            "botany_harvest_progress",
+            "botany_skill",
             // Combat UI handlers (plan-combat-ui §U1–U7).
             "combat_event",
             "status_snapshot",
@@ -54,7 +57,12 @@ public class ServerDataRouterTest {
             "weapon_equipped",
             "weapon_broken",
             // plan-lingtian-v1 §4 active session 推送。
-            "lingtian_session"
+            "lingtian_session",
+            // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
+            "skill_xp_gain",
+            "skill_lv_up",
+            "skill_cap_changed",
+            "skill_scroll_used"
         ), router.registeredTypes());
     }
 
@@ -116,6 +124,26 @@ public class ServerDataRouterTest {
         assertTrue(result.isHandled());
         assertTrue(result.dispatch().alertToast().isPresent());
         assertTrue(result.dispatch().visualEffectState().isPresent());
+    }
+
+    @Test
+    void routesBotanyHarvestProgressIntoStoreHandler() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-botany-harvest-progress.json");
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("botany_harvest_progress", result.envelope().type());
+    }
+
+    @Test
+    void routesBotanySkillIntoStoreHandler() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-botany-skill.json");
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("botany_skill", result.envelope().type());
     }
 
     @Test

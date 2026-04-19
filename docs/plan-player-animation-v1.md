@@ -10,11 +10,11 @@
 
 ## §0 设计轴心
 
-- [ ] **零美术工具依赖**：纯 Java 代码 / LLM 生成 JSON，禁用 Blender/Blockbench
-- [ ] **AI-Native 生产线**：天道 Agent 或开发期 LLM 直接吐 keyframe 代码
-- [ ] **服务端权威触发**：动画播放是表演层，触发由 server 决定
-- [ ] **协议复用**：和 VFX 共用 `bong:vfx_event` CustomPayload 通道
-- [ ] **多层叠加**：上半身动作 + 下半身行走 + 全身姿态独立通道
+- [x] **零美术工具依赖**：纯 Java 代码 / LLM 生成 JSON，禁用 Blender/Blockbench
+- [x] **AI-Native 生产线**：天道 Agent 或开发期 LLM 直接吐 keyframe 代码
+- [x] **服务端权威触发**：动画播放是表演层，触发由 server 决定
+- [x] **协议复用**：和 VFX 共用 `bong:vfx_event` CustomPayload 通道
+- [x] **多层叠加**：上半身动作 + 下半身行走 + 全身姿态独立通道
 
 ---
 
@@ -125,9 +125,9 @@ public class BongAnimationRegistry {
 }
 ```
 
-- [ ] 静态注册（编译期）+ 动态注册（运行时 JSON 字符串）
-- [ ] 客户端启动时扫描 `assets/bong/player_animation/*.json` 自动注册
-- [ ] 提供 `/bong anim test <id>` debug 命令本地试播
+- [x] 静态注册（编译期）+ 动态注册（运行时 JSON 字符串）
+- [x] 客户端启动时扫描 `assets/bong/player_animation/*.json` 自动注册
+- [x] 提供 `/bong anim test <id>` debug 命令本地试播
 
 ### 3.2 播放抽象
 
@@ -144,9 +144,9 @@ public class BongAnimationPlayer {
 }
 ```
 
-- [ ] 自动 fade in/out（默认 3 tick）
-- [ ] 同 priority 自动替换
-- [ ] 维护"当前播放层"映射表，支持精确停止
+- [x] 自动 fade in/out（默认 3 tick）
+- [x] 同 priority 自动替换
+- [x] 维护"当前播放层"映射表，支持精确停止
 
 ### 3.3 多层 Priority 约定
 

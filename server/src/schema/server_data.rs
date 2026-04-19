@@ -36,6 +36,8 @@ pub enum ServerDataType {
     CultivationDetail,
     InventorySnapshot,
     InventoryEvent,
+    BotanyHarvestProgress,
+    BotanySkill,
     AlchemyFurnace,
     AlchemySession,
     AlchemyOutcomeForecast,
@@ -109,6 +111,26 @@ pub enum ServerDataPayloadV1 {
     },
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
+    },
     AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
     AlchemySession(Box<AlchemySessionDataV1>),
     AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
@@ -187,6 +209,27 @@ enum ServerDataPayloadWireV1 {
     InventoryEvent {
         #[serde(flatten)]
         event: ServerDataInventoryEventWireV1,
+    },
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
     },
     AlchemyFurnace {
         #[serde(flatten)]
@@ -414,6 +457,44 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::InventoryEvent { event } => {
                 Ok(Self::InventoryEvent(event.try_into()?))
             }
+            ServerDataPayloadWireV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Ok(Self::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            }),
+            ServerDataPayloadWireV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Ok(Self::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            }),
             ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
             ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
             ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
@@ -532,6 +613,44 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::InventoryEvent(event) => Self::InventoryEvent {
                 event: event.into(),
+            },
+            ServerDataPayloadV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Self::BotanyHarvestProgress {
+                session_id: session_id.clone(),
+                target_id: target_id.clone(),
+                target_name: target_name.clone(),
+                plant_kind: plant_kind.clone(),
+                mode: mode.clone(),
+                progress: *progress,
+                auto_selectable: *auto_selectable,
+                request_pending: *request_pending,
+                interrupted: *interrupted,
+                completed: *completed,
+                detail: detail.clone(),
+                target_pos: *target_pos,
+            },
+            ServerDataPayloadV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Self::BotanySkill {
+                level: *level,
+                xp: *xp,
+                xp_to_next_level: *xp_to_next_level,
+                auto_unlock_level: *auto_unlock_level,
             },
             ServerDataPayloadV1::AlchemyFurnace(data) => {
                 Self::AlchemyFurnace { data: data.clone() }
@@ -669,6 +788,8 @@ impl ServerDataPayloadV1 {
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
+            Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
             Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
@@ -815,6 +936,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.inventory-event.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.alchemy-furnace.sample.json"

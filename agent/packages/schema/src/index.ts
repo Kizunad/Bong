@@ -6,6 +6,7 @@ export * from "./channels.js";
 
 // Message schemas
 export * from "./agent-command.js";
+export * from "./botany.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";
@@ -32,3 +33,6 @@ export * from "./insight-request.js";
 
 // 炼丹 (plan-alchemy-v1 §4)
 export * from "./alchemy.js";
+
+// 子技能 (plan-skill-v1 §8)
+export * from "./skill.js";

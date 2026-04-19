@@ -16,6 +16,7 @@ pub mod fallback;
 pub mod history;
 pub mod learned;
 pub mod session;
+pub mod skill_hook;
 pub mod station;
 pub mod steps;
 
@@ -40,6 +41,8 @@ use self::steps::{
     TemperingResult,
 };
 use crate::cultivation::components::{Cultivation, QiColor};
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][forge] registering plan-forge-v1 systems");
@@ -236,6 +239,7 @@ fn handle_step_advance(
     mut caster_q: Query<(&Cultivation, &QiColor)>,
     mut history_q: Query<&mut ForgeHistory>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
+    mut skill_xp_events: EventWriter<SkillXpGain>,
 ) {
     for advance in ev.read() {
         let Some(session) = sessions.get_mut(advance.session) else {
@@ -268,6 +272,7 @@ fn handle_step_advance(
                 &mut caster_q,
                 &mut history_q,
                 &mut outcomes,
+                &mut skill_xp_events,
             );
             continue;
         }
@@ -303,6 +308,7 @@ fn handle_step_advance(
                 &mut caster_q,
                 &mut history_q,
                 &mut outcomes,
+                &mut skill_xp_events,
             );
         }
     }
@@ -356,6 +362,7 @@ fn finalize_outcome(
     _caster_q: &mut Query<(&Cultivation, &QiColor)>,
     history_q: &mut Query<&mut ForgeHistory>,
     outcomes: &mut EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: &mut EventWriter<SkillXpGain>,
 ) {
     // 读取 outcome spec
     let (weapon_item, quality) = match &bucket {
@@ -469,6 +476,24 @@ fn finalize_outcome(
 
     session.current_step = ForgeStep::Done;
 
+    // plan-skill-v1 §10 forge 钩子：按分步累加算 XP 发 SkillXpGain（Forging）。
+    // 数值 source-of-truth 见 `forge::skill_hook::xp_for_outcome`（plan §7.3）。
+    let xp = skill_hook::xp_for_outcome(
+        bucket,
+        bp.has_step(StepKind::Tempering),
+        bp.has_step(StepKind::Inscription),
+        bp.has_step(StepKind::Consecration),
+    );
+    skill_xp_events.send(SkillXpGain {
+        char_entity: session.caster,
+        skill: SkillId::Forging,
+        amount: xp,
+        source: XpGainSource::Action {
+            plan_id: "forge",
+            action: forge_action_for_bucket(bucket),
+        },
+    });
+
     outcomes.send(ForgeOutcomeEvent {
         session: session.id,
         blueprint: bp.id.clone(),
@@ -479,4 +504,15 @@ fn finalize_outcome(
         side_effects,
         achieved_tier,
     });
+}
+
+/// plan §7.3 action 名对齐（供 agent narration 按结局区分）。
+fn forge_action_for_bucket(bucket: ForgeBucket) -> &'static str {
+    match bucket {
+        ForgeBucket::Perfect => "craft_perfect",
+        ForgeBucket::Good => "craft_good",
+        ForgeBucket::Flawed => "craft_flawed",
+        ForgeBucket::Waste => "craft_waste",
+        ForgeBucket::Explode => "craft_explode",
+    }
 }

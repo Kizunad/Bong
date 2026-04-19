@@ -169,8 +169,8 @@ trait EventJournal {
 
 ### §5.3 向前兼容
 
-- [ ] TypeBox schema 也对齐 `v` 字段（已有）
-- [ ] IPC message 收到 unknown `v` → 丢弃并 warn，不 panic
+- [x] TypeBox schema 也对齐 `v` 字段（已有）
+- [x] IPC message 收到 unknown `v` → 丢弃并 warn，不 panic
 
 ## §6 备份
 

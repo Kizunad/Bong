@@ -18,14 +18,14 @@
 
 ## §0 设计轴心
 
-- [ ] **独立锻炉**（不与炼丹共炉）—— 交互轴是"**锻打节奏**"而非"温度"
-- [ ] **四步串行**：坯料 → 淬炼 → 铭文 → 开光，每步可单独失败
-- [ ] **载体材料非强制**，但决定品阶上限（凡铁只能打到法器）
-- [ ] **不形成 bond** —— 武器可自由交易、掉落、拾取
+- [x] **独立锻炉**（不与炼丹共炉）—— 交互轴是"**锻打节奏**"而非"温度"
+- [x] **四步串行**：坯料 → 淬炼 → 铭文 → 开光，每步可单独失败
+- [x] **载体材料非强制**，但决定品阶上限（凡铁只能打到法器）
+- [x] **不形成 bond** —— 武器可自由交易、掉落、拾取
 - [ ] **开光 ≠ 绑定**：仅给武器染上持有者真元色（+小幅同色加成），换人用效果衰减但不失效
-- [ ] 品阶四阶：**凡器 / 法器 / 灵器 / 道器**（沿用 alchemy §3 约定）
-- [ ] 配方 JSON 加载 + 多结果分桶 + 残缺匹配（与 alchemy 同栈）
-- [ ] MVP 只做武器；防具 / 法器（飞剑/灵幡）/ 暗器留 §7
+- [x] 品阶四阶：**凡器 / 法器 / 灵器 / 道器**（沿用 alchemy §3 约定）
+- [x] 配方 JSON 加载 + 多结果分桶 + 残缺匹配（与 alchemy 同栈）
+- [x] MVP 只做武器；防具 / 法器（飞剑/灵幡）/ 暗器留 §7
 
 ---
 
@@ -42,7 +42,7 @@
 - `outcomes` — 与 alchemy 同五桶：perfect/good/flawed/waste/explode（explode = 武器断裂）
 - `flawed_fallback` + `side_effect_pool` — 同 alchemy，产出残次武器 + 随机附加（可好可坏）
 
-- [ ] 加载器：启动期扫目录 → `BlueprintRegistry` resource
+- [x] 加载器：启动期扫目录 → `BlueprintRegistry` resource
 - [ ] IPC Schema 放 `agent/packages/schema`
 
 ### §1.2 锻炉系统（独立实体）
@@ -58,8 +58,8 @@ pub struct WeaponForgeStation {
 ```
 
 - [ ] MVP 为方块 + BlockEntity（与 alchemy 并列，不共享）
-- [ ] tier 限制能使用的图谱（凡铁砧最高锻法器）
-- [ ] **多炉并行**：一玩家可绑多个砧
+- [x] tier 限制能使用的图谱（凡铁砧最高锻法器）
+- [x] **多炉并行**：一玩家可绑多个砧
 
 ### §1.3 四步进程（核心循环）
 
@@ -87,9 +87,9 @@ pub enum ForgeStep {
 
 玩家从背包拖入基础金属 + 可选载体材料（异兽骨/灵木）到配比槽。
 
-- [ ] 配比公差（类似 alchemy 投料，但此处可多种混合）
-- [ ] 载体材料决定 `tier_cap`（无载体 = 法器上限；灵木 = 灵器上限；异兽骨 + 灵木 = 道器上限）
-- [ ] 失败 = 坯料废，材料不返还，session 终止
+- [x] 配比公差（类似 alchemy 投料，但此处可多种混合）
+- [x] 载体材料决定 `tier_cap`（无载体 = 法器上限；灵木 = 灵器上限；异兽骨 + 灵木 = 道器上限）
+- [x] 失败 = 坯料废，材料不返还，session 终止
 
 #### §1.3.2 淬炼（Tempering）
 
@@ -98,40 +98,40 @@ pub enum ForgeStep {
 - [ ] 屏幕出现节奏提示（类似音游滚动条）：Light / Heavy / Fold 三种指令
 - [ ] 玩家按 J（轻）/ K（重）/ L（折）键在节奏窗口内击中
 - [ ] 连击 combo 提升品阶进度；错拍 / 过拍累积偏差
-- [ ] 每次按键消耗少量真元（体力向，非真元池主消耗）
+- [x] 每次按键消耗少量真元（体力向，非真元池主消耗）
 - [ ] 淬炼时长 ~30-60 秒（单把武器），太久会腻
 
 偏差累积超过 `tempering_profile.tolerance` → 走 flawed / waste。
 
 #### §1.3.3 铭文（Inscription，可跳过）
 
-- [ ] 成功铭文 → 品阶 +1（最高 `tier_cap`）
-- [ ] 铭文槽位：根据武器类型固定 1-3 条（剑 1 / 长柄 2 / 双手重器 3）
+- [x] 成功铭文 → 品阶 +1（最高 `tier_cap`）
+- [x] 铭文槽位：根据武器类型固定 1-3 条（剑 1 / 长柄 2 / 双手重器 3）
 - [ ] 铭文内容来自**铭文残卷 item**（类比 alchemy 丹方残卷，拖入铭文位）
-- [ ] 失败 → 武器留疤，品阶锁在当前
+- [x] 失败 → 武器留疤，品阶锁在当前
 
 #### §1.3.4 开光（Consecration，可跳过）
 
-- [ ] 注入持有者真元若干（`consecration_profile.qi_cost`，典型 30-100）
-- [ ] 武器沾染施术者的 `ColorKind`（单主色，不可覆盖除非重打）
+- [x] 注入持有者真元若干（`consecration_profile.qi_cost`，典型 30-100）
+- [x] 武器沾染施术者的 `ColorKind`（单主色，不可覆盖除非重打）
 - [ ] 效果：**同色攻击 +小幅**（10-20%），异色持有者使用**衰减**（70%）
-- [ ] **不形成 bond** —— 武器可正常交易，只是买家拿到会比卖家弱
-- [ ] 道器必须开光（否则最高锁灵器）
+- [x] **不形成 bond** —— 武器可正常交易，只是买家拿到会比卖家弱
+- [x] 道器必须开光（否则最高锁灵器）
 
 #### 材料消耗 / 失败策略
 
-- [ ] **投入即消耗**，起炉前右键取回，起炉后锁定
-- [ ] 任一步 waste/explode → 材料全失 + session 终止
-- [ ] explode 对 `WeaponForgeStation.integrity` 扣分（断锤伤人）
+- [x] **投入即消耗**，起炉前右键取回，起炉后锁定
+- [x] 任一步 waste/explode → 材料全失 + session 终止
+- [x] explode 对 `WeaponForgeStation.integrity` 扣分（断锤伤人）
 
 #### 残缺匹配（同 alchemy）
 
-- [ ] 坯料配比错 → 走 `flawed_fallback` + `side_effect_pool` 抽随机附加（可好可坏，记入 `LifeRecord`）
+- [x] 坯料配比错 → 走 `flawed_fallback` + `side_effect_pool` 抽随机附加（可好可坏，记入 `LifeRecord`）
 - [ ] 无 fallback → waste
 
 #### 离线 / 持续性
 
-- [ ] 服务器常驻，session 持续 tick（与 alchemy 策略一致）
+- [x] 服务器常驻，session 持续 tick（与 alchemy 策略一致）
 - [ ] BlockEntity 持久化 session_id
 
 ### §1.4 图谱学习与切换
@@ -144,9 +144,9 @@ pub struct LearnedBlueprints {
 }
 ```
 
-- [ ] 机制同 `LearnedRecipes` —— 拖【图谱残卷】item 到图谱卷轴区学习
-- [ ] 翻页切换已学图谱
-- [ ] 已学再拖提示"此图已悟"，不消耗
+- [x] 机制同 `LearnedRecipes` —— 拖【图谱残卷】item 到图谱卷轴区学习
+- [x] 翻页切换已学图谱
+- [x] 已学再拖提示"此图已悟"，不消耗
 
 ---
 
@@ -160,7 +160,7 @@ pub struct LearnedBlueprints {
 | 道器 | + 开光成 | 需异兽骨 + 灵木 + 高境界真元 |
 
 - [ ] 品阶影响 `base_damage` / `qi_capacity`（法器以上可存真元） / `durability` / `拾取权重`
-- [ ] 不做"仙器"——worldview §三 明禁
+- [x] 不做"仙器"——worldview §三 明禁
 
 ---
 
@@ -316,12 +316,12 @@ pub struct LearnedBlueprints {
 
 ### Server 侧
 
-- [ ] `BlueprintRegistry` resource
+- [x] `BlueprintRegistry` resource
 - [ ] `WeaponForgeStation` component + BlockEntity
-- [ ] `ForgeSession` resource（含 step_state / materials_in）
-- [ ] `LearnedBlueprints` component
-- [ ] `LifeRecord.forge_attempts: Vec<ForgeAttempt>`（同 alchemy_attempts，亡者博物馆可见）
-- [ ] Events：`StartForgeRequest` / `TemperingHit`（锻打节奏击键）/ `StepAdvance` / `ForgeOutcome`
+- [x] `ForgeSession` resource（含 step_state / materials_in）
+- [x] `LearnedBlueprints` component
+- [x] `LifeRecord.forge_attempts: Vec<ForgeAttempt>`（同 alchemy_attempts，亡者博物馆可见）
+- [x] Events：`StartForgeRequest` / `TemperingHit`（锻打节奏击键）/ `StepAdvance` / `ForgeOutcome`
 - [ ] Channel：`bong:forge/start` · `bong:forge/tick` · `bong:forge/hit` · `bong:forge/outcome`
 
 ### Client 侧（新增 Store）
@@ -358,7 +358,7 @@ pub struct LearnedBlueprints {
 - [ ] **plan-botany-v1**（待立）：灵木采集
 - [ ] **plan-npc-ai-v1**：散修 NPC 使用武器时读 quality/color；worldview §九 "游商傀儡"未来可作为 NPC 铁匠
 - [ ] **plan-HUD-v1**：武器 tooltip 扩展（quality / color / side_effects 显示）见 `weapon-treasure.svg`
-- [ ] **plan-cultivation-v1**：开光步骤要求 `min_realm`（通灵+）才能打道器
+- [x] **plan-cultivation-v1**：开光步骤要求 `min_realm`（通灵+）才能打道器
 
 ---
 

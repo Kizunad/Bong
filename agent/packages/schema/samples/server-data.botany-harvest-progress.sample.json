@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "type": "botany_harvest_progress",
+  "session_id": "session-botany-01",
+  "target_id": "plant-1",
+  "target_name": "开脉草",
+  "plant_kind": "ning_mai_cao",
+  "mode": "manual",
+  "progress": 0.6,
+  "auto_selectable": true,
+  "request_pending": false,
+  "interrupted": false,
+  "completed": false,
+  "detail": "晨露未散，适合手工采撷",
+  "target_pos": [10.5, 64.0, 10.5]
+}

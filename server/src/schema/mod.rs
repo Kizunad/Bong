@@ -4,6 +4,7 @@
 
 pub mod agent_command;
 pub mod alchemy;
+pub mod botany;
 pub mod channels;
 pub mod chat_message;
 pub mod client_payload;
@@ -16,5 +17,6 @@ pub mod inventory;
 pub mod lingtian;
 pub mod narration;
 pub mod server_data;
+pub mod skill;
 pub mod vfx_event;
 pub mod world_state;

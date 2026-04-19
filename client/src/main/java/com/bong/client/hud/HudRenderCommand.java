@@ -11,6 +11,7 @@ public final class HudRenderCommand {
     private final int width;
     private final int height;
     private final int color;
+    private final String texturePath;
 
     private HudRenderCommand(
         HudRenderLayer layer,
@@ -20,7 +21,8 @@ public final class HudRenderCommand {
         int y,
         int width,
         int height,
-        int color
+        int color,
+        String texturePath
     ) {
         this.layer = Objects.requireNonNull(layer, "layer");
         this.kind = Objects.requireNonNull(kind, "kind");
@@ -30,18 +32,24 @@ public final class HudRenderCommand {
         this.width = width;
         this.height = height;
         this.color = color;
+        this.texturePath = texturePath == null ? "" : texturePath;
     }
 
     public static HudRenderCommand text(HudRenderLayer layer, String text, int x, int y, int color) {
-        return new HudRenderCommand(layer, Kind.TEXT, text, x, y, 0, 0, color);
+        return new HudRenderCommand(layer, Kind.TEXT, text, x, y, 0, 0, color, null);
     }
 
     public static HudRenderCommand screenTint(HudRenderLayer layer, int color) {
-        return new HudRenderCommand(layer, Kind.SCREEN_TINT, "", 0, 0, 0, 0, color);
+        return new HudRenderCommand(layer, Kind.SCREEN_TINT, "", 0, 0, 0, 0, color, null);
     }
 
     public static HudRenderCommand edgeVignette(HudRenderLayer layer, int color) {
-        return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, 0, 0, color);
+        return new HudRenderCommand(layer, Kind.EDGE_VIGNETTE, "", 0, 0, 0, 0, color, null);
+    }
+
+    public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
+        // NOTE(plan-skill-v1 P2): 一字修 — 原 commit 051479fa 漏了 texturePath 参数，阻塞全量 build。
+        return new HudRenderCommand(layer, Kind.EDGE_INK_WASH, "", 0, 0, 0, 0, color, null);
     }
 
     public static HudRenderCommand edgeInkWash(HudRenderLayer layer, int color) {
@@ -49,15 +57,31 @@ public final class HudRenderCommand {
     }
 
     public static HudRenderCommand toast(HudRenderLayer layer) {
-        return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0);
+        return new HudRenderCommand(layer, Kind.TOAST, "", 0, 0, 0, 0, 0, null);
     }
 
     public static HudRenderCommand toast(HudRenderLayer layer, String text, int x, int y, int color) {
-        return new HudRenderCommand(layer, Kind.TOAST, text, x, y, 0, 0, color);
+        return new HudRenderCommand(layer, Kind.TOAST, text, x, y, 0, 0, color, null);
     }
 
     public static HudRenderCommand rect(HudRenderLayer layer, int x, int y, int width, int height, int color) {
-        return new HudRenderCommand(layer, Kind.RECT, "", x, y, width, height, color);
+        return new HudRenderCommand(layer, Kind.RECT, "", x, y, width, height, color, null);
+    }
+
+    /**
+     * plan §1.3 缩略图：drawTexture 支持。{@code texturePath} 例：{@code bong-client:textures/gui/botany/ci_she_hao.png}。
+     * {@code color} 作为 tint（0xFFFFFFFF = 无 tint）。
+     */
+    public static HudRenderCommand texture(
+        HudRenderLayer layer,
+        String texturePath,
+        int x,
+        int y,
+        int width,
+        int height,
+        int color
+    ) {
+        return new HudRenderCommand(layer, Kind.TEXTURED_RECT, "", x, y, width, height, color, texturePath);
     }
 
     /**
@@ -66,7 +90,7 @@ public final class HudRenderCommand {
      * Source PNG is assumed 128×128 (matches {@code GridSlotComponent}).
      */
     public static HudRenderCommand itemTexture(HudRenderLayer layer, String itemId, int x, int y, int size) {
-        return new HudRenderCommand(layer, Kind.ITEM_TEXTURE, itemId == null ? "" : itemId, x, y, size, size, 0);
+        return new HudRenderCommand(layer, Kind.ITEM_TEXTURE, itemId == null ? "" : itemId, x, y, size, size, 0, null);
     }
 
     public HudRenderLayer layer() {
@@ -125,8 +149,16 @@ public final class HudRenderCommand {
         return kind == Kind.RECT;
     }
 
+    public boolean isTexturedRect() {
+        return kind == Kind.TEXTURED_RECT;
+    }
+
     public boolean isItemTexture() {
         return kind == Kind.ITEM_TEXTURE;
+    }
+
+    public String texturePath() {
+        return texturePath;
     }
 
     public enum Kind {
@@ -136,6 +168,7 @@ public final class HudRenderCommand {
         EDGE_INK_WASH,
         TOAST,
         RECT,
+        TEXTURED_RECT,
         ITEM_TEXTURE
     }
 }

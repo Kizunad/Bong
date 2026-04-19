@@ -1,6 +1,5 @@
 #[allow(dead_code)]
 mod alchemy;
-#[allow(dead_code)]
 mod botany;
 mod combat;
 #[allow(dead_code)]
@@ -15,6 +14,7 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
+mod skill;
 mod world;
 
 use crossbeam_channel::unbounded;
@@ -47,8 +47,9 @@ fn main() {
     world::register(&mut app);
     player::register(&mut app);
     inventory::register(&mut app);
-    cultivation::register(&mut app);
     botany::register(&mut app);
+    skill::register(&mut app);
+    cultivation::register(&mut app);
     alchemy::register(&mut app);
     combat::register(&mut app);
     forge::register(&mut app);

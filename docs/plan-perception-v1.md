@@ -194,7 +194,7 @@
 ## §6 实施节点
 
 ### Phase 0：基础设施
-- [ ] 服务端 `bong:server_data` 推送通道（前置依赖，见 plan-particle-system-v1 §0 风险）
+- [x] 服务端 `bong:server_data` 推送通道（前置依赖，见 plan-particle-system-v1 §0 风险）
 - [ ] `BongClientState` 增加 `visual` / `perception` 字段
 
 ### Phase 1：视觉系统

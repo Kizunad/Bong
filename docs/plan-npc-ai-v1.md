@@ -115,8 +115,8 @@ _在现有 4 Scorer + 4 Action 基础上扩展。_
 
 - [ ] NPC 共用 `LifespanComponent`（plan-death §7）
 - [ ] **tick rate 与玩家一致**：1 real hour = 1 year，死域 ×2，但 NPC 无"离线"概念（始终在线）
-- [ ] **首版支持开关**：`NpcAgingConfig { enabled: bool, rate_multiplier: f32 }` ——性能紧张时可降 NPC 老化速率（如 0.3x）
-- [ ] 风烛状态驱动 `RetireAction`（NPC 找偏僻处归隐，等老死）
+- [x] **首版支持开关**：`NpcAgingConfig { enabled: bool, rate_multiplier: f32 }` ——性能紧张时可降 NPC 老化速率（如 0.3x）
+- [x] 风烛状态驱动 `RetireAction`（NPC 找偏僻处归隐，等老死）
 
 ### §3.2 境界推进
 
@@ -236,26 +236,26 @@ RelicGuardBundle= [NpcMarker, Archetype=GuardianRelic, GuardianDuty, TrialEval]
 
 - [ ] `bong:npc/spawn` — server 主动 spawn（生育 / 天道投放 / 夺舍残留）
 - [ ] `bong:npc/death` — NPC 死亡 / 老死（含 cause、archetype、faction）
-- [ ] `bong:npc/behavior_cmd` — **已有** agent 下发
+- [x] `bong:npc/behavior_cmd` — **已有** agent 下发
 - [ ] `bong:faction/event` — 派系大事件（战争 / 盟约 / 瓦解）
-- [ ] `NpcRegistry`（server 全局，所有 NPC 查询 / 总量上限）
-- [ ] `FactionStore`（所有派系状态）
+- [x] `NpcRegistry`（server 全局，所有 NPC 查询 / 总量上限）
+- [x] `FactionStore`（所有派系状态）
 
 ### Agent Intent（producer 侧待补）
 
 - [ ] `SpawnNpc { archetype, pos, faction?, realm? }`
 - [ ] `DespawnNpc { char_id, reason }`
-- [ ] `ModifyBehavior { char_id, blackboard_patch }` — 已有 consumer
+- [x] `ModifyBehavior { char_id, blackboard_patch }` — 已有 consumer
 - [ ] `FactionEvent { kind, source, target }`
 
 ## §7 实施节点
 
 **Phase 0 — LifespanComponent 挂到 NPC + 老化 tick + 总量上限**
 - [ ] NPC 共用 plan-death §7 `LifespanComponent`
-- [ ] `NpcAgingConfig { enabled: true, rate_multiplier: 0.3 }`
-- [ ] `max_npc_count = 512`（可调）+ 满员后停止补员直到降至 0.9× 阈值
+- [x] `NpcAgingConfig { enabled: true, rate_multiplier: 0.3 }`
+- [x] `max_npc_count = 512`（可调）+ 满员后停止补员直到降至 0.9× 阈值
 - [ ] NPC 老死 → 走 plan-death §4b 善终路径（遗骸容器 + `bong:npc/death`）
-- [ ] 风烛 → `RetireAction`
+- [x] 风烛 → `RetireAction`
 
 **Phase 1 — 凡人 archetype**
 - [ ] `CommonerBundle` + `FearCultivatorScorer` + `HungerScorer`

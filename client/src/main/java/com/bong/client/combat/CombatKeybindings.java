@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import com.bong.client.BongClient;
+import com.bong.client.botany.BotanyHudBootstrap;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
@@ -115,10 +116,17 @@ public final class CombatKeybindings {
 
         // Spell-volume is hold-to-show: detect edge transitions via the
         // KeyBinding.isPressed() poll (wasPressed only fires on key-down).
-        boolean heldNow = spellVolumeKey.isPressed();
-        if (heldNow != spellVolumeHeldLastTick) {
-            spellVolumeHandler.onSpellVolumeHold(heldNow);
-            spellVolumeHeldLastTick = heldNow;
+        if (BotanyHudBootstrap.shouldCaptureSpellVolumeKey()) {
+            if (spellVolumeHeldLastTick) {
+                spellVolumeHandler.onSpellVolumeHold(false);
+                spellVolumeHeldLastTick = false;
+            }
+        } else {
+            boolean heldNow = spellVolumeKey.isPressed();
+            if (heldNow != spellVolumeHeldLastTick) {
+                spellVolumeHandler.onSpellVolumeHold(heldNow);
+                spellVolumeHeldLastTick = heldNow;
+            }
         }
 
         while (switchStanceJiemai.wasPressed()) {

@@ -18,15 +18,15 @@
 
 ## §0 设计轴心
 
-- [ ] **三大子系统完全解耦**（为后续自动化留口）：
+- [x] **三大子系统完全解耦**（为后续自动化留口）：
   - 配方系统（JSON 加载，纯数据）
   - 熔炉系统（世界实体，玩家/NPC/未来傀儡皆可绑）
   - 火候进程（运行时状态机，玩家可干预或设定曲线）
-- [ ] **药三分毒**：每颗丹产出一条 `ContamSource`（色 + 量），进入 contamination 系统
-- [ ] **代谢 = 现有经脉能力**：不新增代谢字段；吃下一颗前必须等当前丹毒 purge 到阈值以下
-- [ ] 多结果输出（成丹/副产/废丹/炸炉），**非二元**
+- [x] **药三分毒**：每颗丹产出一条 `ContamSource`（色 + 量），进入 contamination 系统
+- [x] **代谢 = 现有经脉能力**：不新增代谢字段；吃下一颗前必须等当前丹毒 purge 到阈值以下
+- [x] 多结果输出（成丹/副产/废丹/炸炉），**非二元**
 - [ ] **品阶 / 铭文 / 开光 先不做**（TODO）——MVP 只做单一成功度轴
-- [ ] **灵草 MVP 用 placeholder registry**，等 `plan-botany-v1` 落地后替换
+- [x] **灵草 MVP 用 placeholder registry**，等 `plan-botany-v1` 落地后替换
 
 ---
 
@@ -42,7 +42,7 @@
 - `outcomes` — perfect/good/flawed/waste/explode 五桶；`flawed_fallback` 专用于**残缺匹配**路径（见 §1.3 投错料规则）
 - `furnace_tier_min` — 限最低炉阶
 
-- [ ] 加载器：启动期扫目录 → `RecipeRegistry` resource
+- [x] 加载器：启动期扫目录 → `RecipeRegistry` resource
 - [ ] 未来 NPC/agent 可以**读同一张表**做自动炼丹
 
 ### §1.2 熔炉系统（世界实体）
@@ -59,7 +59,7 @@ pub struct AlchemyFurnace {
 
 - [ ] 放置为方块或实体（MVP 用方块 + BlockEntity）
 - [ ] tier 由材料决定（凡铁炉 / 灵铁炉 / ...）
-- [ ] `owner` 只影响启动权限；session 持有当前炼制任务
+- [x] `owner` 只影响启动权限；session 持有当前炼制任务
 - [ ] **多炉并行**：一玩家可绑多个炉（未来自动化入口）
 
 ### §1.3 火候进程（运行时状态机）
@@ -82,16 +82,16 @@ pub enum Intervention {
 }
 ```
 
-- [ ] 进程每 tick 比对当前 temp/qi 与 `fire_profile` → 累积偏差
-- [ ] 结束时按偏差分桶到 `outcomes.{perfect,good,flawed,waste,explode}`
-- [ ] **AutoProfile 是预留口**：未来用 JSON 定义的标准曲线替代人工，实现"自动化炼丹"
+- [x] 进程每 tick 比对当前 temp/qi 与 `fire_profile` → 累积偏差
+- [x] 结束时按偏差分桶到 `outcomes.{perfect,good,flawed,waste,explode}`
+- [x] **AutoProfile 是预留口**：未来用 JSON 定义的标准曲线替代人工，实现"自动化炼丹"
 
 #### 材料消耗规则
 
 - [ ] **投入即消耗**：材料从背包拖入炉槽瞬间扣库存（不等起炉）
 - [ ] **起炉前可右键取回**（退回背包，无损）
-- [ ] **起炉后锁定**，失败（waste/explode）**不返还**任何材料
-- [ ] 中途投料（`stages[].at_tick`）错过窗口 → 本阶段判失败，直接走 flawed/waste 分桶
+- [x] **起炉后锁定**，失败（waste/explode）**不返还**任何材料
+- [x] 中途投料（`stages[].at_tick`）错过窗口 → 本阶段判失败，直接走 flawed/waste 分桶
 
 #### 投错料规则（不做配方校验，走残缺匹配）
 
@@ -109,9 +109,9 @@ pub enum Intervention {
 
 #### 中途投料
 
-- [ ] `stages[]` 定义多阶段投料窗口：`{ at_tick: 80, required: [{material, count}], window: 20 }`
-- [ ] 到 tick 时 UI 提示"该下 X 了"（投料槽闪烁）
-- [ ] window 内未投 / 投错 → 走残缺匹配或失败
+- [x] `stages[]` 定义多阶段投料窗口：`{ at_tick: 80, required: [{material, count}], window: 20 }`
+- [x] 到 tick 时 UI 提示"该下 X 了"（投料槽闪烁）
+- [x] window 内未投 / 投错 → 走残缺匹配或失败
 
 #### 离线 / 持续性
 
@@ -129,10 +129,10 @@ pub struct LearnedRecipes {
 }
 ```
 
-- [ ] 初始玩家无已学方子（或仅"开脉丹"作为教学）
-- [ ] **学习**：从背包拖【丹方残卷】item 到卷轴区 → `LearnedRecipes.ids.push(id)` + 残卷消耗
-- [ ] **翻页**：卷轴 UI 左右箭头切换 `current_index`
-- [ ] 重复残卷（已学）→ 提示"此方已悟"，不消耗
+- [x] 初始玩家无已学方子（或仅"开脉丹"作为教学）
+- [x] **学习**：从背包拖【丹方残卷】item 到卷轴区 → `LearnedRecipes.ids.push(id)` + 残卷消耗
+- [x] **翻页**：卷轴 UI 左右箭头切换 `current_index`
+- [x] 重复残卷（已学）→ 提示"此方已悟"，不消耗
 - [ ] 残卷内容损坏（未来扩展）→ 只能学到残缺版，进残缺匹配池
 
 ---
@@ -153,8 +153,8 @@ useItem(pill) →
   应用 pill.effect（回血 / 加 qi / 推进经脉进度 ...）
 ```
 
-- [ ] `attacker_id: None` 用作"丹毒来源"标签（未来可加 `Source` enum 精确区分）
-- [ ] 丹毒色由配方决定，多为 `Mellow` / `Turbid`（平和 / 浊）
+- [x] `attacker_id: None` 用作"丹毒来源"标签（未来可加 `Source` enum 精确区分）
+- [x] 丹毒色由配方决定，多为 `Mellow` / `Turbid`（平和 / 浊）
 
 ### §2.2 重复服药约束
 
@@ -164,8 +164,8 @@ can_take(pill) = Contamination.entries
   .map(|e| e.amount).sum() < THRESHOLD
 ```
 
-- [ ] 同色丹毒未代谢到阈值 → 禁止再服（或强吃触发过量 debuff）
-- [ ] **不新增字段**：代谢快慢完全由经脉 `sum_rate × integrity` 决定（contamination_tick 本就这么算）
+- [x] 同色丹毒未代谢到阈值 → 禁止再服（或强吃触发过量 debuff）
+- [x] **不新增字段**：代谢快慢完全由经脉 `sum_rate × integrity` 决定（contamination_tick 本就这么算）
 - [ ] 经脉升级 → 代谢加快 = worldview "升级经脉获取更强代谢"
 
 ### §2.3 过量惩罚（可选，放 §7 开放）
@@ -302,21 +302,21 @@ can_take(pill) = Contamination.entries
 
 > 详见 `docs/svg/alchemy-furnace.svg` 草图（草图为放大示意，实际尺寸以代码为准）。
 
-- [ ] 层级：**BaseOwoScreen&lt;FlowLayout&gt;**（B 层，硬编码，右键炉方块打开）
-- [ ] **紧凑面板 600×340**（panel padding 6 / gap 4），目标 UI scale 3 完整可见：
+- [x] 层级：**BaseOwoScreen&lt;FlowLayout&gt;**（B 层，硬编码，右键炉方块打开）
+- [x] **紧凑面板 600×340**（panel padding 6 / gap 4），目标 UI scale 3 完整可见：
   - 1080p · scale 3 → GUI 640×360 ✓
   - 2K · scale 3 → GUI 853×480 ✓ 充裕
   - 历史教训：1560×900 旧版在 scale 3 下只能看见 ~2/3，已弃用
-- [ ] 三列布局（高 244）：
+- [x] 三列布局（高 244）：
   - 左 150：**方子手札**（◀ 标题 ▶ + 副标题 + 正文 140 高 + 残卷拖入区 46 高）
   - 中 220：4 投料槽行 + 状态行 + 进度条 + 温度条 + qi 条 + 干预 log（截 2 条）+ 炉信息一行
   - 右 212：**复用塔科夫背包** `BackpackGridPanel` 5×7（196×140）+ 重量条
-- [ ] 底栏 60：5 个 36×36 outcome 方块（perf/good/flaw/wast/boom）+ Mellow/Violent 双色丹毒条
+- [x] 底栏 60：5 个 36×36 outcome 方块（perf/good/flaw/wast/boom）+ Mellow/Violent 双色丹毒条
 - [ ] **删除项**（旧版冗余）：炉体 ASCII 可视化（lid/body/flame/base 共 200 高）· 多 tab 行 · hotbar 预览 · 大 tooltip 占位框 · 键位提示框 · 各种 plan §X.Y meta-label
 - [ ] **不做**火候曲线编辑器（留 v2）
 - [ ] **不做**品阶显示（只显示 quality %）
 - [ ] **不做**配方匹配校验 UI（投错自然走残缺 / waste / explode）
-- [ ] 尺寸常量集中在 `AlchemyScreen.PANEL_W/PANEL_H/LEFT_W/MID_W/RIGHT_W/BODY_H/BOTTOM_H`，方便后续调参
+- [x] 尺寸常量集中在 `AlchemyScreen.PANEL_W/PANEL_H/LEFT_W/MID_W/RIGHT_W/BODY_H/BOTTOM_H`，方便后续调参
 
 ---
 
@@ -324,21 +324,21 @@ can_take(pill) = Contamination.entries
 
 ### Server 侧
 
-- [ ] `RecipeRegistry` resource（启动期加载 JSON）
+- [x] `RecipeRegistry` resource（启动期加载 JSON）
 - [ ] `AlchemyFurnace` component + BlockEntity（持久化 session_id）
 - [ ] `AlchemySession` resource（map: session_id → state，含 stages_progress / staged_materials_in）
-- [ ] `LearnedRecipes` component（挂玩家，含 ids + current_index）
-- [ ] `LifeRecord` 扩展：追加 `alchemy_attempts: Vec<AlchemyAttempt>`（含时间/配方/残缺版/抽到的 side_effect）
-- [ ] Events：`StartAlchemyRequest` / `InterventionRequest`（调温/注 qi/中途投料）/ `AlchemyOutcome`
+- [x] `LearnedRecipes` component（挂玩家，含 ids + current_index）
+- [x] `LifeRecord` 扩展：追加 `alchemy_attempts: Vec<AlchemyAttempt>`（含时间/配方/残缺版/抽到的 side_effect）
+- [x] Events：`StartAlchemyRequest` / `InterventionRequest`（调温/注 qi/中途投料）/ `AlchemyOutcome`
 - [ ] Channel：`bong:alchemy/start` · `bong:alchemy/tick`（session 状态广播）· `bong:alchemy/intervention` · `bong:alchemy/outcome`
-- [ ] IPC Schema（agent/packages/schema）：recipe JSON Schema（为 agent 推演 NPC 炼丹准备）
+- [x] IPC Schema（agent/packages/schema）：recipe JSON Schema（为 agent 推演 NPC 炼丹准备）
 
 ### Client 侧（新增 Store）
 
-- [ ] `AlchemyFurnaceStore` — 当前打开炉体状态（tier / integrity / owner）
-- [ ] `AlchemySessionStore` — 实时 session（elapsed / temp_track / qi_injected / staged_materials / stage_hints）
-- [ ] `RecipeScrollStore` — 当前卷轴上显示的 recipe 文案 + `LearnedRecipes` 列表 + current_index
-- [ ] 复用：`InventoryStateStore` / `BackpackGridPanel` / `DragState` / `ItemTooltipPanel` / `Contamination`（HUD 预警读取）
+- [x] `AlchemyFurnaceStore` — 当前打开炉体状态（tier / integrity / owner）
+- [x] `AlchemySessionStore` — 实时 session（elapsed / temp_track / qi_injected / staged_materials / stage_hints）
+- [x] `RecipeScrollStore` — 当前卷轴上显示的 recipe 文案 + `LearnedRecipes` 列表 + current_index
+- [x] 复用：`InventoryStateStore` / `BackpackGridPanel` / `DragState` / `ItemTooltipPanel` / `Contamination`（HUD 预警读取）
 
 ---
 
@@ -358,8 +358,8 @@ can_take(pill) = Contamination.entries
 
 ## §6 跨 plan 钩子
 
-- [ ] **plan-botany-v1**（待立）：替换 §3.2 的 placeholder 材料，接入真实灵草采集
-- [ ] **plan-forge-v1**（待立）：炼器走同一炉体抽象？或独立？留待 forge plan 决策
+- [x] **plan-botany-v1**（待立）：替换 §3.2 的 placeholder 材料，接入真实灵草采集
+- [x] **plan-forge-v1**（待立）：炼器走同一炉体抽象？或独立？留待 forge plan 决策
 - [ ] **plan-cultivation-v1**：`open_pill_progress` 字段或事件，让开脉丹推进经脉进度
 - [ ] **plan-HUD-v1 §10**：快捷使用栏消费 pill item
 - [ ] **plan-inventory-v1**：

@@ -44,7 +44,7 @@ pub struct StepAdvance {
     pub session: ForgeSessionId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForgeBucket {
     Perfect,
     Good,
