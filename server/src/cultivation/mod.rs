@@ -232,8 +232,10 @@ fn cultivation_realm_from_player_state(realm: &str) -> Option<Realm> {
 mod tests {
     use super::*;
 
+    use crate::combat::components::Lifecycle;
     use crate::persistence::{
-        persist_active_tribulation, ActiveTribulationRecord, PersistenceSettings,
+        load_active_tribulation, load_ascension_quota, persist_active_tribulation,
+        ActiveTribulationRecord, PersistenceSettings,
     };
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
@@ -384,6 +386,109 @@ mod tests {
         assert_eq!(tribulation.wave_current, 5);
         assert_eq!(tribulation.waves_total, 5);
         assert_eq!(tribulation.started_tick, 1888);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn restored_tribulation_completion_clears_active_row_and_awards_quota() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-tribulation-restore-complete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                wave_current: 4,
+                waves_total: 5,
+                started_tick: 2880,
+            },
+        )
+        .expect("active tribulation should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_event::<tribulation::TribulationWaveCleared>();
+        app.add_systems(
+            Update,
+            (
+                attach_cultivation_to_joined_clients,
+                tribulation::tribulation_wave_system,
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    realm: "qi_refining_3".to_string(),
+                    spirit_qi: 120.0,
+                    spirit_qi_max: 160.0,
+                    karma: 0.0,
+                    experience: 4800,
+                    inventory_score: 0.0,
+                },
+                Lifecycle {
+                    character_id: canonical_player_id("Azure"),
+                    death_count: 0,
+                    fortune_remaining: 1,
+                    last_death_tick: None,
+                    last_revive_tick: None,
+                    near_death_deadline_tick: None,
+                    weakened_until_tick: None,
+                    state: crate::combat::components::LifecycleState::Alive,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let restored = app
+            .world()
+            .get::<tribulation::TribulationState>(entity)
+            .expect("tribulation should restore");
+        assert_eq!(restored.wave_current, 5);
+        assert_eq!(restored.waves_total, 5);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<tribulation::TribulationWaveCleared>>()
+            .send(tribulation::TribulationWaveCleared { entity, wave: 5 });
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should still be attached");
+        assert_eq!(cultivation.realm, Realm::Void);
+        assert!(
+            app.world()
+                .get::<tribulation::TribulationState>(entity)
+                .is_none(),
+            "tribulation state should be removed after ascension"
+        );
+
+        let active = load_active_tribulation(&settings, canonical_player_id("Azure").as_str())
+            .expect("active tribulation query should succeed");
+        assert!(active.is_none(), "active tribulation row should be cleared");
+
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 1);
 
         let _ = std::fs::remove_dir_all(temp_root);
     }
