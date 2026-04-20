@@ -57,10 +57,10 @@ pub struct AlchemyFurnace {
 }
 ```
 
-- [ ] 放置为方块或实体（MVP 用方块 + BlockEntity）
-- [ ] tier 由材料决定（凡铁炉 / 灵铁炉 / ...）
+- [x] 放置为方块或实体（2026-04-21 server-only：`ClientRequestV1::AlchemyFurnacePlace` → `PlaceFurnaceRequest` 事件 → spawn ECS entity + 刷 `BlockState::FURNACE`。Fabric 客户端拦截右键发 payload 未接，见 reminder.md）
+- [x] tier 由材料决定（`alchemy::furnace::furnace_tier_from_item_id`：`furnace_fantie` → tier 1；灵铁炉 tier 2 / 仙铁炉 tier 3 等 forge-v1 品阶落地后补）
 - [x] `owner` 只影响启动权限；session 持有当前炼制任务
-- [ ] **多炉并行**：一玩家可绑多个炉（未来自动化入口）
+- [x] **多炉并行**：同玩家可在多坐标放多个炉（每炉独立 ECS entity；多炉 session 路由 / intervention 按炉分发仍未接，见 reminder.md）
 
 ### §1.3 火候进程（运行时状态机）
 

@@ -9,6 +9,23 @@ rarity = "uncommon"
 spirit_quality_initial = 1.0
 description = "初入末法残土时由宗门发放的护身符。"
 
+# plan-alchemy-v1 §1.2 — 凡铁炉（tier 1 炼丹炉）。
+#
+# 玩家手持右键地面 → 客户端发 `AlchemyFurnacePlace` payload → 服务端消耗 1 个
+# 并在目标方块处 spawn `AlchemyFurnace` ECS entity（tier 由 item_id 决定，见
+# `alchemy::furnace::furnace_tier_from_item_id`）。更高阶（灵铁 tier 2 / 仙铁
+# tier 3）等 forge-v1 品阶系统落地后补。
+[[item]]
+id = "furnace_fantie"
+name = "凡铁炉"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 8.0
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "最入门的炼丹炉。摆稳了就能起炉，坏了再打一座就是。"
+
 [[item]]
 id = "healing_herb_bundle"
 name = "止创草束"
