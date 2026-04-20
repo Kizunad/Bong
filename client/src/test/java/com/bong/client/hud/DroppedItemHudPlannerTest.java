@@ -14,9 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * "只画 icon" 策略下的 planner 回归测试。layout 计算（投影 + clamp + stabilize）保留，
- * emit 阶段只一个 itemTexture command——不再有 background rect / edge accent / directional label。
- * 原版本里方向前缀（↑↓←→）相关 6 个测试已删（下线的是 text 不是 layout，前缀函数留作 dead code 规格）。
+ * "图标带壳" 策略下的 planner 回归测试。layout 计算（投影 + clamp + stabilize）保留，
+ * emit：background rect + (optional edge accent) + icon 的 itemTexture。**不** emit 文字标签。
+ * 原版本里方向前缀（↑↓←→）相关 6 个测试已删（下线的是 text emit，前缀计算函数留作 dead code 规格）。
  */
 public class DroppedItemHudPlannerTest {
     private static final HudTextHelper.WidthMeasurer FIXED_WIDTH = text -> text == null ? 0 : text.length() * 6;
@@ -41,7 +41,7 @@ public class DroppedItemHudPlannerTest {
     }
 
     @Test
-    void emitsIconOnlyForNearestVisibleDroppedItem() {
+    void emitsBackdropAndIconForNearestVisibleDroppedItem() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
             1004L, "main_pack", 0, 0,
             0.0, 0.0, 7.5,
@@ -49,12 +49,12 @@ public class DroppedItemHudPlannerTest {
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT);
-        assertEquals(1, commands.size());
-        HudRenderCommand cmd = commands.get(0);
-        assertTrue(cmd.isItemTexture(), "sole command should be an item texture (icon)");
-        assertEquals("starter_talisman", cmd.text(), "itemTexture command carries itemId in text field");
-        assertFalse(commands.stream().anyMatch(HudRenderCommand::isRect), "no background rect");
-        assertFalse(commands.stream().anyMatch(HudRenderCommand::isText), "no floating label");
+        // 视野居中、无 clamp 时只出 background + icon（无 edge accent 条）
+        assertEquals(2, commands.size());
+        assertTrue(commands.get(0).isRect(), "first command = background rect");
+        assertTrue(commands.get(1).isItemTexture(), "second command = item icon");
+        assertEquals("starter_talisman", commands.get(1).text());
+        assertFalse(commands.stream().anyMatch(HudRenderCommand::isText), "no floating text label");
     }
 
     @Test
@@ -85,7 +85,7 @@ public class DroppedItemHudPlannerTest {
     }
 
     @Test
-    void clampsIconIntoViewportWhenProjectedTargetFallsOffScreen() {
+    void clampsBackdropAndIconIntoViewportWhenProjectedTargetFallsOffScreen() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
             1004L, "main_pack", 0, 0,
             -20.0, 0.0, 5.0,
@@ -93,14 +93,20 @@ public class DroppedItemHudPlannerTest {
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
-        assertEquals(1, commands.size());
-        HudRenderCommand icon = commands.get(0);
-        assertTrue(icon.isItemTexture());
-        // icon 应被 clamp 完全落在屏幕内
-        assertTrue(icon.x() >= 0, "icon x >= 0");
-        assertTrue(icon.x() + icon.width() <= 120, "icon fully on-screen horizontally");
-        assertTrue(icon.y() >= 0, "icon y >= 0");
-        assertTrue(icon.y() + icon.height() <= 80, "icon fully on-screen vertically");
+        // 被 clamp 时会多出 edge accent 条（rect），所以 >= 2
+        assertTrue(commands.size() >= 2);
+        HudRenderCommand backdrop = commands.get(0);
+        assertTrue(backdrop.isRect(), "first command = background rect");
+        // 背景方块完全落在屏幕内
+        assertTrue(backdrop.x() >= 0, "backdrop x >= 0");
+        assertTrue(backdrop.x() + backdrop.width() <= 120, "backdrop fully on-screen horizontally");
+        assertTrue(backdrop.y() >= 0, "backdrop y >= 0");
+        assertTrue(backdrop.y() + backdrop.height() <= 80, "backdrop fully on-screen vertically");
+        // icon 也在屏幕内
+        HudRenderCommand icon = commands.stream()
+            .filter(HudRenderCommand::isItemTexture).findFirst().orElseThrow();
+        assertTrue(icon.x() >= 0 && icon.x() + icon.width() <= 120);
+        assertTrue(icon.y() >= 0 && icon.y() + icon.height() <= 80);
     }
 
     @Test
@@ -119,8 +125,10 @@ public class DroppedItemHudPlannerTest {
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT);
-        assertEquals(1, commands.size());
-        assertEquals("starter_talisman", commands.get(0).text(), "应选最近的 entry（距离平方最小）");
+        List<HudRenderCommand> icons = commands.stream()
+            .filter(HudRenderCommand::isItemTexture).toList();
+        assertEquals(1, icons.size(), "无论 emit 多少辅助 rect/accent，itemTexture 只能一个");
+        assertEquals("starter_talisman", icons.get(0).text(), "应选最近的 entry");
     }
 
     @Test
@@ -143,11 +151,11 @@ public class DroppedItemHudPlannerTest {
         List<HudRenderCommand> first = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT, state);
         List<HudRenderCommand> second = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, slightlyShifted, state);
 
-        assertEquals(1, first.size());
-        assertEquals(1, second.size());
-        // icon 在死区内的微小相机位移时位置保持（stabilization dead-zone 生效）
-        assertEquals(first.get(0).x(), second.get(0).x());
-        assertEquals(first.get(0).y(), second.get(0).y());
+        // 用 backdrop rect 做稳定性断言（icon 在 backdrop 内，同步移动）
+        HudRenderCommand firstBackdrop = first.get(0);
+        HudRenderCommand secondBackdrop = second.get(0);
+        assertEquals(firstBackdrop.x(), secondBackdrop.x());
+        assertEquals(firstBackdrop.y(), secondBackdrop.y());
     }
 
     @Test
@@ -160,8 +168,7 @@ public class DroppedItemHudPlannerTest {
         DroppedItemHudPlanner.MarkerStabilityState state = new DroppedItemHudPlanner.MarkerStabilityState();
 
         List<HudRenderCommand> initial = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT, state);
-        assertEquals(1, initial.size());
-        int firstIconX = initial.get(0).x();
+        int firstBackdropX = initial.get(0).x();
 
         DroppedItemStore.resetForTests();
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
@@ -171,8 +178,7 @@ public class DroppedItemHudPlannerTest {
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT, state);
-        assertEquals(1, commands.size());
-        // 目标切换应重置 stabilizer，icon 位置从新目标投影点算起，而非从旧 icon lerp
-        assertNotEquals(firstIconX, commands.get(0).x(), "icon jumped to new target, not lerped from old");
+        // 目标切换应重置 stabilizer，backdrop 位置从新目标投影点算起，而非从旧位置 lerp
+        assertNotEquals(firstBackdropX, commands.get(0).x(), "backdrop jumped to new target, not lerped from old");
     }
 }

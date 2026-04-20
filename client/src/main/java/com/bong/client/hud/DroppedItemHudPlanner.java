@@ -21,9 +21,11 @@ public final class DroppedItemHudPlanner {
     private static final double MARKER_WORLD_HEIGHT = 0.35;
     private static final double MIN_DEPTH = 0.05;
     private static final double MIN_VECTOR_LENGTH_SQ = 0.000001;
-    private static final double POSITION_DEADZONE_PX = 1.25;
-    private static final double POSITION_LERP_FACTOR = 0.35;
-    private static final double POSITION_SNAP_DISTANCE_PX = 24.0;
+    // 强化：deadzone 提到 4px 吸收走路时的轻微抖动，lerp factor 降到 0.15 让跟随更缓、
+    // snap 距离提到 36px 避免目标切换 / 大视角转动时的瞬跳被误判为缓动。
+    private static final double POSITION_DEADZONE_PX = 4.0;
+    private static final double POSITION_LERP_FACTOR = 0.15;
+    private static final double POSITION_SNAP_DISTANCE_PX = 36.0;
     private static final MarkerStabilityState SHARED_STABILITY_STATE = new MarkerStabilityState();
 
     private DroppedItemHudPlanner() {}
@@ -89,16 +91,27 @@ public final class DroppedItemHudPlanner {
             return List.of();
         }
 
-        // "只画 icon" 策略：layout 计算（投影 + 边缘 clamp + stabilize）保留，
-        // 但 emit 阶段不再绘制 background rect / edge accent / 文字标签——
-        // 仅一个小图标浮在物品上方，不会有"标签位置乱飘"之类的视觉噪音。
-        return List.of(HudRenderCommand.itemTexture(
+        // "图标带壳"策略：emit 背景方块 + edge accent + icon，**不** emit 文字标签——
+        // 方块壳让玩家眼睛聚焦在"块在缓慢移动"而非盯着裸 icon 感知微飘，
+        // 避开原版 text 相对 icon 错位的问题。
+        java.util.ArrayList<HudRenderCommand> commands = new java.util.ArrayList<>();
+        commands.add(HudRenderCommand.rect(
+            HudRenderLayer.BASELINE,
+            layout.backgroundX(),
+            layout.backgroundY(),
+            layout.backgroundWidth(),
+            layout.backgroundHeight(),
+            BACKGROUND_COLOR
+        ));
+        appendEdgeAccent(commands, layout);
+        commands.add(HudRenderCommand.itemTexture(
             HudRenderLayer.BASELINE,
             nearest.item().itemId(),
             layout.iconX(),
             layout.iconY(),
             ICON_SIZE
         ));
+        return List.copyOf(commands);
     }
 
     static ProjectionContext captureProjectionContext() {
@@ -174,7 +187,9 @@ public final class DroppedItemHudPlanner {
         String baseLabel = buildBaseLabel(entry, context.playerPos());
         String clippedBaseLabel = HudTextHelper.clipToWidth(baseLabel, maxLabelWidth, widthMeasurer);
         int baseTextWidth = Math.max(0, widthMeasurer.measure(clippedBaseLabel));
-        int backgroundWidth = INNER_PADDING_X * 2 + ICON_SIZE + LABEL_GAP + baseTextWidth;
+        // 不 emit 文字后，background 尺寸固定为 icon + padding——
+        // 让 backgroundX 不随 nearest 切换或 label 长度变化而跳变。
+        int backgroundWidth = INNER_PADDING_X * 2 + ICON_SIZE;
         int backgroundHeight = INNER_PADDING_Y * 2 + ICON_SIZE;
 
         int minBackgroundX = SCREEN_PADDING;
