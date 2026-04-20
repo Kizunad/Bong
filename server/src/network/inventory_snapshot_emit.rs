@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use valence::prelude::{Added, Client, Entity, Query, Username, With};
+use valence::prelude::{bevy_ecs, Added, Client, Entity, Query, Username, With};
 
+use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
-    ContainerState, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET,
-    EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
-    EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
+    calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
+    EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
+    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
     SMALL_POUCH_CONTAINER_ID,
 };
 use crate::network::agent_bridge::{
@@ -44,6 +45,25 @@ pub fn emit_join_inventory_snapshots(
             inventory,
             player_state,
             "join",
+        );
+    }
+}
+
+pub fn emit_revive_inventory_resyncs(
+    mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut clients: Query<(&mut Client, &Username, &PlayerInventory, &PlayerState), With<Client>>,
+) {
+    for ev in revived.read() {
+        let Ok((mut client, username, inventory, player_state)) = clients.get_mut(ev.entity) else {
+            continue;
+        };
+        send_inventory_snapshot_to_client(
+            ev.entity,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            "revive_death_drop_resync",
         );
     }
 }
@@ -172,28 +192,6 @@ fn equipped_slot_item(inventory: &PlayerInventory, slot: &str) -> Option<Invento
     inventory.equipped.get(slot).map(item_view_from_instance)
 }
 
-fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
-    let container_weight = inventory
-        .containers
-        .iter()
-        .flat_map(|container| container.items.iter())
-        .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
-        .sum::<f64>();
-    let equipped_weight = inventory
-        .equipped
-        .values()
-        .map(|item| item.weight * item.stack_count as f64)
-        .sum::<f64>();
-    let hotbar_weight = inventory
-        .hotbar
-        .iter()
-        .flatten()
-        .map(|item| item.weight * item.stack_count as f64)
-        .sum::<f64>();
-
-    container_weight + equipped_weight + hotbar_weight
-}
-
 fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
     match container_id {
         MAIN_PACK_CONTAINER_ID => ContainerIdV1::MainPack,
@@ -203,7 +201,7 @@ fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
     }
 }
 
-fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
+pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
     InventoryItemViewV1 {
         instance_id: item.instance_id,
         item_id: item.template_id.clone(),
@@ -239,12 +237,21 @@ mod tests {
 
     use super::*;
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        ContainerState, DroppedItemEvent, DroppedItemRecord, InventoryRevision, ItemInstance,
+        ItemRarity, PlacedItemState,
     };
+    use crate::schema::inventory::InventoryEventV1;
 
     fn setup_app() -> App {
         let mut app = App::new();
-        app.add_systems(Update, emit_join_inventory_snapshots);
+        app.add_event::<DroppedItemEvent>();
+        app.add_systems(
+            Update,
+            (
+                emit_join_inventory_snapshots,
+                crate::network::inventory_event_emit::emit_dropped_item_inventory_events,
+            ),
+        );
         app
     }
 
@@ -289,6 +296,26 @@ mod tests {
             let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
                 .expect("server_data payload should decode");
             if matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_)) {
+                payloads.push(payload);
+            }
+        }
+
+        payloads
+    }
+
+    fn collect_inventory_event_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+
+            let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data payload should decode");
+            if matches!(payload.payload, ServerDataPayloadV1::InventoryEvent(_)) {
                 payloads.push(payload);
             }
         }
@@ -534,5 +561,68 @@ mod tests {
             payloads.is_empty(),
             "oversize inventory_snapshot must be rejected without any send"
         );
+    }
+
+    #[test]
+    fn dropped_item_event_emits_inventory_event_payload() {
+        let mut app = setup_app();
+        let state = PlayerState::default();
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Some(make_inventory(21, true)),
+        );
+
+        app.world_mut().send_event(DroppedItemEvent {
+            entity,
+            revision: InventoryRevision(21),
+            dropped: vec![DroppedItemRecord {
+                container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                row: 0,
+                col: 0,
+                instance: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
+            }],
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_inventory_event_payloads(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::Dropped {
+                revision,
+                instance_id,
+                from,
+                world_pos,
+                item,
+            }) => {
+                assert_eq!(*revision, 21);
+                assert_eq!(*instance_id, 1004);
+                assert!(world_pos[0] > 8.0);
+                assert_eq!(world_pos[1], 66.0);
+                assert!(world_pos[2] > 8.0);
+                assert_eq!(item.item_id, "starter_talisman");
+                assert_eq!(item.display_name, "启程护符");
+                assert_eq!(item.stack_count, 1);
+                match from {
+                    crate::schema::inventory::InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } => {
+                        assert_eq!(
+                            *container_id,
+                            crate::schema::inventory::ContainerIdV1::MainPack
+                        );
+                        assert_eq!(*row, 0);
+                        assert_eq!(*col, 0);
+                    }
+                    other => panic!("expected container from location, got {other:?}"),
+                }
+            }
+            other => panic!("expected dropped inventory_event payload, got {other:?}"),
+        }
     }
 }

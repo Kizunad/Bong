@@ -11,6 +11,16 @@ use super::inventory::InventoryLocationV1;
 use crate::cultivation::components::MeridianId;
 use crate::cultivation::forging::ForgeAxis;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApplyPillTargetV1 {
+    #[serde(rename = "self")]
+    SelfTarget,
+    Meridian {
+        meridian_id: MeridianId,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientRequestV1 {
@@ -75,6 +85,20 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         from: InventoryLocationV1,
         to: InventoryLocationV1,
+    },
+    InventoryDiscardItem {
+        v: u8,
+        instance_id: u64,
+        from: InventoryLocationV1,
+    },
+    PickupDroppedItem {
+        v: u8,
+        instance_id: u64,
+    },
+    ApplyPill {
+        v: u8,
+        instance_id: u64,
+        target: ApplyPillTargetV1,
     },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
     /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
@@ -192,6 +216,84 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn apply_pill_self_roundtrip() {
+        let json = r#"{"type":"apply_pill","v":1,"instance_id":1001,"target":{"kind":"self"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ApplyPill {
+                v,
+                instance_id,
+                target,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 1001);
+                assert_eq!(target, ApplyPillTargetV1::SelfTarget);
+            }
+            other => panic!("expected ApplyPill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_pill_meridian_roundtrip() {
+        let json = r#"{"type":"apply_pill","v":1,"instance_id":2002,"target":{"kind":"meridian","meridian_id":"Ren"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ApplyPill {
+                instance_id,
+                target,
+                ..
+            } => {
+                assert_eq!(instance_id, 2002);
+                assert_eq!(
+                    target,
+                    ApplyPillTargetV1::Meridian {
+                        meridian_id: MeridianId::Ren,
+                    }
+                );
+            }
+            other => panic!("expected ApplyPill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pickup_dropped_item_roundtrip() {
+        let json = r#"{"type":"pickup_dropped_item","v":1,"instance_id":3003}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::PickupDroppedItem { v, instance_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 3003);
+            }
+            other => panic!("expected PickupDroppedItem, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inventory_discard_item_roundtrip() {
+        let json = r#"{"type":"inventory_discard_item","v":1,"instance_id":1001,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::InventoryDiscardItem {
+                v,
+                instance_id,
+                from,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 1001);
+                assert_eq!(
+                    from,
+                    InventoryLocationV1::Container {
+                        container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                        row: 0,
+                        col: 0,
+                    }
+                );
+            }
+            other => panic!("expected InventoryDiscardItem, got {other:?}"),
+        }
     }
 
     #[test]

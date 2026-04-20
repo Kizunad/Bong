@@ -10,7 +10,9 @@ pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod defense_sync_emit;
 pub mod defense_window_emit;
+pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
+pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
@@ -204,6 +206,9 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
+            inventory_snapshot_emit::emit_revive_inventory_resyncs,
+            inventory_event_emit::emit_dropped_item_inventory_events,
+            dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
             unlocks_sync_emit::emit_unlocks_sync_payloads,
             // After resolve so we read freshly-emitted CombatEvents the same tick.
