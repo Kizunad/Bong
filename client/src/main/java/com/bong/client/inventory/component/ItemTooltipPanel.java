@@ -12,8 +12,13 @@ import java.util.Locale;
 
 public class ItemTooltipPanel extends BaseComponent {
     private static final int PANEL_WIDTH = 196;
-    /** 空面板/hint 默认高度，也是最小高度保证 icon 高度不被裁。 */
-    private static final int DEFAULT_HEIGHT = 72;
+    /**
+     * 空面板/hint 默认高度，也是最小高度保证 icon 高度不被裁 + 常见 description 完整显示。
+     * 统计当前所有 item description 最长 92 字符（≈ 46 汉字 ≈ 4 行全宽），top
+     * 固定（padding + name + meta + optional status）最大 37 px，加 padding_bottom
+     * 和 desc 行高估算约 81 px。112 给足余量；超出的长描述仍由动态 sizing 自动扩展。
+     */
+    private static final int DEFAULT_HEIGHT = 112;
     private static final int BG_COLOR = 0xCC181818;
     private static final int BORDER_COLOR = 0xFF3A3A3A;
     private static final int HINT_COLOR = 0x60AAAAAA;
