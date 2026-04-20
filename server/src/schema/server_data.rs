@@ -568,4 +568,16 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn rejects_unknown_server_data_version() {
+        let json = r#"{"v":99,"type":"welcome","message":"hello"}"#;
+        let error = serde_json::from_str::<ServerDataV1>(json)
+            .expect_err("unknown server_data version should be rejected");
+
+        assert!(
+            error.to_string().contains("ServerDataV1.v must be"),
+            "unexpected server_data version error: {error}"
+        );
+    }
 }
