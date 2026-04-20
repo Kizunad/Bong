@@ -90,6 +90,7 @@ cols = 7
   template_id = "ling_mu_miao_seed"
   stack_count = 1
 
+
 # ─── 小口袋 3×3 ───────────────────────────────────────────────────────────
 [[containers]]
 id = "small_pouch"

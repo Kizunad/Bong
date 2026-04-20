@@ -304,7 +304,8 @@ pub struct Cultivation {
     pub qi_max: f64,
     pub qi_max_frozen: Option<f64>,
     pub last_qi_zero_at: Option<u64>, // tick 计数
-    pub composure: f64,               // 0.0..=1.0
+    pub pending_material_bonus: f64,
+    pub composure: f64, // 0.0..=1.0
     pub composure_recover_rate: f64,
 }
 
@@ -316,6 +317,7 @@ impl Default for Cultivation {
             qi_max: 10.0,
             qi_max_frozen: None,
             last_qi_zero_at: None,
+            pending_material_bonus: 0.0,
             composure: 1.0,
             composure_recover_rate: 0.001,
         }

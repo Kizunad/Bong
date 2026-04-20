@@ -21,6 +21,8 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 
@@ -83,6 +85,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     /** Screen 存活期间持有的 MeridianStateStore 订阅，close 时移除避免泄漏。 */
     private Consumer<MeridianBody> meridianBodyListener;
     private final LabelComponent[] filterLabels = new LabelComponent[4];
+
+    record PillMenuAction(String label, ActionKind kind) {}
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET }
+    record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
+    record PendingMeridianUse(InventoryItem item) {}
+
+    private PillContextMenuState pillContextMenu;
+    private PendingMeridianUse pendingMeridianUse;
+
+    private static final int PILL_MENU_WIDTH = 112;
+    private static final int PILL_MENU_ROW_HEIGHT = 16;
+    private static final int PILL_MENU_PADDING = 4;
+    private static final int PILL_MENU_BG = 0xEE151515;
+    private static final int PILL_MENU_BORDER = 0xFF777777;
+    private static final int PILL_MENU_TEXT = 0xFFE8E8E8;
+    private static final int PILL_MENU_HOVER = 0xFF2A2A2A;
+    private static final int PILL_TARGET_HINT = 0xFFFFD060;
 
     public InspectScreen(InventoryModel model) {
         super(TITLE);
@@ -607,8 +626,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (bodyInspect == null) return;
         bodyInspect.setActiveLayer(layer);
         boolean isPhys = layer == BodyInspectComponent.Layer.PHYSICAL;
-        physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+        if (physicalLayerLabel != null) {
+            physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
+        }
+        if (meridianLayerLabel != null) {
+            meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+        }
         if (meridianFilterBar != null) {
             meridianFilterBar.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
         }
@@ -679,6 +702,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return model;
     }
 
+    void setBodyInspectForTests(BodyInspectComponent bodyInspect) {
+        this.bodyInspect = bodyInspect;
+    }
+
     static InventoryModel.ContainerDef containerDefAt(InventoryModel model, int index) {
         return model.containers().get(index);
     }
@@ -724,6 +751,45 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
+            return true;
+        }
+
+        if (button == 1) {
+            if (pillContextMenu != null) {
+                int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
+                if (actionIdx >= 0) {
+                    triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
+                } else {
+                    pillContextMenu = null;
+                    pendingMeridianUse = null;
+                }
+                return true;
+            }
+
+            BackpackGridPanel grid = activeGrid();
+            if (grid.containsPoint(mouseX, mouseY)) {
+                var pos = grid.screenToGrid(mouseX, mouseY);
+                if (pos != null) {
+                    InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                    if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                        return true;
+                    }
+                }
+            }
+
+            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            if (hIdx >= 0 && hotbarItems[hIdx] != null
+                    && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
+                return true;
+            }
+
+            if (pendingMeridianUse != null) {
+                pendingMeridianUse = null;
+                return true;
+            }
+        }
+
         if (button == 0) {
             boolean shift = hasShiftDown();
             BackpackGridPanel grid = activeGrid();
@@ -850,7 +916,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Discard
         if (isOverDiscard(mouseX, mouseY)) {
-            dragState.drop();
+            if (dispatchDiscardIntent(dragged, fromLoc)) {
+                dragState.drop();
+            } else {
+                returnDragToSource();
+            }
             clearAllHighlights();
             return;
         }
@@ -985,7 +1055,135 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    private void dispatchMoveIntent(
+    boolean dispatchApplyPillSelf(InventoryItem item) {
+        if (item == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillSelf skipped: item is null");
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillSelf skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        if (!"guyuan_pill".equals(item.itemId()) && !"huiyuan_pill_forbidden".equals(item.itemId())) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchApplyPillSelf instance={} item={}",
+            item.instanceId(), item.itemId());
+        com.bong.client.network.ClientRequestSender.sendApplyPillSelf(item.instanceId());
+        return true;
+    }
+
+    boolean dispatchApplyPillMeridian(InventoryItem item) {
+        if (item == null || bodyInspect == null) {
+            return false;
+        }
+        MeridianChannel selected = bodyInspect.selectedChannel();
+        if (selected == null) {
+            return false;
+        }
+        return dispatchApplyPillMeridianToChannel(item, selected);
+    }
+
+    boolean dispatchApplyPillMeridianToChannel(InventoryItem item, MeridianChannel target) {
+        if (item == null || target == null) {
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillMeridian skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        if (!"ningmai_powder".equals(item.itemId())) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchApplyPillMeridian instance={} item={} meridian={}",
+            item.instanceId(), item.itemId(), target);
+        com.bong.client.network.ClientRequestSender.sendApplyPill(
+            item.instanceId(),
+            new com.bong.client.network.ClientRequestProtocol.MeridianTarget(
+                com.bong.client.network.ClientRequestProtocol.toMeridianId(target)
+            )
+        );
+        return true;
+    }
+
+    List<PillMenuAction> availablePillMenuActions(InventoryItem item) {
+        List<PillMenuAction> actions = new ArrayList<>();
+        if (item == null || item.instanceId() == 0L) {
+            return actions;
+        }
+        if ("guyuan_pill".equals(item.itemId()) || "huiyuan_pill_forbidden".equals(item.itemId())) {
+            actions.add(new PillMenuAction("服用", ActionKind.SELF_USE));
+        }
+        if ("ningmai_powder".equals(item.itemId())) {
+            actions.add(new PillMenuAction("外敷（选经脉）", ActionKind.MERIDIAN_TARGET));
+        }
+        return actions;
+    }
+
+    boolean openPillContextMenu(InventoryItem item, int x, int y) {
+        List<PillMenuAction> actions = availablePillMenuActions(item);
+        if (actions.isEmpty()) {
+            pillContextMenu = null;
+            return false;
+        }
+        pillContextMenu = new PillContextMenuState(item, x, y, List.copyOf(actions));
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    boolean hasOpenPillContextMenu() {
+        return pillContextMenu != null;
+    }
+
+    boolean hasPendingMeridianUse() {
+        return pendingMeridianUse != null;
+    }
+
+    void triggerPillMenuAction(ActionKind kind) {
+        if (pillContextMenu == null || kind == null) {
+            return;
+        }
+        InventoryItem item = pillContextMenu.item();
+        pillContextMenu = null;
+        switch (kind) {
+            case SELF_USE -> {
+                pendingMeridianUse = null;
+                dispatchApplyPillSelf(item);
+            }
+            case MERIDIAN_TARGET -> {
+                if (tabLabels[0] != null && tabLabels[1] != null) {
+                    switchTab(1);
+                } else {
+                    activeTab = 1;
+                }
+                if (bodyInspect != null) {
+                    switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN);
+                }
+                pendingMeridianUse = new PendingMeridianUse(item);
+            }
+        }
+    }
+
+    boolean confirmPendingMeridianUse() {
+        if (pendingMeridianUse == null || bodyInspect == null) {
+            return false;
+        }
+        MeridianChannel target = bodyInspect.focusedChannel();
+        if (!dispatchApplyPillMeridianToChannel(pendingMeridianUse.item(), target)) {
+            return false;
+        }
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    void dispatchMoveIntent(
         InventoryItem item,
         com.bong.client.network.ClientRequestProtocol.InvLocation from,
         com.bong.client.network.ClientRequestProtocol.InvLocation to
@@ -1012,6 +1210,34 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} item={}",
             item.instanceId(), from, to, item.itemId());
         com.bong.client.network.ClientRequestSender.sendInventoryMove(item.instanceId(), from, to);
+    }
+
+    boolean dispatchDiscardIntent(
+        InventoryItem item,
+        com.bong.client.network.ClientRequestProtocol.InvLocation from
+    ) {
+        if (item == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: item is null");
+            return false;
+        }
+        if (from == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: from={} item={}",
+                from, item.itemId());
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchDiscardIntent instance={} from={} item={}",
+            item.instanceId(), from, item.itemId());
+        com.bong.client.network.ClientRequestSender.sendInventoryDiscardItem(item.instanceId(), from);
+        return true;
     }
 
     private void returnDragToSource() {
@@ -1212,6 +1438,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         super.render(context, mouseX, mouseY, delta);
         drawMultiCellItems(context);
         updateTooltipFromHover(mouseX, mouseY);
+        drawPillMenuOverlay(context, mouseX, mouseY);
+        drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
         if (activeTab == 1 && bodyInspect != null) {
@@ -1291,6 +1519,53 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         RenderSystem.disableBlend();
     }
 
+    private int pillMenuHeight() {
+        return pillContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + pillContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
+    }
+
+    private int pillMenuActionIndexAt(double mouseX, double mouseY) {
+        if (pillContextMenu == null) return -1;
+        int left = pillContextMenu.x();
+        int top = pillContextMenu.y();
+        int height = pillMenuHeight();
+        if (mouseX < left || mouseX >= left + PILL_MENU_WIDTH || mouseY < top || mouseY >= top + height) {
+            return -1;
+        }
+        int row = ((int) mouseY - top - PILL_MENU_PADDING) / PILL_MENU_ROW_HEIGHT;
+        return row >= 0 && row < pillContextMenu.actions().size() ? row : -1;
+    }
+
+    private void drawPillMenuOverlay(DrawContext context, int mouseX, int mouseY) {
+        if (pillContextMenu == null) return;
+        int left = pillContextMenu.x();
+        int top = pillContextMenu.y();
+        int height = pillMenuHeight();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 450);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BG);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + 1, PILL_MENU_BORDER);
+        context.fill(left, top + height - 1, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        context.fill(left, top, left + 1, top + height, PILL_MENU_BORDER);
+        context.fill(left + PILL_MENU_WIDTH - 1, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        int hovered = pillMenuActionIndexAt(mouseX, mouseY);
+        var textRenderer = MinecraftClient.getInstance().textRenderer;
+        for (int i = 0; i < pillContextMenu.actions().size(); i++) {
+            int rowTop = top + PILL_MENU_PADDING + i * PILL_MENU_ROW_HEIGHT;
+            if (i == hovered) {
+                context.fill(left + 1, rowTop, left + PILL_MENU_WIDTH - 1, rowTop + PILL_MENU_ROW_HEIGHT, PILL_MENU_HOVER);
+            }
+            context.drawTextWithShadow(
+                textRenderer,
+                Text.literal(pillContextMenu.actions().get(i).label()),
+                left + 6,
+                rowTop + 4,
+                PILL_MENU_TEXT
+            );
+        }
+        matrices.pop();
+    }
+
     private void updateTooltipFromHover(double mx, double my) {
         if (dragState.isDragging()) { tooltipPanel.setHoveredItem(dragState.draggedItem()); return; }
         InventoryItem hovered = null;
@@ -1321,5 +1596,24 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (idx >= 0) hovered = quickUseItems[idx];
         }
         tooltipPanel.setHoveredItem(hovered);
+    }
+
+    private void drawPendingMeridianPrompt(DrawContext context) {
+        if (pendingMeridianUse == null || bodyInspect == null) return;
+        MeridianChannel focus = bodyInspect.focusedChannel();
+        String text = focus == null
+            ? "外敷：请先选择经脉（左键确认 / 右键取消）"
+            : "外敷：左键确认至 " + focus.name();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 430);
+        context.drawTextWithShadow(
+            MinecraftClient.getInstance().textRenderer,
+            Text.literal(text),
+            12,
+            26,
+            PILL_TARGET_HINT
+        );
+        matrices.pop();
     }
 }

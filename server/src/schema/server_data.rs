@@ -9,7 +9,7 @@ use super::combat_hud::{
     QuickSlotConfigV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
-use super::inventory::{InventoryEventV1, InventorySnapshotV1};
+use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
 use super::world_state::PlayerPowerBreakdown;
@@ -36,6 +36,7 @@ pub enum ServerDataType {
     CultivationDetail,
     InventorySnapshot,
     InventoryEvent,
+    DroppedLootSync,
     BotanyHarvestProgress,
     BotanySkill,
     AlchemyFurnace,
@@ -111,6 +112,7 @@ pub enum ServerDataPayloadV1 {
     },
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
+    DroppedLootSync(Vec<DroppedLootEntryV1>),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -210,6 +212,9 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         event: ServerDataInventoryEventWireV1,
     },
+    DroppedLootSync {
+        drops: Vec<DroppedLootEntryV1>,
+    },
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -308,6 +313,7 @@ enum ServerDataPayloadWireV1 {
 #[serde(rename_all = "snake_case")]
 enum InventoryEventKindWireV1 {
     Moved,
+    Dropped,
     StackChanged,
     DurabilityChanged,
 }
@@ -323,9 +329,24 @@ struct ServerDataInventoryEventWireV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     to: Option<super::inventory::InventoryLocationV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    world_pos: Option<[f64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    item: Option<Box<super::inventory::InventoryItemViewV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stack_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     durability: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DroppedLootEntryV1 {
+    pub instance_id: u64,
+    pub source_container_id: String,
+    pub source_row: u64,
+    pub source_col: u64,
+    pub world_pos: [f64; 3],
+    pub item: InventoryItemViewV1,
 }
 
 impl TryFrom<ServerDataInventoryEventWireV1> for InventoryEventV1 {
@@ -351,6 +372,25 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: Some(from.clone()),
                 to: Some(to.clone()),
+                world_pos: None,
+                item: None,
+                stack_count: None,
+                durability: None,
+            },
+            InventoryEventV1::Dropped {
+                revision,
+                instance_id,
+                from,
+                world_pos,
+                item,
+            } => Self {
+                kind: InventoryEventKindWireV1::Dropped,
+                revision: *revision,
+                instance_id: *instance_id,
+                from: Some(from.clone()),
+                to: None,
+                world_pos: Some(*world_pos),
+                item: Some(Box::new(item.clone())),
                 stack_count: None,
                 durability: None,
             },
@@ -364,6 +404,8 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: None,
                 to: None,
+                world_pos: None,
+                item: None,
                 stack_count: Some(*stack_count),
                 durability: None,
             },
@@ -377,6 +419,8 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: None,
                 to: None,
+                world_pos: None,
+                item: None,
                 stack_count: None,
                 durability: Some(*durability),
             },
@@ -457,6 +501,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::InventoryEvent { event } => {
                 Ok(Self::InventoryEvent(event.try_into()?))
             }
+            ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -613,6 +658,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::InventoryEvent(event) => Self::InventoryEvent {
                 event: event.into(),
+            },
+            ServerDataPayloadV1::DroppedLootSync(drops) => Self::DroppedLootSync {
+                drops: drops.clone(),
             },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
@@ -788,6 +836,7 @@ impl ServerDataPayloadV1 {
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
+            Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
@@ -936,6 +985,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.inventory-event.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.dropped-loot-sync.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"

@@ -152,6 +152,13 @@ pub enum InventoryEventV1 {
         from: InventoryLocationV1,
         to: InventoryLocationV1,
     },
+    Dropped {
+        revision: u64,
+        instance_id: u64,
+        from: InventoryLocationV1,
+        world_pos: [f64; 3],
+        item: InventoryItemViewV1,
+    },
     StackChanged {
         revision: u64,
         instance_id: u64,
@@ -269,6 +276,7 @@ impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
 #[serde(untagged)]
 enum RawInventoryEventV1 {
     Moved(RawInventoryEventMovedV1),
+    Dropped(RawInventoryEventDroppedV1),
     StackChanged(RawInventoryEventStackChangedV1),
     DurabilityChanged(RawInventoryEventDurabilityChangedV1),
 }
@@ -293,6 +301,18 @@ struct RawInventoryEventStackChangedV1 {
     pub instance_id: u64,
     #[serde(deserialize_with = "deserialize_non_negative_u64")]
     pub stack_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEventDroppedV1 {
+    kind: String,
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    pub from: InventoryLocationV1,
+    pub world_pos: [f64; 3],
+    pub item: InventoryItemViewV1,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +344,22 @@ impl TryFrom<RawInventoryEventV1> for InventoryEventV1 {
                     instance_id: event.instance_id,
                     from: event.from,
                     to: event.to,
+                })
+            }
+            RawInventoryEventV1::Dropped(event) => {
+                if event.kind != "dropped" {
+                    return Err(format!(
+                        "InventoryEventV1.kind must be 'dropped', got '{}'",
+                        event.kind
+                    ));
+                }
+
+                Ok(Self::Dropped {
+                    revision: event.revision,
+                    instance_id: event.instance_id,
+                    from: event.from,
+                    world_pos: event.world_pos,
+                    item: event.item,
                 })
             }
             RawInventoryEventV1::StackChanged(event) => {
@@ -677,6 +713,38 @@ mod tests {
     }
 
     #[test]
+    fn inventory_event_dropped_roundtrip_preserves_content() {
+        let event = InventoryEventV1::Dropped {
+            revision: 21,
+            instance_id: 2002,
+            from: InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            world_pos: [8.0, 66.0, 8.0],
+            item: InventoryItemViewV1 {
+                instance_id: 2002,
+                item_id: "starter_talisman".to_string(),
+                display_name: "启程护符".to_string(),
+                grid_width: 1,
+                grid_height: 1,
+                weight: 0.2,
+                rarity: ItemRarityV1::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+            },
+        };
+        let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
+        let roundtrip: InventoryEventV1 =
+            serde_json::from_str(&reserialized).expect("dropped event should deserialize");
+
+        assert_eq!(event, roundtrip);
+    }
+
+    #[test]
     fn deserialize_server_data_inventory_snapshot_sample() {
         let payload: ServerDataV1 = serde_json::from_str(SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE)
             .expect("server-data inventory snapshot sample should deserialize into ServerDataV1");
@@ -697,16 +765,31 @@ mod tests {
 
         match payload.payload {
             ServerDataPayloadV1::InventoryEvent(event) => match event {
-                InventoryEventV1::StackChanged {
+                InventoryEventV1::Dropped {
                     revision,
                     instance_id,
-                    stack_count,
+                    from,
+                    world_pos,
+                    item,
                 } => {
                     assert_eq!(revision, 13);
                     assert_eq!(instance_id, 1004);
-                    assert_eq!(stack_count, 1);
+                    assert_eq!(world_pos, [8.0, 66.0, 8.0]);
+                    assert_eq!(item.item_id, "starter_talisman");
+                    match from {
+                        InventoryLocationV1::Container {
+                            container_id,
+                            row,
+                            col,
+                        } => {
+                            assert_eq!(container_id, ContainerIdV1::MainPack);
+                            assert_eq!(row, 0);
+                            assert_eq!(col, 0);
+                        }
+                        other => panic!("expected container source, got {other:?}"),
+                    }
                 }
-                other => panic!("expected stack_changed inventory event, got {other:?}"),
+                other => panic!("expected dropped inventory event, got {other:?}"),
             },
             other => panic!("expected inventory_event payload, got {other:?}"),
         }

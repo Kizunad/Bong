@@ -27,6 +27,7 @@ public class ServerDataRouterTest {
             "cultivation_detail",
             "inventory_snapshot",
             "inventory_event",
+            "dropped_loot_sync",
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
             "botany_skill",

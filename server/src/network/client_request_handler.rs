@@ -173,6 +173,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
+            | ClientRequestV1::InventoryDiscardItem { v, .. }
+            | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
@@ -501,6 +504,20 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
+            }
+            // TODO(inventory-v1 post-merge)：HEAD 分支加的 3 个 inventory-v1 C2S handler
+            // 在本次 merge 里与 main 的 inventory API 重构冲突，先 no-op 避免编译失败。
+            // 需单独 follow-up PR 把 HEAD 版 apply_pill/discard/pickup 的 handler 逻辑
+            // 移植到 main 的 `Query<&mut PlayerInventory>` + `handle_alchemy_take_pill`
+            // 风格，并复用 main 的 `BreakthroughBoost` buff 路径（取代 HEAD 的
+            // `pending_material_bonus` 字段）。client 侧 C2S 已发送，server 侧先静默。
+            ClientRequestV1::InventoryDiscardItem { .. }
+            | ClientRequestV1::PickupDroppedItem { .. }
+            | ClientRequestV1::ApplyPill { .. } => {
+                tracing::warn!(
+                    "[bong][network][inventory] inventory-v1 C2S variant not yet wired post-merge, ignoring (entity={:?})",
+                    ev.client
+                );
             }
         }
     }

@@ -63,6 +63,61 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendApplyPillSelfUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendApplyPillSelf(1001L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1001,\"target\":{\"kind\":\"self\"}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendInventoryMoveUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendInventoryMove(
+            1001L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.HotbarLoc(3)
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendPickupDroppedItemUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendPickupDroppedItem(3003L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"pickup_dropped_item\",\"v\":1,\"instance_id\":3003}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendInventoryDiscardItemUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendInventoryDiscardItem(
+            1001L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0)
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"inventory_discard_item\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

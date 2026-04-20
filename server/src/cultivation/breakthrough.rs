@@ -129,6 +129,13 @@ pub fn compute_success_rate(
     raw.clamp(0.0, 1.0)
 }
 
+pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64) -> f64 {
+    let delta = magnitude.clamp(0.0, 0.30);
+    cultivation.pending_material_bonus =
+        (cultivation.pending_material_bonus + delta).clamp(0.0, 0.30);
+    cultivation.pending_material_bonus
+}
+
 /// 随机骰子抽象 — 测试时可注入确定值。
 pub trait RollSource {
     fn roll_unit(&mut self) -> f64;
@@ -186,16 +193,20 @@ pub fn try_breakthrough<R: RollSource>(
     let completeness = 1.0 + 0.05 * (have as f64 - need as f64);
     let completeness = completeness.clamp(0.8, 1.3);
 
+    let effective_material_bonus =
+        (material_bonus + cultivation.pending_material_bonus).clamp(0.0, 0.30);
+
     let success_rate = compute_success_rate(
         next,
         integrity_avg,
         cultivation.composure,
         completeness,
-        material_bonus,
+        effective_material_bonus,
     );
 
     // 扣费（不论成败）
     cultivation.qi_current -= cost;
+    cultivation.pending_material_bonus = 0.0;
 
     let r = roll.roll_unit();
     if r <= success_rate {
@@ -411,6 +422,14 @@ mod tests {
     }
 
     #[test]
+    fn pending_material_bonus_accumulates_and_caps_at_30_percent() {
+        let mut c = Cultivation::default();
+        assert!((add_pending_material_bonus(&mut c, 0.12) - 0.12).abs() < 1e-9);
+        assert!((add_pending_material_bonus(&mut c, 0.50) - 0.30).abs() < 1e-9);
+        assert!((c.pending_material_bonus - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
     fn completeness_bounded() {
         // 超额很多不会无限放大
         let r = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.3, 0.0);
@@ -426,6 +445,34 @@ mod tests {
         let mut m = MeridianSystem::default();
         let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
         assert_eq!(err, BreakthroughError::AtMaxRealm);
+    }
+
+    #[test]
+    fn pending_material_bonus_is_consumed_on_real_attempt() {
+        let (mut c, mut m) = setup_for_induce();
+        c.pending_material_bonus = 0.12;
+
+        let out = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
+
+        let expected = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.0, 0.12);
+        assert!((out.success_rate - expected).abs() < 1e-9);
+        assert_eq!(c.pending_material_bonus, 0.0);
+    }
+
+    #[test]
+    fn pending_material_bonus_is_preserved_when_preconditions_fail() {
+        let mut c = Cultivation {
+            qi_current: 1.0,
+            pending_material_bonus: 0.12,
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        m.get_mut(MeridianId::Lung).opened = true;
+
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
+
+        assert!(matches!(err, BreakthroughError::NotEnoughQi { .. }));
+        assert!((c.pending_material_bonus - 0.12).abs() < 1e-9);
     }
 
     /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。

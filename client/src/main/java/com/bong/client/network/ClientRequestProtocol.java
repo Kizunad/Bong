@@ -168,6 +168,42 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public sealed interface ApplyPillTarget {
+        JsonObject toJson();
+    }
+
+    public enum SelfTarget implements ApplyPillTarget {
+        INSTANCE;
+
+        @Override
+        public JsonObject toJson() {
+            JsonObject o = new JsonObject();
+            o.addProperty("kind", "self");
+            return o;
+        }
+    }
+
+    public record MeridianTarget(MeridianId meridianId) implements ApplyPillTarget {
+        @Override
+        public JsonObject toJson() {
+            JsonObject o = new JsonObject();
+            o.addProperty("kind", "meridian");
+            o.addProperty("meridian_id", meridianId.name());
+            return o;
+        }
+    }
+
+    public static String encodeApplyPill(long instanceId, ApplyPillTarget target) {
+        JsonObject obj = envelope("apply_pill");
+        obj.addProperty("instance_id", instanceId);
+        obj.add("target", target.toJson());
+        return obj.toString();
+    }
+
+    public static String encodeApplyPillSelf(long instanceId) {
+        return encodeApplyPill(instanceId, SelfTarget.INSTANCE);
+    }
+
     // ─── Inventory move intent (client → server) ────────────────────────────
 
     /** 库存位置三态联合，匹配 server schema InventoryLocationV1。 */
@@ -206,6 +242,19 @@ public final class ClientRequestProtocol {
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        return obj.toString();
+    }
+
+    public static String encodePickupDroppedItem(long instanceId) {
+        JsonObject obj = envelope("pickup_dropped_item");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
+    public static String encodeInventoryDiscardItem(long instanceId, InvLocation from) {
+        JsonObject obj = envelope("inventory_discard_item");
+        obj.addProperty("instance_id", instanceId);
+        obj.add("from", from.toJson());
         return obj.toString();
     }
 

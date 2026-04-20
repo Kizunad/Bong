@@ -1,8 +1,27 @@
 {
   "v": 1,
   "type": "inventory_event",
-  "kind": "stack_changed",
+  "kind": "dropped",
   "revision": 13,
   "instance_id": 1004,
-  "stack_count": 1
+  "from": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 0,
+    "col": 0
+  },
+  "world_pos": [8.0, 66.0, 8.0],
+  "item": {
+    "instance_id": 1004,
+    "item_id": "starter_talisman",
+    "display_name": "启程护符",
+    "grid_width": 1,
+    "grid_height": 1,
+    "weight": 0.2,
+    "rarity": "common",
+    "description": "fixture",
+    "stack_count": 1,
+    "spirit_quality": 0.5,
+    "durability": 1.0
+  }
 }

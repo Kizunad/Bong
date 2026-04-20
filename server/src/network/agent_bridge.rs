@@ -41,6 +41,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::CultivationDetail => "cultivation_detail",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
+        ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
@@ -579,10 +580,28 @@ mod server_data_tests {
         assert_eq!(snapshot_json.get("bone_coins"), Some(&json!(57)));
 
         let event_payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
-            InventoryEventV1::StackChanged {
+            InventoryEventV1::Dropped {
                 revision: 13,
                 instance_id: 1004,
-                stack_count: 1,
+                from: crate::schema::inventory::InventoryLocationV1::Container {
+                    container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                    row: 0,
+                    col: 0,
+                },
+                world_pos: [8.0, 66.0, 8.0],
+                item: crate::schema::inventory::InventoryItemViewV1 {
+                    instance_id: 1004,
+                    item_id: "starter_talisman".to_string(),
+                    display_name: "启程护符".to_string(),
+                    grid_width: 1,
+                    grid_height: 1,
+                    weight: 0.2,
+                    rarity: crate::schema::inventory::ItemRarityV1::Common,
+                    description: "fixture".to_string(),
+                    stack_count: 1,
+                    spirit_quality: 0.5,
+                    durability: 1.0,
+                },
             },
         ));
         let event_bytes = serialize_server_data_payload(&event_payload)
@@ -594,7 +613,7 @@ mod server_data_tests {
             event_json.get("type"),
             Some(&json!(payload_type_label(event_payload.payload_type())))
         );
-        assert_eq!(event_json.get("kind"), Some(&json!("stack_changed")));
+        assert_eq!(event_json.get("kind"), Some(&json!("dropped")));
         assert_eq!(event_json.get("instance_id"), Some(&json!(1004)));
 
         let botany_payload = ServerDataV1::new(ServerDataPayloadV1::BotanyHarvestProgress {
