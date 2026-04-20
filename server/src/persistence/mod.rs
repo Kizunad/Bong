@@ -3975,6 +3975,115 @@ mod persistence_tests {
     }
 
     #[test]
+    fn bootstrap_migrates_v9_zone_overlays_and_preserves_existing_rows() {
+        let db_path = database_path("zone-overlays-v9-migration-drill");
+        bootstrap_sqlite(&db_path, "zone-overlays-v9-baseline")
+            .expect("baseline bootstrap should succeed");
+
+        {
+            let connection = Connection::open(&db_path).expect("legacy db should open");
+            connection
+                .execute_batch(
+                    "
+                    DROP TABLE zone_overlays;
+                    CREATE TABLE zone_overlays (
+                        zone_id TEXT NOT NULL,
+                        overlay_kind TEXT NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        since_wall INTEGER NOT NULL,
+                        schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                        last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                        PRIMARY KEY (zone_id, overlay_kind, since_wall),
+                        CHECK (since_wall >= 0)
+                    );
+                    PRAGMA user_version = 9;
+                    ",
+                )
+                .expect("legacy zone_overlays schema should be creatable");
+            connection
+                .execute(
+                    "
+                    INSERT INTO zone_overlays (
+                        zone_id,
+                        overlay_kind,
+                        payload_json,
+                        since_wall,
+                        schema_version,
+                        last_updated_wall
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ",
+                    params![
+                        DEFAULT_SPAWN_ZONE_NAME,
+                        "collapsed",
+                        serde_json::json!({"danger_level": 4}).to_string(),
+                        77_i64,
+                        CURRENT_SCHEMA_VERSION,
+                        88_i64,
+                    ],
+                )
+                .expect("legacy zone_overlays row should insert");
+        }
+
+        bootstrap_sqlite(&db_path, "zone-overlays-v9-migration-drill")
+            .expect("bootstrap migration should succeed");
+
+        let connection = Connection::open(&db_path).expect("migrated db should open");
+        let user_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version as i32, CURRENT_USER_VERSION);
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(zone_overlays)")
+            .expect("table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("table_info rows should collect");
+        assert!(
+            columns.iter().any(|column| column == "payload_version"),
+            "migrated zone_overlays should include payload_version"
+        );
+
+        let migrated_row: ZoneOverlayRecord = connection
+            .query_row(
+                "
+                SELECT zone_id, overlay_kind, payload_json, payload_version, since_wall
+                FROM zone_overlays
+                WHERE zone_id = ?1 AND overlay_kind = ?2
+                ",
+                params![DEFAULT_SPAWN_ZONE_NAME, "collapsed"],
+                |row| {
+                    Ok(ZoneOverlayRecord {
+                        zone_id: row.get(0)?,
+                        overlay_kind: row.get(1)?,
+                        payload_json: row.get(2)?,
+                        payload_version: row.get(3)?,
+                        since_wall: row.get(4)?,
+                    })
+                },
+            )
+            .expect("migrated zone_overlays row should exist");
+        assert_eq!(
+            migrated_row,
+            ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({"danger_level": 4}).to_string(),
+                payload_version: 1,
+                since_wall: 77,
+            }
+        );
+
+        let _ = fs::remove_dir_all(
+            db_path
+                .parent()
+                .expect("migration drill db path should still have parent directory"),
+        );
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
