@@ -9,15 +9,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
-/**
- * 原版完整 HUD marker 的 planner 回归测试。emit：background rect + (optional edge accent)
- * + icon 的 itemTexture + 距离/名字 text 标签。原版本里方向前缀（↑↓←→）相关 6 个测试已删，
- * 其它 8 个用精简的断言覆盖 empty / projection / clamp / stabilize / nearest-selection。
- */
 public class DroppedItemHudPlannerTest {
     private static final HudTextHelper.WidthMeasurer FIXED_WIDTH = text -> text == null ? 0 : text.length() * 6;
     private static final DroppedItemHudPlanner.ProjectionContext TEST_CONTEXT = new DroppedItemHudPlanner.ProjectionContext(
@@ -41,28 +34,78 @@ public class DroppedItemHudPlannerTest {
     }
 
     @Test
-    void emitsBackdropIconAndTextForNearestVisibleDroppedItem() {
+    void emitsProjectedMarkerForNearestVisibleDroppedItem() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            0.0, 0.0, 7.5,
-            InventoryItem.simple("starter_talisman", "启程护符")
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            7.5,
+            InventoryItem.createFull(
+                1004L,
+                "starter_talisman",
+                "启程护符",
+                1,
+                1,
+                0.2,
+                "common",
+                "fixture",
+                1,
+                0.5,
+                1.0
+            )
+        ));
+
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1005L,
+            "main_pack",
+            0,
+            1,
+            0.0,
+            0.0,
+            12.0,
+            InventoryItem.createFull(
+                1005L,
+                "old_coin",
+                "旧铜钱",
+                1,
+                1,
+                0.1,
+                "common",
+                "fixture",
+                1,
+                0.5,
+                1.0
+            )
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT);
-        // 视野居中、无 clamp 时 emit: background rect + icon + text（无 edge accent 条）
         assertEquals(3, commands.size());
-        assertTrue(commands.get(0).isRect(), "first command = background rect");
-        assertTrue(commands.get(1).isItemTexture(), "second command = item icon");
+        assertEquals(1, commands.stream().filter(HudRenderCommand::isRect).count());
+        assertTrue(commands.get(0).isRect());
+        assertTrue(commands.get(1).isItemTexture());
+        assertTrue(commands.get(2).isText());
         assertEquals("starter_talisman", commands.get(1).text());
-        assertTrue(commands.get(2).isText(), "third command = distance/name label");
+        assertTrue(!commands.get(2).text().startsWith("← "));
+        assertTrue(!commands.get(2).text().startsWith("→ "));
+        assertTrue(!commands.get(2).text().startsWith("↑ "));
+        assertTrue(!commands.get(2).text().startsWith("↓ "));
         assertTrue(commands.get(2).text().contains("启程护符"));
+        assertTrue(commands.get(2).text().contains("7.5m"));
     }
 
     @Test
     void hidesMarkerWhenNearestDropIsBehindCamera() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            0.0, 0.0, -4.0,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            -4.0,
             InventoryItem.simple("starter_talisman", "启程护符")
         ));
 
@@ -72,13 +115,23 @@ public class DroppedItemHudPlannerTest {
     @Test
     void nearestBehindCameraDoesNotFallBackToFartherVisibleDrop() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            0.0, 0.0, -1.0,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            -1.0,
             InventoryItem.simple("starter_talisman", "背后近物")
         ));
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1005L, "main_pack", 0, 1,
-            0.0, 0.0, 8.0,
+            1005L,
+            "main_pack",
+            0,
+            1,
+            0.0,
+            0.0,
+            8.0,
             InventoryItem.simple("old_coin", "前方远物")
         ));
 
@@ -86,57 +139,179 @@ public class DroppedItemHudPlannerTest {
     }
 
     @Test
-    void clampsBackdropAndIconIntoViewportWhenProjectedTargetFallsOffScreen() {
+    void clampsMarkerIntoViewportWhenProjectedTargetFallsOffScreen() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            -20.0, 0.0, 5.0,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            -20.0,
+            0.0,
+            5.0,
             InventoryItem.simple("starter_talisman", "启程护符")
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
-        // 被 clamp 时会多出 edge accent 条（rect），所以 >= 2
-        assertTrue(commands.size() >= 2);
-        HudRenderCommand backdrop = commands.get(0);
-        assertTrue(backdrop.isRect(), "first command = background rect");
-        // 背景方块完全落在屏幕内
-        assertTrue(backdrop.x() >= 0, "backdrop x >= 0");
-        assertTrue(backdrop.x() + backdrop.width() <= 120, "backdrop fully on-screen horizontally");
-        assertTrue(backdrop.y() >= 0, "backdrop y >= 0");
-        assertTrue(backdrop.y() + backdrop.height() <= 80, "backdrop fully on-screen vertically");
-        // icon 也在屏幕内
-        HudRenderCommand icon = commands.stream()
-            .filter(HudRenderCommand::isItemTexture).findFirst().orElseThrow();
-        assertTrue(icon.x() >= 0 && icon.x() + icon.width() <= 120);
-        assertTrue(icon.y() >= 0 && icon.y() + icon.height() <= 80);
+        assertEquals(4, commands.size());
+        assertEquals(2, commands.stream().filter(HudRenderCommand::isRect).count());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isRect() && cmd.width() == 2 && cmd.height() > 2));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("→ ")));
+        assertTrue(commands.get(0).x() >= 0);
+        assertTrue(commands.get(0).x() + commands.get(0).width() <= 120);
+        assertTrue(commands.get(0).y() >= 0);
+        assertTrue(commands.get(0).y() + commands.get(0).height() <= 80);
     }
 
     @Test
-    void rendersAtMostOneIconWhenManyDropsExist() {
+    void rightClampedMarkerUsesRightDirectionalPrefix() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1001L, "main_pack", 0, 0, 0.0, 0.0, 4.0,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            -20.0,
+            0.0,
+            5.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("→ ")));
+    }
+
+    @Test
+    void leftClampedMarkerUsesLeftDirectionalPrefix() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1004L,
+            "main_pack",
+            0,
+            0,
+            20.0,
+            0.0,
+            5.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("← ")));
+    }
+
+    @Test
+    void topClampedMarkerUsesTopDirectionalPrefix() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            30.0,
+            5.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("↑ ")));
+    }
+
+    @Test
+    void bottomClampedMarkerUsesBottomDirectionalPrefix() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            -30.0,
+            5.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("↓ ")));
+    }
+
+    @Test
+    void cornerClampedMarkerUsesVerticalPrefixWhenVerticalOverflowDominates() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1004L,
+            "main_pack",
+            0,
+            0,
+            8.0,
+            40.0,
+            2.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("↑ ")));
+    }
+
+    @Test
+    void cornerClampedMarkerKeepsHorizontalPrefixWhenHorizontalOverflowDominates() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1004L,
+            "main_pack",
+            0,
+            0,
+            -30.0,
+            8.0,
+            2.0,
+            InventoryItem.simple("starter_talisman", "启程护符")
+        ));
+
+        List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT);
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("→ ")));
+    }
+
+    @Test
+    void rendersAtMostOneMarkerWhenManyDropsExist() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            1001L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            4.0,
             InventoryItem.simple("starter_talisman", "最近物")
         ));
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1002L, "main_pack", 0, 1, 0.0, 0.0, 8.0,
+            1002L,
+            "main_pack",
+            0,
+            1,
+            0.0,
+            0.0,
+            8.0,
             InventoryItem.simple("old_coin", "中距离物")
         ));
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1003L, "main_pack", 0, 2, 0.0, 0.0, 14.0,
+            1003L,
+            "main_pack",
+            0,
+            2,
+            0.0,
+            0.0,
+            14.0,
             InventoryItem.simple("cloth_wrap", "远距离物")
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT);
-        List<HudRenderCommand> icons = commands.stream()
-            .filter(HudRenderCommand::isItemTexture).toList();
-        assertEquals(1, icons.size(), "无论 emit 多少辅助 rect/accent，itemTexture 只能一个");
-        assertEquals("starter_talisman", icons.get(0).text(), "应选最近的 entry");
+        assertEquals(3, commands.size());
+        assertTrue(commands.get(2).text().contains("最近物"));
     }
 
     @Test
     void stabilizesSmallProjectedMovementForSameTarget() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            0.0, 0.0, 7.5,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            7.5,
             InventoryItem.simple("starter_talisman", "启程护符")
         ));
         DroppedItemHudPlanner.MarkerStabilityState state = new DroppedItemHudPlanner.MarkerStabilityState();
@@ -152,34 +327,40 @@ public class DroppedItemHudPlannerTest {
         List<HudRenderCommand> first = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT, state);
         List<HudRenderCommand> second = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, slightlyShifted, state);
 
-        // 用 backdrop rect 做稳定性断言（icon 在 backdrop 内，同步移动）
-        HudRenderCommand firstBackdrop = first.get(0);
-        HudRenderCommand secondBackdrop = second.get(0);
-        assertEquals(firstBackdrop.x(), secondBackdrop.x());
-        assertEquals(firstBackdrop.y(), secondBackdrop.y());
+        assertEquals(first.get(0).x(), second.get(0).x());
+        assertEquals(first.get(0).y(), second.get(0).y());
     }
 
     @Test
     void resetsStabilityWhenTargetChanges() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1004L, "main_pack", 0, 0,
-            0.0, 0.0, 7.5,
+            1004L,
+            "main_pack",
+            0,
+            0,
+            0.0,
+            0.0,
+            7.5,
             InventoryItem.simple("starter_talisman", "近物甲")
         ));
         DroppedItemHudPlanner.MarkerStabilityState state = new DroppedItemHudPlanner.MarkerStabilityState();
 
-        List<HudRenderCommand> initial = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT, state);
-        int firstBackdropX = initial.get(0).x();
+        DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT, state);
 
         DroppedItemStore.resetForTests();
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
-            1005L, "main_pack", 0, 0,
-            20.0, 0.0, 5.0,
+            1005L,
+            "main_pack",
+            0,
+            0,
+            20.0,
+            0.0,
+            5.0,
             InventoryItem.simple("old_coin", "左侧新目标")
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 120, 80, TEST_CONTEXT, state);
-        // 目标切换应重置 stabilizer，backdrop 位置从新目标投影点算起，而非从旧位置 lerp
-        assertNotEquals(firstBackdropX, commands.get(0).x(), "backdrop jumped to new target, not lerped from old");
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().startsWith("← ")));
     }
 }
