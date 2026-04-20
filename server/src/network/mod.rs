@@ -2472,6 +2472,9 @@ mod tests {
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
         };
+        use crate::schema::agent_world_model::{
+            AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
+        };
         use crate::world::events::ActiveEventsResource;
         use crossbeam_channel::{unbounded, Receiver};
         use std::collections::BTreeMap;
@@ -2758,6 +2761,74 @@ mod tests {
             assert_eq!(
                 mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_STATE_TS),
                 Some(&"1711333256".to_string())
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn agent_world_model_ingress_persists_sqlite_without_runtime_mirror_config() {
+            let root = unique_temp_dir("agent-world-model-ingress-without-runtime-mirror");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_world_model_ingress_without_runtime_mirror",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let envelope = AgentWorldModelEnvelopeV1 {
+                v: 1,
+                id: "wm-ingress-1".to_string(),
+                source: Some("arbiter".to_string()),
+                snapshot: AgentWorldModelSnapshotV1 {
+                    current_era: Some(CurrentEraV1 {
+                        name: "赤月纪".to_string(),
+                        since_tick: 512,
+                        global_effect: "灵潮倒卷".to_string(),
+                    }),
+                    zone_history: HashMap::from([(
+                        "red_marsh".to_string(),
+                        vec![ZoneHistoryEntryV1 {
+                            name: "red_marsh".to_string(),
+                            spirit_qi: 0.62,
+                            danger_level: 3,
+                            active_events: vec!["blood_moon".to_string()],
+                            player_count: 2,
+                        }],
+                    )]),
+                    last_decisions: BTreeMap::new(),
+                    player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 512)]),
+                    last_tick: Some(512),
+                    last_state_ts: Some(1_711_444_512),
+                },
+            };
+
+            process_agent_world_model_envelope(Some(&settings), None, &envelope);
+
+            let loaded = load_agent_world_model_snapshot(&settings)
+                .expect("sqlite authority load should succeed")
+                .expect("ingress should persist snapshot even without runtime mirror config");
+            let expected = agent_world_model_snapshot_from_wire(&envelope.snapshot);
+
+            assert_eq!(loaded, expected);
+            assert_eq!(loaded.last_tick, Some(512));
+            assert_eq!(loaded.last_state_ts, Some(1_711_444_512));
+            assert_eq!(
+                loaded.current_era,
+                Some(serde_json::json!({
+                    "name": "赤月纪",
+                    "since_tick": 512,
+                    "global_effect": "灵潮倒卷"
+                }))
+            );
+            assert_eq!(
+                loaded.zone_history.get("red_marsh").map(Vec::len),
+                Some(1),
+                "zone history should persist through ingress without runtime mirror config"
             );
 
             let _ = fs::remove_dir_all(root);
