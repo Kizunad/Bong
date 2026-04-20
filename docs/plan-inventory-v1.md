@@ -46,10 +46,12 @@
 
 - **marker / pickup 目标一致性**：`DroppedItemStore.nearestTo` 原基于 `ConcurrentHashMap.values()` 迭代顺序，两个等距 dropped loot 时 marker 渲染与 `G` 键 pickup 可能选中不同 entry。修法：引入单调 `insertionCounter` + per-entry `insertionOrder`，距离差 ≤ `DISTANCE_TIE_EPSILON_SQ`（0.01 m²）时按 insertionOrder 倒序（**最新丢入的胜出**）tie-break，与玩家"刚丢的物品最想被高亮 / 被 G 捡回"的直觉一致。replaceAll 按 list 顺序分配 order（与 server `registry.by_owner` Vec push 尾部=latest 的约定对齐）；同 id replace 保持原 order，避免 server snapshot 洗掉"最新"语义。客户端新增 4 个 tie-break 单测，不破坏原有测试。
 - **optimistic discard 回滚链已存在，不属风险项**：server 端 `inventory_discard_rejection` 分支会 `resync_snapshot` 推全量 snapshot，client `InventorySnapshotHandler` 调 `InventoryStateStore.applyAuthoritativeSnapshot` 覆盖本地，无需额外回滚代码。
+- **tooltip 左上角 icon**：`ItemTooltipPanel` 复用 `GridSlotComponent.drawItemTexture`，在 32×32 左上位置画物品 icon；name/meta/status 从 icon 右侧起，description 在 icon 底部之下走全宽。面板尺寸（196×72）不变，长描述仍会截断（如需完全展示留给后续 "tooltip 高度自适应"）。
+- **世界空间 billboard 渲染（"甲" 轻量方案）**：新增 `DroppedItemWorldRenderer`（`client/src/main/java/com/bong/client/inventory/render/`），走 `WorldRenderEvents.AFTER_ENTITIES`，yaw-only semi-billboard（正面随相机 yaw 转动、pitch 锁竖直）+ sine 上下浮动（±0.06 m，周期 2 s）+ 悬浮 0.45 m + 距离剔除 32 m + lightmap 采样。贴图复用 `textures/gui/items/{item_id}.png`。**纯 client-only**：世界坐标来自 `DroppedItemStore`，不 spawn entity、不改 server，不违反"真正世界实体化延后"约束——这是一个**视觉 surrogate**，用户能直接看到物品在地上而不再仅靠 HUD 方向指示。HUD marker 继续保留作超距离方向指示。
 
 ### 明确延后
 
-- 真正世界实体化的掉落渲染与拾取。
+- **真正世界实体化**的掉落渲染与拾取（server 端 Item entity + 多人争抢 + 物理 + 自动 proximity pickup）。当前 client billboard 只是视觉 surrogate，不替代。
 - 多人争抢 / 多玩家共享可见 dropped loot。
 - 持久化。
 - 灵气税（§486）。
