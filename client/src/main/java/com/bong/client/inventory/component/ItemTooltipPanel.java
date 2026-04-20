@@ -16,6 +16,11 @@ public class ItemTooltipPanel extends BaseComponent {
     private static final int BORDER_COLOR = 0xFF3A3A3A;
     private static final int HINT_COLOR = 0x60AAAAAA;
 
+    // Icon 占左上角一个正方形，文字从 icon 右边起，保持面板尺寸不变。
+    private static final int ICON_SIZE = 32;
+    private static final int ICON_MARGIN = 4;
+    private static final int TEXT_LEFT_OFFSET = ICON_MARGIN + ICON_SIZE + 4;
+
     private InventoryItem hoveredItem;
 
     public ItemTooltipPanel() {
@@ -41,8 +46,17 @@ public class ItemTooltipPanel extends BaseComponent {
             return;
         }
 
+        // 左上角 icon —— 利用 GridSlotComponent.drawItemTexture（含内部 z=100 push + blend 设置），
+        // 复用它避免双份贴图渲染路径，同时天然支持 1×1 / 多格物品（tooltip 统一按正方形 fit 绘制）。
+        GridSlotComponent.drawItemTexture(
+            context, hoveredItem,
+            x + ICON_MARGIN, y + ICON_MARGIN,
+            ICON_SIZE, ICON_SIZE
+        );
+
         int cy = y + 4;
-        int cx = x + 4;
+        int cx = x + TEXT_LEFT_OFFSET;
+        int descLeft = x + ICON_MARGIN;  // description 从面板最左起，icon 下方。
 
         // Item name with rarity color
         context.drawTextWithShadow(textRenderer,
@@ -76,14 +90,17 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + 2;
         }
 
-        // Description (truncate if needed)
+        // Description 过 icon 底部后改用全宽排版（左边距回到面板起点），
+        // icon 占据的顶部右侧已有名称/meta/状态，description 不必绕开。
+        int iconBottom = y + ICON_MARGIN + ICON_SIZE;
         String desc = hoveredItem.description();
         if (!desc.isEmpty()) {
-            // Simple word wrap at panel width
-            int maxWidth = PANEL_WIDTH - 8;
             while (!desc.isEmpty() && cy < y + PANEL_HEIGHT - textRenderer.fontHeight - 2) {
-                String line = trimToWidth(textRenderer, desc, maxWidth);
-                context.drawTextWithShadow(textRenderer, Text.literal(line), cx, cy, 0xFFAAAAAA);
+                boolean belowIcon = cy >= iconBottom;
+                int lineLeft = belowIcon ? descLeft : cx;
+                int lineMax = belowIcon ? (PANEL_WIDTH - ICON_MARGIN * 2) : (PANEL_WIDTH - TEXT_LEFT_OFFSET - ICON_MARGIN);
+                String line = trimToWidth(textRenderer, desc, lineMax);
+                context.drawTextWithShadow(textRenderer, Text.literal(line), lineLeft, cy, 0xFFAAAAAA);
                 cy += textRenderer.fontHeight + 1;
                 desc = desc.substring(line.length()).trim();
             }
