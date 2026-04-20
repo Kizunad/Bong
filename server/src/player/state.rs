@@ -1193,6 +1193,112 @@ mod player_state_tests {
     }
 
     #[test]
+    fn corrupt_legacy_player_json_falls_back_without_affecting_other_players() {
+        let (persistence, data_dir) = sqlite_persistence("corrupt-json-isolation");
+        let corrupted_username = "CorruptCultivator";
+        let healthy_username = "StableCultivator";
+        let corrupted_path = persistence.path_for_username(corrupted_username);
+        let corrupted_migrated_path = persistence.migrated_path_for_username(corrupted_username);
+        let healthy_state = PlayerState {
+            realm: "foundation_2".to_string(),
+            spirit_qi: 64.0,
+            spirit_qi_max: 128.0,
+            karma: -0.3,
+            experience: 2_400,
+            inventory_score: 0.55,
+        };
+
+        save_player_state(&persistence, healthy_username, &healthy_state)
+            .expect("healthy player state should persist");
+
+        fs::create_dir_all(persistence.data_dir()).expect("test data dir should be creatable");
+        fs::write(&corrupted_path, br#"{"realm":"broken""#)
+            .expect("corrupted legacy fixture should be writable");
+
+        let corrupted_loaded = load_player_state(&persistence, corrupted_username);
+        let healthy_loaded = load_player_state(&persistence, healthy_username);
+
+        assert_eq!(corrupted_loaded, PlayerState::default());
+        assert_eq!(healthy_loaded, healthy_state.normalized());
+        assert!(
+            corrupted_path.exists(),
+            "corrupted legacy json should remain in place after failed migration"
+        );
+        assert!(
+            !corrupted_migrated_path.exists(),
+            "corrupted legacy json should not be marked as migrated"
+        );
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let corrupted_row: Option<(String, f64, f64, f64, i64, f64)> = connection
+            .query_row(
+                "
+                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                FROM player_core
+                WHERE username = ?1
+                ",
+                params![corrupted_username],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .expect("corrupted player_core row query should succeed");
+        let healthy_row: (String, f64, f64, f64, i64, f64) = connection
+            .query_row(
+                "
+                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                FROM player_core
+                WHERE username = ?1
+                ",
+                params![healthy_username],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("healthy player_core row should exist");
+
+        assert_eq!(
+            corrupted_row,
+            Some((
+                PlayerState::default().realm,
+                PlayerState::default().spirit_qi,
+                PlayerState::default().spirit_qi_max,
+                PlayerState::default().karma,
+                PlayerState::default().experience as i64,
+                PlayerState::default().inventory_score,
+            ))
+        );
+        assert_eq!(
+            healthy_row,
+            (
+                healthy_state.normalized().realm,
+                healthy_state.normalized().spirit_qi,
+                healthy_state.normalized().spirit_qi_max,
+                healthy_state.normalized().karma,
+                healthy_state.normalized().experience as i64,
+                healthy_state.normalized().inventory_score,
+            )
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn concurrent_player_core_slice_writers_serialize_under_sqlite_busy_timeout() {
         let (persistence, data_dir) = sqlite_persistence("core-slice-concurrency");
         let writer_count = 50usize;
