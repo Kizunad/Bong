@@ -62,8 +62,10 @@ public class ItemTooltipPanel extends BaseComponent {
             needed += lineBlock;
         }
 
-        // description 按全宽 word-wrap 估算（保守：忽略前几行可能挤 icon 右侧，
-        // 实际绕 icon 时行数只会更少 → 估高一点没坏处）。
+        // top 部分至少保证 icon 高度（描述推到 icon 底部之下显示）。
+        needed = Math.max(needed, ICON_MARGIN + ICON_SIZE);
+
+        // description 用 TextRenderer.wrapLines 做真正的 word-wrap，按全宽计算。
         if (!item.description().isEmpty()) {
             int maxWidth = PANEL_WIDTH - ICON_MARGIN * 2;
             int lines = textRenderer.wrapLines(Text.literal(item.description()), maxWidth).size();
@@ -133,29 +135,19 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
-        // Description 过 icon 底部后改用全宽排版（左边距回到面板起点）。
+        // Description —— 用 TextRenderer.wrapLines 做真正的 word-wrap（按字符宽度分行，不加 "…"）。
+        // 为保证 wrap 宽度稳定，统一推到 icon 底部之下全宽显示，不再绕 icon 右侧。
         int iconBottom = y + ICON_MARGIN + ICON_SIZE;
         String desc = hoveredItem.description();
         if (!desc.isEmpty()) {
-            while (!desc.isEmpty() && cy < y + h - textRenderer.fontHeight - 2) {
-                boolean belowIcon = cy >= iconBottom;
-                int lineLeft = belowIcon ? descLeft : cx;
-                int lineMax = belowIcon ? (PANEL_WIDTH - ICON_MARGIN * 2) : (PANEL_WIDTH - TEXT_LEFT_OFFSET - ICON_MARGIN);
-                String line = trimToWidth(textRenderer, desc, lineMax);
-                context.drawTextWithShadow(textRenderer, Text.literal(line), lineLeft, cy, 0xFFAAAAAA);
+            cy = Math.max(cy, iconBottom);
+            int maxWidth = PANEL_WIDTH - ICON_MARGIN * 2;
+            for (var line : textRenderer.wrapLines(Text.literal(desc), maxWidth)) {
+                if (cy > y + h - textRenderer.fontHeight - 2) break;
+                context.drawTextWithShadow(textRenderer, line, descLeft, cy, 0xFFAAAAAA);
                 cy += textRenderer.fontHeight + DESC_LINE_STEP;
-                desc = desc.substring(line.length()).trim();
             }
         }
-    }
-
-    private static String trimToWidth(TextRenderer renderer, String text, int maxWidth) {
-        if (renderer.getWidth(text) <= maxWidth) return text;
-        for (int i = text.length() - 1; i > 0; i--) {
-            String sub = text.substring(0, i) + "…";
-            if (renderer.getWidth(sub) <= maxWidth) return sub;
-        }
-        return text.substring(0, 1);
     }
 
     private static String rarityLabel(String rarity) {
