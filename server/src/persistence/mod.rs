@@ -3502,6 +3502,18 @@ mod persistence_tests {
         unique_temp_dir(test_name).join("bong.db")
     }
 
+    fn reject_if_user_version_exceeds_supported(
+        connection: &Connection,
+        max_supported_user_version: i32,
+    ) -> rusqlite::Result<()> {
+        let user_version: i32 =
+            connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+        if user_version > max_supported_user_version {
+            return Err(rusqlite::Error::ExecuteReturnedResults);
+        }
+        Ok(())
+    }
+
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
@@ -4449,6 +4461,62 @@ mod persistence_tests {
         assert!(
             matches!(error, rusqlite::Error::ExecuteReturnedResults),
             "unexpected error when rejecting future user_version: {error:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_v9_reader_rejects_current_v10_database() {
+        let db_path = database_path("legacy-v9-reader-rejects-v10-db");
+        bootstrap_sqlite(&db_path, "legacy-v9-reader-rejects-v10-db")
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO zone_overlays (
+                    zone_id,
+                    overlay_kind,
+                    payload_json,
+                    since_wall,
+                    schema_version,
+                    last_updated_wall,
+                    payload_version
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    DEFAULT_SPAWN_ZONE_NAME,
+                    "collapsed",
+                    serde_json::json!({"danger_level": 5}).to_string(),
+                    123_i64,
+                    CURRENT_SCHEMA_VERSION,
+                    456_i64,
+                    1_i64,
+                ],
+            )
+            .expect("current-schema zone_overlays row should insert");
+
+        let user_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version as i32, CURRENT_USER_VERSION);
+
+        let error = reject_if_user_version_exceeds_supported(&connection, CURRENT_USER_VERSION - 1)
+            .expect_err("simulated v9 reader should reject current v10 database");
+        assert!(
+            matches!(error, rusqlite::Error::ExecuteReturnedResults),
+            "unexpected error when simulating legacy v9 rejection: {error:?}"
+        );
+
+        let row_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM zone_overlays", [], |row| row.get(0))
+            .expect("zone_overlays count should be readable after rejection");
+        assert_eq!(row_count, 1);
+
+        let _ = fs::remove_dir_all(
+            db_path
+                .parent()
+                .expect("legacy reader test db path should still have parent directory"),
         );
     }
 
