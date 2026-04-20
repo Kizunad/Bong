@@ -967,6 +967,7 @@ mod player_state_tests {
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
     use rusqlite::{params, Connection};
     use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 
@@ -1187,6 +1188,113 @@ mod player_state_tests {
                 .get_version_num(),
             7
         );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn concurrent_player_core_slice_writers_serialize_under_sqlite_busy_timeout() {
+        let (persistence, data_dir) = sqlite_persistence("core-slice-concurrency");
+        let writer_count = 50usize;
+        let baseline_state = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 12.0,
+            spirit_qi_max: 100.0,
+            karma: 0.1,
+            experience: 640,
+            inventory_score: 0.2,
+        };
+
+        for index in 0..writer_count {
+            save_player_state(
+                &persistence,
+                format!("Player{index}").as_str(),
+                &baseline_state,
+            )
+            .expect("baseline player state should persist");
+        }
+
+        let persistence = Arc::new(persistence);
+        let barrier = Arc::new(Barrier::new(writer_count + 1));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let persistence = Arc::clone(&persistence);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let username = format!("Player{index}");
+                    let updated_state = PlayerState {
+                        realm: "qi_refining_3".to_string(),
+                        spirit_qi: 20.0 + index as f64,
+                        spirit_qi_max: 140.0,
+                        karma: ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0),
+                        experience: 2_000 + index as u64,
+                        inventory_score: (index as f64 / writer_count as f64).clamp(0.0, 1.0),
+                    };
+
+                    barrier.wait();
+                    save_player_core_slice(persistence.as_ref(), username.as_str(), &updated_state)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("writer thread should not panic"))
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "all concurrent player core slice writers should succeed: {errors:?}"
+        );
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let row_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM player_core", [], |row| row.get(0))
+            .expect("player_core row count should be readable");
+        assert_eq!(row_count, writer_count as i64);
+
+        for index in 0..writer_count {
+            let username = format!("Player{index}");
+            let (spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience): (
+                f64,
+                f64,
+                f64,
+                String,
+                f64,
+                i64,
+            ) = connection
+                .query_row(
+                    "
+                    SELECT spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience
+                    FROM player_core
+                    WHERE username = ?1
+                    ",
+                    params![username.as_str()],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .expect("updated player_core row should exist");
+
+            assert_eq!(spirit_qi, 20.0 + index as f64);
+            assert_eq!(karma, ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0));
+            assert_eq!(
+                inventory_score,
+                (index as f64 / writer_count as f64).clamp(0.0, 1.0)
+            );
+            assert_eq!(realm, baseline_state.realm);
+            assert_eq!(spirit_qi_max, baseline_state.spirit_qi_max);
+            assert_eq!(experience, baseline_state.experience as i64);
+        }
 
         let _ = fs::remove_dir_all(&data_dir);
     }
