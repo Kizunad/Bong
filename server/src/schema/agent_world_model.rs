@@ -85,3 +85,35 @@ where
     }
     Ok(source)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unknown_agent_world_model_version() {
+        let json = r#"{
+            "v": 2,
+            "id": "wm-1",
+            "source": "arbiter",
+            "snapshot": {
+                "current_era": null,
+                "zone_history": {},
+                "last_decisions": {},
+                "player_first_seen_tick": {},
+                "last_tick": null,
+                "last_state_ts": null
+            }
+        }"#;
+
+        let error = serde_json::from_str::<AgentWorldModelEnvelopeV1>(json)
+            .expect_err("unknown agent world model version should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("AgentWorldModelEnvelopeV1.v must be 1"),
+            "unexpected agent world model version error: {error}"
+        );
+    }
+}
