@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "botany_skill",
+  "level": 2,
+  "xp": 90,
+  "xp_to_next_level": 120,
+  "auto_unlock_level": 3
+}

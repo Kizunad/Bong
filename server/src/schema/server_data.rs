@@ -10,6 +10,7 @@ use super::combat_hud::{
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
+use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
 use super::world_state::PlayerPowerBreakdown;
 
@@ -36,6 +37,8 @@ pub enum ServerDataType {
     InventorySnapshot,
     InventoryEvent,
     DroppedLootSync,
+    BotanyHarvestProgress,
+    BotanySkill,
     AlchemyFurnace,
     AlchemySession,
     AlchemyOutcomeForecast,
@@ -52,6 +55,7 @@ pub enum ServerDataType {
     DefenseSync,
     WeaponEquipped,
     WeaponBroken,
+    LingtianSession,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +113,26 @@ pub enum ServerDataPayloadV1 {
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
     DroppedLootSync(Vec<DroppedLootEntryV1>),
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
+    },
     AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
     AlchemySession(Box<AlchemySessionDataV1>),
     AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
@@ -125,6 +149,7 @@ pub enum ServerDataPayloadV1 {
     DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
+    LingtianSession(Box<LingtianSessionDataV1>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +214,27 @@ enum ServerDataPayloadWireV1 {
     },
     DroppedLootSync {
         drops: Vec<DroppedLootEntryV1>,
+    },
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
     },
     AlchemyFurnace {
         #[serde(flatten)]
@@ -256,6 +302,10 @@ enum ServerDataPayloadWireV1 {
     WeaponBroken {
         #[serde(flatten)]
         weapon_broken: WeaponBrokenV1,
+    },
+    LingtianSession {
+        #[serde(flatten)]
+        lingtian_session: LingtianSessionDataV1,
     },
 }
 
@@ -452,6 +502,44 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::InventoryEvent(event.try_into()?))
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
+            ServerDataPayloadWireV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Ok(Self::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            }),
+            ServerDataPayloadWireV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Ok(Self::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            }),
             ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
             ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
             ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
@@ -483,6 +571,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::WeaponBroken { weapon_broken } => {
                 Ok(Self::WeaponBroken(weapon_broken))
+            }
+            ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
+                Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
         }
     }
@@ -571,6 +662,44 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::DroppedLootSync(drops) => Self::DroppedLootSync {
                 drops: drops.clone(),
             },
+            ServerDataPayloadV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Self::BotanyHarvestProgress {
+                session_id: session_id.clone(),
+                target_id: target_id.clone(),
+                target_name: target_name.clone(),
+                plant_kind: plant_kind.clone(),
+                mode: mode.clone(),
+                progress: *progress,
+                auto_selectable: *auto_selectable,
+                request_pending: *request_pending,
+                interrupted: *interrupted,
+                completed: *completed,
+                detail: detail.clone(),
+                target_pos: *target_pos,
+            },
+            ServerDataPayloadV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Self::BotanySkill {
+                level: *level,
+                xp: *xp,
+                xp_to_next_level: *xp_to_next_level,
+                auto_unlock_level: *auto_unlock_level,
+            },
             ServerDataPayloadV1::AlchemyFurnace(data) => {
                 Self::AlchemyFurnace { data: data.clone() }
             }
@@ -608,6 +737,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::WeaponBroken(b) => Self::WeaponBroken {
                 weapon_broken: b.clone(),
+            },
+            ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
+                lingtian_session: (**s).clone(),
             },
         }
     }
@@ -705,6 +837,8 @@ impl ServerDataPayloadV1 {
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
+            Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
             Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
@@ -721,6 +855,7 @@ impl ServerDataPayloadV1 {
             Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
+            Self::LingtianSession(..) => ServerDataType::LingtianSession,
         }
     }
 }
@@ -853,6 +988,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.dropped-loot-sync.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.alchemy-furnace.sample.json"

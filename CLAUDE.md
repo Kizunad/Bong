@@ -82,3 +82,4 @@ bash scripts/smoke-test.sh
 - Java 17 用于 Fabric，系统默认 Java 21（sdkman）
 - docs/ 目录存放架构设计文档和路线图，修改前可参考
 - Python 文件保存后自动 ruff 格式化（PostToolUse hook，见 `.claude/settings.local.json`）
+- 跑会开 worktree 的外部 orchestrator（Codex / Sisyphus 等）之前，先 `git commit -m "WIP"` 把 worktree 改动落盘；跑完 `git stash list` 检查孤儿 `WIP before inspecting ...` / `WIP: stash before inspecting ...`，有就 `git stash pop` 回来（那类 agent 会 auto-stash + `reset --hard` 但不 auto-pop）

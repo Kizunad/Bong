@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.botany.BotanyHarvestMode;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -112,6 +113,17 @@ public class ClientRequestSenderTest {
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"inventory_discard_item\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendBotanyHarvestRequestIncludesSessionAndMode() {
+        install();
+        ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"botany_harvest_request\",\"v\":1,\"session_id\":\"session-botany-01\",\"mode\":\"manual\"}",
             sent.get(0).body()
         );
     }

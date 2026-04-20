@@ -8,6 +8,10 @@ use valence::prelude::{
 };
 
 use super::state::{canonical_player_id, PlayerState};
+use crate::botany::components::BotanyHarvestMode;
+use crate::botany::components::HarvestSessionStore;
+use crate::botany::harvest::start_or_resume_harvest;
+use crate::botany::registry::canonicalize_herb_id;
 use crate::combat::{
     components::WoundKind,
     debug::enqueue_debug_attack_intent,
@@ -61,6 +65,8 @@ pub struct CombatAction {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GatherAction {
     pub resource: String,
+    pub target_entity: Option<Entity>,
+    pub mode: Option<BotanyHarvestMode>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -132,6 +138,12 @@ pub struct GameplayTick {
 
 impl Resource for GameplayTick {}
 
+impl GameplayTick {
+    pub fn current_tick(&self) -> u64 {
+        self.tick
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct BreakthroughRule {
     current_realm: &'static str,
@@ -161,12 +173,14 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_queued_gameplay_actions(
     mut queue: ResMut<GameplayActionQueue>,
     mut gameplay_tick: ResMut<GameplayTick>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
+    mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
     mut attack_intents: EventWriter<AttackIntent>,
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
@@ -193,6 +207,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                             (
                                 entity,
                                 canonical_player_id(username.0.as_str()),
+                                position.get(),
                                 zone_name_for_position(&zone_registry, position.get()),
                                 validation,
                             )
@@ -201,7 +216,9 @@ pub(crate) fn apply_queued_gameplay_actions(
                 })
         };
 
-        let Some((player_entity, canonical_player, zone_name, validation)) = player_context else {
+        let Some((player_entity, canonical_player, player_position, zone_name, validation)) =
+            player_context
+        else {
             tracing::warn!(
                 "[bong][gameplay] dropped queued action for unknown player `{}`: {:?}",
                 request.player,
@@ -234,10 +251,13 @@ pub(crate) fn apply_queued_gameplay_actions(
 
                         apply_gather_action(
                             canonical_player.as_str(),
+                            player_entity,
+                            player_position,
                             zone_name.as_str(),
                             event_tick,
                             &action,
                             &mut player_state,
+                            harvest_sessions.as_deref_mut(),
                             active_events.as_deref_mut(),
                             &mut pending_narrations,
                         )
@@ -284,16 +304,35 @@ fn bridge_debug_combat_action(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_gather_action(
     canonical_player: &str,
+    player_entity: Entity,
+    player_position: valence::prelude::DVec3,
     zone_name: &str,
     event_tick: u64,
     action: &GatherAction,
     player_state: &mut PlayerState,
+    harvest_sessions: Option<&mut HarvestSessionStore>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
 ) {
     let resource_name = empty_target_fallback(action.resource.as_str());
+
+    if let Some(harvest_sessions) = harvest_sessions {
+        if let Ok(plant_id) = canonicalize_herb_id(resource_name) {
+            start_or_resume_harvest(
+                harvest_sessions,
+                canonical_player.trim_start_matches("offline:"),
+                player_entity,
+                action.target_entity,
+                plant_id,
+                action.mode.unwrap_or(BotanyHarvestMode::Manual),
+                [player_position.x, player_position.y, player_position.z],
+                event_tick,
+            );
+        }
+    }
 
     player_state.spirit_qi =
         (player_state.spirit_qi + GATHER_SPIRIT_QI_REWARD).clamp(0.0, player_state.spirit_qi_max);

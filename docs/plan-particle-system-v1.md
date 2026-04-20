@@ -10,11 +10,11 @@
 
 ## §0 设计轴心
 
-- [ ] 粒子必须**避开原版 "*" 感**：自定义 `buildGeometry`、非 billboard、贴图禁用点/星形
-- [ ] **Server 权威触发**：VFX 事件由服务端发起（技能释放、境界突破、NPC 反应），客户端只负责播放
-- [ ] **客户端纯表演**：无状态广播、无物理影响（粒子/实体不做判定，判定在 server）
-- [ ] 所有 VFX 对 Iris 光影零冲突（走标准 `RenderLayer`，不碰 shader program）
-- [ ] 分类基类复用：`LineParticle` / `RibbonParticle` / `GroundDecalParticle` / 默认 billboard
+- [x] 粒子必须**避开原版 "*" 感**：自定义 `buildGeometry`、非 billboard、贴图禁用点/星形
+- [x] **Server 权威触发**：VFX 事件由服务端发起（技能释放、境界突破、NPC 反应），客户端只负责播放
+- [x] **客户端纯表演**：无状态广播、无物理影响（粒子/实体不做判定，判定在 server）
+- [x] 所有 VFX 对 Iris 光影零冲突（走标准 `RenderLayer`，不碰 shader program）
+- [x] 分类基类复用：`LineParticle` / `RibbonParticle` / `GroundDecalParticle` / 默认 billboard
 
 ---
 
@@ -24,28 +24,28 @@
 
 拉伸 quad：沿速度方向长、垂直方向窄。用于**剑气、刀罡、掌风线条、暗器轨迹**。
 
-- [ ] 重写 `buildGeometry`：取 velocity，构造一个朝速度方向拉长的四边形
-- [ ] 支持可配置"长度 = 速度 × factor"
-- [ ] UV 沿长度方向（支持贴图流动动画）
+- [x] 重写 `buildGeometry`：取 velocity，构造一个朝速度方向拉长的四边形
+- [x] 支持可配置"长度 = 速度 × factor"
+- [x] UV 沿长度方向（支持贴图流动动画）
 - [ ] 发光层走 `RenderLayer.getEntityTranslucentEmissive`
 
 ### 1.2 `BongRibbonParticle`
 
 记录过去 N 帧位置，拼接带状几何。用于**飞剑拖尾、雷电、丝带法宝**。
 
-- [ ] 内部维护位置环形缓冲（默认 16 帧）
-- [ ] 每帧构造 N-1 个连续四边形（ribbon 段）
-- [ ] UV 沿 ribbon 长度流动
-- [ ] 头尾 alpha 渐隐
-- [ ] 开放"ribbon 宽度随生命周期变化"回调
+- [x] 内部维护位置环形缓冲（默认 16 帧）
+- [x] 每帧构造 N-1 个连续四边形（ribbon 段）
+- [x] UV 沿 ribbon 长度流动
+- [x] 头尾 alpha 渐隐
+- [x] 开放"ribbon 宽度随生命周期变化"回调
 
 ### 1.3 `BongGroundDecalParticle`
 
 贴地固定朝向，法线朝上。用于**脚下符圈、血迹、脚印、结界投影**。
 
-- [ ] 重写 billboard 逻辑：四边形法线锁定为 `(0, 1, 0)`
-- [ ] 贴图 UV 可旋转（符阵自转）
-- [ ] 高度微抬（避免 z-fighting）
+- [x] 重写 billboard 逻辑：四边形法线锁定为 `(0, 1, 0)`
+- [x] 贴图 UV 可旋转（符阵自转）
+- [x] 高度微抬（避免 z-fighting）
 - [ ] 支持地形贴合（按下方方块 bounding box 微调 Y）
 
 ### 1.4 `BongModelParticle`（可选，后期）
@@ -60,9 +60,9 @@
 
 原版基类，但**贴图资源规范**严格：
 
-- [ ] 禁用任何点/星/方块贴图
-- [ ] 规范：符文（汉字、卦象）、花瓣、墨迹、光球（带 alpha 光晕）、剑形剪影
-- [ ] 尺寸：32×32 / 64×64，必须带 alpha
+- [x] 禁用任何点/星/方块贴图
+- [x] 规范：符文（汉字、卦象）、花瓣、墨迹、光球（带 alpha 光晕）、剑形剪影
+- [x] 尺寸：32×32 / 64×64，必须带 alpha
 
 ---
 
@@ -104,10 +104,10 @@ VFX 的触发来源是**服务端的游戏逻辑**：
 }
 ```
 
-- [ ] 定义 `VfxEvent` TypeBox schema（`agent/packages/schema/src/vfx.ts`）
-- [ ] 导出 JSON Schema → Rust serde struct
-- [ ] 客户端 `BongNetworkHandler` 分发到 `VfxDispatcher`
-- [ ] `VfxDispatcher` 按 `event` 字符串查注册表 → 调用对应 `VfxPlayer.play(params)`
+- [x] 定义 `VfxEvent` TypeBox schema（`agent/packages/schema/src/vfx.ts`）
+- [x] 导出 JSON Schema → Rust serde struct
+- [x] 客户端 `BongNetworkHandler` 分发到 `VfxDispatcher`
+- [x] `VfxDispatcher` 按 `event` 字符串查注册表 → 调用对应 `VfxPlayer.play(params)`
 
 ### 2.3 服务端 VFX 分发器架构（不学 Pumpkin）
 
@@ -150,15 +150,15 @@ fn flush_vfx_queue(
 
 ### 2.5 合批与节流规则
 
-- [ ] 同一 tick 内同 `event id` 且 origin 距离 <1m 的事件 → 合并为 `count=N`
-- [ ] 单 chunk 内每 tick VFX 事件上限（默认 8 个，超出按优先级丢弃）
-- [ ] 每玩家每 tick 收到的 VFX 包上限（默认 32 个）
-- [ ] 优先级：突破/天劫 > 玩家技能 > NPC 技能 > 环境
+- [x] 同一 tick 内同 `event id` 且 origin 距离 <1m 的事件 → 合并为 `count=N`
+- [x] 单 chunk 内每 tick VFX 事件上限（默认 8 个，超出按优先级丢弃）
+- [x] 每玩家每 tick 收到的 VFX 包上限（默认 32 个）
+- [x] 优先级：突破/天劫 > 玩家技能 > NPC 技能 > 环境
 
 ### 2.6 范围控制
 
 - [ ] vanilla 粒子：`ChunkLayer::play_particle` 自动按 chunk viewer 过滤（默认 view distance）
-- [ ] 自定义 `vfx_event`：服务端按距离过滤，默认 64 格；大型事件（天劫、破境）整服广播
+- [x] 自定义 `vfx_event`：服务端按距离过滤，默认 64 格；大型事件（天劫、破境）整服广播
 - [ ] 实现参考 Valence `view_writer(position)` 模式
 
 ### 2.7 事件 → 播放器注册表（客户端）
@@ -173,9 +173,9 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 
 ### 2.8 确定性 vs 随机性
 
-- [ ] **参数由 server 决定**（颜色、强度、方向）
-- [ ] **细节由 client 自由**（单个粒子的抖动、随机旋转）
-- [ ] 不保证严格跨客户端视觉一致（没必要），只保证"语义一致"
+- [x] **参数由 server 决定**（颜色、强度、方向）
+- [x] **细节由 client 自由**（单个粒子的抖动、随机旋转）
+- [x] 不保证严格跨客户端视觉一致（没必要），只保证"语义一致"
 
 ---
 
@@ -255,22 +255,22 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 - 客户端 `BongNetworkHandler` 已有 dispatch 架构
 
 **待补（Phase 0 实际工作）**：
-- [ ] **决策 A**：VFX 事件**复用** `bong:server_data` + 新 `VfxEvent` payload variant，**vs. 独立** `bong:vfx_event` channel（对应 §7 第一条开放问题）
+- [x] **决策 A**：VFX 事件**复用** `bong:server_data` + 新 `VfxEvent` payload variant，**vs. 独立** `bong:vfx_event` channel（对应 §7 第一条开放问题）
   - 复用利：schema 集中、dispatcher 现成、IPC 版本化一致
   - 独立利：高频 VFX 不挤占状态同步，可独立节流
-- [ ] 新增 `VfxEventV1`（`agent/packages/schema` TypeBox → Rust 双端对齐）：`event_id` / `origin` / `direction` / `color` / `strength` / `duration_ticks`
-- [ ] Bevy 端新增 VFX 事件队列（`Events<VfxEvent>` 或自建 `Resource`）+ tick flush system
-- [ ] **范围过滤新抽象**（关键）：基于 `Position` + 视距过滤收件人。现有 `emit_player_state_payloads` 是"每在线 client 一份"，VFX 需要"按发源点筛订阅者"——属本 phase 新增系统
-- [ ] 客户端 `BongNetworkHandler` 注册 VFX 事件分发器，复用现有 dispatch 模式
+- [x] 新增 `VfxEventV1`（`agent/packages/schema` TypeBox → Rust 双端对齐）：`event_id` / `origin` / `direction` / `color` / `strength` / `duration_ticks`
+- [x] Bevy 端新增 VFX 事件队列（`Events<VfxEvent>` 或自建 `Resource`）+ tick flush system
+- [x] **范围过滤新抽象**（关键）：基于 `Position` + 视距过滤收件人。现有 `emit_player_state_payloads` 是"每在线 client 一份"，VFX 需要"按发源点筛订阅者"——属本 phase 新增系统
+- [x] 客户端 `BongNetworkHandler` 注册 VFX 事件分发器，复用现有 dispatch 模式
 
 ### 5.2 Phase 1 — 三个渲染基类 + 最小端到端链路
 
-- [ ] §1 三个基类（Line/Ribbon/GroundDecal）原型 + 单元测试渲染
-- [ ] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
+- [x] §1 三个基类（Line/Ribbon/GroundDecal）原型 + 单元测试渲染
+- [x] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
 
 ### 5.3 Phase 2 — 首批资产与扩展
 
-- [ ] §4.1 首批粒子贴图资源制作（9 种）
+- [x] §4.1 首批粒子贴图资源制作（9 种）
 - [ ] 飞剑实体 + Ribbon 拖尾 demo
 - [ ] 符阵 BlockEntity + GroundDecal 粒子 demo
 

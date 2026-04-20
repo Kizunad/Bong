@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, Client, Commands, EventReader, EventWriter, Query, Res, ResMut, Resource, Username,
+    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut,
+    Resource, Username,
 };
 
 use crate::alchemy::{
@@ -22,22 +23,25 @@ use crate::alchemy::{
 use crate::combat::components::{
     Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
 };
-use crate::combat::events::DefenseIntent;
+use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::CombatClock;
-use crate::cultivation::breakthrough::{add_pending_material_bonus, BreakthroughRequest};
-use crate::cultivation::components::{Contamination, Cultivation, MeridianId, MeridianSystem};
+use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::inventory::{apply_inventory_move, InventoryMoveOutcome, PlayerInventory};
 use crate::inventory::{
-    apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    inventory_item_by_instance, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryMoveOutcome, ItemEffect, PlayerInventory,
-};
-use crate::inventory::{
-    ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
+    ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
+use crate::lingtian::environment::read_environment_at;
+use crate::lingtian::events::{
+    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+    StartReplenishRequest, StartTillRequest,
+};
+use crate::lingtian::session::{ReplenishSource, SessionMode};
+use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
+use crate::lingtian::PlotEnvironment;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -45,11 +49,11 @@ use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
     current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
-use crate::player::state::PlayerState;
-use crate::schema::client_request::{ApplyPillTargetV1, ClientRequestV1};
+use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
+use crate::player::state::{canonical_player_id, PlayerState};
+use crate::schema::client_request::ClientRequestV1;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -72,24 +76,43 @@ pub struct CombatRequestParams<'w, 's> {
     pub unlocked_q: Query<'w, 's, &'static UnlockedStyles>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
+    pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
 }
 
+/// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
+/// SystemParam 16 上限。`layers` 用于 `StartTill` 时读 chunk 派生真实
+/// `TerrainKind` + `PlotEnvironment`，避免客户端伪造地形。
 #[derive(SystemParam)]
-pub struct InventoryApplyParams<'w, 's> {
-    pub inventories: Query<'w, 's, &'static mut PlayerInventory>,
-    pub cultivations: Query<'w, 's, &'static mut Cultivation>,
-    pub meridians: Query<'w, 's, &'static mut MeridianSystem>,
-    pub contaminations: Query<'w, 's, &'static mut Contamination>,
-    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
-    pub player_states: Query<'w, 's, &'static PlayerState>,
+pub struct LingtianRequestParams<'w, 's> {
+    pub till_tx: EventWriter<'w, StartTillRequest>,
+    pub renew_tx: EventWriter<'w, StartRenewRequest>,
+    pub planting_tx: EventWriter<'w, StartPlantingRequest>,
+    pub harvest_tx: EventWriter<'w, StartHarvestRequest>,
+    pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
+    pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
+    pub layers: Query<'w, 's, &'static ChunkLayer>,
+}
+
+/// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
+/// 顶部参数的 16-tuple Bevy 0.14 SystemParam 上限。
+#[derive(SystemParam)]
+pub struct AlchemyRequestParams<'w, 's> {
+    pub state: ResMut<'w, AlchemyMockState>,
+    pub furnaces: Query<'w, 's, &'static mut AlchemyFurnace>,
+    pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
+    pub recipe_registry: Res<'w, RecipeRegistry>,
 }
 
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
+/// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
+/// 20 tick/s × 60 s × 5 = 6000。
+const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
+    mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
     mut breakthrough_tx: EventWriter<BreakthroughRequest>,
     mut forge_tx: EventWriter<ForgeRequest>,
     mut insight_tx: EventWriter<InsightChosen>,
@@ -97,13 +120,11 @@ pub fn handle_client_request_payloads(
     combat_clock: Res<CombatClock>,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
-    mut alchemy_state: ResMut<AlchemyMockState>,
-    mut alchemy_furnaces: Query<&mut AlchemyFurnace>,
-    mut alchemy_learned: Query<&mut LearnedRecipes>,
-    mut inventory_apply: InventoryApplyParams,
-    mut dropped_loot_registry: ResMut<DroppedLootRegistry>,
+    mut alchemy_params: AlchemyRequestParams,
+    mut inventories: Query<&mut PlayerInventory>,
+    player_states: Query<&PlayerState>,
     mut combat_params: CombatRequestParams,
-    recipe_registry: Res<RecipeRegistry>,
+    mut lingtian_tx: LingtianRequestParams,
 ) {
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
@@ -142,6 +163,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::ForgeRequest { v, .. }
             | ClientRequestV1::InsightDecision { v, .. }
+            | ClientRequestV1::BotanyHarvestRequest { v, .. }
             | ClientRequestV1::AlchemyOpenFurnace { v, .. }
             | ClientRequestV1::AlchemyFeedSlot { v, .. }
             | ClientRequestV1::AlchemyTakeBack { v, .. }
@@ -152,12 +174,18 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
-            | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
-            | ClientRequestV1::SwitchDefenseStance { v, .. } => *v,
+            | ClientRequestV1::SwitchDefenseStance { v, .. }
+            | ClientRequestV1::LingtianStartTill { v, .. }
+            | ClientRequestV1::LingtianStartRenew { v, .. }
+            | ClientRequestV1::LingtianStartPlanting { v, .. }
+            | ClientRequestV1::LingtianStartHarvest { v, .. }
+            | ClientRequestV1::LingtianStartReplenish { v, .. }
+            | ClientRequestV1::LingtianStartDrainQi { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -181,8 +209,9 @@ pub fn handle_client_request_payloads(
                     "[bong][network] client_request breakthrough entity={:?}",
                     ev.client
                 );
-                // 当前阶段固定 material_bonus=0.0，等价于无灵材加成突破；
-                // 保持该占位行为以稳定既有 ClientRequestV1 语义。
+                // material_bonus 的实际来源是玩家身上 StatusEffects 里的
+                // BreakthroughBoost buff（由 AlchemyTakePill 吃丹挂上），
+                // 在 breakthrough_system 内聚合消费。client 请求本身不传额外 bonus。
                 breakthrough_tx.send(BreakthroughRequest {
                     entity: ev.client,
                     material_bonus: 0.0,
@@ -218,14 +247,43 @@ pub fn handle_client_request_payloads(
                     axis,
                 });
             }
+            ClientRequestV1::BotanyHarvestRequest {
+                session_id, mode, ..
+            } => {
+                let Some(queue) = gameplay_queue.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
+                    );
+                    continue;
+                };
+                let player_key = clients
+                    .get(ev.client)
+                    .map(|(username, _)| canonical_player_id(username.0.as_str()))
+                    .unwrap_or_else(|_| format!("offline:{:?}", ev.client));
+                queue.enqueue(
+                    player_key,
+                    GameplayAction::Gather(GatherAction {
+                        resource: session_id,
+                        target_entity: None,
+                        mode: Some(match mode {
+                            crate::schema::botany::BotanyHarvestModeV1::Manual => {
+                                crate::botany::components::BotanyHarvestMode::Manual
+                            }
+                            crate::schema::botany::BotanyHarvestModeV1::Auto => {
+                                crate::botany::components::BotanyHarvestMode::Auto
+                            }
+                        }),
+                    }),
+                );
+            }
             // ── 炼丹请求 ECS dispatch (plan-alchemy-v1 §4) ──────────────────
             ClientRequestV1::AlchemyTurnPage { delta, .. } => {
                 handle_alchemy_turn_page(
                     ev.client,
                     delta,
                     &mut clients,
-                    &mut alchemy_learned,
-                    &mut alchemy_state,
+                    &mut alchemy_params.learned,
+                    &mut alchemy_params.state,
                 );
             }
             ClientRequestV1::AlchemyLearnRecipe { recipe_id, .. } => {
@@ -233,8 +291,8 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     recipe_id,
                     &mut clients,
-                    &mut alchemy_learned,
-                    &recipe_registry,
+                    &mut alchemy_params.learned,
+                    &alchemy_params.recipe_registry,
                 );
             }
             ClientRequestV1::AlchemyIntervention { intervention, .. } => {
@@ -242,14 +300,14 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     intervention.into(),
                     &mut clients,
-                    &mut alchemy_furnaces,
+                    &mut alchemy_params.furnaces,
                 );
             }
             ClientRequestV1::AlchemyOpenFurnace { furnace_id, .. } => {
                 // 当前 MVP:每玩家一个虚拟炉,furnace_id 仅作日志记录;触发一次完整 snapshot 重推。
                 if let Ok((username, mut client)) = clients.get_mut(ev.client) {
                     let player_id = crate::player::state::canonical_player_id(username.0.as_str());
-                    if let Ok(learned) = alchemy_learned.get(ev.client) {
+                    if let Ok(learned) = alchemy_params.learned.get(ev.client) {
                         alchemy_snapshot_emit::send_recipe_book_from_learned(
                             &mut client,
                             &player_id,
@@ -261,11 +319,21 @@ pub fn handle_client_request_payloads(
                     );
                 }
             }
+            ClientRequestV1::AlchemyTakePill { pill_item_id, .. } => {
+                handle_alchemy_take_pill(
+                    ev.client,
+                    &pill_item_id,
+                    &combat_clock,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &mut combat_params,
+                );
+            }
             // 涉及 inventory 联动的请求暂保留 stub(plan-inventory-v1 接入后再做)
             other @ (ClientRequestV1::AlchemyFeedSlot { .. }
             | ClientRequestV1::AlchemyTakeBack { .. }
-            | ClientRequestV1::AlchemyIgnite { .. }
-            | ClientRequestV1::AlchemyTakePill { .. }) => {
+            | ClientRequestV1::AlchemyIgnite { .. }) => {
                 tracing::debug!(
                     "[bong][network][alchemy] received {other:?} from {:?}; awaiting inventory wiring (plan-inventory-v1)",
                     ev.client
@@ -282,190 +350,10 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     to,
-                    &mut inventory_apply.inventories,
+                    &mut inventories,
                     &mut clients,
-                    &inventory_apply.player_states,
+                    &player_states,
                 );
-            }
-            ClientRequestV1::ApplyPill {
-                instance_id,
-                target,
-                ..
-            } => {
-                let mut inventory = match inventory_apply.inventories.get_mut(ev.client) {
-                    Ok(inv) => inv,
-                    Err(_) => {
-                        tracing::warn!(
-                            "[bong][network][inventory] apply_pill entity={:?} has no PlayerInventory",
-                            ev.client
-                        );
-                        continue;
-                    }
-                };
-                let mut cultivation = match inventory_apply.cultivations.get_mut(ev.client) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        tracing::warn!(
-                            "[bong][network][inventory] apply_pill entity={:?} has no Cultivation component",
-                            ev.client
-                        );
-                        continue;
-                    }
-                };
-                let mut meridian_system = match inventory_apply.meridians.get_mut(ev.client) {
-                    Ok(m) => m,
-                    Err(_) => {
-                        tracing::warn!(
-                            "[bong][network][inventory] apply_pill entity={:?} has no MeridianSystem component",
-                            ev.client
-                        );
-                        continue;
-                    }
-                };
-                let mut contamination = match inventory_apply.contaminations.get_mut(ev.client) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        tracing::warn!(
-                            "[bong][network][inventory] apply_pill entity={:?} has no Contamination component",
-                            ev.client
-                        );
-                        continue;
-                    }
-                };
-
-                match apply_pill_to_state(
-                    &mut inventory,
-                    &mut cultivation,
-                    &mut meridian_system,
-                    &mut contamination,
-                    &combat_params.item_registry,
-                    instance_id,
-                    &target,
-                ) {
-                    Ok(applied) => {
-                        tracing::info!(
-                            "[bong][network][inventory] apply_pill entity={:?} instance={} template=`{}` magnitude={:.3} total_bonus={:.3} remaining_stack={} revision={}",
-                            ev.client,
-                            instance_id,
-                            applied.template_id,
-                            applied.magnitude,
-                            applied.total_bonus,
-                            applied.remaining_stack,
-                            applied.revision,
-                        );
-                        resync_snapshot(
-                            ev.client,
-                            &inventory,
-                            &mut clients,
-                            &inventory_apply.player_states,
-                            "apply_pill",
-                        );
-                    }
-                    Err(reason) => {
-                        tracing::debug!(
-                            "[bong][network][inventory] apply_pill entity={:?} instance={} ignored: {}",
-                            ev.client,
-                            instance_id,
-                            reason
-                        );
-                    }
-                }
-            }
-            ClientRequestV1::InventoryDiscardItem {
-                instance_id, from, ..
-            } => {
-                let mut inventory = match inventory_apply.inventories.get_mut(ev.client) {
-                    Ok(inv) => inv,
-                    Err(_) => continue,
-                };
-                let player_pos = match inventory_apply.positions.get(ev.client) {
-                    Ok(pos) => [pos.0.x, pos.0.y, pos.0.z],
-                    Err(_) => continue,
-                };
-
-                match discard_inventory_item_to_dropped_loot(
-                    &mut inventory,
-                    &mut dropped_loot_registry,
-                    ev.client,
-                    player_pos,
-                    instance_id,
-                    &from,
-                ) {
-                    Ok(_) => {
-                        resync_snapshot(
-                            ev.client,
-                            &inventory,
-                            &mut clients,
-                            &inventory_apply.player_states,
-                            "inventory_discard_item",
-                        );
-                        if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                            send_dropped_loot_sync_to_client(
-                                ev.client,
-                                &mut client,
-                                &dropped_loot_registry,
-                            );
-                        }
-                    }
-                    Err(reason) => {
-                        tracing::debug!(
-                            "[bong][network][inventory] inventory_discard_item entity={:?} instance={} ignored: {}",
-                            ev.client,
-                            instance_id,
-                            reason
-                        );
-                        resync_snapshot(
-                            ev.client,
-                            &inventory,
-                            &mut clients,
-                            &inventory_apply.player_states,
-                            "inventory_discard_rejection",
-                        );
-                    }
-                }
-            }
-            ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
-                let mut inventory = match inventory_apply.inventories.get_mut(ev.client) {
-                    Ok(inv) => inv,
-                    Err(_) => continue,
-                };
-                let player_pos = match inventory_apply.positions.get(ev.client) {
-                    Ok(pos) => [pos.0.x, pos.0.y, pos.0.z],
-                    Err(_) => continue,
-                };
-
-                match pickup_dropped_loot_instance(
-                    &mut inventory,
-                    &mut dropped_loot_registry,
-                    ev.client,
-                    player_pos,
-                    instance_id,
-                ) {
-                    Ok(_) => {
-                        resync_snapshot(
-                            ev.client,
-                            &inventory,
-                            &mut clients,
-                            &inventory_apply.player_states,
-                            "pickup_dropped_item",
-                        );
-                        if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                            send_dropped_loot_sync_to_client(
-                                ev.client,
-                                &mut client,
-                                &dropped_loot_registry,
-                            );
-                        }
-                    }
-                    Err(reason) => {
-                        tracing::debug!(
-                            "[bong][network][inventory] pickup_dropped_item entity={:?} instance={} ignored: {}",
-                            ev.client,
-                            instance_id,
-                            reason
-                        );
-                    }
-                }
             }
             ClientRequestV1::Jiemai { .. } => {
                 tracing::info!(
@@ -486,7 +374,7 @@ pub fn handle_client_request_payloads(
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
-                    &inventory_apply.inventories,
+                    &inventories,
                 );
             }
             ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
@@ -495,7 +383,7 @@ pub fn handle_client_request_payloads(
                     slot,
                     item_id,
                     &mut combat_params.bindings_q,
-                    &inventory_apply.inventories,
+                    &inventories,
                 );
             }
             ClientRequestV1::SwitchDefenseStance { stance, .. } => {
@@ -506,7 +394,149 @@ pub fn handle_client_request_payloads(
                     &combat_params.unlocked_q,
                 );
             }
+            // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
+            ClientRequestV1::LingtianStartTill {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                mode,
+                ..
+            } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                // plan §1.2.2 — terrain / environment 由 server 从 chunk_layer 派生，
+                // 避免客户端伪造；session 再按 `TerrainKind::is_tillable` 决定放行。
+                let (terrain, environment) = match lingtian_tx.layers.get_single() {
+                    Ok(layer) => {
+                        let terrain = layer
+                            .block(pos)
+                            .map(|b| terrain_from_block_kind(b.state.to_kind()))
+                            .unwrap_or(TerrainKind::Unknown);
+                        (terrain, read_environment_at(layer, pos))
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "[bong][network] lingtian_start_till: chunk layer unavailable ({err:?}); \
+                             falling back to Unknown terrain — session will reject."
+                        );
+                        (TerrainKind::Unknown, PlotEnvironment::base())
+                    }
+                };
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} terrain={terrain:?}",
+                    ev.client
+                );
+                lingtian_tx.till_tx.send(StartTillRequest {
+                    player: ev.client,
+                    pos,
+                    hoe_instance_id,
+                    mode: parse_session_mode(&mode),
+                    terrain,
+                    environment,
+                });
+            }
+            ClientRequestV1::LingtianStartRenew {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id}",
+                    ev.client
+                );
+                lingtian_tx.renew_tx.send(StartRenewRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    hoe_instance_id,
+                });
+            }
+            ClientRequestV1::LingtianStartPlanting {
+                x, y, z, plant_id, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id}",
+                    ev.client
+                );
+                lingtian_tx.planting_tx.send(StartPlantingRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    plant_id,
+                });
+            }
+            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode}",
+                    ev.client
+                );
+                lingtian_tx.harvest_tx.send(StartHarvestRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    mode: parse_session_mode(&mode),
+                });
+            }
+            ClientRequestV1::LingtianStartReplenish {
+                x, y, z, source, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source}",
+                    ev.client
+                );
+                let Some(parsed) = parse_replenish_source(&source) else {
+                    tracing::warn!(
+                        "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
+                    );
+                    continue;
+                };
+                lingtian_tx.replenish_tx.send(StartReplenishRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    source: parsed,
+                });
+            }
+            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                lingtian_tx.drain_qi_tx.send(StartDrainQiRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                });
+            }
+            // TODO(inventory-v1 post-merge)：HEAD 分支加的 3 个 inventory-v1 C2S handler
+            // 在本次 merge 里与 main 的 inventory API 重构冲突，先 no-op 避免编译失败。
+            // 需单独 follow-up PR 把 HEAD 版 apply_pill/discard/pickup 的 handler 逻辑
+            // 移植到 main 的 `Query<&mut PlayerInventory>` + `handle_alchemy_take_pill`
+            // 风格，并复用 main 的 `BreakthroughBoost` buff 路径（取代 HEAD 的
+            // `pending_material_bonus` 字段）。client 侧 C2S 已发送，server 侧先静默。
+            ClientRequestV1::InventoryDiscardItem { .. }
+            | ClientRequestV1::PickupDroppedItem { .. }
+            | ClientRequestV1::ApplyPill { .. } => {
+                tracing::warn!(
+                    "[bong][network][inventory] inventory-v1 C2S variant not yet wired post-merge, ignoring (entity={:?})",
+                    ev.client
+                );
+            }
         }
+    }
+}
+
+fn parse_session_mode(raw: &str) -> SessionMode {
+    match raw.to_ascii_lowercase().as_str() {
+        "auto" => SessionMode::Auto,
+        _ => SessionMode::Manual,
+    }
+}
+
+fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
+    match raw.to_ascii_lowercase().as_str() {
+        "zone" => Some(ReplenishSource::Zone),
+        "bone_coin" => Some(ReplenishSource::BoneCoin),
+        "beast_core" => Some(ReplenishSource::BeastCore),
+        "ling_shui" => Some(ReplenishSource::LingShui),
+        _ => None,
     }
 }
 
@@ -887,118 +917,6 @@ fn resync_snapshot(
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct ApplyPillApplied {
-    template_id: String,
-    magnitude: f64,
-    total_bonus: f64,
-    remaining_stack: u32,
-    revision: u64,
-}
-
-fn apply_meridian_heal(meridians: &mut MeridianSystem, meridian_id: MeridianId, magnitude: f64) {
-    let meridian = meridians.get_mut(meridian_id);
-    if !meridian.opened {
-        return;
-    }
-
-    let mut remaining = magnitude.clamp(0.0, 1.0);
-    for crack in &mut meridian.cracks {
-        if remaining <= 0.0 {
-            break;
-        }
-        let missing = (crack.severity - crack.healing_progress).max(0.0);
-        let applied = remaining.min(missing);
-        crack.healing_progress += applied;
-        remaining -= applied;
-    }
-
-    let healed_count = meridian
-        .cracks
-        .iter()
-        .filter(|crack| crack.healing_progress >= crack.severity)
-        .count();
-    meridian
-        .cracks
-        .retain(|crack| crack.healing_progress < crack.severity);
-    if healed_count > 0 {
-        meridian.integrity = (meridian.integrity + 0.05 * healed_count as f64).min(1.0);
-    }
-    if remaining > 0.0 {
-        meridian.integrity = (meridian.integrity + remaining * 0.1).min(1.0);
-    }
-}
-
-fn apply_contamination_cleanse(contamination: &mut Contamination, magnitude: f64) {
-    let mut remaining = magnitude.clamp(0.0, 1.0);
-    contamination.entries.sort_by(|a, b| {
-        b.amount
-            .partial_cmp(&a.amount)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    for entry in &mut contamination.entries {
-        if remaining <= 0.0 {
-            break;
-        }
-        let applied = remaining.min(entry.amount);
-        entry.amount = (entry.amount - applied).max(0.0);
-        remaining -= applied;
-    }
-    contamination.entries.retain(|entry| entry.amount > 1e-9);
-}
-
-fn apply_pill_to_state(
-    inventory: &mut PlayerInventory,
-    cultivation: &mut Cultivation,
-    meridians: &mut MeridianSystem,
-    contamination: &mut Contamination,
-    item_registry: &ItemRegistry,
-    instance_id: u64,
-    target: &ApplyPillTargetV1,
-) -> Result<ApplyPillApplied, String> {
-    let item = inventory_item_by_instance(inventory, instance_id)
-        .ok_or_else(|| format!("missing inventory instance {instance_id}"))?;
-
-    let template = item_registry
-        .get(&item.template_id)
-        .ok_or_else(|| format!("unknown inventory template `{}`", item.template_id))?;
-
-    let (magnitude, total_bonus) = match (target, template.effect.as_ref()) {
-        (ApplyPillTargetV1::SelfTarget, Some(ItemEffect::BreakthroughBonus { magnitude })) => {
-            let magnitude = *magnitude;
-            let total_bonus = add_pending_material_bonus(cultivation, magnitude);
-            (magnitude, total_bonus)
-        }
-        (
-            ApplyPillTargetV1::Meridian { meridian_id },
-            Some(ItemEffect::MeridianHeal { magnitude, .. }),
-        ) => {
-            apply_meridian_heal(meridians, *meridian_id, *magnitude);
-            (*magnitude, cultivation.pending_material_bonus)
-        }
-        (ApplyPillTargetV1::SelfTarget, Some(ItemEffect::ContaminationCleanse { magnitude })) => {
-            apply_contamination_cleanse(contamination, *magnitude);
-            (*magnitude, cultivation.pending_material_bonus)
-        }
-        (_, Some(effect)) => {
-            return Err(format!("effect {effect:?} not supported in this slice"));
-        }
-        (_, None) => {
-            return Err(format!("template `{}` has no effect", item.template_id));
-        }
-    };
-
-    let consume_outcome = consume_item_instance_once(inventory, instance_id)?;
-
-    Ok(ApplyPillApplied {
-        template_id: item.template_id,
-        magnitude,
-        total_bonus,
-        remaining_stack: consume_outcome.remaining_stack,
-        revision: consume_outcome.revision.0,
-    })
-}
-
 fn handle_alchemy_turn_page(
     entity: valence::prelude::Entity,
     delta: i32,
@@ -1099,300 +1017,195 @@ fn handle_alchemy_intervention(
     alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, &furnace);
 }
 
+/// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
+/// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
+/// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
+fn handle_alchemy_take_pill(
+    entity: Entity,
+    pill_item_id: &str,
+    clock: &CombatClock,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    combat_params: &mut CombatRequestParams,
+) {
+    let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} unknown template `{pill_item_id}`"
+        );
+        return;
+    };
+    let Some(effect) = template.effect.clone() else {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` has no effect"
+        );
+        return;
+    };
+
+    let mut inventory = match inventories.get_mut(entity) {
+        Ok(inv) => inv,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][alchemy] take_pill entity={entity:?} no PlayerInventory"
+            );
+            return;
+        }
+    };
+    if !consume_one_by_template(&mut inventory, pill_item_id) {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` not in inventory"
+        );
+        return;
+    }
+
+    match effect {
+        ItemEffect::BreakthroughBonus { magnitude } => {
+            combat_params.buff_tx.send(ApplyStatusEffectIntent {
+                target: entity,
+                kind: StatusEffectKind::BreakthroughBoost,
+                magnitude: magnitude as f32,
+                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS,
+                issued_at_tick: clock.tick,
+            });
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
+            );
+        }
+        ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
+            // 需对应 tick 系统（meridian_heal / contamination_cleanse）消费，当前尚未 wire。
+            tracing::warn!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` effect {:?} not yet wired to runtime",
+                effect
+            );
+        }
+    }
+
+    resync_snapshot(entity, &inventory, clients, player_states, "take_pill");
+}
+
+/// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
+/// stack_count > 1 时减 1；否则移除整个 slot/placement。成功返回 true。
+fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -> bool {
+    for slot in inventory.hotbar.iter_mut() {
+        if let Some(item) = slot.as_mut() {
+            if item.template_id == template_id {
+                if item.stack_count > 1 {
+                    item.stack_count -= 1;
+                } else {
+                    *slot = None;
+                }
+                inventory.revision.0 = inventory.revision.0.saturating_add(1);
+                return true;
+            }
+        }
+    }
+    for container in inventory.containers.iter_mut() {
+        if let Some(idx) = container
+            .items
+            .iter()
+            .position(|p| p.instance.template_id == template_id)
+        {
+            if container.items[idx].instance.stack_count > 1 {
+                container.items[idx].instance.stack_count -= 1;
+            } else {
+                container.items.remove(idx);
+            }
+            inventory.revision.0 = inventory.revision.0.saturating_add(1);
+            return true;
+        }
+    }
+    let equipped_key = inventory
+        .equipped
+        .iter()
+        .find(|(_, v)| v.template_id == template_id)
+        .map(|(k, _)| k.clone());
+    if let Some(k) = equipped_key {
+        if let Some(slot) = inventory.equipped.get_mut(&k) {
+            if slot.stack_count > 1 {
+                slot.stack_count -= 1;
+            } else {
+                inventory.equipped.remove(&k);
+            }
+            inventory.revision.0 = inventory.revision.0.saturating_add(1);
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
-mod tests {
+mod take_pill_tests {
     use super::*;
-    use crate::cultivation::components::{
-        ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack,
-        MeridianSystem, Realm,
-    };
-    use crate::inventory::{
-        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
-        ItemTemplate, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
-        SMALL_POUCH_CONTAINER_ID,
-    };
-    use std::collections::HashMap;
+    use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity};
 
-    fn breakthrough_pill_template() -> ItemTemplate {
-        ItemTemplate {
-            id: "guyuan_pill".to_string(),
-            display_name: "固元丹".to_string(),
-            category: ItemCategory::Pill,
+    fn make_pill(instance_id: u64, template_id: &str, stack: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
             grid_w: 1,
             grid_h: 1,
-            base_weight: 0.2,
+            weight: 0.1,
             rarity: ItemRarity::Rare,
-            spirit_quality_initial: 1.0,
-            description: "温补真元，服后可加速恢复灵力。".to_string(),
-            effect: Some(ItemEffect::BreakthroughBonus { magnitude: 0.12 }),
-            cast_duration_ms: 1500,
-            cooldown_ms: 1500,
-            weapon_spec: None,
+            description: String::new(),
+            stack_count: stack,
+            spirit_quality: 1.0,
+            durability: 1.0,
         }
     }
 
-    fn unsupported_pill_template() -> ItemTemplate {
-        ItemTemplate {
-            id: "ningmai_powder".to_string(),
-            display_name: "凝脉散".to_string(),
-            category: ItemCategory::Pill,
-            grid_w: 1,
-            grid_h: 1,
-            base_weight: 0.3,
-            rarity: ItemRarity::Uncommon,
-            spirit_quality_initial: 1.0,
-            description: "外敷经脉，缓解走火入魔。".to_string(),
-            effect: Some(ItemEffect::MeridianHeal {
-                magnitude: 0.2,
-                target: "any_meridian".to_string(),
-            }),
-            cast_duration_ms: 1500,
-            cooldown_ms: 1500,
-            weapon_spec: None,
-        }
-    }
-
-    fn registry_with(template: ItemTemplate) -> ItemRegistry {
-        let mut map = HashMap::new();
-        map.insert(template.id.clone(), template);
-        ItemRegistry::from_map(map)
-    }
-
-    fn inventory_with_item(instance: ItemInstance) -> PlayerInventory {
+    fn fresh_inventory() -> PlayerInventory {
         PlayerInventory {
-            revision: InventoryRevision(7),
-            containers: vec![
-                ContainerState {
-                    id: MAIN_PACK_CONTAINER_ID.to_string(),
-                    name: "主背包".to_string(),
-                    rows: 5,
-                    cols: 7,
-                    items: vec![crate::inventory::PlacedItemState {
-                        row: 0,
-                        col: 0,
-                        instance,
-                    }],
-                },
-                ContainerState {
-                    id: SMALL_POUCH_CONTAINER_ID.to_string(),
-                    name: "小口袋".to_string(),
-                    rows: 3,
-                    cols: 3,
-                    items: Vec::new(),
-                },
-                ContainerState {
-                    id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
-                    name: "前挂包".to_string(),
-                    rows: 3,
-                    cols: 4,
-                    items: Vec::new(),
-                },
-            ],
-            equipped: HashMap::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main".into(),
+                name: "main".into(),
+                rows: 4,
+                cols: 4,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
             hotbar: Default::default(),
             bone_coins: 0,
-            max_weight: 45.0,
+            max_weight: 100.0,
         }
     }
 
     #[test]
-    fn apply_pill_to_state_consumes_breakthrough_pill_and_sets_pending_bonus() {
-        let registry = registry_with(breakthrough_pill_template());
-        let mut inventory = inventory_with_item(ItemInstance {
-            instance_id: 1001,
-            template_id: "guyuan_pill".to_string(),
-            display_name: "固元丹".to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.2,
-            rarity: ItemRarity::Rare,
-            description: "温补真元，服后可加速恢复灵力。".to_string(),
-            stack_count: 2,
-            spirit_quality: 1.0,
-            durability: 1.0,
-        });
-        let mut cultivation = Cultivation {
-            realm: Realm::Awaken,
-            pending_material_bonus: 0.05,
-            ..Default::default()
-        };
-        let mut meridians = MeridianSystem::default();
-
-        let out = apply_pill_to_state(
-            &mut inventory,
-            &mut cultivation,
-            &mut meridians,
-            &mut Contamination::default(),
-            &registry,
-            1001,
-            &ApplyPillTargetV1::SelfTarget,
-        )
-        .expect("breakthrough pill should apply");
-
-        assert_eq!(out.template_id, "guyuan_pill");
-        assert!((out.magnitude - 0.12).abs() < 1e-9);
-        assert!((out.total_bonus - 0.17).abs() < 1e-9);
-        assert_eq!(out.remaining_stack, 1);
-        assert_eq!(out.revision, 8);
-        assert!((cultivation.pending_material_bonus - 0.17).abs() < 1e-9);
-        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 1);
+    fn consume_hotbar_decrements_stack() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[2] = Some(make_pill(1, "guyuan_pill", 3));
+        assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
+        assert_eq!(inv.hotbar[2].as_ref().unwrap().stack_count, 2);
+        assert_eq!(inv.revision.0, 1);
     }
 
     #[test]
-    fn apply_pill_to_state_rejects_unsupported_effect_without_mutation() {
-        let registry = registry_with(unsupported_pill_template());
-        let mut inventory = inventory_with_item(ItemInstance {
-            instance_id: 1002,
-            template_id: "ningmai_powder".to_string(),
-            display_name: "凝脉散".to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.3,
-            rarity: ItemRarity::Uncommon,
-            description: "外敷经脉，缓解走火入魔。".to_string(),
-            stack_count: 2,
-            spirit_quality: 1.0,
-            durability: 1.0,
-        });
-        let mut cultivation = Cultivation {
-            pending_material_bonus: 0.05,
-            ..Default::default()
-        };
-        let mut meridians = MeridianSystem::default();
-
-        let err = apply_pill_to_state(
-            &mut inventory,
-            &mut cultivation,
-            &mut meridians,
-            &mut Contamination::default(),
-            &registry,
-            1002,
-            &ApplyPillTargetV1::SelfTarget,
-        )
-        .unwrap_err();
-
-        assert!(err.contains("not supported in this slice"));
-        assert_eq!(inventory.revision, InventoryRevision(7));
-        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 2);
-        assert!((cultivation.pending_material_bonus - 0.05).abs() < 1e-9);
+    fn consume_hotbar_removes_slot_when_stack_one() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[0] = Some(make_pill(1, "guyuan_pill", 1));
+        assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
+        assert!(inv.hotbar[0].is_none());
     }
 
     #[test]
-    fn apply_pill_to_state_heals_selected_meridian_and_consumes_powder() {
-        let registry = registry_with(unsupported_pill_template());
-        let mut inventory = inventory_with_item(ItemInstance {
-            instance_id: 1002,
-            template_id: "ningmai_powder".to_string(),
-            display_name: "凝脉散".to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.3,
-            rarity: ItemRarity::Uncommon,
-            description: "外敷经脉，缓解走火入魔。".to_string(),
-            stack_count: 2,
-            spirit_quality: 1.0,
-            durability: 1.0,
-        });
-        let mut cultivation = Cultivation::default();
-        let mut meridians = MeridianSystem::default();
-        let lung = meridians.get_mut(MeridianId::Lung);
-        lung.opened = true;
-        lung.integrity = 0.6;
-        lung.cracks.push(MeridianCrack {
-            severity: 0.15,
-            healing_progress: 0.05,
-            cause: CrackCause::Attack,
-            created_at: 1,
-        });
-
-        let out = apply_pill_to_state(
-            &mut inventory,
-            &mut cultivation,
-            &mut meridians,
-            &mut Contamination::default(),
-            &registry,
-            1002,
-            &ApplyPillTargetV1::Meridian {
-                meridian_id: MeridianId::Lung,
-            },
-        )
-        .expect("meridian heal pill should apply");
-
-        assert_eq!(out.template_id, "ningmai_powder");
-        assert!((out.magnitude - 0.2).abs() < 1e-9);
-        assert_eq!(out.remaining_stack, 1);
-        assert_eq!(out.revision, 8);
-        assert_eq!(cultivation.pending_material_bonus, 0.0);
-        assert!(meridians.get(MeridianId::Lung).cracks.is_empty());
-        assert!((meridians.get(MeridianId::Lung).integrity - 0.66).abs() < 1e-9);
+    fn consume_falls_back_to_container_when_hotbar_missing() {
+        let mut inv = fresh_inventory();
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(7, "guyuan_pill", 2),
+            });
+        assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
+        assert_eq!(inv.containers[0].items[0].instance.stack_count, 1);
     }
 
     #[test]
-    fn apply_pill_to_state_cleanses_contamination_and_consumes_forbidden_pill() {
-        let registry = registry_with(ItemTemplate {
-            id: "huiyuan_pill_forbidden".to_string(),
-            display_name: "回元丹·禁药".to_string(),
-            category: ItemCategory::Pill,
-            grid_w: 1,
-            grid_h: 1,
-            base_weight: 0.2,
-            rarity: ItemRarity::Legendary,
-            spirit_quality_initial: 1.0,
-            description: "禁药版回元丹，可瞬间排尽异种真元，然代价为反噬经脉。".to_string(),
-            effect: Some(ItemEffect::ContaminationCleanse { magnitude: 0.6 }),
-            cast_duration_ms: 2500,
-            cooldown_ms: 8000,
-            weapon_spec: None,
-        });
-        let mut inventory = inventory_with_item(ItemInstance {
-            instance_id: 1003,
-            template_id: "huiyuan_pill_forbidden".to_string(),
-            display_name: "回元丹·禁药".to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.2,
-            rarity: ItemRarity::Legendary,
-            description: "禁药版回元丹，可瞬间排尽异种真元，然代价为反噬经脉。".to_string(),
-            stack_count: 1,
-            spirit_quality: 1.0,
-            durability: 1.0,
-        });
-        let mut cultivation = Cultivation::default();
-        let mut meridians = MeridianSystem::default();
-        let mut contamination = Contamination {
-            entries: vec![
-                ContamSource {
-                    amount: 0.4,
-                    color: ColorKind::Sharp,
-                    attacker_id: None,
-                    introduced_at: 1,
-                },
-                ContamSource {
-                    amount: 0.3,
-                    color: ColorKind::Turbid,
-                    attacker_id: None,
-                    introduced_at: 2,
-                },
-            ],
-        };
-
-        let out = apply_pill_to_state(
-            &mut inventory,
-            &mut cultivation,
-            &mut meridians,
-            &mut contamination,
-            &registry,
-            1003,
-            &ApplyPillTargetV1::SelfTarget,
-        )
-        .expect("forbidden pill should cleanse contamination");
-
-        assert_eq!(out.template_id, "huiyuan_pill_forbidden");
-        assert!((out.magnitude - 0.6).abs() < 1e-9);
-        assert_eq!(out.remaining_stack, 0);
-        assert_eq!(out.revision, 8);
-        assert_eq!(cultivation.pending_material_bonus, 0.0);
-        assert_eq!(contamination.entries.len(), 1);
-        assert!((contamination.entries[0].amount - 0.1).abs() < 1e-9);
+    fn consume_returns_false_if_template_missing() {
+        let mut inv = fresh_inventory();
+        assert!(!consume_one_by_template(&mut inv, "ghost_pill"));
+        assert_eq!(inv.revision.0, 0);
     }
 }

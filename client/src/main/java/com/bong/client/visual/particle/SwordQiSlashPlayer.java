@@ -22,10 +22,11 @@ public final class SwordQiSlashPlayer implements VfxPlayer {
         new net.minecraft.util.Identifier("bong", "sword_qi_slash");
 
     /** 沿方向采样的默认粒子数，用于编织出一段弧。 */
-    private static final int DEFAULT_FANOUT = 4;
-    /** 单个 Line 粒子的默认长度因子。 */
-    private static final double LENGTH_FACTOR = 0.6;
-    private static final double MIN_LENGTH = 0.6;
+    private static final int DEFAULT_FANOUT = 6;
+    /** 单个 Line 粒子的长度因子（quad 长度 = |velocity| × factor）。 */
+    private static final double LENGTH_FACTOR = 2.0;
+    /** 长度保底，防止低速粒子退化成一个点。 */
+    private static final double MIN_LENGTH = 1.8;
     /** 默认颜色：淡青。payload.color 缺省时使用。 */
     private static final int FALLBACK_RGB = 0x88CCFF;
 
@@ -59,9 +60,10 @@ public final class SwordQiSlashPlayer implements VfxPlayer {
         double strength = payload.strength().orElse(0.8);
         int fanout = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_FANOUT).getAsInt()), 1, 16);
         float alpha = (float) Math.max(0.1, Math.min(1.0, strength));
-        double halfWidth = 0.05 + 0.15 * strength;
+        // halfWidth 0.45..0.95 格（quad 宽度 0.9..1.9 格），保证从近到中距都看得见
+        double halfWidth = 0.45 + 0.5 * strength;
 
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(16).getAsInt());
+        int maxAge = payload.durationTicks().orElse(OptionalInt.of(24).getAsInt());
 
         // 沿 direction 均匀分布若干条 Line；彼此位置微错开（±0.15 垂直方向）以体现弧感。
         // "弧"的垂直偏移轴：取 direction × +Y（若平行则退回 +X）
@@ -75,7 +77,8 @@ public final class SwordQiSlashPlayer implements VfxPlayer {
 
         for (int i = 0; i < fanout; i++) {
             double t = fanout == 1 ? 0.0 : ((double) i / (fanout - 1)) * 2 - 1; // [-1, 1]
-            double jitter = t * 0.2;
+            // 弧形横向展开 ±0.9 格，让"斩击弧"能在视野里铺开
+            double jitter = t * 0.9;
             double px = ox + side[0] * jitter;
             double py = oy + side[1] * jitter;
             double pz = oz + side[2] * jitter;

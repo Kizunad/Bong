@@ -10,8 +10,12 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res};
 
+use crate::combat::components::StatusEffects;
+use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::skill::components::SkillId;
+use crate::skill::events::SkillCapChanged;
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
@@ -63,6 +67,22 @@ pub fn qi_max_multiplier(next: Realm) -> f64 {
         Realm::Solidify => 3.0,
         Realm::Spirit => 3.5,
         Realm::Void => 5.0,
+    }
+}
+
+/// plan-skill-v1 §4 境界软挂钩：每个境界压制 skill 的 `effective_lv = min(real_lv, cap)`。
+///
+/// 数值表（plan §4）：醒灵=3 · 引气=5 · 凝脉=7 · 固元=8 · 通灵=9 · 化虚=10。
+/// 代码 Realm 枚举的中文对照见 `components.rs`（Awaken=醒灵 / Induce=引气 / Condense=凝脉 /
+/// Solidify=固元 / Spirit=通灵 / Void=化虚）。
+pub fn skill_cap_for_realm(realm: Realm) -> u8 {
+    match realm {
+        Realm::Awaken => 3,
+        Realm::Induce => 5,
+        Realm::Condense => 7,
+        Realm::Solidify => 8,
+        Realm::Spirit => 9,
+        Realm::Void => 10,
     }
 }
 
@@ -221,14 +241,17 @@ pub fn try_breakthrough<R: RollSource>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
     mut requests: EventReader<BreakthroughRequest>,
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
+    mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
     let now = clock.tick;
@@ -243,12 +266,17 @@ pub fn breakthrough_system(
                 tick: now,
             });
         }
-        let res = try_breakthrough(
-            &mut cultivation,
-            &mut meridians,
-            req.material_bonus,
-            &mut roll,
-        );
+
+        // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
+        //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
+        //   最终 clamp 由 compute_success_rate 内部处理。
+        let buff_bonus = status_effects_q
+            .get(req.entity)
+            .map(|se| sum_breakthrough_boost(se) as f64)
+            .unwrap_or(0.0);
+        let material_bonus = req.material_bonus + buff_bonus;
+
+        let res = try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll);
 
         match &res {
             Ok(success) => {
@@ -256,6 +284,16 @@ pub fn breakthrough_system(
                     realm: success.to,
                     tick: now,
                 });
+                // plan-skill-v1 §4 境界软挂钩：突破到新境界 → 三个 MVP skill 的 cap 全部上调。
+                // Client / agent 订阅 SkillCapChanged 做 narration / inspect 面板 effective_lv 展示。
+                let new_cap = skill_cap_for_realm(success.to);
+                for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                    skill_cap_events.send(SkillCapChanged {
+                        char_entity: req.entity,
+                        skill,
+                        new_cap,
+                    });
+                }
                 // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
                 if let Ok(pos) = positions.get(req.entity) {
                     let p = pos.get();
@@ -297,6 +335,11 @@ pub fn breakthrough_system(
                     }),
                 });
             }
+        }
+
+        // 不论成败，一次性消费 BreakthroughBoost buff（plan §3.1：辅助丹药为突破"仪式"消耗）
+        if let Ok(mut se) = status_effects_q.get_mut(req.entity) {
+            clear_breakthrough_boost(&mut se);
         }
 
         outcomes.send(BreakthroughOutcome {
@@ -430,5 +473,16 @@ mod tests {
 
         assert!(matches!(err, BreakthroughError::NotEnoughQi { .. }));
         assert!((c.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。
+    #[test]
+    fn skill_cap_for_realm_matches_plan_section_four() {
+        assert_eq!(skill_cap_for_realm(Realm::Awaken), 3);
+        assert_eq!(skill_cap_for_realm(Realm::Induce), 5);
+        assert_eq!(skill_cap_for_realm(Realm::Condense), 7);
+        assert_eq!(skill_cap_for_realm(Realm::Solidify), 8);
+        assert_eq!(skill_cap_for_realm(Realm::Spirit), 9);
+        assert_eq!(skill_cap_for_realm(Realm::Void), 10);
     }
 }

@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.google.gson.JsonObject;
 
@@ -87,6 +88,19 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("forge_request");
         obj.addProperty("meridian", meridian.name());
         obj.addProperty("axis", axis.name());
+        return obj.toString();
+    }
+
+    public static String encodeBotanyHarvestRequest(String sessionId, BotanyHarvestMode mode) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId must not be blank");
+        }
+        if (mode == null) {
+            throw new IllegalArgumentException("mode must not be null");
+        }
+        JsonObject obj = envelope("botany_harvest_request");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("mode", mode.wireName());
         return obj.toString();
     }
 
@@ -271,6 +285,68 @@ public final class ClientRequestProtocol {
     public static String encodeSwitchDefenseStance(String stance) {
         JsonObject obj = envelope("switch_defense_stance");
         obj.addProperty("stance", stance);
+        return obj.toString();
+    }
+
+    // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
+
+    /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */
+    public static String encodeLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
+        JsonObject obj = envelope("lingtian_start_till");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("hoe_instance_id", hoeInstanceId);
+        obj.addProperty("mode", mode);
+        return obj.toString();
+    }
+
+    /** plan §1.6 — 起翻新 session。 */
+    public static String encodeLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
+        JsonObject obj = envelope("lingtian_start_renew");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("hoe_instance_id", hoeInstanceId);
+        return obj.toString();
+    }
+
+    /** plan §1.2.3 — 起种植 session（背包内须有该 plant_id 的种子）。 */
+    public static String encodeLingtianStartPlanting(int x, int y, int z, String plantId) {
+        JsonObject obj = envelope("lingtian_start_planting");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("plant_id", plantId);
+        return obj.toString();
+    }
+
+    /** plan §1.5 — 起收获 session。{@code mode} = "manual" | "auto"。 */
+    public static String encodeLingtianStartHarvest(int x, int y, int z, String mode) {
+        JsonObject obj = envelope("lingtian_start_harvest");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("mode", mode);
+        return obj.toString();
+    }
+
+    /** plan §1.4 — 起补灵 session。{@code source} = "zone" | "bone_coin" | "beast_core" | "ling_shui"。 */
+    public static String encodeLingtianStartReplenish(int x, int y, int z, String source) {
+        JsonObject obj = envelope("lingtian_start_replenish");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("source", source);
+        return obj.toString();
+    }
+
+    /** plan §1.7 — 起偷灵 session。 */
+    public static String encodeLingtianStartDrainQi(int x, int y, int z) {
+        JsonObject obj = envelope("lingtian_start_drain_qi");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
         return obj.toString();
     }
 

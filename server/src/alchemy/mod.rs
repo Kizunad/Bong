@@ -30,6 +30,7 @@ pub mod pill;
 pub mod recipe;
 pub mod resolver;
 pub mod session;
+pub mod skill_hook;
 
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Entity, Event, Query, Username, With, Without,

@@ -6,6 +6,7 @@ import {
   AlchemyRecipeEntryV1,
   AlchemyStageHintV1,
 } from "./alchemy.js";
+import { BotanyHarvestModeV1 } from "./botany.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind } from "./cultivation.js";
 import {
@@ -67,6 +68,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
+  Type.Literal("botany_harvest_progress"),
+  Type.Literal("botany_skill"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
   Type.Literal("alchemy_outcome_forecast"),
@@ -257,6 +260,46 @@ export const ServerDataInventoryEventV1 = Type.Union([
 ]);
 export type ServerDataInventoryEventV1 = Static<typeof ServerDataInventoryEventV1>;
 
+export const ServerDataBotanyHarvestProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_harvest_progress"),
+    session_id: Type.String({ minLength: 1 }),
+    target_id: Type.String({ minLength: 1 }),
+    target_name: Type.String({ minLength: 1 }),
+    plant_kind: Type.String({ minLength: 1 }),
+    mode: BotanyHarvestModeV1,
+    progress: Type.Number({ minimum: 0, maximum: 1 }),
+    auto_selectable: Type.Boolean(),
+    request_pending: Type.Boolean(),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+    detail: Type.String(),
+    // plan §1.3 投影锚定：目标植物世界坐标，client 侧做 world→screen 投影定位浮窗。
+    // 省略时 client 回退到准星右侧锚点。
+    target_pos: Type.Optional(
+      Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanyHarvestProgressV1 = Static<
+  typeof ServerDataBotanyHarvestProgressV1
+>;
+
+export const ServerDataBotanySkillV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_skill"),
+    level: Type.Integer({ minimum: 0 }),
+    xp: Type.Integer({ minimum: 0 }),
+    xp_to_next_level: Type.Integer({ minimum: 1 }),
+    auto_unlock_level: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanySkillV1 = Static<typeof ServerDataBotanySkillV1>;
+
 // ─── 炼丹推送（plan-alchemy-v1 §4） ────────────────────────────────────────
 
 export const ServerDataAlchemyFurnaceV1 = Type.Object(
@@ -375,6 +418,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
+  ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanySkillV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,
   ServerDataAlchemyOutcomeForecastV1,

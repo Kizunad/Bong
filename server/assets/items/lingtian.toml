@@ -1,0 +1,38 @@
+# plan-lingtian-v1 §1.2.1 — 锄头三档。
+#
+# 形状 1×2、Misc category（lingtian 自管 hoe semantics，不挤 ItemCategory 枚举）。
+# 耐久按档：铁 20 次 / 灵铁 50 次 / 玄铁 100 次。运行时每次开垦或翻新扣 1 次，
+# 在 inventory.durability（归一化 0..=1）上做 `-= 1.0 / uses_max`。
+
+[[item]]
+id = "hoe_iron"
+name = "铁锄"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.7
+description = "开荒最便宜的铁锄。可开垦或翻新 20 次。"
+
+[[item]]
+id = "hoe_lingtie"
+name = "灵铁锄"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "uncommon"
+spirit_quality_initial = 0.85
+description = "灵铁所制。耐久 50 次。"
+
+[[item]]
+id = "hoe_xuantie"
+name = "玄铁锄"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "玄铁所打。耐久 100 次。屯田老手所求。"

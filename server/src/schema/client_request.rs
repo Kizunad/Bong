@@ -43,6 +43,11 @@ pub enum ClientRequestV1 {
         trigger_id: String,
         choice_idx: Option<u32>,
     },
+    BotanyHarvestRequest {
+        v: u8,
+        session_id: String,
+        mode: crate::schema::botany::BotanyHarvestModeV1,
+    },
     // ─── 炼丹（plan-alchemy-v1 §4） ─────────────────────────
     AlchemyOpenFurnace {
         v: u8,
@@ -126,6 +131,58 @@ pub enum ClientRequestV1 {
     SwitchDefenseStance {
         v: u8,
         stance: String,
+    },
+    // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
+    /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
+    /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
+    LingtianStartTill {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        hoe_instance_id: u64,
+        /// "manual" / "auto"（auto 需 herbalism Lv.3+，server 暂不校验）。
+        mode: String,
+    },
+    /// plan §1.6 — 起翻新 session。
+    LingtianStartRenew {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        hoe_instance_id: u64,
+    },
+    /// plan §1.2.3 — 起种植 session（背包内须有该 plant 的种子）。
+    LingtianStartPlanting {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        plant_id: String,
+    },
+    /// plan §1.5 — 起收获 session（plot.crop 须 ripe）。
+    LingtianStartHarvest {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        mode: String,
+    },
+    /// plan §1.4 — 起补灵 session。
+    LingtianStartReplenish {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        /// "zone" / "bone_coin" / "beast_core" / "ling_shui"。
+        source: String,
+    },
+    /// plan §1.7 — 起偷灵 session。
+    LingtianStartDrainQi {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
     },
 }
 
@@ -300,6 +357,27 @@ mod tests {
     fn rejects_unknown_type() {
         let json = r#"{"type":"nuke_world","v":1}"#;
         assert!(serde_json::from_str::<ClientRequestV1>(json).is_err());
+    }
+
+    #[test]
+    fn botany_harvest_request_roundtrip() {
+        let json = r#"{"type":"botany_harvest_request","v":1,"session_id":"session-botany-01","mode":"manual"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::BotanyHarvestRequest {
+                v,
+                session_id,
+                mode,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(session_id, "session-botany-01");
+                assert!(matches!(
+                    mode,
+                    crate::schema::botany::BotanyHarvestModeV1::Manual
+                ));
+            }
+            other => panic!("expected BotanyHarvestRequest, got {other:?}"),
+        }
     }
 
     #[test]

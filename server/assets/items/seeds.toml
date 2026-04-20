@@ -1,0 +1,37 @@
+# plan-lingtian-v1 §1.2.4 — 种子 item。
+#
+# 命名约定：`{canonical_plant_id}_seed`（与 SeedRegistry 反查一致）。
+# 形状 1×1，stack 32。仅 §3.1 测试三作物入库；后续 cultivable 物种逐步补齐。
+
+[[item]]
+id = "ci_she_hao_seed"
+name = "刺舌蒿种"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.7
+description = "微辛之种。可入灵田长成刺舌蒿。"
+
+[[item]]
+id = "ning_mai_cao_seed"
+name = "凝脉草种"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.75
+description = "凝脉散主料的种。需补灵养护。"
+
+[[item]]
+id = "ling_mu_miao_seed"
+name = "灵木苗籽"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "rare"
+spirit_quality_initial = 0.95
+description = "极慢之种。植入灵田二十日方成灵木苗。forge 载体。"

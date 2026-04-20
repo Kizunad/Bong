@@ -44,6 +44,24 @@ pub fn has_active_status(status_effects: &StatusEffects, kind: StatusEffectKind)
         .any(|effect| effect.kind == kind && effect.remaining_ticks > 0)
 }
 
+/// plan-cultivation-v1 §3.1：汇总 BreakthroughBoost buff magnitude。
+/// 只统计 remaining_ticks > 0 的条目；返回未 clamp 的和，调用方负责封顶。
+pub fn sum_breakthrough_boost(status_effects: &StatusEffects) -> f32 {
+    status_effects
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::BreakthroughBoost && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum()
+}
+
+/// 一次性消费：移除所有 BreakthroughBoost 条目。供 breakthrough_system 在成败后调用。
+pub fn clear_breakthrough_boost(status_effects: &mut StatusEffects) {
+    status_effects
+        .active
+        .retain(|e| e.kind != StatusEffectKind::BreakthroughBoost);
+}
+
 pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut StatusEffects>) {
     if !clock.tick.is_multiple_of(STATUS_EFFECT_TICK_INTERVAL_TICKS) {
         return;
@@ -241,6 +259,56 @@ mod tests {
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         assert_eq!(attrs.defense_power, 0.75);
+    }
+
+    #[test]
+    fn sum_breakthrough_boost_accumulates_and_ignores_other_kinds() {
+        let status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.12,
+                    remaining_ticks: 100,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.05,
+                    remaining_ticks: 50,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::DamageAmp,
+                    magnitude: 0.25,
+                    remaining_ticks: 100,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.20,
+                    remaining_ticks: 0, // 过期，不计入
+                },
+            ],
+        };
+        assert!((sum_breakthrough_boost(&status_effects) - 0.17).abs() < 1e-6);
+    }
+
+    #[test]
+    fn clear_breakthrough_boost_removes_only_target_kind() {
+        let mut status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.1,
+                    remaining_ticks: 100,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::Bleeding,
+                    magnitude: 0.4,
+                    remaining_ticks: 50,
+                },
+            ],
+        };
+        clear_breakthrough_boost(&mut status_effects);
+        assert_eq!(status_effects.active.len(), 1);
+        assert_eq!(status_effects.active[0].kind, StatusEffectKind::Bleeding);
     }
 
     #[test]

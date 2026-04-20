@@ -3,8 +3,10 @@ package com.bong.client;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
+import com.bong.client.debug.BongSpawnParticleCommand;
 import com.bong.client.debug.BongVfxCommand;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
@@ -12,6 +14,7 @@ import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
+import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
@@ -36,6 +39,7 @@ public class BongClient implements ClientModInitializer {
         DroppedItemPickupBootstrap.register();
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
+        LingtianActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
         BongVfxCommand.register();
@@ -48,10 +52,12 @@ public class BongClient implements ClientModInitializer {
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
         BongAnimCommand.register();
+        BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
+        BotanyHudBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx and /anim commands active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /spawnp commands active.");
     }
 }

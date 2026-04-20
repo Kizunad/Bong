@@ -23,6 +23,8 @@ public final class ServerDataRouter {
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
+        BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -58,6 +60,8 @@ public final class ServerDataRouter {
         DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
+        com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
+            new com.bong.client.network.lingtian.LingtianSessionHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -71,6 +75,8 @@ public final class ServerDataRouter {
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
+        handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);
         handlers.put("alchemy_session", alchemySessionHandler);
         handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);
@@ -93,6 +99,12 @@ public final class ServerDataRouter {
         handlers.put("defense_sync", defenseSyncHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
+        handlers.put("lingtian_session", lingtianSessionHandler);
+        // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
+        handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
+        handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
+        handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
+        handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
         return new ServerDataRouter(handlers);
     }
 

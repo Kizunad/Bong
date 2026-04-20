@@ -11,6 +11,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 import { AlchemyInterventionV1 } from "./alchemy.js";
+import { BotanyHarvestModeV1 } from "./botany.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
 import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
@@ -148,6 +149,17 @@ export const InventoryDiscardItemRequestV1 = Type.Object(
 );
 export type InventoryDiscardItemRequestV1 = Static<typeof InventoryDiscardItemRequestV1>;
 
+export const BotanyHarvestRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_harvest_request"),
+    session_id: Type.String({ minLength: 1 }),
+    mode: BotanyHarvestModeV1,
+  },
+  { additionalProperties: false },
+);
+export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
+
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
 export const AlchemyOpenFurnaceRequestV1 = Type.Object(
@@ -246,6 +258,7 @@ export const ClientRequestV1 = Type.Union([
   ApplyPillRequestV1,
   PickupDroppedItemRequestV1,
   InventoryDiscardItemRequestV1,
+  BotanyHarvestRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

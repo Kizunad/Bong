@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.BongClient;
+import com.bong.client.botany.BotanyHarvestMode;
 import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
@@ -60,6 +61,10 @@ public final class ClientRequestSender {
         ClientRequestProtocol.ForgeAxis axis
     ) {
         dispatch(ClientRequestProtocol.encodeForgeRequest(meridian, axis));
+    }
+
+    public static void sendBotanyHarvestRequest(String sessionId, BotanyHarvestMode mode) {
+        dispatch(ClientRequestProtocol.encodeBotanyHarvestRequest(sessionId, mode));
     }
 
     /** Combat UI 系列 C2S 通用发送入口。 */
@@ -147,6 +152,32 @@ public final class ClientRequestSender {
 
     public static void sendApplyPillSelf(long instanceId) {
         dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
+    }
+
+    // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
+
+    public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartTill(x, y, z, hoeInstanceId, mode));
+    }
+
+    public static void sendLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartRenew(x, y, z, hoeInstanceId));
+    }
+
+    public static void sendLingtianStartPlanting(int x, int y, int z, String plantId) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartPlanting(x, y, z, plantId));
+    }
+
+    public static void sendLingtianStartHarvest(int x, int y, int z, String mode) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartHarvest(x, y, z, mode));
+    }
+
+    public static void sendLingtianStartReplenish(int x, int y, int z, String source) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartReplenish(x, y, z, source));
+    }
+
+    public static void sendLingtianStartDrainQi(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartDrainQi(x, y, z));
     }
 
     private static void dispatch(String json) {

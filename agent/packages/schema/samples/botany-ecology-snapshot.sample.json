@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "tick": 1200,
+  "zones": [
+    {
+      "zone": "spawn",
+      "spirit_qi": 0.45,
+      "plant_counts": [
+        { "kind": "ci_she_hao", "count": 4 },
+        { "kind": "ning_mai_cao", "count": 2 }
+      ],
+      "variant_counts": [
+        { "variant": "none", "count": 5 },
+        { "variant": "thunder", "count": 1 }
+      ]
+    },
+    {
+      "zone": "blood_valley",
+      "spirit_qi": -0.2,
+      "plant_counts": [
+        { "kind": "chi_sui_cao", "count": 1 },
+        { "kind": "fu_chen_cao", "count": 1 }
+      ],
+      "variant_counts": [
+        { "variant": "tainted", "count": 2 }
+      ]
+    }
+  ]
+}

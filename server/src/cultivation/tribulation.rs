@@ -15,7 +15,10 @@ use valence::prelude::{
 
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::skill::components::SkillId;
+use crate::skill::events::SkillCapChanged;
 
+use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 
@@ -105,6 +108,7 @@ pub fn tribulation_wave_system(
     mut cleared: EventReader<TribulationWaveCleared>,
     mut players: Query<(&mut Cultivation, &mut TribulationState, &MeridianSystem)>,
     mut commands: valence::prelude::Commands,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for ev in cleared.read() {
         if let Ok((mut c, mut state, _)) = players.get_mut(ev.entity) {
@@ -113,6 +117,15 @@ pub fn tribulation_wave_system(
                 // 渡劫成功
                 c.realm = Realm::Void;
                 c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
+                let new_cap = skill_cap_for_realm(Realm::Void);
+                for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                    skill_cap_events.send(SkillCapChanged {
+                        char_entity: ev.entity,
+                        skill,
+                        new_cap,
+                    });
+                }
                 commands.entity(ev.entity).remove::<TribulationState>();
                 tracing::info!(
                     "[bong][cultivation] {:?} ASCENDED to Void realm after {} waves",

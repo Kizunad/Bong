@@ -35,6 +35,24 @@ export const CHANNELS = {
 
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
+
+  /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
+  BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
+
+  /** Server → Agent: botany 生态快照 (plan-botany-v1 §7 · 定时聚合 zone spirit_qi + 植物密度 + variant 分布) */
+  BOTANY_ECOLOGY: "bong:botany/ecology",
+
+  /** Server → Agent: skill XP 进账 (plan-skill-v1 §8) — 做中学 / 顿悟 / 突破 / 师承 四路来源 */
+  SKILL_XP_GAIN: "bong:skill/xp_gain",
+
+  /** Server → Agent: skill 升级事件 (plan-skill-v1 §8) — agent P5 据此生成冷漠古意 narration */
+  SKILL_LV_UP: "bong:skill/lv_up",
+
+  /** Server → Agent: skill cap 变更 (plan-skill-v1 §4) — 境界突破上调 / 跌落下修 */
+  SKILL_CAP_CHANGED: "bong:skill/cap_changed",
+
+  /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
+  SKILL_SCROLL_USED: "bong:skill/scroll_used",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -49,6 +67,12 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CULTIVATION_DEATH,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.BOTANY_HARVEST_PROGRESS,
+  CHANNELS.BOTANY_ECOLOGY,
+  CHANNELS.SKILL_XP_GAIN,
+  CHANNELS.SKILL_LV_UP,
+  CHANNELS.SKILL_CAP_CHANGED,
+  CHANNELS.SKILL_SCROLL_USED,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

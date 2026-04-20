@@ -1,5 +1,9 @@
 package com.bong.client.hud;
 
+import com.bong.client.botany.BotanySkillStore;
+import com.bong.client.botany.BotanySkillViewModel;
+import com.bong.client.botany.HarvestSessionStore;
+import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.state.NarrationState;
@@ -20,6 +24,8 @@ public class BongHudOrchestratorTest {
     void resetToastState() {
         BongToast.resetForTests();
         InventoryStateStore.resetForTests();
+        HarvestSessionStore.resetForTests();
+        BotanySkillStore.resetForTests();
     }
 
     @Test
@@ -146,4 +152,33 @@ public class BongHudOrchestratorTest {
         assertTrue(commands.get(1).text().contains("超载"));
     }
 
+    @Test
+    void activeBotanySessionAddsBotanyLayerCommands() {
+        HarvestSessionStore.replace(HarvestSessionViewModel.create(
+            "session-botany-01",
+            "plant-1",
+            "开脉草",
+            "ning_mai_cao",
+            null,
+            0.0,
+            true,
+            false,
+            false,
+            false,
+            "晨露未散",
+            10L
+        ));
+        BotanySkillStore.replace(BotanySkillViewModel.create(2, 90L, 120L, 3));
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            0L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
+    }
 }

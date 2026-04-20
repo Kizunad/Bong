@@ -87,3 +87,6 @@ tmp/
 
 # Serena MCP 本仓库 local state
 .serena/
+
+# Reference 3D 模型（Tripo / 素材站下载），只作本地建模参考不进 repo
+local_models/

@@ -53,9 +53,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Tabs (left panel)
     private int activeTab = 0;
-    private final LabelComponent[] tabLabels = new LabelComponent[2];
+    // plan-skill-v1 §5.1 第三个 tab "技艺"
+    private final LabelComponent[] tabLabels = new LabelComponent[3];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
+    private FlowLayout skillTabContent;
+    // plan-skill-v1 §5.1 三行固定（herbalism / alchemy / forging）
+    private com.bong.client.skill.SkillRowComponent[] skillRows;
+    /** Screen 存活期间持有的 SkillSetStore 订阅，close 时解绑避免泄漏。 */
+    private java.util.function.Consumer<com.bong.client.skill.SkillSetSnapshot> skillListener;
 
     // Hotbar
     private final GridSlotComponent[] hotbarSlots = new GridSlotComponent[HOTBAR_SLOTS];
@@ -113,6 +119,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             InventoryStateStore.removeListener(inventoryListener);
             inventoryListener = null;
         }
+        if (skillListener != null) {
+            com.bong.client.skill.SkillSetStore.removeListener(skillListener);
+            skillListener = null;
+        }
         super.removed();
     }
 
@@ -157,8 +167,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         tabBar.gap(6);
         tabBar.padding(Insets.of(1, 2, 1, 2));
-        String[] tabNames = {"装备", "修仙"};
-        for (int i = 0; i < 2; i++) {
+        String[] tabNames = {"装备", "修仙", "技艺"};
+        for (int i = 0; i < tabNames.length; i++) {
             final int idx = i;
             var label = Components.label(Text.literal(tabNames[i]));
             label.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
@@ -324,6 +334,40 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
+
+        // Tab 2: 技艺 (plan-skill-v1 §5.1)
+        //   实装范围：左列 380 三行固定（herbalism/alchemy/forging）；中列 1020 留空占位；
+        //   右列由现有 BackpackGridPanel 渲染。详情四象限 / 曲线 canvas / 里程碑 / 残卷拖入槽留 P4/P6。
+        skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+        skillTabContent.gap(2);
+        skillTabContent.padding(Insets.of(2));
+
+        skillRows = new com.bong.client.skill.SkillRowComponent[3];
+        com.bong.client.skill.SkillId[] order = {
+            com.bong.client.skill.SkillId.HERBALISM,
+            com.bong.client.skill.SkillId.ALCHEMY,
+            com.bong.client.skill.SkillId.FORGING,
+        };
+        for (int i = 0; i < order.length; i++) {
+            skillRows[i] = new com.bong.client.skill.SkillRowComponent(order[i]);
+            skillTabContent.child(skillRows[i].component());
+        }
+        // 中列占位 —— 详情面板见后续迭代（P3 effective_lv 灰显 / P4 残卷槽 / P5 里程碑）。
+        LabelComponent skillDetailPlaceholder = Components.label(Text.of("详情 —— 见后续迭代"));
+        skillDetailPlaceholder.color(Color.ofArgb(0xFF606060));
+        skillTabContent.child(skillDetailPlaceholder);
+
+        // 初次填充
+        refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+        // 订阅更新 —— 回主线程再刷 UI，避免网络线程 mutate owo-lib 组件。
+        skillListener = next -> {
+            if (next == null) return;
+            MinecraftClient.getInstance().execute(() -> refreshSkillRows(next));
+        };
+        com.bong.client.skill.SkillSetStore.addListener(skillListener);
+
+        leftCol.child(skillTabContent);
+        skillTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         middle.child(leftCol);
 
@@ -555,11 +599,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchTab(int idx) {
         if (idx == activeTab) return;
         activeTab = idx;
-        for (int i = 0; i < 2; i++)
+        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, skillTabContent};
+        for (int i = 0; i < tabs.length; i++) {
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        FlowLayout[] tabs = {equipTabContent, cultivationTabContent};
-        for (int i = 0; i < 2; i++)
-            tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
+            if (tabs[i] != null) {
+                tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
+            }
+        }
+        // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
+        if (idx == 2) {
+            refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+        }
+    }
+
+    /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
+    private void refreshSkillRows(com.bong.client.skill.SkillSetSnapshot snapshot) {
+        if (skillRows == null || snapshot == null) return;
+        long now = System.currentTimeMillis();
+        for (com.bong.client.skill.SkillRowComponent row : skillRows) {
+            if (row == null) continue;
+            row.update(snapshot.get(row.skill()), now);
+        }
     }
 
     private void switchBodyLayer(BodyInspectComponent.Layer layer) {

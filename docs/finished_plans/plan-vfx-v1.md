@@ -14,11 +14,11 @@
 
 ## §0 设计轴心
 
-- [ ] **零光影依赖**：本 plan 范围内所有效果不需要装 Iris/OptiFine 也能跑
-- [ ] 修仙沙盒的视觉核心：**世界内 VFX**（剑气/飞剑/符阵）> 屏幕滤镜
-- [ ] 短暂事件（顿悟/破境/天劫）可用强表演；常态不干扰视野
-- [ ] **走标准 vanilla 渲染 API**：粒子 / EntityRenderer / BlockEntityRenderer / DrawContext，避开 GLSL 自写 program
-- [ ] 装光影的玩家**自动享受加成**（飞剑被打阴影、剑气被加辉光），但**不依赖**
+- [x] **零光影依赖**：本 plan 范围内所有效果不需要装 Iris/OptiFine 也能跑
+- [x] 修仙沙盒的视觉核心：**世界内 VFX**（剑气/飞剑/符阵）> 屏幕滤镜
+- [x] 短暂事件（顿悟/破境/天劫）可用强表演；常态不干扰视野
+- [x] **走标准 vanilla 渲染 API**：粒子 / EntityRenderer / BlockEntityRenderer / DrawContext，避开 GLSL 自写 program
+- [x] 装光影的玩家**自动享受加成**（飞剑被打阴影、剑气被加辉光），但**不依赖**
 
 ---
 
@@ -93,12 +93,12 @@
 
 改的是 camera / FOV 参数，**不碰任何 shader**：
 
-- [ ] `SCREEN_SHAKE`（已实现，扩展强度档位）
-- [ ] 运功 FOV 收缩（专注感）
-- [ ] 破境 FOV 拉伸 + 短暂俯仰
-- [ ] 受创镜头后退
-- [ ] 灵压靠近时镜头细微晃动
-- [ ] 天劫降临时镜头自动仰视
+- [x] `SCREEN_SHAKE`（已实现，扩展强度档位）
+- [x] 运功 FOV 收缩（专注感）
+- [x] 破境 FOV 拉伸 + 短暂俯仰
+- [x] 受创镜头后退
+- [x] 灵压靠近时镜头细微晃动
+- [x] 天劫降临时镜头自动仰视
 
 ---
 
@@ -141,20 +141,20 @@
 
 ## §8 实施节点
 
-- [ ] §3 OverlayQuadRenderer / EdgeDecalRenderer 抽象
-- [ ] §3.2 首批 HUD 叠色（血月、入魔、顿悟、天劫至少 4 个）
-- [ ] §4 镜头 FOV 反馈（运功收 FOV、破境拉伸）
-- [ ] 子 plan 委派验收：particle-system / player-animation 各自达成 Phase 1
-- [ ] 整体集成 demo：服务端事件 → 粒子 + 动画 + HUD 叠色 + 抖屏同时触发
+- [x] §3 OverlayQuadRenderer / EdgeDecalRenderer 抽象
+- [x] §3.2 首批 HUD 叠色（血月、入魔、顿悟、天劫至少 4 个）
+- [x] §4 镜头 FOV 反馈（运功收 FOV、破境拉伸）
+- [x] 子 plan 委派验收：particle-system / player-animation 各自达成 Phase 1
+- [x] 整体集成 demo：服务端事件 → 粒子 + 动画 + HUD 叠色 + 抖屏同时触发
 
 ---
 
 ## §9 开放问题
 
-- [ ] HUD 叠色与现有 `VisualEffectController` 的整合层级（`OverlayQuadRenderer` 是 controller 的子模块还是平级）？
-- [ ] 镜头 FOV 改动是否需要 Mixin？vanilla `Camera` / `GameRenderer` API 是否够用？
-- [ ] 美术资源（HUD 叠色贴图、边缘装饰贴图）的来源？
-- [ ] 是否为 `plan-iris-integration-v1.md` 的"光影增强档位"预留切换 UI？
+- [x] HUD 叠色与现有 `VisualEffectController` 的整合层级（`OverlayQuadRenderer` 是 controller 的子模块还是平级）？
+- [x] 镜头 FOV 改动是否需要 Mixin？vanilla `Camera` / `GameRenderer` API 是否够用？
+- [x] 美术资源（HUD 叠色贴图、边缘装饰贴图）的来源？
+- [x] 是否为 `plan-iris-integration-v1.md` 的"光影增强档位"预留切换 UI？
 
 ---
 

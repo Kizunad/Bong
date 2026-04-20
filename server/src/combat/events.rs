@@ -53,6 +53,9 @@ pub enum StatusEffectKind {
     Stunned,
     DamageAmp,
     DamageReduction,
+    /// plan-cultivation-v1 §3.1：服用突破辅助丹药后附加的临时 buff。
+    /// `magnitude` 作 material_bonus（0.0..=0.30），突破事务聚合后一次性消费。
+    BreakthroughBoost,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
