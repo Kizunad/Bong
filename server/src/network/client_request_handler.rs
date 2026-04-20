@@ -121,3 +121,106 @@ pub fn handle_client_request_payloads(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
+    use valence::testing::create_mock_client;
+
+    #[derive(Default)]
+    struct CapturedBreakthroughRequests(Vec<BreakthroughRequest>);
+
+    impl valence::prelude::Resource for CapturedBreakthroughRequests {}
+
+    #[derive(Default)]
+    struct CapturedForgeRequests(Vec<ForgeRequest>);
+
+    impl valence::prelude::Resource for CapturedForgeRequests {}
+
+    #[derive(Default)]
+    struct CapturedInsightChoices(Vec<InsightChosen>);
+
+    impl valence::prelude::Resource for CapturedInsightChoices {}
+
+    fn capture_breakthrough_requests(
+        mut events: EventReader<BreakthroughRequest>,
+        mut captured: ResMut<CapturedBreakthroughRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_forge_requests(
+        mut events: EventReader<ForgeRequest>,
+        mut captured: ResMut<CapturedForgeRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_insight_choices(
+        mut events: EventReader<InsightChosen>,
+        mut captured: ResMut<CapturedInsightChoices>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    #[test]
+    fn unsupported_client_request_version_is_ignored_without_side_effects() {
+        let mut app = App::new();
+        app.insert_resource(CapturedBreakthroughRequests::default());
+        app.insert_resource(CapturedForgeRequests::default());
+        app.insert_resource(CapturedInsightChoices::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_breakthrough_requests,
+                capture_forge_requests,
+                capture_insight_choices,
+            )
+                .chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"breakthrough_request","v":99}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(
+            app.world().get::<MeridianTarget>(entity).is_none(),
+            "unsupported request version should not attach MeridianTarget"
+        );
+        assert!(
+            app.world()
+                .resource::<CapturedBreakthroughRequests>()
+                .0
+                .is_empty(),
+            "unsupported request version should not emit BreakthroughRequest"
+        );
+        assert!(
+            app.world().resource::<CapturedForgeRequests>().0.is_empty(),
+            "unsupported request version should not emit ForgeRequest"
+        );
+        assert!(
+            app.world()
+                .resource::<CapturedInsightChoices>()
+                .0
+                .is_empty(),
+            "unsupported request version should not emit InsightChosen"
+        );
+    }
+}
