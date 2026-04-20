@@ -1130,6 +1130,48 @@ pub fn export_zone_persistence(settings: &PersistenceSettings) -> io::Result<Zon
     })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn import_zone_persistence(
+    settings: &PersistenceSettings,
+    bundle: &ZoneExportBundle,
+) -> io::Result<()> {
+    if bundle.kind != "zones_export_v1" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unexpected zone export kind: {}", bundle.kind),
+        ));
+    }
+    if bundle.schema_version > CURRENT_SCHEMA_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "zone export schema_version {} is newer than supported {}",
+                bundle.schema_version, CURRENT_SCHEMA_VERSION
+            ),
+        ));
+    }
+
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    transaction
+        .execute("DELETE FROM zones_runtime", [])
+        .map_err(io::Error::other)?;
+    for runtime in &bundle.zones_runtime {
+        upsert_zone_runtime(&transaction, runtime, wall_clock)?;
+    }
+
+    transaction
+        .execute("DELETE FROM zone_overlays", [])
+        .map_err(io::Error::other)?;
+    for overlay in &bundle.zone_overlays {
+        upsert_zone_overlay(&transaction, overlay, wall_clock)?;
+    }
+
+    transaction.commit().map_err(io::Error::other)
+}
+
 fn hydrate_zone_runtime(
     settings: &PersistenceSettings,
     zones: &mut crate::world::zone::ZoneRegistry,
@@ -4169,6 +4211,111 @@ mod persistence_tests {
         assert_eq!(bundle.zones_runtime[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(bundle.zone_overlays[0].overlay_kind, "collapsed");
         assert_eq!(bundle.zone_overlays[0].payload_version, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_zone_persistence_replaces_existing_zone_rows_atomically() {
+        let (settings, root) = persistence_settings("zone-import-bundle");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let existing_zones = crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: -0.55,
+                danger_level: 5,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        };
+        persist_zone_runtime_snapshot(&settings, &existing_zones)
+            .expect("existing zone runtime should persist");
+        persist_zone_overlays(
+            &settings,
+            &[ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({"danger_level": 5}).to_string(),
+                payload_version: 1,
+                since_wall: 1,
+            }],
+        )
+        .expect("existing zone overlays should persist");
+
+        let bundle = ZoneExportBundle {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            kind: "zones_export_v1".to_string(),
+            zones_runtime: vec![ZoneRuntimeRecord {
+                zone_id: "blood_valley".to_string(),
+                spirit_qi: 0.44,
+                danger_level: 2,
+            }],
+            zone_overlays: vec![ZoneOverlayRecord {
+                zone_id: "blood_valley".to_string(),
+                overlay_kind: "ruins_discovered".to_string(),
+                payload_json: serde_json::json!({"active_events": ["ruins_discovered"]})
+                    .to_string(),
+                payload_version: 1,
+                since_wall: 99,
+            }],
+        };
+
+        import_zone_persistence(&settings, &bundle).expect("zone import should succeed");
+
+        assert_eq!(
+            load_zone_runtime_snapshot(&settings).expect("zone runtime should load"),
+            bundle.zones_runtime
+        );
+        assert_eq!(
+            load_zone_overlays(&settings).expect("zone overlays should load"),
+            bundle.zone_overlays
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_zone_persistence_rejects_wrong_kind() {
+        let (settings, root) = persistence_settings("zone-import-wrong-kind");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let error = import_zone_persistence(
+            &settings,
+            &ZoneExportBundle {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                kind: "players_export_v1".to_string(),
+                zones_runtime: Vec::new(),
+                zone_overlays: Vec::new(),
+            },
+        )
+        .expect_err("wrong kind should be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_zone_persistence_rejects_future_schema_version() {
+        let (settings, root) = persistence_settings("zone-import-future-schema");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let error = import_zone_persistence(
+            &settings,
+            &ZoneExportBundle {
+                schema_version: CURRENT_SCHEMA_VERSION + 1,
+                kind: "zones_export_v1".to_string(),
+                zones_runtime: Vec::new(),
+                zone_overlays: Vec::new(),
+            },
+        )
+        .expect_err("future schema_version should be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
 
         let _ = fs::remove_dir_all(root);
     }
