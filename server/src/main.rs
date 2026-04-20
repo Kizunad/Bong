@@ -179,23 +179,34 @@ fn cli_dev_mode_enabled() -> bool {
 #[cfg(test)]
 mod cli_tests {
     use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
 
     use super::{cli_dev_mode_enabled, run_cli};
+
+    static CLI_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct ScopedEnvVar {
         key: &'static str,
         previous: Option<OsString>,
+        _lock: MutexGuard<'static, ()>,
     }
 
     impl ScopedEnvVar {
         fn set(key: &'static str, value: Option<&str>) -> Self {
+            let lock = CLI_ENV_MUTEX
+                .lock()
+                .expect("cli env mutex should not be poisoned");
             let previous = std::env::var_os(key);
             if let Some(value) = value {
                 std::env::set_var(key, value);
             } else {
                 std::env::remove_var(key);
             }
-            Self { key, previous }
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
         }
     }
 
