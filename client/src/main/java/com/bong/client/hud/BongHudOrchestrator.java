@@ -79,6 +79,10 @@ public final class BongHudOrchestrator {
             nextY += LINE_HEIGHT;
         }
 
+        commands.addAll(OverweightHudPlanner.buildCommands(widthMeasurer, normalizedWidth));
+        // 地面 dropped loot 改走 world-space billboard（DroppedItemWorldRenderer），
+        // HUD marker 路径已下线——两套定位系统并存会让文字标签相对图标"乱飘"。
+
         if (BongClientFeatures.ENABLE_VISUAL_EFFECTS) {
             VisualHudRenderer.append(
                 commands,

@@ -1,5 +1,7 @@
 package com.bong.client.hud;
 
+import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -17,6 +19,7 @@ public class BongHudOrchestratorTest {
     @AfterEach
     void resetToastState() {
         BongToast.resetForTests();
+        InventoryStateStore.resetForTests();
     }
 
     @Test
@@ -119,4 +122,28 @@ public class BongHudOrchestratorTest {
         assertEquals(1, commands.size());
         assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
     }
+
+    @Test
+    void overweightIndicatorAppearsBelowBaselineWhenInventoryExceedsLimit() {
+        InventoryStateStore.applyAuthoritativeSnapshot(
+            InventoryModel.builder()
+                .containers(InventoryModel.DEFAULT_CONTAINERS)
+                .weight(60.0, 50.0)
+                .build(),
+            3L
+        );
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            0L,
+            FIXED_WIDTH,
+            220
+        );
+
+        assertEquals(2, commands.size());
+        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+        assertEquals(HudRenderLayer.BASELINE, commands.get(1).layer());
+        assertTrue(commands.get(1).text().contains("超载"));
+    }
+
 }
