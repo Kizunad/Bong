@@ -1,6 +1,6 @@
 # Plan: Inventory v1
 
-状态：草案（2026-04-13，§3.1 频道部分 2026-04-13 校准为统一 `bong:server_data` 路由）
+状态：进行中（2026-04-20 校准：Inventory 主链已闭环；剩余工作以实机 QA、文档收口与少量 UI 打磨为主）
 作者：Claude Code + Kiz
 前置：`plan-cultivation-v1.md`（P1 客户端 UI 已落地）、`worldview.md` §486/§558/§686
 
@@ -17,7 +17,44 @@
    - **灵气流失税**（§486）— 世界观要求但不是 MVP 重点，延后到 v2；
    - 持久化（重启丢失，offline 模式 OK）；
    - 多人交易 / 箱子 / 炼丹炉（独立 plan）；
-   - 拾取掉落实体（Phase B）。
+   - 真正世界实体化的掉落渲染 / 自动 proximity pickup / 多人争抢（Phase B 以后）。
+
+---
+
+## 0.1 当前状态校准（2026-04-20）
+
+### 已闭环完成
+
+- 权威 inventory snapshot / delta 主链：`InventorySnapshot`、`InventoryEvent`、`InventoryStateStore`、`InventorySnapshotHandler`、`InventoryEventHandler`、`InspectScreenBootstrap` 已接通。
+- 权威 inventory 操作：拖拽移动已走 C2S 意图；丹药 `ApplyPillRequest` 三个分支（突破加成 / 经脉修复 / 丹毒清理）已落地。
+- dropped-loot 最小闭环已超出原 plan 骨架：
+  - `death_drop_system` + `DroppedLootRegistry`；
+  - `dropped_loot_sync` S2C；
+  - client `DroppedItemStore`；
+  - projected HUD marker（含 edge accent / 方向前缀 / corner dominant-axis / 基础抗抖）；
+  - `G` 键 pickup；
+  - InspectScreen 右侧垃圾桶丢弃 → server-authoritative dropped loot。
+- overweight/weight penalty 的 HUD 指示已可用。
+
+### 已实现，待实机 QA / 收口
+
+- 丢弃 → dropped marker → `G` pickup 一轮完整场景 QA 仍需系统化记录。
+- dropped marker 已可用，但视觉细节（edge readability / 进一步稳定性）仍可继续优化。
+- 文档自身仍需按本节结论持续收口，避免与代码现状再次脱节。
+
+### 近期一致性修复（2026-04-20）
+
+- **marker / pickup 目标一致性**：`DroppedItemStore.nearestTo` 原基于 `ConcurrentHashMap.values()` 迭代顺序，两个等距 dropped loot 时 marker 渲染与 `G` 键 pickup 可能选中不同 entry。修法：引入单调 `insertionCounter` + per-entry `insertionOrder`，距离差 ≤ `DISTANCE_TIE_EPSILON_SQ`（0.01 m²）时按 insertionOrder 倒序（**最新丢入的胜出**）tie-break，与玩家"刚丢的物品最想被高亮 / 被 G 捡回"的直觉一致。replaceAll 按 list 顺序分配 order（与 server `registry.by_owner` Vec push 尾部=latest 的约定对齐）；同 id replace 保持原 order，避免 server snapshot 洗掉"最新"语义。客户端新增 4 个 tie-break 单测，不破坏原有测试。
+- **optimistic discard 回滚链已存在，不属风险项**：server 端 `inventory_discard_rejection` 分支会 `resync_snapshot` 推全量 snapshot，client `InventorySnapshotHandler` 调 `InventoryStateStore.applyAuthoritativeSnapshot` 覆盖本地，无需额外回滚代码。
+
+### 明确延后
+
+- 真正世界实体化的掉落渲染与拾取。
+- 多人争抢 / 多玩家共享可见 dropped loot。
+- 持久化。
+- 灵气税（§486）。
+- 交易 / 箱子 / 骨币死信箱。
+- 装备加成 / 耐久度消耗体系深化。
 
 ---
 
@@ -138,7 +175,7 @@ pub struct ItemInstance {
 | `inventory_snapshot_emit` | 玩家新连入 / 重生 | 推全量 `inventory_snapshot` S2C |
 
 **Event 清单**：
-- C2S：`InventoryMoveRequest`、`ApplyPillRequest`、`DropItemRequest`
+- C2S：`InventoryMoveRequest`、`ApplyPillRequest`、`InventoryDiscardItemRequest`、`PickupDroppedItemRequest`
 - 内部：`InventoryEvent { kind: Added|Removed|Moved|StackChanged|DurabilityChanged, instance_id, ... }`
 - outbound：`DroppedItemEvent`（供未来战斗 plan / world entity 消费）
 
@@ -153,6 +190,7 @@ pub struct ItemInstance {
 需要扩的 `ServerDataType` 变体（`server/src/schema/server_data.rs`）：
 - `InventorySnapshot`（全量，进服 / 重生 / 容器切换时推一次）
 - `InventoryEvent`（delta，`kind: Added|Removed|Moved|StackChanged|DurabilityChanged` + `instance_id`）
+- `DroppedLootSync`（全量 owner-scoped dropped loot，同步给 HUD marker / pickup 流）
 - 模板同步方案已移出 v1，不再作为当前实现目标。
 
 Client 端照 `ServerDataRouter` 现有模式，新增两个 handler 注册到 dispatcher：
@@ -161,7 +199,11 @@ handlers.put("inventory_snapshot", new InventorySnapshotHandler(store));
 handlers.put("inventory_event",    new InventoryEventHandler(store));
 ```
 
-C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequestV1` / `ApplyPillRequestV1` / `DropItemRequestV1`）。
+C2S 复用 `bong:client_request`，当前 inventory 主线实际使用 4 个联合变体：
+- `InventoryMoveRequestV1`
+- `ApplyPillRequestV1`
+- `InventoryDiscardItemRequestV1`
+- `PickupDroppedItemRequestV1`
 
 ### 3.2 Schema 文件（`agent/packages/schema/src/`）
 
@@ -170,7 +212,8 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
   ```ts
   InventoryMoveRequestV1 { v, instance_id, to_container, to_row, to_col }
   ApplyPillRequestV1    { v, instance_id, target: { kind: "self" } | { kind: "meridian", meridian_id: MeridianId } }
-  DropItemRequestV1     { v, instance_id }
+  InventoryDiscardItemRequestV1 { v, instance_id, from: InventoryLocationV1 }
+  PickupDroppedItemRequestV1    { v, instance_id }
   ```
 - Round-trip 测试覆盖所有新 schema。
 
@@ -186,8 +229,8 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
 |---|---|---|
 | cultivation §91 `BreakthroughRequest.material_bonus = 0.0 占位` | `ApplyPillRequest(kind=BreakthroughBonus)` → `Cultivation.pending_material_bonus`，下次 breakthrough 读取并清零 | ✅ |
 | cultivation §89 mock 「凝脉散 on SI」 | `ApplyPillRequest(kind=MeridianHeal, target=Specific(SI))` → `MeridianSystem.applied_items` + `healing_boost` | ✅ |
-| cultivation §37 `CultivationDeathTrigger` 消费者之一 | `death_drop_system` 订阅，产出 `DroppedItemEvent`（不阻塞战斗 plan） | 部分 ✅ |
-| worldview §686 死亡掉落 | 同上 | 骨架 ✅ |
+| cultivation §37 `CultivationDeathTrigger` 消费者之一 | `death_drop_system` 订阅，产出 `DroppedItemEvent` + `DroppedLootRegistry` + `dropped_loot_sync` | 最小闭环 ✅ |
+| worldview §686 死亡掉落 | 同上；client 已能看到 marker 并按 `G` 捡回 | 最小闭环 ✅ |
 
 **不集成**：
 - worldview §486 灵气税（v2）
@@ -197,37 +240,40 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
 
 ## 5. 阶段化实施路线
 
-### P1 — Server 骨架 + 只读 snapshot
+### P1 — Server 骨架 + 只读 snapshot（已完成）
 - TOML loader + `ItemRegistry` Resource（含 5–10 个 sample items）
 - `PlayerInventory` Component + `inventory_init_system`（从 TOML loadout 填初始物品）
 - `inventory_snapshot_emit`（进服推全量）
 - Client：`InventoryStateStore` + `InventorySnapshotHandler` 把 mock 换成真实 snapshot（仍只读）
 - 单测：TOML 解析、snapshot round-trip
 
-### P2 — 移动 + 装备 + 堆叠
+### P2 — 移动 + 装备 + 堆叠（已完成）
 - `InventoryMoveRequest` C2S + `inventory_move_system`（校验 footprint、stack merge）
 - `InventoryEvent::Moved/StackChanged` delta S2C
 - Client：`DragState` 结束时发 C2S（替换当前纯本地移动），订阅 delta 应用到 UI
 - 单测：合法/越界/重叠移动、stack merge
 
-### P3 — 丹药效果联动（关闭 cultivation TODO §89/§91）
+### P3 — 丹药效果联动（已完成）
 - `ApplyPillRequest` + `apply_pill_system`
 - `ItemEffect::BreakthroughBonus` / `MeridianHeal` / `ContaminationCleanse` 三个分支落地
 - Client：右键 pill → context menu「服用 / 外敷（选经脉）」；外敷时接入 `BodyInspectComponent` 的经脉选中 hover
 - 单测：effect magnitude clamp、breakthrough 消费清零
 
-### P4 — 死亡掉落（骨架，待战斗 plan 激活）
+### P4 — 死亡掉落 + dropped-loot 最小闭环（已完成，且超出原骨架）
 - `death_drop_system` 随机抽样（seed 可测）
-- 产出 `DroppedItemEvent`（暂不渲染世界 entity）
-- 单测：50% 命中、随机种子稳定
+- `DroppedLootRegistry` + `DroppedItemEvent` + `dropped_loot_sync`
+- client `DroppedItemStore` + projected HUD marker
+- `G` 键 pickup
+- InspectScreen 右侧垃圾桶丢弃接入同一 dropped-loot 流
+- 单测：50% 命中、随机种子稳定、discard/pickup 主链可回归
 
-### P5 — Weight penalty
+### P5 — Weight penalty（已完成）
 - `derived_weight > max_weight` → `OverloadedMarker` + HUD 指示
 - 具体移速减益等战斗/移动 plan 接管后再落
 
 ### 延后（v2 / 独立 plan）
 - 灵气税（worldview §486）
-- 掉落物世界实体 + 拾取
+- 掉落物世界实体 + 自动 proximity 拾取 + 多人争抢
 - 交易 / 箱子 / 骨币死信箱
 - 持久化（DB/文件）
 - 法器装备加成 / 耐久度消耗
@@ -239,51 +285,35 @@ C2S 复用 `bong:client_request`，新增 3 个联合变体（`InventoryMoveRequ
 - Rust：TOML 解析、每个 system 至少 3 测（正常 / 非法 / 边界）、schema round-trip
 - TS：每个 schema artifact round-trip + discriminated union 分支覆盖
 - Java：handler 解析 + store 应用 + snapshot fixture 与 mock 同构对比
-- 端到端：server + client 联跑，进服见到 TOML loadout、I 键打开看到真实物品、拖拽生效后刷新
+- 端到端：server + client 联跑，进服见到 TOML loadout、I 键打开看到真实物品、拖拽生效、垃圾桶丢弃后出现 marker，并可 `G` 键捡回
 
 ---
 
-## 7. Client UI Refactor Checklist
+## 7. Client UI 状态校准（2026-04-20）
 
-UI 已经存在，这个 plan 只负责把它接到权威 snapshot 上。按 P 阶段拆分。
+### 7.1 已完成
 
-### 7.1 P1 — 只读 snapshot 替换 mock
+- `InventoryItem` 权威字段（`instanceId` / `stackCount` / `spiritQuality` / `durability`）已补齐并接入主线 snapshot。
+- `InventoryStateStore`、`InventorySnapshotHandler`、`InventoryEventHandler`、`ServerDataRouter` 注册已落地。
+- `InspectScreenBootstrap` / `InspectScreen` 已按权威 snapshot 刷新，不再以旧 mock 作为主线数据源。
+- P2/P3 主线已完成：拖拽移动发 C2S、丹药右键菜单、经脉 targeting 均已落地。
+- dropped-loot UI 主线已完成：`DroppedItemStore`、`DroppedLootSyncHandler`、projected marker、`G` pickup、右侧垃圾桶丢弃接 server-authoritative dropped loot。
 
-**数据模型补字段**
-- [ ] `InventoryItem` 新增 4 字段：`long instanceId`、`int stackCount`、`double spiritQuality (0..1)`、`double durability (0..1)`
-- [ ] `InventoryItem.create(...)` 工厂签名扩展 + 向后兼容 overload（仅旧字段）供 mock 用；所有调用点逐步切换
-- [ ] 影响面：`MockMeridianData`（3 处 appliedItem）、`MockInventoryData`、`InventoryModel` 相关 builder
+### 7.2 待实机 QA / 文档收口
 
-**新类**
-- [ ] `com.bong.client.inventory.state.InventoryStateStore`：复刻 `MeridianStateStore` 模式（`CopyOnWriteArrayList<Consumer<InventoryModel>>` 监听、`replace()` / `snapshot()` / `addListener()` / `resetForTests()`）
-- [ ] `com.bong.client.inventory.state.ItemRegistryStore`：如后续需要再单独立项，当前 v1 不作为主线
-- [ ] `com.bong.client.network.InventorySnapshotHandler implements ServerDataHandler`：解析 `inventory_snapshot` 全量 → `InventoryStateStore.replace(...)`
-- [ ] `com.bong.client.network.InventoryEventHandler implements ServerDataHandler`：解析 `inventory_event` → `InventoryStateStore` 增量合并
-- [ ] 两个 handler 在 `ServerDataRouter` / 分发路由处注册
+- 丢弃 → marker → `G` pickup 的一轮完整手工 QA 仍需留记录。
+- dropped marker 的视觉细节已可用，但 edge readability / target switching / 进一步稳定性仍可后续优化。
 
-**Bootstrap + Screen 接线**
-- [ ] `InspectScreenBootstrap.createScreenForCurrentState()`：从 `InventoryStateStore.snapshot()` 取 model，权威快照未到时才 fallback `MockInventoryData`
-- [ ] `InspectScreen` 打开时注册 `InventoryStateStore.addListener(...)`，close 时移除；listener 内重新刷新 grid/hotbar/equipment
-- [ ] 丢弃 screen 内保留的 `model` 字段直接引用 —— 改为每次渲染前从 store 取最新
+### 7.3 可选 UI 尾项（不阻塞 v1 闭环）
 
-**UI 显示增强（小改）**
-- [ ] `GridSlotComponent`：`stackCount > 1` 时右下角叠加数字（使用 MC 默认 font renderer）
-- [ ] `GridSlotComponent`：`spiritQuality < 0.5` 时边框变灰；`< 0.2` 时再降饱和
-- [ ] `ItemTooltipPanel`：追加两行「纯度 X%」「耐久 Y%」，仅当 < 1.0 显示，避免新玩家信息过载
-- [ ] 散装灵石相关 UI 指引已 out-of-scope，不再作为 v1 目标；如未来要做双通货，再开新 plan
+- `GridSlotComponent`：`stackCount > 1` 的角标展示。
+- `GridSlotComponent`：`spiritQuality` 的轻量边框退饱和提示。
+- `ItemTooltipPanel`：纯度 / 耐久附加展示。
 
-**测试**
-- [ ] `InventorySnapshotHandlerTest`：全量 payload → store 断言；字段缺失 / 长度不一致 → 不触碰 store
-- [ ] `ItemRegistrySnapshotHandlerTest`：template parse + lookup
-- [ ] `InventoryItemTest`：新字段 default / clamp 行为
-- [ ] Fixture JSON 与 `agent/packages/schema/samples/inventory_snapshot.json` 对齐
+### 7.4 已移出 v1 主线 / 明确延后
 
-**显式 NOT P1（延后到 P2/P3）**
-- 拖拽不发 C2S，仍保留本地 `DragState` 行为 —— P1 作为「视觉只读快照」就够；真正移动待 P2 打通
-- 右键菜单、ApplyPill 交互均 P3
-
-### 7.2 P2 — 拖拽发 C2S（补表略，实施前再展开）
-### 7.3 P3 — 丹药右键菜单（补表略，实施前再展开）
+- 单独的 `ItemRegistryStore` / 模板同步主线。
+- 散装灵石双通货 UI 指引。
 
 ---
 
