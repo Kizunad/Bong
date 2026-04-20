@@ -116,4 +116,31 @@ mod tests {
             "unexpected agent world model version error: {error}"
         );
     }
+
+    #[test]
+    fn rejects_unsupported_agent_world_model_source() {
+        let json = r#"{
+            "v": 1,
+            "id": "wm-1",
+            "source": "oracle",
+            "snapshot": {
+                "current_era": null,
+                "zone_history": {},
+                "last_decisions": {},
+                "player_first_seen_tick": {},
+                "last_tick": null,
+                "last_state_ts": null
+            }
+        }"#;
+
+        let error = serde_json::from_str::<AgentWorldModelEnvelopeV1>(json)
+            .expect_err("unsupported agent world model source should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("AgentWorldModelEnvelopeV1.source has unsupported value"),
+            "unexpected agent world model source error: {error}"
+        );
+    }
 }
