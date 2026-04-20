@@ -53,6 +53,22 @@ public final class BongHudOrchestrator {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(
+            snapshot, combat, nowMillis, widthMeasurer, maxTextWidth,
+            screenWidth, screenHeight, DroppedItemHudPlanner.captureProjectionContext()
+        );
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        DroppedItemHudPlanner.ProjectionContext droppedItemProjectionContext
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         int normalizedWidth = normalizeWidth(maxTextWidth);
@@ -80,8 +96,14 @@ public final class BongHudOrchestrator {
         }
 
         commands.addAll(OverweightHudPlanner.buildCommands(widthMeasurer, normalizedWidth));
-        // 地面 dropped loot 改走 world-space billboard（DroppedItemWorldRenderer），
-        // HUD marker 路径已下线——两套定位系统并存会让文字标签相对图标"乱飘"。
+        // 地面 dropped loot 走 HUD icon-only 标记（不含文字 / 边框 / 背景，避免 label 乱飘）。
+        commands.addAll(DroppedItemHudPlanner.buildCommands(
+            widthMeasurer,
+            normalizedWidth,
+            screenWidth,
+            screenHeight,
+            droppedItemProjectionContext
+        ));
 
         if (BongClientFeatures.ENABLE_VISUAL_EFFECTS) {
             VisualHudRenderer.append(
