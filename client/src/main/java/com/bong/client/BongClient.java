@@ -34,6 +34,7 @@ public class BongClient implements ClientModInitializer {
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
         DroppedItemPickupBootstrap.register();
+        com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
