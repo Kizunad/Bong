@@ -14,9 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * "图标带壳" 策略下的 planner 回归测试。layout 计算（投影 + clamp + stabilize）保留，
- * emit：background rect + (optional edge accent) + icon 的 itemTexture。**不** emit 文字标签。
- * 原版本里方向前缀（↑↓←→）相关 6 个测试已删（下线的是 text emit，前缀计算函数留作 dead code 规格）。
+ * 原版完整 HUD marker 的 planner 回归测试。emit：background rect + (optional edge accent)
+ * + icon 的 itemTexture + 距离/名字 text 标签。原版本里方向前缀（↑↓←→）相关 6 个测试已删，
+ * 其它 8 个用精简的断言覆盖 empty / projection / clamp / stabilize / nearest-selection。
  */
 public class DroppedItemHudPlannerTest {
     private static final HudTextHelper.WidthMeasurer FIXED_WIDTH = text -> text == null ? 0 : text.length() * 6;
@@ -41,7 +41,7 @@ public class DroppedItemHudPlannerTest {
     }
 
     @Test
-    void emitsBackdropAndIconForNearestVisibleDroppedItem() {
+    void emitsBackdropIconAndTextForNearestVisibleDroppedItem() {
         DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
             1004L, "main_pack", 0, 0,
             0.0, 0.0, 7.5,
@@ -49,12 +49,13 @@ public class DroppedItemHudPlannerTest {
         ));
 
         List<HudRenderCommand> commands = DroppedItemHudPlanner.buildCommands(FIXED_WIDTH, 220, 320, 180, TEST_CONTEXT);
-        // 视野居中、无 clamp 时只出 background + icon（无 edge accent 条）
-        assertEquals(2, commands.size());
+        // 视野居中、无 clamp 时 emit: background rect + icon + text（无 edge accent 条）
+        assertEquals(3, commands.size());
         assertTrue(commands.get(0).isRect(), "first command = background rect");
         assertTrue(commands.get(1).isItemTexture(), "second command = item icon");
         assertEquals("starter_talisman", commands.get(1).text());
-        assertFalse(commands.stream().anyMatch(HudRenderCommand::isText), "no floating text label");
+        assertTrue(commands.get(2).isText(), "third command = distance/name label");
+        assertTrue(commands.get(2).text().contains("启程护符"));
     }
 
     @Test
