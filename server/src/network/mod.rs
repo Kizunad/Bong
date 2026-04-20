@@ -2705,6 +2705,65 @@ mod tests {
         }
 
         #[test]
+        fn bootstrap_world_model_runtime_mirror_loads_sqlite_snapshot_before_mirror_write() {
+            let root = unique_temp_dir("runtime-mirror-bootstrap-loads-sqlite-snapshot");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_bootstrap_loads_sqlite_snapshot",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "赤月纪",
+                    "sinceTick": 256,
+                    "globalEffect": "灵潮倒卷"
+                })),
+                zone_history: BTreeMap::from([(
+                    "red_marsh".to_string(),
+                    vec![serde_json::json!({
+                        "name": "red_marsh",
+                        "spirit_qi": 0.62,
+                        "danger_level": 3,
+                        "active_events": ["blood_moon"],
+                        "player_count": 2
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 256)]),
+                last_tick: Some(256),
+                last_state_ts: Some(1_711_333_256),
+            };
+
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed before bootstrap");
+
+            let bootstrapped = bootstrap_agent_world_model_mirror(&settings)
+                .expect("runtime mirror bootstrap load should succeed")
+                .expect("runtime mirror bootstrap should return sqlite snapshot");
+            assert_eq!(bootstrapped, snapshot);
+
+            let mirror_fields =
+                crate::persistence::world_model_snapshot_to_mirror_fields(&bootstrapped)
+                    .expect("bootstrapped snapshot should project to mirror fields");
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_TICK),
+                Some(&"256".to_string())
+            );
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_STATE_TS),
+                Some(&"1711333256".to_string())
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
         fn agent_publish_failure_does_not_roll_back_sqlite() {
             let root = unique_temp_dir("publish-failure-does-not-rollback-sqlite");
             let db_path = root.join("data").join("bong.db");
