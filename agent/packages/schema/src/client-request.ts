@@ -249,6 +249,20 @@ export const AlchemyTakePillRequestV1 = Type.Object(
 );
 export type AlchemyTakePillRequestV1 = Static<typeof AlchemyTakePillRequestV1>;
 
+export const AlchemyFurnacePlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_furnace_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    /** 炉类物品的 inventory instance_id — server 校验并消耗一个。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -267,5 +281,6 @@ export const ClientRequestV1 = Type.Union([
   AlchemyTurnPageRequestV1,
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
+  AlchemyFurnacePlaceRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

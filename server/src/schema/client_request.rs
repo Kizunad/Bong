@@ -83,6 +83,16 @@ pub enum ClientRequestV1 {
         v: u8,
         pill_item_id: String,
     },
+    /// plan-alchemy-v1 §1.2 — 玩家手持炉类物品，客户端拦截右键地面并发此请求。
+    /// server 校验 `item_instance_id` 为合法炉类物品 → 消耗一个 → 在 `pos`
+    /// spawn `AlchemyFurnace` ECS entity，并把对应方块刷成 `FURNACE`。
+    AlchemyFurnacePlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
     /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
     /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
     InventoryMoveIntent {
@@ -434,6 +444,26 @@ mod tests {
         match req {
             ClientRequestV1::AlchemyTurnPage { delta, .. } => assert_eq!(delta, -1),
             other => panic!("expected AlchemyTurnPage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_furnace_place_roundtrip() {
+        let json = r#"{"type":"alchemy_furnace_place","v":1,"x":-12,"y":64,"z":38,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::AlchemyFurnacePlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (-12, 64, 38));
+                assert_eq!(item_instance_id, 4242);
+            }
+            other => panic!("expected AlchemyFurnacePlace, got {other:?}"),
         }
     }
 

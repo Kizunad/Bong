@@ -18,7 +18,7 @@ use valence::prelude::{
 
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
-    RecipeRegistry,
+    PlaceFurnaceRequest, RecipeRegistry,
 };
 use crate::combat::components::{
     Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
@@ -101,6 +101,7 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub furnaces: Query<'w, 's, &'static mut AlchemyFurnace>,
     pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
     pub recipe_registry: Res<'w, RecipeRegistry>,
+    pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
 }
 
 const CHANNEL: &str = "bong:client_request";
@@ -172,6 +173,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyTurnPage { v, .. }
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
+            | ClientRequestV1::AlchemyFurnacePlace { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
@@ -329,6 +331,24 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &mut combat_params,
                 );
+            }
+            ClientRequestV1::AlchemyFurnacePlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                tracing::info!(
+                    "[bong][network][alchemy] furnace_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                alchemy_params.place_furnace_tx.send(PlaceFurnaceRequest {
+                    player: ev.client,
+                    pos,
+                    item_instance_id,
+                });
             }
             // 涉及 inventory 联动的请求暂保留 stub(plan-inventory-v1 接入后再做)
             other @ (ClientRequestV1::AlchemyFeedSlot { .. }

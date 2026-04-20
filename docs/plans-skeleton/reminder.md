@@ -13,11 +13,28 @@
 - 服药 → `ContamSource` 注入（`attacker_id=None`）复用 `contamination_tick`；同色阈值 1.0 禁服
 - 50 个单测全绿，集成测试验证 "起炉 → 结算 → 服药 → 污染" 全流程
 
+### ✅ 已落地（2026-04-21，§1.2 放置炉 server-only MVP）
+- `ClientRequestV1::AlchemyFurnacePlace` payload + TypeBox 对齐
+- `PlaceFurnaceRequest` 事件 → `handle_alchemy_furnace_place` 系统
+- `AlchemyFurnace::placed(pos, tier)` + `block_pos()` + `furnace_tier_from_item_id("furnace_fantie") → 1`
+- 拆掉玩家加入时挂的自带虚拟炉（改为只挂 `LearnedRecipes`）；没世界炉 = 炼不了丹
+- 放置成功刷 `BlockState::FURNACE`；同坐标拒绝叠放；非炉类物品拒绝；多炉并行 OK
+- `server/assets/items/core.toml` 加 `furnace_fantie`（凡铁炉 2×2 misc）
+- 5 个集成测试（place / duplicate / wrong-item / multi / unknown-instance）全绿
+
 ### 仍延后（本次没做）
+- **Fabric 客户端**拦截 vanilla `UseItemOnC2s` → 查 Bong inventory 选中物品 → 发 `AlchemyFurnacePlace` payload（server 侧已就绪，等客户端接）
+- **纯内存炉**：服务器重启 = 所有放置炉丢失。`AlchemyFurnace::pos` 是 `Option<(i32,i32,i32)>` 可 serde，持久化等 plan-persistence-v1 对接
+- **多炉 session 路由**：现在 `AlchemyIntervention` 等沿用"每玩家一炉"假设（`AlchemyRequestParams.furnaces.get_mut(ev.client)`），改为"按 BlockPos 定位炉"后还需给 `AlchemyOpenFurnace` / `AlchemyIgnite` / `AlchemyIntervention` payload 加 `furnace_pos` 字段
+- **高阶炉 item**：`furnace_lingtie`（tier 2）/ `furnace_xiantie`（tier 3）等 forge-v1 品阶系统落地后批量补齐；`furnace_tier_from_item_id` 只需扩 match 分支
+- **视觉资产**（3 档全链路）：
+  - `furnace_fantie` **item 图标** 128×128 PNG 缺失（路径 `client/src/main/resources/assets/bong-client/textures/gui/items/furnace_fantie.png`）— Fabric 通路接通前玩家看不到背包图标，用 `/gen-image` 基于 MC 原版熔炉风格合成一张即可
+  - **世界方块模型** 目前服务端放 `BlockState::FURNACE`（vanilla），世界里就是原版熔炉外观。若要自定义"凡铁炉"形态需客户端 Fabric 注册自定义 block + 自带 blockstate/model/texture JSON，服务端用 valence 目前无法直接放自定义 BlockState。短期可接受共用 vanilla 外观；长期考虑走"资源包级 override"或等 Fabric mod 侧扩展 block registry
+  - 高阶炉（灵铁 / 仙铁）图标 + 可能的 3D 模型差异同上，一并等 forge-v1 品阶定下来
 - **客户端 Screen**（plan §3.3 三列 owo-lib UI）— 需要 DragState 扩展 `FURNACE_SLOT` + 新 store + 炉方块右键打开流程
 - **Redis channel** `bong:alchemy/*` + agent `@bong/schema/src/alchemy-recipe.ts` TypeBox 对齐
 - **BlockEntity 持久化**（plan §1.3 离线持续性）— 需 plan-persistence-v1 对接
-- **炉方块放置 + 右键 → `StartAlchemyRequest`**（需要 world/block 侧接入）
+- **炉方块放置 + 右键 → `StartAlchemyRequest`**（需要 world/block 侧接入）— 放置已完成，右键"开炉"仍需客户端
 - **炸炉真正结算**（ResolvedOutcome::Explode 的 damage / meridian_crack 应用到 caster 实体）
 - **skill XP 事件**（plan-skill-v1 §7）
 
