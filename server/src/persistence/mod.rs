@@ -3476,10 +3476,14 @@ mod persistence_tests {
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMeleeArchetype};
+    use crate::player::state::{
+        save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
+    };
     use crate::schema::common::NpcStateKind;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use rusqlite::{params, OptionalExtension};
     use serde_json::Value;
+    use std::sync::{Arc, Barrier};
     use valence::prelude::{App, DVec3, EntityKind, Position};
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
@@ -4576,6 +4580,947 @@ mod persistence_tests {
             },
             ..capture
         }
+    }
+
+    #[test]
+    fn semantic_event_writers_serialize_under_wal_busy_timeout() {
+        let (settings, root) = persistence_settings("near-death-concurrency");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let settings = Arc::new(settings);
+        let writer_count = 10usize;
+        let barrier = Arc::new(Barrier::new(writer_count + 1));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:Conflict{index}");
+                    let tick = 100 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(10),
+                        biography: vec![BiographyEntry::NearDeath {
+                            cause: format!("duel-{index}"),
+                            tick,
+                        }],
+                        insights_taken: Vec::new(),
+                        spirit_root_first: None,
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id.clone(),
+                        death_count: 1,
+                        fortune_remaining: 1,
+                        last_death_tick: Some(tick),
+                        last_revive_tick: Some(tick.saturating_sub(1)),
+                        near_death_deadline_tick: Some(tick + 30),
+                        weakened_until_tick: Some(tick + 5),
+                        state: LifecycleState::NearDeath,
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "near_death".to_string(),
+                        delta_years: -1,
+                        source: format!("duel-{index}"),
+                    };
+
+                    barrier.wait();
+                    persist_near_death_transition(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        "duel",
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("writer thread should not panic"))
+            .collect::<Vec<_>>();
+        let errors = results
+            .into_iter()
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "all concurrent semantic-event writers should succeed: {errors:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let life_records: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should be readable");
+        let life_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_events", [], |row| row.get(0))
+            .expect("life_events count should be readable");
+        let death_registry: i64 = connection
+            .query_row("SELECT COUNT(*) FROM death_registry", [], |row| row.get(0))
+            .expect("death_registry count should be readable");
+        let lifespan_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM lifespan_events", [], |row| row.get(0))
+            .expect("lifespan_events count should be readable");
+
+        assert_eq!(life_records, writer_count as i64);
+        assert_eq!(life_events, writer_count as i64);
+        assert_eq!(death_registry, writer_count as i64);
+        assert_eq!(lifespan_events, writer_count as i64);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mixed_player_core_and_semantic_event_writers_share_sqlite_without_lock_failures() {
+        let (settings, root) = persistence_settings("mixed-core-near-death");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let player_seed = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 12.0,
+            spirit_qi_max: 100.0,
+            karma: 0.1,
+            experience: 640,
+            inventory_score: 0.2,
+        };
+        let player_writer_count = 10usize;
+        let semantic_writer_count = 10usize;
+
+        for index in 0..player_writer_count {
+            save_player_state(
+                &player_persistence,
+                format!("MixedPlayer{index}").as_str(),
+                &player_seed,
+            )
+            .expect("seed player state should persist");
+        }
+
+        let settings = Arc::new(settings);
+        let player_persistence = Arc::new(player_persistence);
+        let barrier = Arc::new(Barrier::new(
+            player_writer_count + semantic_writer_count + 1,
+        ));
+
+        let player_handles = (0..player_writer_count)
+            .map(|index| {
+                let persistence = Arc::clone(&player_persistence);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let username = format!("MixedPlayer{index}");
+                    let updated_state = PlayerState {
+                        realm: "qi_refining_3".to_string(),
+                        spirit_qi: 25.0 + index as f64,
+                        spirit_qi_max: 160.0,
+                        karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
+                        experience: 3_000 + index as u64,
+                        inventory_score: (index as f64 / player_writer_count as f64)
+                            .clamp(0.0, 1.0),
+                    };
+
+                    barrier.wait();
+                    save_player_core_slice(persistence.as_ref(), username.as_str(), &updated_state)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let semantic_handles = (0..semantic_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:MixedConflict{index}");
+                    let tick = 500 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(20),
+                        biography: vec![BiographyEntry::NearDeath {
+                            cause: format!("mixed-duel-{index}"),
+                            tick,
+                        }],
+                        insights_taken: Vec::new(),
+                        spirit_root_first: None,
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id.clone(),
+                        death_count: 1,
+                        fortune_remaining: 1,
+                        last_death_tick: Some(tick),
+                        last_revive_tick: Some(tick.saturating_sub(1)),
+                        near_death_deadline_tick: Some(tick + 30),
+                        weakened_until_tick: Some(tick + 5),
+                        state: LifecycleState::NearDeath,
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "near_death".to_string(),
+                        delta_years: -1,
+                        source: format!("mixed-duel-{index}"),
+                    };
+
+                    barrier.wait();
+                    persist_near_death_transition(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        "mixed-duel",
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = player_handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("player writer should not panic")
+                    .map(|_| ())
+            })
+            .chain(
+                semantic_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("semantic writer should not panic")),
+            )
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "mixed player core and semantic writers should all succeed: {errors:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let life_records: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should be readable");
+        let life_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_events", [], |row| row.get(0))
+            .expect("life_events count should be readable");
+        let death_registry: i64 = connection
+            .query_row("SELECT COUNT(*) FROM death_registry", [], |row| row.get(0))
+            .expect("death_registry count should be readable");
+        let lifespan_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM lifespan_events", [], |row| row.get(0))
+            .expect("lifespan_events count should be readable");
+
+        assert_eq!(life_records, semantic_writer_count as i64);
+        assert_eq!(life_events, semantic_writer_count as i64);
+        assert_eq!(death_registry, semantic_writer_count as i64);
+        assert_eq!(lifespan_events, semantic_writer_count as i64);
+
+        for index in 0..player_writer_count {
+            let username = format!("MixedPlayer{index}");
+            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+                .query_row(
+                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    params![username.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("player core row should exist after mixed load");
+            assert_eq!(spirit_qi, 25.0 + index as f64);
+            assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
+            assert_eq!(
+                inventory_score,
+                (index as f64 / player_writer_count as f64).clamp(0.0, 1.0)
+            );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mixed_player_semantic_and_npc_writers_share_sqlite_without_lock_failures() {
+        let (settings, root) = persistence_settings("mixed-player-semantic-npc");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let player_seed = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 12.0,
+            spirit_qi_max: 100.0,
+            karma: 0.1,
+            experience: 640,
+            inventory_score: 0.2,
+        };
+        let player_writer_count = 10usize;
+        let semantic_writer_count = 10usize;
+        let npc_writer_count = 10usize;
+
+        for index in 0..player_writer_count {
+            save_player_state(
+                &player_persistence,
+                format!("MixedNpcPlayer{index}").as_str(),
+                &player_seed,
+            )
+            .expect("seed player state should persist");
+        }
+
+        let settings = Arc::new(settings);
+        let player_persistence = Arc::new(player_persistence);
+        let barrier = Arc::new(Barrier::new(
+            player_writer_count + semantic_writer_count + npc_writer_count + 1,
+        ));
+
+        let player_handles = (0..player_writer_count)
+            .map(|index| {
+                let persistence = Arc::clone(&player_persistence);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let username = format!("MixedNpcPlayer{index}");
+                    let updated_state = PlayerState {
+                        realm: "qi_refining_3".to_string(),
+                        spirit_qi: 35.0 + index as f64,
+                        spirit_qi_max: 180.0,
+                        karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
+                        experience: 5_000 + index as u64,
+                        inventory_score: (index as f64 / player_writer_count as f64)
+                            .clamp(0.0, 1.0),
+                    };
+
+                    barrier.wait();
+                    save_player_core_slice(persistence.as_ref(), username.as_str(), &updated_state)
+                        .map(|_| ())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let semantic_handles = (0..semantic_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:MixedNpcConflict{index}");
+                    let tick = 700 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(20),
+                        biography: vec![BiographyEntry::NearDeath {
+                            cause: format!("mixed-npc-duel-{index}"),
+                            tick,
+                        }],
+                        insights_taken: Vec::new(),
+                        spirit_root_first: None,
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id.clone(),
+                        death_count: 1,
+                        fortune_remaining: 1,
+                        last_death_tick: Some(tick),
+                        last_revive_tick: Some(tick.saturating_sub(1)),
+                        near_death_deadline_tick: Some(tick + 30),
+                        weakened_until_tick: Some(tick + 5),
+                        state: LifecycleState::NearDeath,
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "near_death".to_string(),
+                        delta_years: -1,
+                        source: format!("mixed-npc-duel-{index}"),
+                    };
+
+                    barrier.wait();
+                    persist_near_death_transition(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        "mixed-npc-duel",
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let npc_handles = (0..npc_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let capture = sample_npc_capture(format!("npc_mixed_{index}").as_str());
+                    barrier.wait();
+                    persist_npc_capture(settings.as_ref(), &capture)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = player_handles
+            .into_iter()
+            .map(|handle| handle.join().expect("player writer should not panic"))
+            .chain(
+                semantic_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("semantic writer should not panic")),
+            )
+            .chain(
+                npc_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("npc writer should not panic")),
+            )
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "mixed player, semantic, and npc writers should all succeed: {errors:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let life_records: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should be readable");
+        let life_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_events", [], |row| row.get(0))
+            .expect("life_events count should be readable");
+        let death_registry: i64 = connection
+            .query_row("SELECT COUNT(*) FROM death_registry", [], |row| row.get(0))
+            .expect("death_registry count should be readable");
+        let lifespan_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM lifespan_events", [], |row| row.get(0))
+            .expect("lifespan_events count should be readable");
+        let npc_state_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_state", [], |row| row.get(0))
+            .expect("npc_state count should be readable");
+        let npc_digest_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_digests", [], |row| row.get(0))
+            .expect("npc_digests count should be readable");
+        let archetype_registry_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM archetype_registry", [], |row| {
+                row.get(0)
+            })
+            .expect("archetype_registry count should be readable");
+
+        assert_eq!(life_records, semantic_writer_count as i64);
+        assert_eq!(life_events, semantic_writer_count as i64);
+        assert_eq!(death_registry, semantic_writer_count as i64);
+        assert_eq!(lifespan_events, semantic_writer_count as i64);
+        assert_eq!(npc_state_count, npc_writer_count as i64);
+        assert_eq!(npc_digest_count, npc_writer_count as i64);
+        assert_eq!(archetype_registry_count, npc_writer_count as i64);
+
+        for index in 0..player_writer_count {
+            let username = format!("MixedNpcPlayer{index}");
+            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+                .query_row(
+                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    params![username.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("player core row should exist after mixed npc load");
+            assert_eq!(spirit_qi, 35.0 + index as f64);
+            assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
+            assert_eq!(
+                inventory_score,
+                (index as f64 / player_writer_count as f64).clamp(0.0, 1.0)
+            );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mixed_player_semantic_npc_and_zone_runtime_writers_share_sqlite_without_lock_failures() {
+        let (settings, root) = persistence_settings("mixed-player-semantic-npc-zone");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let player_seed = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 12.0,
+            spirit_qi_max: 100.0,
+            karma: 0.1,
+            experience: 640,
+            inventory_score: 0.2,
+        };
+        let player_writer_count = 10usize;
+        let semantic_writer_count = 10usize;
+        let npc_writer_count = 10usize;
+        let zone_writer_count = 5usize;
+
+        for index in 0..player_writer_count {
+            save_player_state(
+                &player_persistence,
+                format!("MixedZonePlayer{index}").as_str(),
+                &player_seed,
+            )
+            .expect("seed player state should persist");
+        }
+
+        let settings = Arc::new(settings);
+        let player_persistence = Arc::new(player_persistence);
+        let barrier = Arc::new(Barrier::new(
+            player_writer_count + semantic_writer_count + npc_writer_count + zone_writer_count + 1,
+        ));
+
+        let player_handles = (0..player_writer_count)
+            .map(|index| {
+                let persistence = Arc::clone(&player_persistence);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let username = format!("MixedZonePlayer{index}");
+                    let updated_state = PlayerState {
+                        realm: "qi_refining_3".to_string(),
+                        spirit_qi: 45.0 + index as f64,
+                        spirit_qi_max: 200.0,
+                        karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
+                        experience: 7_000 + index as u64,
+                        inventory_score: (index as f64 / player_writer_count as f64)
+                            .clamp(0.0, 1.0),
+                    };
+
+                    barrier.wait();
+                    save_player_core_slice(persistence.as_ref(), username.as_str(), &updated_state)
+                        .map(|_| ())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let semantic_handles = (0..semantic_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:MixedZoneConflict{index}");
+                    let tick = 900 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(20),
+                        biography: vec![BiographyEntry::NearDeath {
+                            cause: format!("mixed-zone-duel-{index}"),
+                            tick,
+                        }],
+                        insights_taken: Vec::new(),
+                        spirit_root_first: None,
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id.clone(),
+                        death_count: 1,
+                        fortune_remaining: 1,
+                        last_death_tick: Some(tick),
+                        last_revive_tick: Some(tick.saturating_sub(1)),
+                        near_death_deadline_tick: Some(tick + 30),
+                        weakened_until_tick: Some(tick + 5),
+                        state: LifecycleState::NearDeath,
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "near_death".to_string(),
+                        delta_years: -1,
+                        source: format!("mixed-zone-duel-{index}"),
+                    };
+
+                    barrier.wait();
+                    persist_near_death_transition(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        "mixed-zone-duel",
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let npc_handles = (0..npc_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let capture = sample_npc_capture(format!("npc_zone_mixed_{index}").as_str());
+                    barrier.wait();
+                    persist_npc_capture(settings.as_ref(), &capture)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let zone_handles = (0..zone_writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let registry = crate::world::zone::ZoneRegistry {
+                        zones: vec![crate::world::zone::Zone {
+                            name: format!("mixed_zone_{index}"),
+                            bounds: crate::world::zone::default_spawn_bounds(),
+                            spirit_qi: 0.1 + index as f64,
+                            danger_level: 1 + index as u8,
+                            active_events: Vec::new(),
+                            patrol_anchors: Vec::new(),
+                            blocked_tiles: Vec::new(),
+                        }],
+                    };
+
+                    barrier.wait();
+                    persist_zone_runtime_snapshot(settings.as_ref(), &registry)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = player_handles
+            .into_iter()
+            .map(|handle| handle.join().expect("player writer should not panic"))
+            .chain(
+                semantic_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("semantic writer should not panic")),
+            )
+            .chain(
+                npc_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("npc writer should not panic")),
+            )
+            .chain(
+                zone_handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("zone writer should not panic")),
+            )
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "mixed player, semantic, npc, and zone writers should all succeed: {errors:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let life_records: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should be readable");
+        let life_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_events", [], |row| row.get(0))
+            .expect("life_events count should be readable");
+        let death_registry: i64 = connection
+            .query_row("SELECT COUNT(*) FROM death_registry", [], |row| row.get(0))
+            .expect("death_registry count should be readable");
+        let lifespan_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM lifespan_events", [], |row| row.get(0))
+            .expect("lifespan_events count should be readable");
+        let npc_state_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_state", [], |row| row.get(0))
+            .expect("npc_state count should be readable");
+        let npc_digest_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_digests", [], |row| row.get(0))
+            .expect("npc_digests count should be readable");
+        let archetype_registry_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM archetype_registry", [], |row| {
+                row.get(0)
+            })
+            .expect("archetype_registry count should be readable");
+
+        assert_eq!(life_records, semantic_writer_count as i64);
+        assert_eq!(life_events, semantic_writer_count as i64);
+        assert_eq!(death_registry, semantic_writer_count as i64);
+        assert_eq!(lifespan_events, semantic_writer_count as i64);
+        assert_eq!(npc_state_count, npc_writer_count as i64);
+        assert_eq!(npc_digest_count, npc_writer_count as i64);
+        assert_eq!(archetype_registry_count, npc_writer_count as i64);
+
+        for index in 0..player_writer_count {
+            let username = format!("MixedZonePlayer{index}");
+            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+                .query_row(
+                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    params![username.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("player core row should exist after mixed zone load");
+            assert_eq!(spirit_qi, 45.0 + index as f64);
+            assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
+            assert_eq!(
+                inventory_score,
+                (index as f64 / player_writer_count as f64).clamp(0.0, 1.0)
+            );
+        }
+
+        let runtime_rows = load_zone_runtime_snapshot(settings.as_ref())
+            .expect("zone runtime snapshot should load after mixed zone load");
+        assert_eq!(runtime_rows.len(), zone_writer_count);
+        for index in 0..zone_writer_count {
+            let zone_id = format!("mixed_zone_{index}");
+            let record = runtime_rows
+                .iter()
+                .find(|row| row.zone_id == zone_id)
+                .unwrap_or_else(|| panic!("missing runtime row for {zone_id}"));
+            assert_eq!(record.spirit_qi, 0.1 + index as f64);
+            assert_eq!(record.danger_level, 1 + index as u8);
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mixed_sqlite_writers_remain_correct_across_multiple_contention_batches() {
+        let (settings, root) = persistence_settings("mixed-sqlite-multi-batch");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let player_seed = PlayerState {
+            realm: "qi_refining_1".to_string(),
+            spirit_qi: 12.0,
+            spirit_qi_max: 100.0,
+            karma: 0.1,
+            experience: 640,
+            inventory_score: 0.2,
+        };
+        let batch_count = 3usize;
+        let player_writer_count = 10usize;
+        let semantic_writer_count = 10usize;
+        let npc_writer_count = 10usize;
+        let zone_writer_count = 5usize;
+
+        for index in 0..player_writer_count {
+            save_player_state(
+                &player_persistence,
+                format!("BatchPlayer{index}").as_str(),
+                &player_seed,
+            )
+            .expect("seed player state should persist");
+        }
+
+        let settings = Arc::new(settings);
+        let player_persistence = Arc::new(player_persistence);
+        let mut all_errors = Vec::new();
+
+        for batch in 0..batch_count {
+            let barrier = Arc::new(Barrier::new(
+                player_writer_count
+                    + semantic_writer_count
+                    + npc_writer_count
+                    + zone_writer_count
+                    + 1,
+            ));
+
+            let player_handles = (0..player_writer_count)
+                .map(|index| {
+                    let persistence = Arc::clone(&player_persistence);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        let username = format!("BatchPlayer{index}");
+                        let updated_state = PlayerState {
+                            realm: "qi_refining_3".to_string(),
+                            spirit_qi: 10.0 * batch as f64 + index as f64,
+                            spirit_qi_max: 220.0,
+                            karma: (0.1 * batch as f64).clamp(-1.0, 1.0),
+                            experience: 10_000 + (batch as u64 * 100) + index as u64,
+                            inventory_score: (0.01 * ((batch * 10 + index) as f64)).clamp(0.0, 1.0),
+                        };
+
+                        barrier.wait();
+                        save_player_core_slice(
+                            persistence.as_ref(),
+                            username.as_str(),
+                            &updated_state,
+                        )
+                        .map(|_| ())
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let semantic_handles = (0..semantic_writer_count)
+                .map(|index| {
+                    let settings = Arc::clone(&settings);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        let char_id = format!("offline:Batch{batch}_Conflict{index}");
+                        let tick = 1_100 + (batch as u64 * 100) + index as u64;
+                        let life_record = LifeRecord {
+                            character_id: char_id.clone(),
+                            created_at: tick.saturating_sub(20),
+                            biography: vec![BiographyEntry::NearDeath {
+                                cause: format!("batch-duel-{batch}-{index}"),
+                                tick,
+                            }],
+                            insights_taken: Vec::new(),
+                            spirit_root_first: None,
+                        };
+                        let lifecycle = Lifecycle {
+                            character_id: char_id.clone(),
+                            death_count: 1,
+                            fortune_remaining: 1,
+                            last_death_tick: Some(tick),
+                            last_revive_tick: Some(tick.saturating_sub(1)),
+                            near_death_deadline_tick: Some(tick + 30),
+                            weakened_until_tick: Some(tick + 5),
+                            state: LifecycleState::NearDeath,
+                        };
+                        let lifespan_event = LifespanEventRecord {
+                            at_tick: tick,
+                            kind: "near_death".to_string(),
+                            delta_years: -1,
+                            source: format!("batch-duel-{batch}-{index}"),
+                        };
+
+                        barrier.wait();
+                        persist_near_death_transition(
+                            settings.as_ref(),
+                            &lifecycle,
+                            &life_record,
+                            "batch-duel",
+                            Some(&lifespan_event),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let npc_handles = (0..npc_writer_count)
+                .map(|index| {
+                    let settings = Arc::clone(&settings);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        let capture =
+                            sample_npc_capture(format!("npc_batch_{batch}_{index}").as_str());
+                        barrier.wait();
+                        persist_npc_capture(settings.as_ref(), &capture)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let zone_handles = (0..zone_writer_count)
+                .map(|index| {
+                    let settings = Arc::clone(&settings);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        let registry = crate::world::zone::ZoneRegistry {
+                            zones: vec![crate::world::zone::Zone {
+                                name: format!("mixed_zone_{batch}_{index}"),
+                                bounds: crate::world::zone::default_spawn_bounds(),
+                                spirit_qi: 0.1 + batch as f64 + index as f64,
+                                danger_level: 1 + batch as u8 + index as u8,
+                                active_events: Vec::new(),
+                                patrol_anchors: Vec::new(),
+                                blocked_tiles: Vec::new(),
+                            }],
+                        };
+
+                        barrier.wait();
+                        persist_zone_runtime_snapshot(settings.as_ref(), &registry)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            barrier.wait();
+            let batch_errors = player_handles
+                .into_iter()
+                .map(|handle| handle.join().expect("player writer should not panic"))
+                .chain(
+                    semantic_handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("semantic writer should not panic")),
+                )
+                .chain(
+                    npc_handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("npc writer should not panic")),
+                )
+                .chain(
+                    zone_handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("zone writer should not panic")),
+                )
+                .filter_map(Result::err)
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>();
+            all_errors.extend(batch_errors);
+        }
+
+        assert!(
+            all_errors.is_empty(),
+            "multi-batch mixed sqlite writers should all succeed: {all_errors:?}"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let expected_semantic_rows = (batch_count * semantic_writer_count) as i64;
+        let expected_npc_rows = (batch_count * npc_writer_count) as i64;
+        let expected_zone_rows = batch_count * zone_writer_count;
+        let life_records: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should be readable");
+        let life_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_events", [], |row| row.get(0))
+            .expect("life_events count should be readable");
+        let death_registry: i64 = connection
+            .query_row("SELECT COUNT(*) FROM death_registry", [], |row| row.get(0))
+            .expect("death_registry count should be readable");
+        let lifespan_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM lifespan_events", [], |row| row.get(0))
+            .expect("lifespan_events count should be readable");
+        let npc_state_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_state", [], |row| row.get(0))
+            .expect("npc_state count should be readable");
+        let npc_digest_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM npc_digests", [], |row| row.get(0))
+            .expect("npc_digests count should be readable");
+        let archetype_registry_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM archetype_registry", [], |row| {
+                row.get(0)
+            })
+            .expect("archetype_registry count should be readable");
+
+        assert_eq!(life_records, expected_semantic_rows);
+        assert_eq!(life_events, expected_semantic_rows);
+        assert_eq!(death_registry, expected_semantic_rows);
+        assert_eq!(lifespan_events, expected_semantic_rows);
+        assert_eq!(npc_state_count, expected_npc_rows);
+        assert_eq!(npc_digest_count, expected_npc_rows);
+        assert_eq!(archetype_registry_count, expected_npc_rows);
+
+        let final_batch = batch_count - 1;
+        for index in 0..player_writer_count {
+            let username = format!("BatchPlayer{index}");
+            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+                .query_row(
+                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    params![username.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("player core row should exist after multi-batch load");
+            assert_eq!(spirit_qi, 10.0 * final_batch as f64 + index as f64);
+            assert_eq!(karma, (0.1 * final_batch as f64).clamp(-1.0, 1.0));
+            assert_eq!(
+                inventory_score,
+                (0.01 * ((final_batch * 10 + index) as f64)).clamp(0.0, 1.0)
+            );
+        }
+
+        let runtime_rows = load_zone_runtime_snapshot(settings.as_ref())
+            .expect("zone runtime snapshot should load after multi-batch load");
+        assert_eq!(runtime_rows.len(), expected_zone_rows);
+        for batch in 0..batch_count {
+            for index in 0..zone_writer_count {
+                let zone_id = format!("mixed_zone_{batch}_{index}");
+                let record = runtime_rows
+                    .iter()
+                    .find(|row| row.zone_id == zone_id)
+                    .unwrap_or_else(|| panic!("missing runtime row for {zone_id}"));
+                assert_eq!(record.spirit_qi, 0.1 + batch as f64 + index as f64);
+                assert_eq!(record.danger_level, 1 + batch as u8 + index as u8);
+            }
+        }
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
