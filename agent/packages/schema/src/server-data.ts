@@ -9,13 +9,15 @@ import {
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind } from "./cultivation.js";
 import {
+  InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
   InventoryEventMovedV1,
   InventoryEventStackChangedV1,
+  InventoryItemViewV1,
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
-import { PlayerPowerBreakdown } from "./world-state.js";
+import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -64,6 +66,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("cultivation_detail"),
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
+  Type.Literal("dropped_loot_sync"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
   Type.Literal("alchemy_outcome_forecast"),
@@ -187,6 +190,29 @@ export type ServerDataInventorySnapshotV1 = Static<
   typeof ServerDataInventorySnapshotV1
 >;
 
+export const DroppedLootEntryV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    source_container_id: Type.String(),
+    source_row: Type.Integer({ minimum: 0 }),
+    source_col: Type.Integer({ minimum: 0 }),
+    world_pos: Vec3,
+    item: InventoryItemViewV1,
+  },
+  { additionalProperties: false },
+);
+export type DroppedLootEntryV1 = Static<typeof DroppedLootEntryV1>;
+
+export const ServerDataDroppedLootSyncV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("dropped_loot_sync"),
+    drops: Type.Array(DroppedLootEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDroppedLootSyncV1 = Static<typeof ServerDataDroppedLootSyncV1>;
+
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -205,6 +231,15 @@ const ServerDataInventoryEventStackChangedV1 = Type.Object(
   { additionalProperties: false },
 );
 
+const ServerDataInventoryEventDroppedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("inventory_event"),
+    ...InventoryEventDroppedV1.properties,
+  },
+  { additionalProperties: false },
+);
+
 const ServerDataInventoryEventDurabilityChangedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -216,6 +251,7 @@ const ServerDataInventoryEventDurabilityChangedV1 = Type.Object(
 
 export const ServerDataInventoryEventV1 = Type.Union([
   ServerDataInventoryEventMovedV1,
+  ServerDataInventoryEventDroppedV1,
   ServerDataInventoryEventStackChangedV1,
   ServerDataInventoryEventDurabilityChangedV1,
 ]);
@@ -338,6 +374,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataCultivationDetailV1,
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
+  ServerDataDroppedLootSyncV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,
   ServerDataAlchemyOutcomeForecastV1,

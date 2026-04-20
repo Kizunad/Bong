@@ -157,6 +157,20 @@ export const InventoryEventMovedV1 = Type.Object(
   { additionalProperties: false },
 );
 
+import { Vec3 } from "./world-state.js";
+
+export const InventoryEventDroppedV1 = Type.Object(
+  {
+    kind: Type.Literal("dropped"),
+    revision: RevisionV1,
+    instance_id: SafeIntegerV1,
+    from: InventoryLocationV1,
+    world_pos: Vec3,
+    item: InventoryItemViewV1,
+  },
+  { additionalProperties: false },
+);
+
 export const InventoryEventStackChangedV1 = Type.Object(
   {
     kind: Type.Literal("stack_changed"),
@@ -179,6 +193,7 @@ export const InventoryEventDurabilityChangedV1 = Type.Object(
 
 export const InventoryEventV1 = Type.Union([
   InventoryEventMovedV1,
+  InventoryEventDroppedV1,
   InventoryEventStackChangedV1,
   InventoryEventDurabilityChangedV1,
 ]);

@@ -13,6 +13,10 @@ import { Type, type Static } from "@sinclair/typebox";
 import { AlchemyInterventionV1 } from "./alchemy.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
+import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+
+const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+const HOTBAR_SLOT_COUNT = 9;
 
 export const SetMeridianTargetRequestV1 = Type.Object(
   {
@@ -55,6 +59,94 @@ export const InsightDecisionRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type InsightDecisionRequestV1 = Static<typeof InsightDecisionRequestV1>;
+
+export const ApplyPillTargetV1 = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("self"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("meridian"),
+      meridian_id: MeridianId,
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type ApplyPillTargetV1 = Static<typeof ApplyPillTargetV1>;
+
+export const InventoryLocationV1 = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("container"),
+      container_id: ContainerIdV1,
+      row: Type.Integer({ minimum: 0 }),
+      col: Type.Integer({ minimum: 0 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("equip"),
+      slot: EquipSlotV1,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("hotbar"),
+      index: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type InventoryLocationV1 = Static<typeof InventoryLocationV1>;
+
+export const InventoryMoveIntentRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("inventory_move_intent"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    from: InventoryLocationV1,
+    to: InventoryLocationV1,
+  },
+  { additionalProperties: false },
+);
+export type InventoryMoveIntentRequestV1 = Static<typeof InventoryMoveIntentRequestV1>;
+
+export const ApplyPillRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("apply_pill"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    target: ApplyPillTargetV1,
+  },
+  { additionalProperties: false },
+);
+export type ApplyPillRequestV1 = Static<typeof ApplyPillRequestV1>;
+
+export const PickupDroppedItemRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("pickup_dropped_item"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
+
+export const InventoryDiscardItemRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("inventory_discard_item"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    from: InventoryLocationV1,
+  },
+  { additionalProperties: false },
+);
+export type InventoryDiscardItemRequestV1 = Static<typeof InventoryDiscardItemRequestV1>;
 
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
@@ -150,6 +242,10 @@ export const ClientRequestV1 = Type.Union([
   BreakthroughRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
+  InventoryMoveIntentRequestV1,
+  ApplyPillRequestV1,
+  PickupDroppedItemRequestV1,
+  InventoryDiscardItemRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

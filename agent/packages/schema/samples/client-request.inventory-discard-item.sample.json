@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "inventory_discard_item",
+  "instance_id": 1001,
+  "from": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 0,
+    "col": 0
+  }
+}

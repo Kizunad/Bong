@@ -196,6 +196,30 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.inventory-move-intent.sample.json", () => {
+    const data = loadSample("client-request.inventory-move-intent.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.apply-pill.sample.json", () => {
+    const data = loadSample("client-request.apply-pill.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.pickup-dropped-item.sample.json", () => {
+    const data = loadSample("client-request.pickup-dropped-item.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.inventory-discard-item.sample.json", () => {
+    const data = loadSample("client-request.inventory-discard-item.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("combat-event.realtime.sample.json", () => {
     const data = loadSample("combat-event.realtime.sample.json");
     const result = validate(CombatRealtimeEventV1, data);

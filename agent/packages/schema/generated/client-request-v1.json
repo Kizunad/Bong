@@ -279,6 +279,549 @@
       "required": [
         "v",
         "type",
+        "instance_id",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "inventory_move_intent",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "anyOf": [
+                    {
+                      "const": "main_pack",
+                      "type": "string"
+                    },
+                    {
+                      "const": "small_pouch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "front_satchel",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "two_hand",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "to": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "anyOf": [
+                    {
+                      "const": "main_pack",
+                      "type": "string"
+                    },
+                    {
+                      "const": "small_pouch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "front_satchel",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "two_hand",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id",
+        "target"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "apply_pill",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "self",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "meridian_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "meridian",
+                  "type": "string"
+                },
+                "meridian_id": {
+                  "description": "20 条经脉（12 正经 + 8 奇经）",
+                  "anyOf": [
+                    {
+                      "const": "Lung",
+                      "type": "string"
+                    },
+                    {
+                      "const": "LargeIntestine",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Stomach",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Spleen",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Heart",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SmallIntestine",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Bladder",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Kidney",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Pericardium",
+                      "type": "string"
+                    },
+                    {
+                      "const": "TripleEnergizer",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Gallbladder",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Liver",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Ren",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Du",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Chong",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Dai",
+                      "type": "string"
+                    },
+                    {
+                      "const": "YinQiao",
+                      "type": "string"
+                    },
+                    {
+                      "const": "YangQiao",
+                      "type": "string"
+                    },
+                    {
+                      "const": "YinWei",
+                      "type": "string"
+                    },
+                    {
+                      "const": "YangWei",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "pickup_dropped_item",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id",
+        "from"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "inventory_discard_item",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "anyOf": [
+                    {
+                      "const": "main_pack",
+                      "type": "string"
+                    },
+                    {
+                      "const": "small_pouch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "front_satchel",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "two_hand",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "furnace_id"
       ],
       "properties": {
