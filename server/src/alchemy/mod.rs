@@ -32,12 +32,16 @@ pub mod resolver;
 pub mod session;
 pub mod skill_hook;
 
+use std::collections::HashSet;
+
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
     EventReader, Query, Username, With, Without,
 };
 
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::player::state::PlayerState;
 
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
@@ -114,11 +118,12 @@ pub fn register(app: &mut App) {
 }
 
 /// plan §1.2 — 消费 `PlaceFurnaceRequest`：
-///   1. 拒绝在同一坐标叠放（ECS 已有炉 → warn + skip）
+///   1. 拒绝在同一坐标叠放（ECS 已有炉 **或** 同 tick 另一个请求已刚放 → warn + skip）
 ///   2. 按 `item_instance_id` 查背包物品、按 `furnace_tier_from_item_id` 决定 tier
 ///   3. 消耗一个物品（`consume_item_instance_once`）
 ///   4. `commands.spawn(AlchemyFurnace::placed(pos, tier))`（玩家多炉并行）
 ///   5. 把目标方块刷成 `FURNACE`
+///   6. 推一次 inventory snapshot 让 client UI 同步
 ///
 /// 纯内存：炉状态不落盘，服务器重启 = 炉丢失（见 reminder.md）。
 #[allow(clippy::too_many_arguments)]
@@ -128,10 +133,18 @@ pub fn handle_alchemy_furnace_place(
     mut inventories: Query<&mut PlayerInventory>,
     mut layers: Query<&mut ChunkLayer>,
     existing: Query<&AlchemyFurnace>,
-    usernames: Query<&Username>,
+    mut clients: Query<(&Username, &mut Client, &PlayerState)>,
 ) {
+    // 同 tick 已放下的坐标：`commands.spawn` 要等帧末 apply，所以 `existing` 查询看不到
+    // 本系统循环内上一次放的炉。若不自己记一下，两个同 pos 请求同 tick 到就会都过
+    // 检查、都 spawn，产生重叠炉（Codex P1）。
+    let mut placed_this_tick: HashSet<(i32, i32, i32)> = HashSet::new();
+
     for req in events.read() {
-        if existing.iter().any(|f| f.block_pos() == Some(req.pos)) {
+        let pos_key = (req.pos.x, req.pos.y, req.pos.z);
+        if placed_this_tick.contains(&pos_key)
+            || existing.iter().any(|f| f.block_pos() == Some(req.pos))
+        {
             tracing::warn!(
                 "[bong][alchemy] place_furnace rejected: pos={:?} already occupied by another furnace",
                 req.pos
@@ -168,10 +181,24 @@ pub fn handle_alchemy_furnace_place(
             continue;
         }
         let mut furnace = AlchemyFurnace::placed(req.pos, tier);
-        furnace.owner = usernames.get(req.player).ok().map(|u| u.0.clone());
+        let owner_name = clients.get(req.player).ok().map(|(u, _, _)| u.0.clone());
+        furnace.owner = owner_name;
         commands.spawn(furnace);
+        placed_this_tick.insert(pos_key);
         if let Ok(mut layer) = layers.get_single_mut() {
             layer.set_block(req.pos, BlockState::FURNACE);
+        }
+        // Codex P2 — 消耗物品后立即回推 snapshot，避免客户端 UI 残留旧物品导致
+        // 二次误发相同 instance_id 的请求。`inv` 已 bump_revision，取最新快照即可。
+        if let Ok((username, mut client, player_state)) = clients.get_mut(req.player) {
+            send_inventory_snapshot_to_client(
+                req.player,
+                &mut client,
+                username.0.as_str(),
+                &inv,
+                player_state,
+                "alchemy_furnace_place_consumed",
+            );
         }
         tracing::info!(
             "[bong][alchemy] place_furnace ok: player={:?} pos={:?} tier={} from item=`{}`",
@@ -465,6 +492,43 @@ mod integration_tests {
         // 栈已空
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn place_furnace_rejects_same_tick_duplicate_pos() {
+        // Codex P1 回归：同 tick 两个 PlaceFurnaceRequest 指向同 pos，应只放下一座。
+        let mut app = build_place_app();
+        let player = app
+            .world_mut()
+            .spawn(inventory_with(item_instance(47, "furnace_fantie", 3)))
+            .id();
+        let pos = valence::prelude::BlockPos::new(7, 64, 7);
+
+        // 两个事件在同一帧入队
+        app.world_mut().send_event(PlaceFurnaceRequest {
+            player,
+            pos,
+            item_instance_id: 47,
+        });
+        app.world_mut().send_event(PlaceFurnaceRequest {
+            player,
+            pos,
+            item_instance_id: 47,
+        });
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&AlchemyFurnace>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "same-tick duplicate pos must only spawn one furnace"
+        );
+        // 只消耗一个（3 → 2）
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inv.containers[0].items[0].instance.stack_count, 2);
     }
 
     #[test]
