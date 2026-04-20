@@ -4096,6 +4096,62 @@ mod persistence_tests {
     }
 
     #[test]
+    fn agent_world_model_snapshot_roundtrips_through_sqlite() {
+        let (settings, root) = persistence_settings("agent-world-model-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let snapshot = AgentWorldModelSnapshotRecord {
+            current_era: Some(serde_json::json!({
+                "name": "blood_moon",
+                "since_tick": 4096,
+                "global_effect": "qi tides run violent"
+            })),
+            zone_history: BTreeMap::from([(
+                "spawn".to_string(),
+                vec![serde_json::json!({
+                    "name": "spawn",
+                    "spirit_qi": 0.35,
+                    "danger_level": 2,
+                    "active_events": ["blood_moon"],
+                    "player_count": 1
+                })],
+            )]),
+            last_decisions: BTreeMap::from([(
+                "era".to_string(),
+                AgentWorldModelDecisionRecord {
+                    commands: Vec::new(),
+                    narrations: Vec::new(),
+                    reasoning: "era shift persisted for recovery".to_string(),
+                },
+            )]),
+            player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
+            last_tick: Some(4_200),
+            last_state_ts: Some(1_704_067_200),
+        };
+
+        persist_agent_world_model_snapshot(&settings, &snapshot)
+            .expect("agent world model snapshot should persist");
+        let loaded = load_agent_world_model_snapshot(&settings)
+            .expect("agent world model snapshot should load")
+            .expect("agent world model snapshot should exist");
+
+        assert_eq!(loaded, snapshot);
+
+        let connection = Connection::open(settings.db_path()).expect("sqlite db should open");
+        let schema_version: i32 = connection
+            .query_row(
+                "SELECT schema_version FROM agent_world_model WHERE row_id = ?1",
+                params![AGENT_WORLD_MODEL_ROW_ID],
+                |row| row.get(0),
+            )
+            .expect("agent_world_model schema_version should exist");
+        assert_eq!(schema_version, CURRENT_SCHEMA_VERSION);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
