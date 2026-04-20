@@ -77,6 +77,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
     }
 
+    public static void sendPickupDroppedItem(long instanceId) {
+        dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
+    }
+
+    public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
+        dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {
@@ -131,6 +139,14 @@ public final class ClientRequestSender {
 
     public static void sendAlchemyTakePill(String pillItemId) {
         dispatch(ClientRequestProtocol.encodeAlchemyTakePill(pillItemId));
+    }
+
+    public static void sendApplyPill(long instanceId, ClientRequestProtocol.ApplyPillTarget target) {
+        dispatch(ClientRequestProtocol.encodeApplyPill(instanceId, target));
+    }
+
+    public static void sendApplyPillSelf(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
     }
 
     private static void dispatch(String json) {

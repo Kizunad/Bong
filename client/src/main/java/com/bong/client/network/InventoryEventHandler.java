@@ -3,6 +3,7 @@ package com.bong.client.network;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -29,6 +30,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
     private record ContainerLoc(String containerId, int row, int col) implements Location {}
     private record EquipLoc(EquipSlotType slot) implements Location {}
     private record HotbarLoc(int index) implements Location {}
+    private record WorldPos(double x, double y, double z) {}
 
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
@@ -70,6 +72,28 @@ public final class InventoryEventHandler implements ServerDataHandler {
                         "Ignoring inventory_event 'moved' payload: invalid from/to location");
                 }
                 next = applyMoved(current, instanceId, from, to);
+            }
+            case "dropped" -> {
+                Location from = parseLocation(readRequiredObject(payload, "from"));
+                WorldPos worldPos = parseWorldPos(readRequiredArray(payload, "world_pos"));
+                InventoryItem droppedItem = parseInventoryItem(readRequiredObject(payload, "item"));
+                if (from == null || worldPos == null || droppedItem == null || droppedItem.instanceId() != instanceId) {
+                    return ServerDataDispatch.noOp(envelope.type(),
+                        "Ignoring inventory_event 'dropped' payload: invalid from/world_pos/item payload");
+                }
+                if (from instanceof ContainerLoc loc) {
+                    DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+                        instanceId,
+                        loc.containerId(),
+                        loc.row(),
+                        loc.col(),
+                        worldPos.x(),
+                        worldPos.y(),
+                        worldPos.z(),
+                        droppedItem
+                    ));
+                }
+                next = applyDropped(current, instanceId);
             }
             case "stack_changed" -> {
                 Long stackCount = readRequiredLong(payload, "stack_count");
@@ -127,6 +151,12 @@ public final class InventoryEventHandler implements ServerDataHandler {
         if (item == null) return null;
         InventoryItem replacement = transform.apply(item);
         return rebuildWith(current, instanceId, replacement, null, null);
+    }
+
+    private static InventoryModel applyDropped(InventoryModel current, long instanceId) {
+        InventoryItem item = findItem(current, instanceId);
+        if (item == null) return null;
+        return rebuildWith(current, instanceId, null, null, null);
     }
 
     /**
@@ -228,6 +258,58 @@ public final class InventoryEventHandler implements ServerDataHandler {
         );
     }
 
+    private static InventoryItem parseInventoryItem(JsonObject itemObject) {
+        if (itemObject == null) return null;
+        Long instanceId = readRequiredLong(itemObject, "instance_id");
+        String itemId = readRequiredString(itemObject, "item_id");
+        String displayName = readRequiredString(itemObject, "display_name");
+        Integer gridWidth = readRequiredInt(itemObject, "grid_width");
+        Integer gridHeight = readRequiredInt(itemObject, "grid_height");
+        Double weight = readRequiredDouble(itemObject, "weight");
+        String rarity = readRequiredString(itemObject, "rarity");
+        String description = readRequiredStringAllowEmpty(itemObject, "description");
+        Integer stackCount = readRequiredInt(itemObject, "stack_count");
+        Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
+        Double durability = readRequiredDouble(itemObject, "durability");
+
+        if (instanceId == null || itemId == null || displayName == null
+            || gridWidth == null || gridHeight == null || weight == null
+            || rarity == null || description == null || stackCount == null
+            || spiritQuality == null || durability == null
+            || gridWidth < 1 || gridHeight < 1 || weight < 0.0 || stackCount < 1
+            || spiritQuality < 0.0 || spiritQuality > 1.0
+            || durability < 0.0 || durability > 1.0) {
+            return null;
+        }
+
+        return InventoryItem.createFull(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability
+        );
+    }
+
+    private static WorldPos parseWorldPos(com.google.gson.JsonArray array) {
+        if (array == null || array.size() != 3) {
+            return null;
+        }
+        Double x = readRequiredDouble(array.get(0));
+        Double y = readRequiredDouble(array.get(1));
+        Double z = readRequiredDouble(array.get(2));
+        if (x == null || y == null || z == null) {
+            return null;
+        }
+        return new WorldPos(x, y, z);
+    }
+
     // ─── Location parsing ───────────────────────────────────────────────────
 
     private static Location parseLocation(JsonObject obj) {
@@ -300,6 +382,26 @@ public final class InventoryEventHandler implements ServerDataHandler {
         return Double.isFinite(value) ? value : null;
     }
 
+    private static Double readRequiredDouble(JsonElement element) {
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isNumber()) {
+            return null;
+        }
+        double value = primitive.getAsDouble();
+        return Double.isFinite(value) ? value : null;
+    }
+
+    private static com.google.gson.JsonArray readRequiredArray(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonArray()) {
+            return null;
+        }
+        return element.getAsJsonArray();
+    }
+
     private static Long readRequiredLong(JsonObject object, String fieldName) {
         JsonElement element = object.get(fieldName);
         if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
@@ -328,5 +430,27 @@ public final class InventoryEventHandler implements ServerDataHandler {
         }
 
         return value;
+    }
+
+    private static String readRequiredStringAllowEmpty(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isString()) {
+            return null;
+        }
+
+        return primitive.getAsString();
+    }
+
+    private static Integer readRequiredInt(JsonObject object, String fieldName) {
+        Long value = readRequiredLong(object, fieldName);
+        if (value == null || value > Integer.MAX_VALUE) {
+            return null;
+        }
+        return value.intValue();
     }
 }

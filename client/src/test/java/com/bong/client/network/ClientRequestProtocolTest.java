@@ -48,6 +48,74 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesApplyPillSelf() {
+        String json = ClientRequestProtocol.encodeApplyPillSelf(1001L);
+        assertEquals(
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1001,\"target\":{\"kind\":\"self\"}}",
+            json
+        );
+    }
+
+    @Test
+    void encodesApplyPillMeridianTarget() {
+        String json = ClientRequestProtocol.encodeApplyPill(
+            2002L,
+            new ClientRequestProtocol.MeridianTarget(ClientRequestProtocol.MeridianId.Ren)
+        );
+        assertEquals(
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":2002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"Ren\"}}",
+            json
+        );
+    }
+
+    @Test
+    void encodesInventoryMoveFromContainerToHotbar() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            1001L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.HotbarLoc(3)
+        );
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
+            json
+        );
+    }
+
+    @Test
+    void encodesInventoryMoveFromEquipToContainer() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            2002L,
+            new ClientRequestProtocol.EquipLoc("main_hand"),
+            new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2)
+        );
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"},\"to\":{\"kind\":\"container\",\"container_id\":\"small_pouch\",\"row\":1,\"col\":2}}",
+            json
+        );
+    }
+
+    @Test
+    void encodesPickupDroppedItem() {
+        String json = ClientRequestProtocol.encodePickupDroppedItem(3003L);
+        assertEquals(
+            "{\"type\":\"pickup_dropped_item\",\"v\":1,\"instance_id\":3003}",
+            json
+        );
+    }
+
+    @Test
+    void encodesInventoryDiscardItem() {
+        String json = ClientRequestProtocol.encodeInventoryDiscardItem(
+            1001L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0)
+        );
+        assertEquals(
+            "{\"type\":\"inventory_discard_item\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0}}",
+            json
+        );
+    }
+
+    @Test
     void meridianIdEnumCoversAll20Channels() {
         // 12 正经 + 8 奇经
         assertEquals(20, ClientRequestProtocol.MeridianId.values().length);

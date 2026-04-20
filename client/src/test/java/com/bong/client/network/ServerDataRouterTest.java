@@ -27,6 +27,7 @@ public class ServerDataRouterTest {
             "cultivation_detail",
             "inventory_snapshot",
             "inventory_event",
+            "dropped_loot_sync",
             // Combat UI handlers (plan-combat-ui §U1–U7).
             "combat_event",
             "status_snapshot",
