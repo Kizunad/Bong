@@ -4872,6 +4872,66 @@ mod persistence_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn persist_termination_transition_sorts_public_index_by_died_at_tick_then_char_id() {
+        let (settings, root) = persistence_settings("deceased-export-index-ordering");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let exports = [
+            ("offline:Crimson", 90_i64),
+            ("offline:Azure", 90_i64),
+            ("offline:Bronze", 77_i64),
+        ];
+
+        for (char_id, died_at_tick) in exports {
+            let life_record = LifeRecord {
+                character_id: char_id.to_string(),
+                created_at: 11,
+                biography: vec![BiographyEntry::Terminated {
+                    cause: "fortune_exhausted".to_string(),
+                    tick: died_at_tick as u64,
+                }],
+                insights_taken: Vec::new(),
+                spirit_root_first: None,
+            };
+            let lifecycle = Lifecycle {
+                character_id: life_record.character_id.clone(),
+                death_count: 1,
+                fortune_remaining: 0,
+                last_death_tick: Some(died_at_tick as u64),
+                last_revive_tick: None,
+                near_death_deadline_tick: None,
+                weakened_until_tick: None,
+                state: crate::combat::components::LifecycleState::Terminated,
+            };
+
+            persist_termination_transition(&settings, &lifecycle, &life_record)
+                .expect("terminated snapshot should persist");
+        }
+
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index json should exist"),
+        )
+        .expect("index json should deserialize");
+
+        assert_eq!(index.len(), 3);
+        assert_eq!(index[0].char_id, "offline:Bronze");
+        assert_eq!(index[0].died_at_tick, 77);
+        assert_eq!(index[0].path, "deceased/offline:Bronze.json");
+
+        assert_eq!(index[1].char_id, "offline:Azure");
+        assert_eq!(index[1].died_at_tick, 90);
+        assert_eq!(index[1].path, "deceased/offline:Azure.json");
+
+        assert_eq!(index[2].char_id, "offline:Crimson");
+        assert_eq!(index[2].died_at_tick, 90);
+        assert_eq!(index[2].path, "deceased/offline:Crimson.json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn sample_npc_life_record(char_id: &str) -> LifeRecord {
         LifeRecord {
             character_id: char_id.to_string(),
