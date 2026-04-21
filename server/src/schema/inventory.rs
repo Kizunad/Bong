@@ -923,6 +923,37 @@ mod tests {
     }
 
     #[test]
+    fn item_view_freshness_legacy_json_missing_frozen_fields_defaults() {
+        // Freshness 字段缺 frozen_accumulated / frozen_since_tick（v0 NBT）
+        // 应经 #[serde(default)] 默认回 0 / None。
+        let json = json!({
+            "instance_id": 42,
+            "item_id": "ling_shi_fan",
+            "display_name": "凡品灵石",
+            "grid_width": 1,
+            "grid_height": 1,
+            "weight": 0.5,
+            "rarity": "common",
+            "description": "",
+            "stack_count": 1,
+            "spirit_quality": 0.7,
+            "durability": 1.0,
+            "freshness": {
+                "created_at_tick": 0,
+                "initial_qi": 8.0,
+                "track": "Decay",
+                "profile": "ling_shi_fan_v1",
+            },
+        });
+
+        let view: InventoryItemViewV1 = serde_json::from_value(json)
+            .expect("legacy Freshness (without frozen_*) must deserialize");
+        let f = view.freshness.expect("freshness should be Some");
+        assert_eq!(f.frozen_accumulated, 0);
+        assert!(f.frozen_since_tick.is_none());
+    }
+
+    #[test]
     fn item_view_freshness_invalid_track_rejected() {
         // 枚举字段必须严格匹配 DecayTrack 三值之一
         let bad = json!({

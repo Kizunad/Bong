@@ -48,9 +48,10 @@ export type DecayTrackV1 = Static<typeof DecayTrackV1>;
 export const FreshnessV1 = Type.Object(
   {
     created_at_tick: SafeIntegerV1,
-    initial_qi: Type.Number(),
+    // initial_qi 必须非负 — shelflife compute_* headroom / exp-decay 公式假设 >= 0
+    initial_qi: Type.Number({ minimum: 0 }),
     track: DecayTrackV1,
-    profile: Type.String(),
+    profile: Type.String({ minLength: 1, maxLength: 128 }),
     frozen_accumulated: Type.Optional(SafeIntegerV1),
     frozen_since_tick: Type.Optional(Type.Union([SafeIntegerV1, Type.Null()])),
   },

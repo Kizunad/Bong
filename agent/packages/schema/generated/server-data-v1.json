@@ -633,6 +633,7 @@
                         "type": "integer"
                       },
                       "initial_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track": {
@@ -652,6 +653,8 @@
                         ]
                       },
                       "profile": {
+                        "minLength": 1,
+                        "maxLength": 128,
                         "type": "string"
                       },
                       "frozen_accumulated": {
@@ -797,6 +800,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -816,6 +820,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -950,6 +956,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -969,6 +976,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1103,6 +1112,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -1122,6 +1132,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1256,6 +1268,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -1275,6 +1288,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1409,6 +1424,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -1428,6 +1444,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1562,6 +1580,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -1581,6 +1600,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1715,6 +1736,7 @@
                           "type": "integer"
                         },
                         "initial_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track": {
@@ -1734,6 +1756,8 @@
                           ]
                         },
                         "profile": {
+                          "minLength": 1,
+                          "maxLength": 128,
                           "type": "string"
                         },
                         "frozen_accumulated": {
@@ -1874,6 +1898,7 @@
                         "type": "integer"
                       },
                       "initial_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track": {
@@ -1893,6 +1918,8 @@
                         ]
                       },
                       "profile": {
+                        "minLength": 1,
+                        "maxLength": 128,
                         "type": "string"
                       },
                       "frozen_accumulated": {
@@ -2485,6 +2512,7 @@
                       "type": "integer"
                     },
                     "initial_qi": {
+                      "minimum": 0,
                       "type": "number"
                     },
                     "track": {
@@ -2504,6 +2532,8 @@
                       ]
                     },
                     "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
                       "type": "string"
                     },
                     "frozen_accumulated": {
@@ -2777,6 +2807,7 @@
                         "type": "integer"
                       },
                       "initial_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track": {
@@ -2796,6 +2827,8 @@
                         ]
                       },
                       "profile": {
+                        "minLength": 1,
+                        "maxLength": 128,
                         "type": "string"
                       },
                       "frozen_accumulated": {
