@@ -243,6 +243,7 @@ mod server_data_tests {
             spirit_quality: 0.5,
             durability: 0.9,
             freshness: None,
+            freshness_current: None,
         }
     }
 
@@ -603,6 +604,7 @@ mod server_data_tests {
                     spirit_quality: 0.5,
                     durability: 1.0,
                     freshness: None,
+                    freshness_current: None,
                 },
             },
         ));

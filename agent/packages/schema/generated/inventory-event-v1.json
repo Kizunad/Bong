@@ -541,6 +541,51 @@
                   ]
                 }
               }
+            },
+            "freshness_current": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "current_qi",
+                "track_state"
+              ],
+              "properties": {
+                "current_qi": {
+                  "type": "number"
+                },
+                "track_state": {
+                  "anyOf": [
+                    {
+                      "const": "Fresh",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Declining",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Dead",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Spoiled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Peaking",
+                      "type": "string"
+                    },
+                    {
+                      "const": "PastPeak",
+                      "type": "string"
+                    },
+                    {
+                      "const": "AgePostPeakSpoiled",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
             }
           }
         }

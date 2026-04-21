@@ -62,6 +62,24 @@ pub struct InventoryItemViewV1 {
     /// 为旧 client snapshot / 未挂 freshness 的物品兼容。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freshness: Option<crate::shelflife::Freshness>,
+    /// plan-shelflife-v1 M3a — 衍生数据（snapshot emit 时由 server 预算，供 client tooltip
+    /// 直接渲染；client 不需要内置 compute_* 逻辑 + DecayProfileRegistry）。
+    /// `None` = freshness 字段缺失 / profile 未在 registry / 无法衍生。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_current: Option<FreshnessDerivedV1>,
+}
+
+/// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
+/// 由 server snapshot emit 时调 `compute_current_qi` + `compute_track_state` 算出，
+/// 塞 InventoryItemViewV1 携带到 client。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FreshnessDerivedV1 {
+    /// 当下灵气 / 真元 / 药力含量。
+    pub current_qi: f32,
+    /// 当下路径机态 — 7 档（Fresh / Declining / Dead / Spoiled / Peaking / PastPeak /
+    /// AgePostPeakSpoiled）。client M3b 由此 + current_qi/initial_qi 比率衍生 5 档显示位。
+    pub track_state: crate::shelflife::TrackState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -740,6 +758,7 @@ mod tests {
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                freshness_current: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -890,6 +909,7 @@ mod tests {
                 frozen_accumulated: 200,
                 frozen_since_tick: Some(1000),
             }),
+            freshness_current: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -913,6 +933,7 @@ mod tests {
             spirit_quality: 0.0,
             durability: 1.0,
             freshness: None,
+            freshness_current: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
