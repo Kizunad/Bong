@@ -3407,7 +3407,7 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
     (year as i32, m as u32, d as u32)
 }
 
-fn scan_orphaned_npc_archives(settings: &PersistenceSettings) -> io::Result<()> {
+fn find_orphaned_npc_archive_paths(settings: &PersistenceSettings) -> io::Result<Vec<PathBuf>> {
     let connection = open_persistence_connection(settings)?;
     let mut statement = connection
         .prepare("SELECT path FROM npc_deceased_index")
@@ -3421,7 +3421,9 @@ fn scan_orphaned_npc_archives(settings: &PersistenceSettings) -> io::Result<()> 
     }
 
     let archive_root = resolve_persistence_relative_path(settings, "data/archive/npc_deceased");
-    let archive_files = collect_files_with_suffix(&archive_root, ".json.zst")?;
+    let mut archive_files = collect_files_with_suffix(&archive_root, ".json.zst")?;
+    archive_files.sort();
+    let mut orphaned = Vec::new();
     for archive_file in archive_files {
         let Ok(relative_path) = archive_file.strip_prefix(
             archive_root
@@ -3438,11 +3440,19 @@ fn scan_orphaned_npc_archives(settings: &PersistenceSettings) -> io::Result<()> 
             format!("data/{normalized}")
         };
         if !indexed_paths.contains(&normalized) {
-            tracing::warn!(
-                "[bong][persistence] orphaned npc archive without sqlite index: {}",
-                archive_file.display()
-            );
+            orphaned.push(archive_file);
         }
+    }
+
+    Ok(orphaned)
+}
+
+fn scan_orphaned_npc_archives(settings: &PersistenceSettings) -> io::Result<()> {
+    for archive_file in find_orphaned_npc_archive_paths(settings)? {
+        tracing::warn!(
+            "[bong][persistence] orphaned npc archive without sqlite index: {}",
+            archive_file.display()
+        );
     }
 
     Ok(())
@@ -6179,6 +6189,81 @@ mod persistence_tests {
                 utc_year_from_unix_seconds(archive.archived_at_wall),
                 archive.char_id
             )
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_orphaned_npc_archive_paths_reports_unindexed_archives() {
+        let (settings, root) = persistence_settings("npc-archive-orphan-scan");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let indexed_capture = sample_npc_capture("npc_archive_indexed");
+        persist_npc_capture(&settings, &indexed_capture)
+            .expect("indexed capture should persist before archive");
+        let indexed_archive = NpcDeceasedArchiveRecord {
+            char_id: indexed_capture.state.char_id.clone(),
+            archetype: indexed_capture.state.archetype.clone(),
+            died_at_tick: 901,
+            archived_at_wall: 1_704_067_400,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(indexed_capture.state.clone()),
+            digest: Some(indexed_capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(
+                indexed_capture.state.char_id.as_str(),
+            )),
+        };
+        persist_npc_deceased_archive(&settings, &indexed_archive)
+            .expect("indexed archive should persist");
+
+        let orphan_capture = sample_npc_capture("npc_archive_orphan");
+        persist_npc_capture(&settings, &orphan_capture)
+            .expect("orphan capture should persist before archive");
+        let orphan_archive = NpcDeceasedArchiveRecord {
+            char_id: orphan_capture.state.char_id.clone(),
+            archetype: orphan_capture.state.archetype.clone(),
+            died_at_tick: 902,
+            archived_at_wall: 1_704_067_500,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 2,
+            state: Some(orphan_capture.state.clone()),
+            digest: Some(orphan_capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(
+                orphan_capture.state.char_id.as_str(),
+            )),
+        };
+        persist_npc_deceased_archive(&settings, &orphan_archive)
+            .expect("orphan archive should persist before index deletion");
+
+        let orphan_path = npc_deceased_archive_absolute_path(
+            &settings,
+            orphan_archive.char_id.as_str(),
+            orphan_archive.archived_at_wall,
+        );
+        let indexed_path = npc_deceased_archive_absolute_path(
+            &settings,
+            indexed_archive.char_id.as_str(),
+            indexed_archive.archived_at_wall,
+        );
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        connection
+            .execute(
+                "DELETE FROM npc_deceased_index WHERE char_id = ?1",
+                params![orphan_archive.char_id.as_str()],
+            )
+            .expect("test should delete orphan index row");
+
+        let orphaned =
+            find_orphaned_npc_archive_paths(&settings).expect("orphan scan helper should succeed");
+        scan_orphaned_npc_archives(&settings).expect("orphan scan entrypoint should succeed");
+
+        assert_eq!(orphaned, vec![orphan_path]);
+        assert!(
+            indexed_path.exists(),
+            "indexed archive fixture should remain on disk"
         );
 
         let _ = fs::remove_dir_all(root);
