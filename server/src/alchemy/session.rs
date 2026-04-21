@@ -28,7 +28,7 @@ pub enum Intervention {
     AutoProfile(String),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StagedMaterials {
     /// material → count（累积全阶段）
     pub materials: HashMap<String, u32>,
@@ -36,6 +36,31 @@ pub struct StagedMaterials {
     pub completed_stages: Vec<usize>,
     /// 错过的阶段 index。
     pub missed_stages: Vec<usize>,
+    /// plan-shelflife-v1 §5.1 M5c — 当下 current_qi 聚合（所有投入的 weighted average）。
+    /// 1.0 = 所有材料全鲜；0.5 = 整体半衰；0.0 = 全死物。
+    /// 无 freshness 物品 caller 传 factor=1.0 保持原行为。
+    /// 默认 1.0 用于 legacy 持久化兼容。
+    #[serde(default = "default_quality_factor")]
+    pub quality_factor: f32,
+    /// 累积投入总数（running weighted average 分母）。
+    #[serde(default)]
+    pub quality_total_count: u32,
+}
+
+fn default_quality_factor() -> f32 {
+    1.0
+}
+
+impl Default for StagedMaterials {
+    fn default() -> Self {
+        Self {
+            materials: HashMap::new(),
+            completed_stages: Vec::new(),
+            missed_stages: Vec::new(),
+            quality_factor: 1.0,
+            quality_total_count: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,11 +106,15 @@ impl AlchemySession {
 
     /// plan §1.3 投料记录 — 起炉投料（stage0）或中途投料。
     /// 返回 Err 若投料时机超窗（missed）。
+    ///
+    /// M5c：`materials` 每项 `(name, count, quality_factor)` — `quality_factor` 是
+    /// `shelflife::decay_current_qi_factor` 结果（无 Freshness / 凡俗物品 caller 传 1.0）。
+    /// 投入累加到 `staged.quality_factor` 的 running weighted average（by count）。
     pub fn feed_stage(
         &mut self,
         recipe: &Recipe,
         stage_idx: usize,
-        materials: &[(String, u32)],
+        materials: &[(String, u32, f32)],
     ) -> Result<(), String> {
         let stage = recipe
             .stages
@@ -101,8 +130,17 @@ impl AlchemySession {
                 "stage {stage_idx} window missed: tick={tick} window=[{start},{end}]"
             ));
         }
-        for (mat, count) in materials {
+        for (mat, count, factor) in materials {
             *self.staged.materials.entry(mat.clone()).or_insert(0) += *count;
+            // M5c — update running weighted average：acc_new = (acc_prev × n_prev + factor × count) / n_new
+            let prev_total = self.staged.quality_total_count;
+            let new_total = prev_total.saturating_add(*count);
+            if new_total > 0 {
+                let prev_sum = (self.staged.quality_factor as f64) * (prev_total as f64);
+                let add_sum = (*factor as f64) * (*count as f64);
+                self.staged.quality_factor = ((prev_sum + add_sum) / (new_total as f64)) as f32;
+                self.staged.quality_total_count = new_total;
+            }
         }
         if !self.staged.completed_stages.contains(&stage_idx) {
             self.staged.completed_stages.push(stage_idx);
@@ -218,7 +256,7 @@ mod tests {
     fn feed_stage0_on_start_succeeds() {
         let r = simple_single_stage_recipe();
         let mut s = AlchemySession::new(r.id.clone(), "alice".into());
-        s.feed_stage(&r, 0, &[("m".into(), 1)]).unwrap();
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
         assert_eq!(s.staged.materials["m"], 1);
         assert_eq!(s.staged.completed_stages, vec![0]);
     }
@@ -231,7 +269,7 @@ mod tests {
         for _ in 0..20 {
             s.tick();
         }
-        let err = s.feed_stage(&r, 1, &[("n".into(), 1)]);
+        let err = s.feed_stage(&r, 1, &[("n".into(), 1, 1.0)]);
         assert!(err.is_err());
         assert_eq!(s.staged.missed_stages, vec![1]);
     }
@@ -251,7 +289,7 @@ mod tests {
     fn perfect_run_end_to_end() {
         let r = simple_single_stage_recipe();
         let mut s = AlchemySession::new(r.id.clone(), "alice".into());
-        s.feed_stage(&r, 0, &[("m".into(), 1)]).unwrap();
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.5));
         s.apply_intervention(Intervention::InjectQi(5.0));
         for _ in 0..10 {
@@ -265,7 +303,7 @@ mod tests {
     fn missed_stage_produces_flawed_or_worse() {
         let r = multi_stage_recipe();
         let mut s = AlchemySession::new(r.id.clone(), "alice".into());
-        s.feed_stage(&r, 0, &[("m".into(), 1)]).unwrap();
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.5));
         s.apply_intervention(Intervention::InjectQi(5.0));
         for _ in 0..10 {
@@ -283,7 +321,7 @@ mod tests {
     fn qi_deficit_routes_to_waste() {
         let r = simple_single_stage_recipe();
         let mut s = AlchemySession::new(r.id.clone(), "alice".into());
-        s.feed_stage(&r, 0, &[("m".into(), 1)]).unwrap();
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.5));
         // no qi injected
         for _ in 0..10 {
@@ -296,7 +334,7 @@ mod tests {
     fn severe_overheat_explodes() {
         let r = simple_single_stage_recipe();
         let mut s = AlchemySession::new(r.id.clone(), "alice".into());
-        s.feed_stage(&r, 0, &[("m".into(), 1)]).unwrap();
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
         s.apply_intervention(Intervention::InjectQi(5.0));
         s.apply_intervention(Intervention::AdjustTemp(1.0)); // 远超 target 0.5, band 0.1
         for _ in 0..10 {
