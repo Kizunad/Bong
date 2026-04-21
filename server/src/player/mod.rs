@@ -12,9 +12,9 @@ use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
-    Added, App, Changed, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId,
-    GameMode, IntoSystemConfigs, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
-    VisibleChunkLayer, VisibleEntityLayers, With, Without,
+    Added, App, AppExit, Changed, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId,
+    EventReader, GameMode, IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res,
+    ResMut, Update, Username, VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
@@ -60,6 +60,7 @@ pub fn register(app: &mut App) {
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
+    app.add_systems(Last, flush_connected_players_on_shutdown);
 }
 
 pub fn spawn_position() -> [f64; 3] {
@@ -198,6 +199,36 @@ fn despawn_disconnected_clients(
         tracing::info!("[bong][player] cleaning up disconnected client entity {entity:?}");
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.insert(Despawned);
+        }
+    }
+}
+
+fn flush_connected_players_on_shutdown(
+    persistence: Res<PlayerStatePersistence>,
+    mut app_exit: EventReader<AppExit>,
+    players: Query<(&Username, &PlayerState, &Position, Option<&PlayerInventory>), With<Client>>,
+) {
+    if app_exit.read().next().is_none() {
+        return;
+    }
+
+    for (username, player_state, position, player_inventory) in &players {
+        match save_player_slices(
+            &persistence,
+            username.0.as_str(),
+            player_state,
+            position_to_array(position),
+            player_inventory,
+        ) {
+            Ok(path) => tracing::info!(
+                "[bong][player] saved player slices for shutdown flush `{}` to {}",
+                username.0,
+                path.display()
+            ),
+            Err(error) => tracing::warn!(
+                "[bong][player] failed to save player slices during shutdown flush for `{}`: {error}",
+                username.0,
+            ),
         }
     }
 }
@@ -612,6 +643,57 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn shutdown_flush_persists_connected_player_slices_without_disconnect() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("shutdown-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::default();
+        app.insert_resource(persistence);
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            realm: "qi_refining_5".to_string(),
+            spirit_qi: 91.0,
+            spirit_qi_max: 140.0,
+            karma: 0.33,
+            experience: 3_200,
+            inventory_score: 0.85,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score) =
+            read_core_snapshot(&db_path);
+        let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
+        let inventory_json = read_inventory_json(&db_path);
+
+        assert_eq!(realm, "qi_refining_5");
+        assert_eq!(spirit_qi, 91.0);
+        assert_eq!(spirit_qi_max, 140.0);
+        assert_eq!(karma, 0.33);
+        assert_eq!(experience, 3_200);
+        assert_eq!(inventory_score, 0.85);
+        assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
+        assert_ne!(
+            serde_json::from_str::<serde_json::Value>(&inventory_json)
+                .expect("inventory_json should decode"),
+            serde_json::Value::Null
+        );
+        assert!(
+            app.world().get::<Client>(entity).is_some(),
+            "shutdown flush should persist while the player is still connected"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
