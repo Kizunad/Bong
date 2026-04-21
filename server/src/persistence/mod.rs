@@ -4785,6 +4785,93 @@ mod persistence_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn persist_termination_transition_rewrites_existing_public_index_entry_for_same_char() {
+        let (settings, root) = persistence_settings("deceased-export-rewrite");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let first_life_record = LifeRecord {
+            character_id: "offline:Ancestor".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            insights_taken: Vec::new(),
+            spirit_root_first: None,
+        };
+        let first_lifecycle = Lifecycle {
+            character_id: first_life_record.character_id.clone(),
+            death_count: 3,
+            fortune_remaining: 0,
+            last_death_tick: Some(77),
+            last_revive_tick: Some(55),
+            near_death_deadline_tick: None,
+            weakened_until_tick: None,
+            state: crate::combat::components::LifecycleState::Terminated,
+        };
+        persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
+            .expect("first terminated snapshot should persist");
+
+        let second_life_record = LifeRecord {
+            character_id: "offline:Ancestor".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "tribulation_aftershock".to_string(),
+                tick: 99,
+            }],
+            insights_taken: Vec::new(),
+            spirit_root_first: None,
+        };
+        let second_lifecycle = Lifecycle {
+            character_id: second_life_record.character_id.clone(),
+            death_count: 4,
+            fortune_remaining: 0,
+            last_death_tick: Some(99),
+            last_revive_tick: Some(55),
+            near_death_deadline_tick: None,
+            weakened_until_tick: None,
+            state: crate::combat::components::LifecycleState::Terminated,
+        };
+        persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
+            .expect("second terminated snapshot should overwrite export");
+
+        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
+        )
+        .expect("snapshot json should deserialize");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index json should exist"),
+        )
+        .expect("index json should deserialize");
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let (died_at_tick, public_path): (i64, String) = connection
+            .query_row(
+                "SELECT died_at_tick, public_path FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Ancestor"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("deceased snapshot row should exist");
+
+        assert_eq!(snapshot.char_id, "offline:Ancestor");
+        assert_eq!(snapshot.died_at_tick, 99);
+        assert!(matches!(
+            snapshot.life_record.biography.last(),
+            Some(BiographyEntry::Terminated { tick: 99, .. })
+        ));
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].char_id, "offline:Ancestor");
+        assert_eq!(index[0].died_at_tick, 99);
+        assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(died_at_tick, 99);
+        assert_eq!(public_path, "deceased/offline:Ancestor.json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn sample_npc_life_record(char_id: &str) -> LifeRecord {
         LifeRecord {
             character_id: char_id.to_string(),
