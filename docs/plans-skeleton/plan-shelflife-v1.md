@@ -2,7 +2,7 @@
 
 **通用保质期 / 过期系统**（原 `plan-volatility-v1`，升格扩展）。末法时代一切都在衰败，但**陈化酒**、**老坛丹**等上古封印产物反例 = 时间亦可积淀。本 plan 以**一套 NBT + 一套 lazy eval** 承载三条不同降级路径，供所有"有时间敏感性"的物品（矿物 / 兽产 / 草药 / 丹药 / 食物 / 工艺品）import。
 
-**世界观锚点**：`worldview.md §63`（末法命名 — 一切物品带衰败意象）· `worldview.md §518`（骨币封印真元 — 陈化/冻结的正例）· `worldview.md §六 557`（矿脉有限 — 消费侧衰败放大稀缺）· `worldview.md §九 429`（鲸落遗骸 — 时间尺度极长的封印陈化意象）。
+**世界观锚点**：`worldview.md L63`（末法命名 — 一切物品带衰败意象）· `worldview.md §六 L518`（骨币封印真元 — 陈化/冻结的正例）· `worldview.md §六 L557`（矿脉有限 — 消费侧衰败放大稀缺）· `worldview.md §九 L429`（鲸落遗骸 — 时间尺度极长的封印陈化意象）。
 
 **交叉引用**：
 - `plan-mineral-v1.md`（灵石走 Decay 路径）
@@ -33,10 +33,16 @@
 
 ### 0.3 结构原则
 
-- [ ] **lazy evaluation** — 不逐 tick 扫库存，访问时现算（inspect / 消费 / UI snapshot）
+- [ ] **lazy evaluation** — 不逐 tick 扫库存，访问时现算（inspect / 消费 / UI snapshot），具体 access 点枚举见 §6.1
 - [ ] **封印 = 冻结全路径** — 阵法护匣对 Decay/Spoil/Age 一律暂停，适用于骨币续印 / 药店封存样品
 - [ ] **神识感知按路径显示不同语义**（§4）
 - [ ] **消费侧后果按路径分支**（§5）
+
+### 0.4 与 inventory plan 的边界约定
+
+- [ ] **本 plan 定义**：`Freshness` NBT struct + `DecayProfile` registry + `compute_*` 纯函数 + `ContainerFreshnessBehavior` enum + Probe / Warning / BonusRoll 三个 event
+- [ ] **`plan-inventory-v1` 实现**：在 `InventoryItem` struct 加 `freshness: Option<Freshness>` 字段（`#[serde(default)]`）；在 `Container` trait 实现层加 `freshness_behavior() -> ContainerFreshnessBehavior` 方法
+- [ ] **不允许的循环**：本 plan 不引用 `InventoryItem` / `Container` 的具体类型，只定义 trait / data struct，避免 inventory ↔ shelflife 互依
 
 ---
 
@@ -86,8 +92,9 @@ else:
 
 - 路径：Age
 - 用于：陈酒、老坛丹、陈年灵茶
-- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, `post_peak_half_life`
-- 物理意象：灌入灵气 / 药性随时间析出成熟，过峰则封印失效开始外泄
+- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, `post_peak_half_life`, **`post_peak_spoil_threshold`**（current_qi 跌至此值时强制路径迁移 Age → Spoil）, **`post_peak_spoil_profile`**（迁移后用哪个 Spoil profile）
+- 物理意象：灌入灵气 / 药性随时间析出成熟，过峰则封印失效开始外泄；外泄到一定程度变质腐败（陈酒 → 醋 → 毒）
+- **路径迁移规则**：当 `current_qi < post_peak_spoil_threshold` 时，`Freshness.track` 由 `Age` 改为 `Spoil`，`profile` 改为 `post_peak_spoil_profile`，`created_at_tick` 重置为迁移当下 tick（重新开始 Spoil 的衰减计时）— 实装在 §6 lazy eval 的访问点统一处理
 
 ---
 
@@ -127,8 +134,20 @@ pub struct DecayProfile {
     pub floor_qi: f32,              // Decay 路径的"死物残值"
     pub spoil_threshold: Option<f32>, // Spoil 路径：低于此值判腐败
     pub peak_bonus_cap: Option<f32>,  // Age 路径：峰值上限
+    pub post_peak_spoil_threshold: Option<f32>, // Age 路径：触发 → Spoil 迁移的阈值
+    pub post_peak_spoil_profile: Option<DecayProfileId>, // Age 路径：迁移后挂的 Spoil profile
 }
 ```
+
+> **注**：v1 用 Option struct 是为骨架阶段速成。M0 实装可重构为 enum 分支：
+> ```rust
+> pub enum DecayProfile {
+>   Decay { formula, params, floor_qi },
+>   Spoil { formula, params, spoil_threshold, contam_kind },
+>   Age { formula, params, peak_bonus_cap, post_peak_spoil_threshold, post_peak_spoil_profile },
+> }
+> ```
+> 决策延后到 §10 开放问题。
 
 ---
 
@@ -183,32 +202,63 @@ pub struct DecayProfile {
 
 ## §6 tick 架构（lazy eval）
 
+### 6.1 核心原则 + access-time 枚举
+
 - [ ] **核心原则**：不开后台 tick 扫描全库存。衰减是**函数**不是**状态**，需要时现算
-- [ ] **热点**：access-time 计算 + 容器进出时记账
-- [ ] **批量查询优化**：inventory snapshot emit 时一次算好所有 item 的 `current_qi` + `track_state`，塞 client payload
-- [ ] **持久化**（归 `plan-persistence-v1`）：存 `created_at_tick` + `frozen_accumulated` + `track` + `profile_id`，不存 `current_qi`（下次开档即时算）
-- [ ] **死物 / 腐败 / 过峰**也按 lazy eval — 访问到时再做 item ID 变体切换（`ling_shi` → `dead_ling_shi` / `bone_coin` → `rotten_bone_coin` / `chen_jiu` → `chen_cu` 等）
+- [ ] **完整 access-time 枚举**（M0 必须穷尽以下事件触发 lazy compute + 状态迁移）：
+  1. **Inventory snapshot emit**（默认每 N tick / item 变化时）— 批量算 `current_qi` + `track_state` 塞 client payload
+  2. **Consume intent**（alchemy / forge / 修炼吸收 / 食用 / 骨币交易）— 取当下值参与 §5 分支处理
+  3. **`FreshnessProbeIntent`**（神识感知请求）— 算 + 返回精度按修为分档
+  4. **Container in / out 事件** — 记 `frozen_accumulated`（封印冻结路径）
+  5. **Death drop / pickup** — item entity 落地时算一次（裸露 biome 修饰开始计入），拾取回 inventory 时算一次
+  6. **Item transfer**（玩家→玩家 / 玩家→容器）— 算一次 + 进出容器记账
+  7. **Server tick boundary 200**（与 worldstate publish 同节拍） — 全局 sweep 触发**只对**`track_state` 边界跨越的 item 做 ID 变体切换（见 §6.3），其它 item 不触
+
+### 6.2 批量查询优化
+
+- [ ] **inventory snapshot emit** 一次性算好所有 item 的 `current_qi` + `track_state` + `predicted_event`
+- [ ] **持久化**（归 `plan-persistence-v1`）：存 `created_at_tick` + `frozen_accumulated` + `track` + `profile_id`，**不**存 `current_qi`（下次开档即时算）
+
+### 6.3 死物 / 腐败 / 过峰 item ID 变体策略
+
+> v1 不做"所有 Decay 物品都注册死变体"（N×2 物品膨胀）。仅对**经济意义大**的物品做变体切换：
+
+| 物品 | track | 触发条件 | 变体后 item ID |
+|---|---|---|---|
+| `ling_shi_*` | Decay | `current_qi <= floor_qi` | `dead_ling_shi_*`（仍可走 botany 堆肥 / alchemy 杂料） |
+| `骨币` | Decay | `current_qi <= floor_qi` | `rotten_bone_coin`（次级市场回收） |
+| `兽肉` / `兽血` | Spoil | `current_qi < spoil_threshold` | NBT `is_spoiled = true`（**不**换 item ID，由 NBT 标识；消费时按 §5.2 校验） |
+| `常规丹药` | Spoil | 同上 | NBT `is_spoiled = true`（同上） |
+| `老坛灵丹` | Age 迁 Spoil | 见 §1.4 路径迁移 | NBT 同上，无 item ID 切换 |
+| `陈酒` | Age 迁 Spoil | 同上 | `chen_cu`（陈酒 → 醋）这种**有文化语义**的特例做 item ID 切换；普通 Age 物品只换 NBT |
+
+- [ ] **决策原则**：item ID 切换仅当**有独立经济市场 / 文化命名**才做（死灵石、腐骨币、陈醋）；否则用 NBT 内部状态表示
+- [ ] **lazy 触发**：变体切换在上述 access-time 第 5/6/7 条触发；不在 §6.1 第 1-4 条切（避免渲染时直接换物品 ID 带来的 Bevy ECS 混乱）
 
 ---
 
 ## §7 跨 plan 钩子表
 
+> **半衰期数值是建议骨架值，不是真实物理**。游戏化简化：兽肉真实常温 4-8h 就坏，本表 1d 是为玩家体验调慢；陈酒 365d 真实合理但玩家时间预算紧 — 实施时按 **"游戏内时间 vs 现实时间"换算**重新调（建议 1 现实日 = 游戏内 N 日，参数 N 由 cultivation/agent 时间系统决定）。所有数字 M5 联调时按实际玩家行为再校。
+
 | 消费 plan | 物品 | 路径 | 公式 + 参数建议 |
 |---|---|---|---|
-| `plan-mineral-v1` | `ling_shi` | Decay | Exponential, half_life ≈ 3 real-days |
-| `plan-mineral-v1` | `dan_sha` / `zhu_sha` | Decay | Exponential, half_life ≈ 60 days |
+| `plan-mineral-v1` | `ling_shi_fan/zhong/shang/yi` | Decay | Exp, half_life 3/5/7/14 days（按品阶递增） |
+| `plan-mineral-v1` | `dan_sha` / `zhu_sha` | Decay | Exp, half_life ≈ 60 days |
 | `plan-fauna-v1` | `骨币` | Decay | Linear, ~1y 完全衰减（需续印） |
-| `plan-fauna-v1` | `兽血` | **Spoil** | Exponential, half_life ≈ 12 real-hours |
-| `plan-fauna-v1` | `兽肉` | **Spoil** | Exponential, half_life ≈ 1 real-day |
-| `plan-fauna-v1` | `内丹` / `血精` | 混合 | Decay + Spoil 复合（内丹 7d Decay 后进 Spoil） |
-| `plan-botany-v1` | 鲜草药 | **Spoil** | Exponential, half_life ≈ 2 real-days |
+| `plan-fauna-v1` | `兽血` | **Spoil** | Exp, half_life ≈ 12 real-hours |
+| `plan-fauna-v1` | `兽肉` | **Spoil** | Exp, half_life ≈ 1 real-day |
+| `plan-fauna-v1` | `内丹` / `血精` | Age→Spoil 迁 | PeakAndFall, peak ≈ 7d, post_peak_spoil_threshold ≈ 0.3 → 自动迁 Spoil |
+| `plan-botany-v1` | 鲜草药 | **Spoil** | Exp, half_life ≈ 2 real-days |
 | `plan-botany-v1` | 阴干草药 | Decay | Stepwise（容器挂钩） |
 | `plan-botany-v1` | 陈年灵茶 | **Age** | PeakAndFall, peak ≈ 90d |
-| `plan-alchemy-v1` | 常规丹药 | **Spoil** | Exponential, half_life ≈ 30 real-days |
+| `plan-alchemy-v1` | 常规丹药 | **Spoil** | Exp, half_life ≈ 30 real-days |
 | `plan-alchemy-v1` | 老坛灵丹 | **Age** | PeakAndFall, peak ≈ 180d |
-| `plan-food-v1` | 凡俗食物 | **Spoil** | Exponential, half_life ≈ 3 days |
+| `plan-alchemy-v1` | 丹方残卷 | Decay | Linear, ~500 days（v2+ 是否做调参） |
+| `plan-food-v1` | 凡俗食物 | **Spoil** | Exp, half_life ≈ 3 days |
 | `plan-food-v1` | 陈酒 / 陈醋 | **Age** | PeakAndFall, peak ≈ 365d |
-| `plan-forge-v1` | 图谱残卷 | Decay | Linear, 1000+ days |
+| `plan-forge-v1` | 图谱残卷 | Decay | Linear, ~1000+ days（仅装饰怀古，可考虑去除） |
+| `plan-cultivation-v1` | 灵石作修炼燃料 | — | 不挂自己的 profile，按当下 `current_qi` 吸收（cultivation plan 需自家 blessing 加入"烧灵石"机制） |
 
 ---
 
@@ -246,15 +296,17 @@ pub struct DecayProfile {
 
 ## §10 开放问题
 
-- [ ] **半衰期数值正式调参**：§7 表只是骨架建议，需 M5 联调按实际玩家行为测
-- [ ] **陈化物的最佳消费窗口 UX**：Age 路径的"巅峰"提示是硬通知 / 可忽略？过峰直接降级还是有渡期？
-- [ ] **Spoil → Age 的二次降级**：陈酒过峰变 Spoil 是否自动还是玩家选择（"陈酿"vs"做旧失败"）
-- [ ] **骨币续印成本**：worldview §518 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置
-- [ ] **冻结区间记账并发**：玩家同 tick 多次进出容器 — 需要事件合流 + idempotent key
-- [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修粒度差是否太大？
-- [ ] **死物 / 腐败 / 过峰 的次级经济**：死灵石 / 腐骨币 / 败药粉 / 过老酒 是否自成市场（ragpickers / 垃圾收购商 / 腐料炼毒）— 归 `plan-economy-v1`
-- [ ] **biome 修饰与裸露 item 的实现**：worldgen biome 边界跨越是按 tick 采样还是纯 lazy-on-read — 倾向后者，简单且一致
-- [ ] **内丹 / 血精的混合路径**：Decay 期内稳定储能 → 到期转 Spoil — 这是用两个 profile 接力还是单一复合 profile 表达？实装时决定
+- [ ] **半衰期数值正式调参 + 时间换算**：§7 表只是骨架建议，需 M5 联调按实际玩家行为测；同时定义"1 现实日 = N 游戏日"的换算（与 cultivation/agent 时间系统协调）
+- [ ] **陈化物的最佳消费窗口 UX**：Age 路径的"巅峰"提示是硬通知（dialog 中断）还是软提示（HUD 角标）？玩家是否可关闭通知？
+- [ ] **DecayProfile spec：Option struct vs enum 分支**（§2.2 注）：M0 实装决策。enum 更类型安全；Option 更兼容序列化。倾向 enum
+- [ ] **骨币续印成本**：worldview §六 L518 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置 / `created_at_tick` 是否归零
+- [ ] **冻结区间记账并发**：玩家同 tick 多次进出容器 — 需要事件合流 + idempotent key（`(item_uuid, tick)` 去重）
+- [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修粒度差是否太大？是否加 4 阶（练气/凝脉/固元/化虚）
+- [ ] **死物 / 腐败 / 过峰 的次级经济**：死灵石 / 腐骨币 / 败药粉 / 陈醋 是否自成市场（ragpickers / 垃圾收购商 / 腐料炼毒）— 归 `plan-economy-v1`
+- [ ] **biome 修饰与裸露 item 的实现**：worldgen biome 边界跨越是按 tick 采样还是纯 lazy-on-read — 倾向后者（§6.1 第 5 条 death drop / pickup 计入），简单且一致
+- [ ] **cultivation plan blessing 灵石燃料**：cultivation 现无"烧灵石作修炼燃料"机制，需该 plan 独立 PR 加入消费路径，本 plan 才能落地灵石的实际用途
+- [ ] **forge 图谱残卷是否真需 Decay**：1000+ days 几乎无影响，仅装饰怀古意象 — 是否取消该挂钩简化 v1 范围
+- [ ] **`SpoilConsumeWarning` 事件的客户端 UX 通道**：拒绝自动消费 + 二次确认走 dialog 还是 chat 提示 + 命令？（与 `plan-HUD-v1` 协调）
 
 ---
 
