@@ -1158,6 +1158,35 @@ pub fn inventory_item_by_instance(
     clone_item_at(inventory, instance_id)
 }
 
+/// Borrow-only 版本 — 返回 `&ItemInstance` 引用，避免 clone_item_at 的 ~5-6 次
+/// String heap alloc。用于只读消费者（如 shelflife probe resolver），不需要把
+/// item 搬出 inventory 的场景。
+pub fn inventory_item_by_instance_borrow(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<&ItemInstance> {
+    for c in &inventory.containers {
+        if let Some(p) = c
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == instance_id)
+        {
+            return Some(&p.instance);
+        }
+    }
+    for item in inventory.equipped.values() {
+        if item.instance_id == instance_id {
+            return Some(item);
+        }
+    }
+    for item in inventory.hotbar.iter().flatten() {
+        if item.instance_id == instance_id {
+            return Some(item);
+        }
+    }
+    None
+}
+
 pub fn consume_item_instance_once(
     inventory: &mut PlayerInventory,
     instance_id: u64,
@@ -2992,5 +3021,82 @@ cols = 4
         app.update();
 
         assert!(app.world().get::<OverloadedMarker>(entity).is_none());
+    }
+
+    // =========== inventory_item_by_instance_borrow (M4 optimization) ===========
+
+    fn make_test_item_instance(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: "test".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        }
+    }
+
+    fn make_empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: Vec::new(),
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        }
+    }
+
+    #[test]
+    fn borrow_helper_finds_item_in_container() {
+        let mut inv = make_empty_inventory();
+        inv.containers.push(ContainerState {
+            id: "main_pack".into(),
+            name: "main_pack".into(),
+            rows: 4,
+            cols: 4,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(42, "iron_sword"),
+            }],
+        });
+        let got = inventory_item_by_instance_borrow(&inv, 42);
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().template_id, "iron_sword");
+    }
+
+    #[test]
+    fn borrow_helper_finds_item_in_equipped_and_hotbar() {
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            "main_hand".to_string(),
+            make_test_item_instance(7, "talisman"),
+        );
+        inv.hotbar[0] = Some(make_test_item_instance(8, "pill"));
+        assert_eq!(
+            inventory_item_by_instance_borrow(&inv, 7)
+                .unwrap()
+                .template_id,
+            "talisman"
+        );
+        assert_eq!(
+            inventory_item_by_instance_borrow(&inv, 8)
+                .unwrap()
+                .template_id,
+            "pill"
+        );
+    }
+
+    #[test]
+    fn borrow_helper_returns_none_for_missing_instance() {
+        let inv = make_empty_inventory();
+        assert!(inventory_item_by_instance_borrow(&inv, 99).is_none());
     }
 }
