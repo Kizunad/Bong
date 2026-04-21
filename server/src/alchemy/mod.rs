@@ -256,7 +256,7 @@ mod integration_tests {
             .feed_stage(
                 &recipe,
                 0,
-                &[("bai_cao".into(), 2), ("ling_shui".into(), 1)],
+                &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
             )
             .unwrap();
         session.apply_intervention(Intervention::AdjustTemp(0.45));

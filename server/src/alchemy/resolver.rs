@@ -75,6 +75,17 @@ pub fn resolve(
     recipe: &Recipe,
     registry: &RecipeRegistry,
 ) -> ResolvedOutcome {
+    let outcome = resolve_raw(session, recipe, registry);
+    // plan-shelflife-v1 §5.1 M5c — 按 staged.quality_factor 折算 qi_gain。
+    // Bucket / quality / pill ID 不变（freshness 不影响"炼丹技艺档位"，只影响"产出 qi 量"）。
+    apply_quality_factor(outcome, session.staged.quality_factor)
+}
+
+fn resolve_raw(
+    session: &AlchemySession,
+    recipe: &Recipe,
+    registry: &RecipeRegistry,
+) -> ResolvedOutcome {
     let staged = &session.staged.materials;
     let need = recipe.stage0_ingredients();
 
@@ -149,6 +160,37 @@ pub fn resolve(
         };
     }
     ResolvedOutcome::Mismatch
+}
+
+/// plan-shelflife-v1 §5.1 M5c — 把 staged.quality_factor 应用到 Pill.qi_gain。
+/// 其它 outcome 变体（Waste / Explode / Mismatch）不受影响。
+/// factor ≈ 1.0 时短路，避免浮点漂移破坏现有 exact-equality 测试。
+fn apply_quality_factor(outcome: ResolvedOutcome, factor: f32) -> ResolvedOutcome {
+    if (factor - 1.0).abs() < f32::EPSILON {
+        return outcome;
+    }
+    match outcome {
+        ResolvedOutcome::Pill {
+            recipe_id,
+            pill,
+            quality,
+            toxin_amount,
+            toxin_color,
+            qi_gain,
+            side_effect,
+            flawed_path,
+        } => ResolvedOutcome::Pill {
+            recipe_id,
+            pill,
+            quality,
+            toxin_amount,
+            toxin_color,
+            qi_gain: qi_gain.map(|q| q * factor as f64),
+            side_effect,
+            flawed_path,
+        },
+        other => other,
+    }
 }
 
 fn map_exact_bucket(recipe: &Recipe, bucket: OutcomeBucket) -> ResolvedOutcome {
@@ -264,7 +306,7 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2), ("ling_shui".into(), 1)],
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(0.45));
@@ -292,7 +334,7 @@ mod tests {
         let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
         let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
         // 缺 ling_shui
-        s.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3)])
+        s.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
             .unwrap_or_default();
         s.apply_intervention(Intervention::AdjustTemp(0.60));
         s.apply_intervention(Intervention::InjectQi(15.0));
@@ -321,7 +363,7 @@ mod tests {
         s.feed_stage(
             &recipe,
             0,
-            &[("bai_cao".into(), 2), ("ling_shui".into(), 1)],
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
         )
         .unwrap();
         s.apply_intervention(Intervention::AdjustTemp(1.0));
@@ -378,6 +420,120 @@ mod tests {
             }
             other => panic!("unexpected biography: {other:?}"),
         }
+    }
+
+    // ============== M5c — quality_factor 折算 qi_gain ==============
+
+    #[test]
+    fn quality_factor_one_preserves_qi_gain() {
+        // factor=1.0 短路，qi_gain 与原 perfect 值一致（24.0）。
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.45));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+        assert!((s.staged.quality_factor - 1.0).abs() < 1e-6);
+        let out = resolve(&s, &recipe, &registry);
+        match out {
+            ResolvedOutcome::Pill { qi_gain, .. } => assert_eq!(qi_gain, Some(24.0)),
+            other => panic!("expected pill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quality_factor_half_halves_qi_gain() {
+        // factor=0.5 → qi_gain = 24 × 0.5 = 12
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 0.5), ("ling_shui".into(), 1, 0.5)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.45));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+        assert!((s.staged.quality_factor - 0.5).abs() < 1e-6);
+        let out = resolve(&s, &recipe, &registry);
+        match out {
+            ResolvedOutcome::Pill { qi_gain, .. } => {
+                let q = qi_gain.expect("qi_gain");
+                assert!((q - 12.0).abs() < 1e-6, "expected ~12.0, got {q}");
+            }
+            other => panic!("expected pill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quality_factor_mixed_fresh_and_half_weighted_average() {
+        // 2 个 bai_cao factor=1.0 + 1 个 ling_shui factor=0.5 → acc = (2×1.0 + 1×0.5) / 3 = 0.833...
+        // qi_gain = 24 × 0.833... = 20.0
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 0.5)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.45));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+        assert!(
+            (s.staged.quality_factor - 0.8333).abs() < 1e-3,
+            "running avg got {}",
+            s.staged.quality_factor
+        );
+        let out = resolve(&s, &recipe, &registry);
+        match out {
+            ResolvedOutcome::Pill { qi_gain, .. } => {
+                let q = qi_gain.expect("qi_gain");
+                assert!((q - 20.0).abs() < 0.01, "expected ~20.0, got {q}");
+            }
+            other => panic!("expected pill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quality_factor_zero_dead_materials_give_zero_qi() {
+        // factor=0.0 (全死料) → qi_gain=0
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 0.0), ("ling_shui".into(), 1, 0.0)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.45));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+        let out = resolve(&s, &recipe, &registry);
+        match out {
+            ResolvedOutcome::Pill { qi_gain, .. } => assert_eq!(qi_gain, Some(0.0)),
+            other => {
+                panic!("expected pill (even dead materials still produce pill), got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn quality_factor_default_is_one_for_legacy_sessions() {
+        // 无 Freshness 传 factor=1.0 的 test 路径：running avg 应保持 1.0。
+        let mut s = AlchemySession::new("r".into(), "alice".into());
+        assert_eq!(s.staged.quality_factor, 1.0);
+        assert_eq!(s.staged.quality_total_count, 0);
     }
 
     #[test]
