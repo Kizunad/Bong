@@ -130,6 +130,11 @@ impl AlchemySession {
                 "stage {stage_idx} window missed: tick={tick} window=[{start},{end}]"
             ));
         }
+        // Codex P2 (PR #39) — legacy session 兼容：反序列化旧档时 quality_total_count
+        // 默认 0、quality_factor 默认 1.0，但 `materials` 可能已有投料。首次投新料前
+        // 先按 `materials.sum()` 补齐 total_count（假设旧档投料全鲜），否则新投料会
+        // 把 prev_total 错算成 0，running avg 被后续 factor 过度拉低。
+        self.reconcile_legacy_quality_count();
         for (mat, count, factor) in materials {
             *self.staged.materials.entry(mat.clone()).or_insert(0) += *count;
             // M5c — update running weighted average：acc_new = (acc_prev × n_prev + factor × count) / n_new
@@ -146,6 +151,15 @@ impl AlchemySession {
             self.staged.completed_stages.push(stage_idx);
         }
         Ok(())
+    }
+
+    /// Codex P2 (PR #39) — 反序列化旧档兼容：若 `quality_total_count==0` 但 `materials`
+    /// 非空，按 materials.sum() 补齐，avoiding running avg 对历史投料的遗漏。
+    /// 幂等：`quality_total_count > 0` 时 no-op，不重复补。
+    fn reconcile_legacy_quality_count(&mut self) {
+        if self.staged.quality_total_count == 0 && !self.staged.materials.is_empty() {
+            self.staged.quality_total_count = self.staged.materials.values().sum();
+        }
     }
 
     /// 每 tick 调用一次 — 推进时间、采样温度。
@@ -349,5 +363,48 @@ mod tests {
         let r = multi_stage_recipe();
         assert_eq!(r.stages.len(), 2);
         assert_eq!(r.stages[1].window, 2);
+    }
+
+    // ============== Codex P2 (PR #39) — legacy session recovery ==============
+
+    #[test]
+    fn legacy_session_recovery_reconciles_quality_total_count() {
+        // 模拟 pre-M5c 档序列化恢复：materials 已有 3 份投料，但 quality_total_count
+        // 默认为 0（serde default），quality_factor 默认 1.0。现在继续投 1 份 factor=0.5
+        // 新料：正确结果应是 (3×1.0 + 1×0.5)/4 = 0.875，而非 bug 版的 0.5。
+        let r = simple_single_stage_recipe();
+        let mut s = AlchemySession::new(r.id.clone(), "alice".into());
+        // 模拟反序列化后 state
+        s.staged.materials.insert("a".into(), 3);
+        assert_eq!(s.staged.quality_total_count, 0);
+        assert_eq!(s.staged.quality_factor, 1.0);
+
+        // 首次投料应先 reconcile legacy count，再 update running avg
+        s.feed_stage(&r, 0, &[("b".into(), 1, 0.5)]).unwrap();
+
+        assert_eq!(s.staged.quality_total_count, 4);
+        assert!(
+            (s.staged.quality_factor - 0.875).abs() < 1e-3,
+            "legacy recovery got {}",
+            s.staged.quality_factor
+        );
+    }
+
+    #[test]
+    fn reconcile_quality_count_idempotent_when_already_set() {
+        // 新 session 正常投料后，再投一次不应重复 reconcile（count 已非 0）。
+        let r = simple_single_stage_recipe();
+        let mut s = AlchemySession::new(r.id.clone(), "alice".into());
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
+        assert_eq!(s.staged.quality_total_count, 1);
+        // 第二次投料（materials 已有 1 但 count 也是 1 — reconcile 无效果）
+        s.feed_stage(&r, 0, &[("m".into(), 2, 0.5)]).unwrap();
+        // 期望：(1×1.0 + 2×0.5)/3 = 0.667；若 reconcile 错误叠加会得不同值
+        assert_eq!(s.staged.quality_total_count, 3);
+        assert!(
+            (s.staged.quality_factor - 0.6667).abs() < 1e-3,
+            "got {}",
+            s.staged.quality_factor
+        );
     }
 }
