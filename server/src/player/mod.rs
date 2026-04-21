@@ -565,4 +565,55 @@ mod tests {
 
         let _ = fs::remove_dir_all(&data_dir);
     }
+
+    #[test]
+    fn disconnect_flush_persists_latest_player_slices_before_cleanup() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([42.0, 77.0, -3.5]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            realm: "qi_refining_4".to_string(),
+            spirit_qi: 88.0,
+            spirit_qi_max: 120.0,
+            karma: -0.15,
+            experience: 2_400,
+            inventory_score: 0.7,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score) =
+            read_core_snapshot(&db_path);
+        let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
+        let inventory_json = read_inventory_json(&db_path);
+
+        assert_eq!(realm, "qi_refining_4");
+        assert_eq!(spirit_qi, 88.0);
+        assert_eq!(spirit_qi_max, 120.0);
+        assert_eq!(karma, -0.15);
+        assert_eq!(experience, 2_400);
+        assert_eq!(inventory_score, 0.7);
+        assert_eq!((pos_x, pos_y, pos_z), (42.0, 77.0, -3.5));
+        assert_ne!(
+            serde_json::from_str::<serde_json::Value>(&inventory_json)
+                .expect("inventory_json should decode"),
+            serde_json::Value::Null
+        );
+        assert!(
+            app.world().get::<Despawned>(entity).is_some(),
+            "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
 }
