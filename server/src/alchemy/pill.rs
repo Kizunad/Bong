@@ -1,11 +1,24 @@
-//! 服药 → 污染 注入（plan-alchemy-v1 §2）。
+//! 服药 → 污染 注入（plan-alchemy-v1 §2 + plan-shelflife-v1 §5.2 M5b）。
 //!
 //! 复用 `cultivation::Contamination / ContamSource` — 不新增字段。
 //! 代谢速率天然由 MeridianSystem `sum_rate × integrity`（contamination_tick 做）决定。
+//!
+//! M5b：`consume_pill` 接收 shelflife `SpoilCheckOutcome` 驱动分支：
+//! - `NotApplicable` / `Safe` → 正常消费
+//! - `Warn` → 消费 + 额外 push Sharp contam（按腐败程度放大）
+//! - `CriticalBlock` → 拒绝消费，返回 `PillConsumeOutcome.blocked = true`
 
 use serde::{Deserialize, Serialize};
 
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
+use crate::shelflife::SpoilCheckOutcome;
+
+/// plan-shelflife-v1 §5.2 — Spoil `Warn` 档额外污染系数。
+/// `extra_toxin = toxin_amount × (1 - current/threshold) × SPOIL_TOXIN_MULT`；
+/// current 接近 threshold 时 extra ≈ 0，接近 CriticalBlock 边界 (0.1×threshold) 时 ≈ 0.9×toxin_amount。
+/// 首版定 1.0（完全腐败场景 extra ≈ toxin_amount 即毒性翻倍）；M7 跨 plan 定稿时按
+/// 实际玩家行为再调。
+pub const SPOIL_TOXIN_MULT: f64 = 1.0;
 
 /// 服药时的单体效果描述（plan §3.2 pill 效果的运行时形态）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +32,21 @@ pub struct PillEffect {
     /// 未来扩展（plan §6 cultivation 钩子）：推进经脉打通进度。
     #[serde(default)]
     pub meridian_progress_bonus: Option<f64>,
+}
+
+/// plan-shelflife-v1 M5b — `consume_pill` 的结构化返回值。
+///
+/// `blocked=true` 时 `qi_gained` / `extra_toxin_added` 均为 0 — 调用侧据此触发
+/// UI 二次确认（plan §5.2 "拒绝自动消费"）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PillConsumeOutcome {
+    /// 实际生效的 qi_gain（blocked 时为 0.0）。
+    pub qi_gained: f64,
+    /// CriticalBlock 触发自动拒绝时为 true；Normal / Safe / Warn 均 false。
+    pub blocked: bool,
+    /// Spoil `Warn` 档额外 push 的污染量（color 同 `effect.toxin_color`）。
+    /// Normal / Safe / Blocked 时为 0.0。
+    pub extra_toxin_added: f64,
 }
 
 /// plan §2.2 — 同色丹毒未排到阈值不允许再服。
@@ -39,31 +67,84 @@ pub fn can_take_pill(contam: &Contamination, color: ColorKind) -> bool {
     sum_drug_toxin(contam, color) < TOXIN_THRESHOLD
 }
 
-/// plan §2.1 服药流程：
-/// 1. 查 pill 效果
-/// 2. 污染 push 一条 ContamSource（attacker_id=None，标识丹毒）
-/// 3. 应用效果（qi_gain 等）
+/// plan-alchemy-v1 §2.1 + plan-shelflife-v1 §5.2 — 服药流程。
 ///
-/// 返回实际生效的 qi_gain（供调用侧广播）。
+/// # 参数
+/// - `effect` — pill 基础效果（toxin_amount / color / qi_gain）
+/// - `contam` — 玩家污染状态（mut：push ContamSource）
+/// - `cultivation` — 玩家修为（mut：增加 qi_current）
+/// - `now_tick` — 当前 server tick（contam 记录时间戳）
+/// - `spoil` — shelflife `spoil_check` 结果（caller 先查 registry + freshness 生成）
+///
+/// # 分支
+/// - `NotApplicable` / `Safe` → 正常消费：push 基础 contam + apply qi_gain
+/// - `Warn` → 消费 + 额外 push Sharp contam（按 `1 - current/threshold` 放大）
+/// - `CriticalBlock` → 拒绝，无 contam / 无 qi / `blocked=true`
+///
+/// 调用侧应在 `Warn` / `CriticalBlock` 时 emit `SpoilConsumeWarning` event。
 pub fn consume_pill(
     effect: &PillEffect,
     contam: &mut Contamination,
     cultivation: &mut Cultivation,
     now_tick: u64,
-) -> f64 {
+    spoil: SpoilCheckOutcome,
+) -> PillConsumeOutcome {
+    // CriticalBlock — 立即退，不做任何副作用
+    if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
+        return PillConsumeOutcome {
+            qi_gained: 0.0,
+            blocked: true,
+            extra_toxin_added: 0.0,
+        };
+    }
+
+    // 基础污染
     contam.entries.push(ContamSource {
         amount: effect.toxin_amount,
         color: effect.toxin_color,
         attacker_id: None,
         introduced_at: now_tick,
     });
-    match effect.qi_gain {
+
+    // Warn 档 — 额外污染
+    let extra_toxin = match spoil {
+        SpoilCheckOutcome::Warn {
+            current_qi,
+            spoil_threshold,
+        } => {
+            let ratio = if spoil_threshold > 0.0 {
+                (1.0 - (current_qi as f64 / spoil_threshold as f64)).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let extra = effect.toxin_amount * ratio * SPOIL_TOXIN_MULT;
+            if extra > 0.0 {
+                contam.entries.push(ContamSource {
+                    amount: extra,
+                    color: effect.toxin_color,
+                    attacker_id: None,
+                    introduced_at: now_tick,
+                });
+            }
+            extra
+        }
+        _ => 0.0,
+    };
+
+    // qi_gain
+    let qi_gained = match effect.qi_gain {
         Some(q) => {
             let before = cultivation.qi_current;
             cultivation.qi_current = (before + q).min(cultivation.qi_max);
             cultivation.qi_current - before
         }
         None => 0.0,
+    };
+
+    PillConsumeOutcome {
+        qi_gained,
+        blocked: false,
+        extra_toxin_added: extra_toxin,
     }
 }
 
@@ -87,22 +168,33 @@ mod tests {
         Contamination::default()
     }
 
+    fn basic_effect(qi_gain: Option<f64>) -> PillEffect {
+        PillEffect {
+            toxin_amount: 0.3,
+            toxin_color: ColorKind::Mellow,
+            qi_gain,
+            meridian_progress_bonus: None,
+        }
+    }
+
     #[test]
-    fn consume_pill_appends_contam_and_restores_qi() {
+    fn consume_pill_normal_appends_contam_and_restores_qi() {
         let mut contam = fresh_contam();
         let mut cult = Cultivation {
             qi_current: 0.0,
             qi_max: 100.0,
             ..Default::default()
         };
-        let effect = PillEffect {
-            toxin_amount: 0.3,
-            toxin_color: ColorKind::Mellow,
-            qi_gain: Some(24.0),
-            meridian_progress_bonus: None,
-        };
-        let gained = consume_pill(&effect, &mut contam, &mut cult, 10);
-        assert_eq!(gained, 24.0);
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::NotApplicable,
+        );
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert!(!outcome.blocked);
+        assert_eq!(outcome.extra_toxin_added, 0.0);
         assert_eq!(cult.qi_current, 24.0);
         assert_eq!(contam.entries.len(), 1);
         assert_eq!(contam.entries[0].color, ColorKind::Mellow);
@@ -118,14 +210,14 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        let effect = PillEffect {
-            toxin_amount: 0.3,
-            toxin_color: ColorKind::Mellow,
-            qi_gain: Some(50.0),
-            meridian_progress_bonus: None,
-        };
-        let gained = consume_pill(&effect, &mut contam, &mut cult, 0);
-        assert_eq!(gained, 10.0);
+        let outcome = consume_pill(
+            &basic_effect(Some(50.0)),
+            &mut contam,
+            &mut cult,
+            0,
+            SpoilCheckOutcome::NotApplicable,
+        );
+        assert_eq!(outcome.qi_gained, 10.0);
         assert_eq!(cult.qi_current, 100.0);
     }
 
@@ -185,5 +277,150 @@ mod tests {
             introduced_at: 0,
         });
         assert_eq!(overdose_penalty(&contam, ColorKind::Violent), 0.0);
+    }
+
+    // ============== M5b Spoil 分支 ==============
+
+    #[test]
+    fn consume_pill_spoil_safe_same_as_normal() {
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Safe { current_qi: 80.0 },
+        );
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert!(!outcome.blocked);
+        assert_eq!(outcome.extra_toxin_added, 0.0);
+        assert_eq!(contam.entries.len(), 1);
+    }
+
+    #[test]
+    fn consume_pill_spoil_warn_adds_extra_contam() {
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        // current=25, threshold=50 → ratio=0.5 → extra = 0.3 × 0.5 × 1.0 = 0.15
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Warn {
+                current_qi: 25.0,
+                spoil_threshold: 50.0,
+            },
+        );
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert!(!outcome.blocked);
+        assert!((outcome.extra_toxin_added - 0.15).abs() < 1e-9);
+        assert_eq!(contam.entries.len(), 2);
+        // 第二条 entry 应为 extra toxin，color 同基础
+        assert_eq!(contam.entries[1].color, ColorKind::Mellow);
+        assert!((contam.entries[1].amount - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consume_pill_spoil_warn_edge_current_equals_threshold_zero_extra() {
+        // current ≈ threshold → ratio=0 → extra=0（即便是 Warn 档亦然，边界场景）
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Warn {
+                current_qi: 50.0,
+                spoil_threshold: 50.0,
+            },
+        );
+        assert_eq!(outcome.extra_toxin_added, 0.0);
+        assert_eq!(contam.entries.len(), 1); // 仅基础，无 extra
+    }
+
+    #[test]
+    fn consume_pill_spoil_warn_near_critical_near_full_extra() {
+        // current=5, threshold=50 → ratio=0.9 → extra = 0.3 × 0.9 × 1.0 = 0.27
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Warn {
+                current_qi: 5.0,
+                spoil_threshold: 50.0,
+            },
+        );
+        assert!((outcome.extra_toxin_added - 0.27).abs() < 1e-9);
+        assert_eq!(contam.entries.len(), 2);
+    }
+
+    #[test]
+    fn consume_pill_spoil_critical_block_refuses_all_effects() {
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi: 2.0,
+                spoil_threshold: 50.0,
+            },
+        );
+        assert_eq!(outcome.qi_gained, 0.0);
+        assert!(outcome.blocked);
+        assert_eq!(outcome.extra_toxin_added, 0.0);
+        // 无 contam 新增，qi 不变
+        assert_eq!(contam.entries.len(), 0);
+        assert_eq!(cult.qi_current, 50.0);
+    }
+
+    #[test]
+    fn consume_pill_spoil_warn_zero_threshold_defensive() {
+        // 防御性：malformed spoil_threshold=0 时 ratio=1.0（完全腐败），不除零 panic
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Warn {
+                current_qi: 0.0,
+                spoil_threshold: 0.0,
+            },
+        );
+        assert!((outcome.extra_toxin_added - 0.3).abs() < 1e-9);
     }
 }

@@ -22,6 +22,7 @@ pub mod registry;
 pub mod types;
 
 pub use compute::{compute_current_qi, compute_track_state};
+#[allow(unused_imports)]
 pub use consume::{
     age_peak_check, decay_current_qi_factor, spoil_check, AgeBonusRoll, AgePeakCheck,
     SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity, CRITICAL_BLOCK_RATIO,

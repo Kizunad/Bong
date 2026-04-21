@@ -48,7 +48,9 @@ pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 #[allow(unused_imports)]
 pub use learned::LearnedRecipes;
 #[allow(unused_imports)]
-pub use pill::{can_take_pill, consume_pill, overdose_penalty, PillEffect};
+pub use pill::{
+    can_take_pill, consume_pill, overdose_penalty, PillConsumeOutcome, PillEffect, SPOIL_TOXIN_MULT,
+};
 #[allow(unused_imports)]
 pub use recipe::{Recipe, RecipeId, RecipeRegistry};
 #[allow(unused_imports)]
@@ -290,8 +292,15 @@ mod integration_tests {
             ..Default::default()
         };
         assert!(pill::can_take_pill(&contam, pill_effect.toxin_color));
-        let gained = consume_pill(&pill_effect, &mut contam, &mut cult, 1000);
-        assert_eq!(gained, 24.0);
+        let outcome = consume_pill(
+            &pill_effect,
+            &mut contam,
+            &mut cult,
+            1000,
+            crate::shelflife::SpoilCheckOutcome::NotApplicable,
+        );
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert!(!outcome.blocked);
         assert_eq!(contam.entries.len(), 1);
 
         // 4. 同色再吃：未到阈值仍可
