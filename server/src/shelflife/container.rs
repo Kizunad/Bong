@@ -11,10 +11,18 @@ use super::types::{ContainerFreshnessBehavior, DecayFormula, DecayProfile, Decay
 
 /// plan §3 — 解析容器对当前 item 的 storage_multiplier。
 ///
-/// 不同 ContainerFreshnessBehavior 对不同 track / formula 行为不同：
+/// 不同 ContainerFreshnessBehavior 对不同 track / formula 行为不同。
+/// **关键语义**：`storage_multiplier` 在 time-based 公式（Exp/Linear/PeakAndFall）
+/// 里是 rate 缩放，在 Stepwise 公式里是 `current_qi = initial * multiplier` 的直乘。
+/// 这让"冻结"对两种公式有不同实现：
+/// - time-based + Freeze → multiplier=0.0 → effective_dt=0 → current 停在 initial ✓
+/// - Stepwise + Freeze → multiplier=1.0（**不是 0.0**）→ current=initial*1.0=initial ✓
+/// 若 Stepwise+Freeze 误用 0.0 会把物品瞬间归零（Codex review r#34 P1）。
+///
+/// 分流细则：
 /// - `Normal` → 1.0（基准）
 /// - `Halve` → 0.5（除 Stepwise，对其退 Normal）
-/// - `Freeze` → 0.0（全 track）
+/// - `Freeze` → 0.0（time-based）/ 1.0（Stepwise — 参考上述语义注）
 /// - `DryingRack { m }` → m（仅 Stepwise 公式，其他退 Normal）
 /// - `SpoilOnly { r }` → r（仅 Spoil track，其他退 Normal）
 /// - `AgeAccelerate { f }` → 1 / max(f, 0.01)（仅 Age track，其他退 Normal）
@@ -34,7 +42,16 @@ pub fn container_storage_multiplier(
                 0.5
             }
         }
-        ContainerFreshnessBehavior::Freeze => 0.0,
+        ContainerFreshnessBehavior::Freeze => {
+            if is_stepwise {
+                // Stepwise 语义：current = initial * multiplier；Freeze 应保留 initial
+                // → multiplier = 1.0（不是 0.0，避免瞬间归零）。`frozen_since_tick` 仍记
+                // 账以便物品后续被迁移到 time-based profile 时冻结期被正确减除。
+                1.0
+            } else {
+                0.0
+            }
+        }
         ContainerFreshnessBehavior::DryingRack { multiplier } => {
             if is_stepwise {
                 multiplier.max(0.0)
@@ -156,12 +173,34 @@ mod tests {
     }
 
     #[test]
-    fn freeze_returns_zero_for_all_profiles() {
+    fn freeze_returns_zero_for_time_based_profiles() {
+        // time-based (Exp/Linear/PeakAndFall) — multiplier=0 → effective_dt=0 → current=initial
         let b = ContainerFreshnessBehavior::Freeze;
         assert!((container_storage_multiplier(&b, &decay_exp()) - 0.0).abs() < 1e-6);
-        assert!((container_storage_multiplier(&b, &decay_stepwise()) - 0.0).abs() < 1e-6);
         assert!((container_storage_multiplier(&b, &spoil_exp()) - 0.0).abs() < 1e-6);
         assert!((container_storage_multiplier(&b, &age_profile()) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn freeze_preserves_stepwise_via_unity_multiplier() {
+        // Regression: Codex review r#34 P1 — Stepwise + Freeze 返回 0.0 会把
+        // current_qi = initial * 0 = 0 瞬间归零。应返 1.0 保留 initial。
+        let b = ContainerFreshnessBehavior::Freeze;
+        let m = container_storage_multiplier(&b, &decay_stepwise());
+        assert!(
+            (m - 1.0).abs() < 1e-6,
+            "Freeze + Stepwise must return 1.0 to preserve initial, got {m}"
+        );
+
+        // 端到端：Stepwise 物品经 compute_current_qi 在 Freeze 容器下保持 initial
+        use super::super::compute::compute_current_qi;
+        let p = decay_stepwise();
+        let f = Freshness::new(0, 100.0, &p);
+        let current = compute_current_qi(&f, &p, 1_000_000, m);
+        assert!(
+            (current - 100.0).abs() < 1e-3,
+            "Stepwise + Freeze must preserve initial_qi, got {current}"
+        );
     }
 
     #[test]
