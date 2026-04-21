@@ -32,7 +32,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
-    bootstrap_agent_world_model_mirror, persist_agent_world_model_snapshot,
+    bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
     world_model_snapshot_to_mirror_fields, AgentWorldModelCommandRecord,
     AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord, AgentWorldModelSnapshotRecord,
     PersistenceSettings, WORLD_MODEL_STATE_KEY,
@@ -48,6 +48,9 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+#[cfg(test)]
+use crate::persistence::{load_agent_decisions, load_agent_eras};
 
 const REDIS_URL_ENV_KEY: &str = "REDIS_URL";
 const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
@@ -896,8 +899,11 @@ fn process_agent_world_model_envelope(
     };
 
     let snapshot = agent_world_model_snapshot_from_wire(&envelope.snapshot);
+    let source = envelope.source.as_deref().unwrap_or("unknown");
 
-    if let Err(error) = persist_agent_world_model_snapshot(settings, &snapshot) {
+    if let Err(error) =
+        persist_agent_world_model_authority_state(settings, envelope.id.as_str(), source, &snapshot)
+    {
         tracing::warn!(
             "[bong][network] failed sqlite authority persist for agent world-model id={}: {error}",
             envelope.id
@@ -2894,6 +2900,74 @@ mod tests {
                 Some(1),
                 "zone history should persist through ingress without runtime mirror config"
             );
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn agent_world_model_ingress_persists_append_only_rows_without_runtime_mirror_config() {
+            let root = unique_temp_dir("agent-world-model-ingress-append-only-no-mirror");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_world_model_ingress_append_only_without_runtime_mirror",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let envelope = AgentWorldModelEnvelopeV1 {
+                v: 1,
+                id: "wm-ingress-append-only-1".to_string(),
+                source: Some("arbiter".to_string()),
+                snapshot: AgentWorldModelSnapshotV1 {
+                    current_era: Some(CurrentEraV1 {
+                        name: "霜烬纪".to_string(),
+                        since_tick: 640,
+                        global_effect: "镜海回响".to_string(),
+                    }),
+                    zone_history: HashMap::from([(
+                        "frost_marsh".to_string(),
+                        vec![ZoneHistoryEntryV1 {
+                            name: "frost_marsh".to_string(),
+                            spirit_qi: 0.71,
+                            danger_level: 4,
+                            active_events: vec!["frost_tide".to_string()],
+                            player_count: 1,
+                        }],
+                    )]),
+                    last_decisions: BTreeMap::from([(
+                        "era".to_string(),
+                        crate::schema::agent_world_model::AgentWorldModelDecisionV1 {
+                            commands: Vec::new(),
+                            narrations: Vec::new(),
+                            reasoning: "append-only authority ingress should persist era rows"
+                                .to_string(),
+                        },
+                    )]),
+                    player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
+                    last_tick: Some(640),
+                    last_state_ts: Some(1_711_555_640),
+                },
+            };
+
+            process_agent_world_model_envelope(Some(&settings), None, &envelope);
+
+            let eras = load_agent_eras(&settings).expect("agent eras should load after ingress");
+            assert_eq!(eras.len(), 1);
+            assert_eq!(eras[0].envelope_id, envelope.id);
+            assert_eq!(eras[0].source, "arbiter");
+            assert_eq!(eras[0].era_name, "霜烬纪");
+
+            let decisions =
+                load_agent_decisions(&settings).expect("agent decisions should load after ingress");
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(decisions[0].envelope_id, envelope.id);
+            assert_eq!(decisions[0].agent_name, "era");
+            assert_eq!(decisions[0].command_count, 0);
+            assert_eq!(decisions[0].narration_count, 0);
 
             let _ = fs::remove_dir_all(root);
         }

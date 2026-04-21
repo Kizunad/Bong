@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 10;
+const CURRENT_USER_VERSION: i32 = 11;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -261,6 +261,32 @@ pub struct AgentWorldModelSnapshotRecord {
     pub last_tick: Option<i64>,
     #[serde(default)]
     pub last_state_ts: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentEraRecord {
+    pub event_id: String,
+    pub envelope_id: String,
+    pub source: String,
+    pub era_name: String,
+    pub since_tick: i64,
+    pub global_effect: String,
+    pub observed_at_tick: Option<i64>,
+    pub observed_at_wall: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentDecisionRecord {
+    pub event_id: String,
+    pub envelope_id: String,
+    pub source: String,
+    pub agent_name: String,
+    pub reasoning: String,
+    pub command_count: u32,
+    pub narration_count: u32,
+    pub payload_json: String,
+    pub observed_at_tick: Option<i64>,
+    pub observed_at_wall: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -932,6 +958,46 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 11 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS agent_eras (
+                event_id TEXT PRIMARY KEY,
+                envelope_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                era_name TEXT NOT NULL,
+                since_tick INTEGER NOT NULL,
+                global_effect TEXT NOT NULL,
+                observed_at_tick INTEGER,
+                observed_at_wall INTEGER NOT NULL CHECK (observed_at_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_eras_envelope_id
+            ON agent_eras (envelope_id, observed_at_wall, event_id);
+            CREATE TABLE IF NOT EXISTS agent_decisions (
+                event_id TEXT PRIMARY KEY,
+                envelope_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                reasoning TEXT NOT NULL,
+                command_count INTEGER NOT NULL CHECK (command_count >= 0),
+                narration_count INTEGER NOT NULL CHECK (narration_count >= 0),
+                payload_json TEXT NOT NULL,
+                observed_at_tick INTEGER,
+                observed_at_wall INTEGER NOT NULL CHECK (observed_at_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_decisions_envelope_agent
+            ON agent_decisions (envelope_id, agent_name, observed_at_wall, event_id);
+            PRAGMA user_version = 11;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ExecuteReturnedResults);
@@ -954,6 +1020,7 @@ fn ensure_agent_world_model_table(connection: &Connection) -> rusqlite::Result<(
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn persist_agent_world_model_snapshot(
     settings: &PersistenceSettings,
     snapshot: &AgentWorldModelSnapshotRecord,
@@ -989,6 +1056,43 @@ pub fn persist_agent_world_model_snapshot(
     transaction.commit().map_err(io::Error::other)
 }
 
+pub fn persist_agent_world_model_authority_state(
+    settings: &PersistenceSettings,
+    envelope_id: &str,
+    source: &str,
+    snapshot: &AgentWorldModelSnapshotRecord,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let snapshot_json = serde_json::to_string(snapshot)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_agent_world_model_snapshot(&transaction, &snapshot_json, wall_clock)?;
+    if let Some(era) = snapshot.current_era.as_ref() {
+        append_agent_era(
+            &transaction,
+            envelope_id,
+            source,
+            era,
+            snapshot.last_tick,
+            wall_clock,
+        )?;
+    }
+    for (agent_name, decision) in &snapshot.last_decisions {
+        append_agent_decision(
+            &transaction,
+            envelope_id,
+            source,
+            agent_name,
+            decision,
+            snapshot.last_tick,
+            wall_clock,
+        )?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
 pub fn load_agent_world_model_snapshot(
     settings: &PersistenceSettings,
 ) -> io::Result<Option<AgentWorldModelSnapshotRecord>> {
@@ -1009,6 +1113,20 @@ pub fn load_agent_world_model_snapshot(
     let snapshot = serde_json::from_str::<AgentWorldModelSnapshotRecord>(&snapshot_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(Some(snapshot))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_agent_eras(settings: &PersistenceSettings) -> io::Result<Vec<AgentEraRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_agent_eras_from_connection(&connection)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_agent_decisions(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<AgentDecisionRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_agent_decisions_from_connection(&connection)
 }
 
 pub fn persist_active_tribulation(
@@ -2042,6 +2160,142 @@ fn upsert_npc_state(
     Ok(())
 }
 
+fn upsert_agent_world_model_snapshot(
+    transaction: &rusqlite::Transaction<'_>,
+    snapshot_json: &str,
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO agent_world_model (
+                row_id,
+                snapshot_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(row_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                AGENT_WORLD_MODEL_ROW_ID,
+                snapshot_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn append_agent_era(
+    transaction: &rusqlite::Transaction<'_>,
+    envelope_id: &str,
+    source: &str,
+    era: &serde_json::Value,
+    observed_at_tick: Option<i64>,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let era_name = era
+        .get("name")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "agent era missing name"))?;
+    let since_tick = era
+        .get("since_tick")
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "agent era missing since_tick")
+        })?;
+    let global_effect = era
+        .get("global_effect")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "agent era missing global_effect",
+            )
+        })?;
+    transaction
+        .execute(
+            "
+            INSERT INTO agent_eras (
+                event_id,
+                envelope_id,
+                source,
+                era_name,
+                since_tick,
+                global_effect,
+                observed_at_tick,
+                observed_at_wall,
+                schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ",
+            params![
+                Uuid::now_v7().to_string(),
+                envelope_id,
+                source,
+                era_name,
+                since_tick,
+                global_effect,
+                observed_at_tick,
+                wall_clock,
+                EVENT_SCHEMA_VERSION,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn append_agent_decision(
+    transaction: &rusqlite::Transaction<'_>,
+    envelope_id: &str,
+    source: &str,
+    agent_name: &str,
+    decision: &AgentWorldModelDecisionRecord,
+    observed_at_tick: Option<i64>,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let payload_json = serde_json::to_string(decision)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO agent_decisions (
+                event_id,
+                envelope_id,
+                source,
+                agent_name,
+                reasoning,
+                command_count,
+                narration_count,
+                payload_json,
+                observed_at_tick,
+                observed_at_wall,
+                schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ",
+            params![
+                Uuid::now_v7().to_string(),
+                envelope_id,
+                source,
+                agent_name,
+                decision.reasoning,
+                i64::try_from(decision.commands.len())
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+                i64::try_from(decision.narrations.len())
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+                payload_json,
+                observed_at_tick,
+                wall_clock,
+                EVENT_SCHEMA_VERSION,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn upsert_npc_digest(
     transaction: &rusqlite::Transaction<'_>,
     digest: &NpcDigestRecord,
@@ -2380,6 +2634,99 @@ fn load_zone_overlays_from_connection(
         overlays.push(row.map_err(io::Error::other)?);
     }
     Ok(overlays)
+}
+
+fn load_agent_eras_from_connection(connection: &Connection) -> io::Result<Vec<AgentEraRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT event_id, envelope_id, source, era_name, since_tick, global_effect,
+                   observed_at_tick, observed_at_wall
+            FROM agent_eras
+            ORDER BY observed_at_wall ASC, event_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AgentEraRecord {
+                event_id: row.get(0)?,
+                envelope_id: row.get(1)?,
+                source: row.get(2)?,
+                era_name: row.get(3)?,
+                since_tick: row.get(4)?,
+                global_effect: row.get(5)?,
+                observed_at_tick: row.get(6)?,
+                observed_at_wall: row.get(7)?,
+            })
+        })
+        .map_err(io::Error::other)?;
+
+    let mut records = Vec::new();
+    for row in rows {
+        records.push(row.map_err(io::Error::other)?);
+    }
+    Ok(records)
+}
+
+fn load_agent_decisions_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<AgentDecisionRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT event_id, envelope_id, source, agent_name, reasoning, command_count,
+                   narration_count, payload_json, observed_at_tick, observed_at_wall
+            FROM agent_decisions
+            ORDER BY observed_at_wall ASC, event_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })
+        .map_err(io::Error::other)?;
+
+    let mut records = Vec::new();
+    for row in rows {
+        let (
+            event_id,
+            envelope_id,
+            source,
+            agent_name,
+            reasoning,
+            command_count,
+            narration_count,
+            payload_json,
+            observed_at_tick,
+            observed_at_wall,
+        ) = row.map_err(io::Error::other)?;
+        records.push(AgentDecisionRecord {
+            event_id,
+            envelope_id,
+            source,
+            agent_name,
+            reasoning,
+            command_count: sql_to_u32(command_count)?,
+            narration_count: sql_to_u32(narration_count)?,
+            payload_json,
+            observed_at_tick,
+            observed_at_wall,
+        });
+    }
+    Ok(records)
 }
 
 fn load_zone_runtime_snapshot_from_connection(
@@ -3998,6 +4345,25 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task11_migration_creates_agent_append_only_tables() {
+        let db_path = database_path("task11-agent-append-only");
+        bootstrap_sqlite(&db_path, "task11-agent-append-only").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        for table_name in ["agent_eras", "agent_decisions"] {
+            let exists: Option<String> = connection
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table_name],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("sqlite_master query should succeed");
+            assert_eq!(exists.as_deref(), Some(table_name));
+        }
+    }
+
+    #[test]
     fn bootstrap_migrates_v9_zone_overlays_and_preserves_existing_rows() {
         let db_path = database_path("zone-overlays-v9-migration-drill");
         bootstrap_sqlite(&db_path, "zone-overlays-v9-baseline")
@@ -4158,6 +4524,124 @@ mod persistence_tests {
             )
             .expect("agent_world_model schema_version should exist");
         assert_eq!(schema_version, CURRENT_SCHEMA_VERSION);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_authority_write_persists_snapshot_and_append_only_rows() {
+        let (settings, root) = persistence_settings("agent-authority-append-only");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let first_snapshot = AgentWorldModelSnapshotRecord {
+            current_era: Some(serde_json::json!({
+                "name": "blood_moon",
+                "since_tick": 4096,
+                "global_effect": "qi tides run violent"
+            })),
+            zone_history: BTreeMap::from([(
+                "spawn".to_string(),
+                vec![serde_json::json!({
+                    "name": "spawn",
+                    "spirit_qi": 0.35,
+                    "danger_level": 2,
+                    "active_events": ["blood_moon"],
+                    "player_count": 1
+                })],
+            )]),
+            last_decisions: BTreeMap::from([(
+                "era".to_string(),
+                AgentWorldModelDecisionRecord {
+                    commands: Vec::new(),
+                    narrations: Vec::new(),
+                    reasoning: "era shift persisted for recovery".to_string(),
+                },
+            )]),
+            player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
+            last_tick: Some(4_200),
+            last_state_ts: Some(1_704_067_200),
+        };
+
+        persist_agent_world_model_authority_state(
+            &settings,
+            "wm-append-1",
+            "arbiter",
+            &first_snapshot,
+        )
+        .expect("first authority write should succeed");
+
+        let second_snapshot = AgentWorldModelSnapshotRecord {
+            current_era: Some(serde_json::json!({
+                "name": "ashen_sky",
+                "since_tick": 5000,
+                "global_effect": "embers drift across the realm"
+            })),
+            zone_history: first_snapshot.zone_history.clone(),
+            last_decisions: BTreeMap::from([
+                (
+                    "era".to_string(),
+                    AgentWorldModelDecisionRecord {
+                        commands: Vec::new(),
+                        narrations: Vec::new(),
+                        reasoning: "era advanced under persistent authority".to_string(),
+                    },
+                ),
+                (
+                    "calamity".to_string(),
+                    AgentWorldModelDecisionRecord {
+                        commands: vec![AgentWorldModelCommandRecord {
+                            command_type: "spawn_event".to_string(),
+                            target: "spawn".to_string(),
+                            params: serde_json::Map::new(),
+                        }],
+                        narrations: vec![AgentWorldModelNarrationRecord {
+                            scope: "broadcast".to_string(),
+                            target: None,
+                            text: "灾潮将起".to_string(),
+                            style: "era_decree".to_string(),
+                        }],
+                        reasoning: "calamity prepared one command and one narration".to_string(),
+                    },
+                ),
+            ]),
+            player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
+            last_tick: Some(5_100),
+            last_state_ts: Some(1_704_067_500),
+        };
+
+        persist_agent_world_model_authority_state(
+            &settings,
+            "wm-append-2",
+            "calamity",
+            &second_snapshot,
+        )
+        .expect("second authority write should succeed");
+
+        let loaded = load_agent_world_model_snapshot(&settings)
+            .expect("authority snapshot should load")
+            .expect("authority snapshot should exist");
+        assert_eq!(loaded, second_snapshot);
+
+        let eras = load_agent_eras(&settings).expect("agent eras should load");
+        assert_eq!(eras.len(), 2);
+        assert_eq!(eras[0].envelope_id, "wm-append-1");
+        assert_eq!(eras[0].source, "arbiter");
+        assert_eq!(eras[0].era_name, "blood_moon");
+        assert_eq!(eras[1].envelope_id, "wm-append-2");
+        assert_eq!(eras[1].source, "calamity");
+        assert_eq!(eras[1].era_name, "ashen_sky");
+
+        let decisions = load_agent_decisions(&settings).expect("agent decisions should load");
+        assert_eq!(decisions.len(), 3);
+        assert_eq!(decisions[0].envelope_id, "wm-append-1");
+        assert_eq!(decisions[0].agent_name, "era");
+        assert_eq!(decisions[1].envelope_id, "wm-append-2");
+        assert_eq!(decisions[1].agent_name, "calamity");
+        assert_eq!(decisions[1].command_count, 1);
+        assert_eq!(decisions[1].narration_count, 1);
+        assert_eq!(decisions[2].envelope_id, "wm-append-2");
+        assert_eq!(decisions[2].agent_name, "era");
 
         let _ = fs::remove_dir_all(root);
     }
