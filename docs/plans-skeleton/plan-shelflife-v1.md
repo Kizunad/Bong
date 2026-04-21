@@ -301,7 +301,7 @@ pub struct DecayProfile {
 - [ ] **DecayProfile spec：Option struct vs enum 分支**（§2.2 注）：M0 实装决策。enum 更类型安全；Option 更兼容序列化。倾向 enum
 - [ ] **骨币续印成本**：worldview §六 L518 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置 / `created_at_tick` 是否归零
 - [ ] **冻结区间记账并发**：玩家同 tick 多次进出容器 — 需要事件合流 + idempotent key（`(item_uuid, tick)` 去重）
-- [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修粒度差是否太大？是否加 4 阶（练气/凝脉/固元/化虚）
+- [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修 3 档粒度差是否太大？是否按 worldview §一 L68-72 的 6 境界（醒灵 / 引气 / 凝脉 / 固元 / 通灵 / 化虚）逐档细化感知精度
 - [ ] **死物 / 腐败 / 过峰 的次级经济**：死灵石 / 腐骨币 / 败药粉 / 陈醋 是否自成市场（ragpickers / 垃圾收购商 / 腐料炼毒）— 归 `plan-economy-v1`
 - [ ] **biome 修饰与裸露 item 的实现**：worldgen biome 边界跨越是按 tick 采样还是纯 lazy-on-read — 倾向后者（§6.1 第 5 条 death drop / pickup 计入），简单且一致
 - [ ] **cultivation plan blessing 灵石燃料**：cultivation 现无"烧灵石作修炼燃料"机制，需该 plan 独立 PR 加入消费路径，本 plan 才能落地灵石的实际用途
