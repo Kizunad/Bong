@@ -4,7 +4,7 @@
 
 **世界观锚点**：`worldview.md §四 219`（凡铁/木石作低品阶基础材料）· `worldview.md §九 429`（鲸落遗骸可藏固态灵矿）· `worldview.md §七 492`（挖到极品矿脉触发劫气标记）· `worldview.md §六 557`（矿脉有限「挖完就没」，硬通货）· `worldview.md §十 891/893`（青云残峰 / 血谷的矿脉分布 + 血谷"灵眼"）· `worldview.md §九 906`（鲸落化石固态灵矿）。
 
-**交叉引用**：`plan-forge-v1.md §3.2 §6 §7`（blueprint 材料替换）· `plan-alchemy-v1.md`（丹砂/朱砂辅料）· `plan-worldgen-v3.1.md`（矿脉生成接入 LAYER_REGISTRY）· `plan-botany-v1.md`（与草药互补：本 plan 管矿物 / botany 管草药）· `plan-volatility-v1.md`（灵石衰变 / 矿料挥发机制 — 本 plan 只声明 decay_profile 参数，机制归 volatility）· `plan-fauna-v1.md`（待立 — 妖兽材料，与本 plan 并列）· `plan-spiritwood-v1.md`（待立 — 灵木材料）。
+**交叉引用**：`plan-forge-v1.md §3.2 §6 §7`（blueprint 材料替换）· `plan-alchemy-v1.md`（丹砂/朱砂辅料）· `plan-worldgen-v3.1.md`（矿脉生成接入 LAYER_REGISTRY）· `plan-botany-v1.md`（与草药互补：本 plan 管矿物 / botany 管草药）· `plan-shelflife-v1.md`（灵石衰变 / 矿料挥发机制 — 本 plan 只声明 decay_profile 参数，机制归 shelflife）· `plan-fauna-v1.md`（待立 — 妖兽材料，与本 plan 并列）· `plan-spiritwood-v1.md`（待立 — 灵木材料）。
 
 ---
 
@@ -19,10 +19,10 @@
   3. **灵石** = **末法劣质衰变物**（见下条，逻辑链展开）
   4. **金银** = 废土（Earth 本位失效）
 - [ ] **灵石逻辑限制链**（对齐"骨币能当货币 ↔ 灵石比骨币更垃圾"的经济逻辑）：
-  - **衰变机制**归 `plan-volatility-v1`（挥发 Exponential 档，half_life ≈ 3 real-days）— 本 plan 不重造，只声明 `ling_shi` 的 `decay_profile` 参数
-  - **易掺假**：末法市场流通的灵石 70% 含杂石 / 半废料，真灵石目测鉴别困难（需**神识感知**，走 volatility §4）
+  - **衰变机制**归 `plan-shelflife-v1`（挥发 Exponential 档，half_life ≈ 3 real-days）— 本 plan 不重造，只声明 `ling_shi` 的 `decay_profile` 参数
+  - **易掺假**：末法市场流通的灵石 70% 含杂石 / 半废料，真灵石目测鉴别困难（需**神识感知**，走 shelflife §4）
   - **不便携称量**：不同矿脉的灵石灵气含量（`initial_qi`）飘忽 20-80%，不能作为标准化货币单位
-  - **纯消费品**：一烧就没，和骨币里**阵法封印循环**的真元本质不同（骨币用 volatility Linear + Freeze 档，衰变慢且可续印；灵石 Exponential 不可封印）
+  - **纯消费品**：一烧就没，和骨币里**阵法封印循环**的真元本质不同（骨币用 shelflife Linear + Freeze 档，衰变慢且可续印；灵石 Exponential 不可封印）
   - 真修士与正规商队只认**骨币 + 实物（丹药 / 矿物）换**；灵石只在**新手 / 凡俗小市**作小额以物易物
 - [ ] 末法审美：资源包贴图方向是**褪色 / 锈蚀 / 朴拙**（汉代漆器、商周青铜锈），不是"七彩辉光 / 神光大作"
 
@@ -92,7 +92,7 @@
 - [ ] **神识感知**：修为 ≥ 凝脉 的玩家右键矿脉方块触发 `MineralProbeIntent` → 返回矿种 / 剩余储量（不扣真元，低冷却）
 - [ ] **极品矿脉触发劫气**（worldview §七 492）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao`）时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
 - [ ] 采矿动作走 `plan-botany-v1` 同款 session 模式（长按 / 进度条）
-- [ ] **灵石衰变接入 `plan-volatility-v1`**：`ling_shi` item NBT 挂通用 `Freshness { decay_profile: LingShi }`，`DecayProfile::LingShi = Exponential(half_life ≈ 3 real-days)`；神识感知走 volatility §4 通用 probe 机制
+- [ ] **灵石衰变接入 `plan-shelflife-v1`**：`ling_shi` item NBT 挂通用 `Freshness { decay_profile: LingShi }`，`DecayProfile::LingShi = Exponential(half_life ≈ 3 real-days)`；神识感知走 shelflife §4 通用 probe 机制
 
 ---
 
@@ -184,8 +184,8 @@
 
 - [ ] 矿脉被挖完后是否 respawn（按世界观 §六 557 倾向：不 respawn，除非全服事件刷新）— 需设计长期经济平衡
 - [ ] 玩家之间矿脉所有权 / 争夺：worldview §九"盲盒死信箱"文化下，先挖先得 vs 灵龛领地覆盖
-- [ ] 经济位四层金字塔（§0.1）的落地路径：**骨币系统**（真货币，`plan-fauna-v1`）+ **矿物作交易筹码**（本 plan）+ **挥发衰变机制**（归 `plan-volatility-v1`）— `plan-economy-v1` 是否单独立项合流，或下沉到 fauna 内
-- [ ] 灵石鉴真体验：`FreshnessProbeIntent`（走 volatility §4）返回真灵石 vs 死灵石。末法市场"假灵石"是否可刷入？刷入则需掺假经济学（plan-economy-v1 范畴）
+- [ ] 经济位四层金字塔（§0.1）的落地路径：**骨币系统**（真货币，`plan-fauna-v1`）+ **矿物作交易筹码**（本 plan）+ **挥发衰变机制**（归 `plan-shelflife-v1`）— `plan-economy-v1` 是否单独立项合流，或下沉到 fauna 内
+- [ ] 灵石鉴真体验：`FreshnessProbeIntent`（走 shelflife §4）返回真灵石 vs 死灵石。末法市场"假灵石"是否可刷入？刷入则需掺假经济学（plan-economy-v1 范畴）
 - [ ] `can_tie`（残铁）/ `ku_jin`（枯金）只出遗迹的话，遗迹生成节奏如何 — 与 `plan-worldgen-v3.1.md` structure 系统协调
 - [ ] 客户端资源包是否走**自动下载**（Valence `ResourcePackPrompt`）还是手动放入 — 延后到 client mod 发包时决定
 - [ ] CustomModelData 方案：v1 先不碰，v2 看是否要同 block 跨 biome 切贴图
