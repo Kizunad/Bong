@@ -24,7 +24,7 @@ use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
     ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, Resource, Startup, Update, Username, With,
+    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
@@ -58,6 +58,7 @@ const DEFAULT_PLAYER_RECENT_KILLS: u32 = 0;
 const DEFAULT_PLAYER_RECENT_DEATHS: u32 = 0;
 const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
 const NARRATION_DEDUPE_CAPACITY: usize = 512;
+const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -95,6 +96,13 @@ struct NarrationDedupeResource {
 }
 
 impl Resource for NarrationDedupeResource {}
+
+#[derive(Default)]
+struct WorldModelMirrorReconcileState {
+    ticks_since_last_reconcile: u64,
+}
+
+impl Resource for WorldModelMirrorReconcileState {}
 
 impl NarrationDedupeResource {
     fn should_drop(&mut self, payload_key: &str, now_secs: u64) -> bool {
@@ -161,6 +169,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
     app.insert_resource(NarrationDedupeResource::default());
+    app.insert_resource(WorldModelMirrorReconcileState::default());
     app.insert_resource(combat_bridge::CombatSummaryAccumulator::default());
 
     app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
@@ -171,6 +180,7 @@ pub fn register(app: &mut App) {
             publish_world_state_to_redis,
             collect_player_chat,
             process_redis_inbound,
+            reconcile_world_model_runtime_mirror_system.after(process_redis_inbound),
             execute_agent_commands.after(process_redis_inbound),
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
@@ -944,6 +954,60 @@ fn bootstrap_world_model_runtime_mirror_system(
     {
         tracing::warn!(
             "[bong][network] failed to rebuild runtime world-model mirror from sqlite authority: {error}"
+        );
+    }
+}
+
+fn should_run_world_model_runtime_mirror_reconcile(
+    state: &mut WorldModelMirrorReconcileState,
+) -> bool {
+    state.ticks_since_last_reconcile = state.ticks_since_last_reconcile.saturating_add(1);
+    if state.ticks_since_last_reconcile < WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS {
+        return false;
+    }
+
+    state.ticks_since_last_reconcile = 0;
+    true
+}
+
+fn reconcile_world_model_runtime_mirror_with_writer<F>(
+    settings: &PersistenceSettings,
+    mut write_mirror: F,
+) -> io::Result<()>
+where
+    F: FnMut(Option<&AgentWorldModelSnapshotRecord>) -> io::Result<()>,
+{
+    let snapshot = bootstrap_agent_world_model_mirror(settings)?;
+    write_mirror(snapshot.as_ref())
+}
+
+fn reconcile_world_model_runtime_mirror(
+    settings: &PersistenceSettings,
+    redis_url: &str,
+) -> io::Result<()> {
+    reconcile_world_model_runtime_mirror_with_writer(settings, |snapshot| {
+        write_world_model_runtime_mirror(redis_url, snapshot)
+    })
+}
+
+fn reconcile_world_model_runtime_mirror_system(
+    persistence_settings: Option<Res<PersistenceSettings>>,
+    runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
+    mut reconcile_state: ResMut<WorldModelMirrorReconcileState>,
+) {
+    let Some(settings) = persistence_settings.as_deref() else {
+        return;
+    };
+    let Some(redis_config) = runtime_mirror_redis.as_deref() else {
+        return;
+    };
+    if !should_run_world_model_runtime_mirror_reconcile(&mut reconcile_state) {
+        return;
+    }
+
+    if let Err(error) = reconcile_world_model_runtime_mirror(settings, redis_config.url.as_str()) {
+        tracing::warn!(
+            "[bong][network] failed periodic runtime world-model mirror reconcile from sqlite authority: {error}"
         );
     }
 }
@@ -2884,6 +2948,107 @@ mod tests {
                 .expect("sqlite authority load should succeed even after mirror failure")
                 .expect("world model snapshot should still exist");
             assert_eq!(loaded, snapshot);
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn world_model_runtime_mirror_reconcile_waits_for_five_minute_interval() {
+            let mut state = WorldModelMirrorReconcileState::default();
+
+            for _ in 0..(WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS - 1) {
+                assert!(
+                    !should_run_world_model_runtime_mirror_reconcile(&mut state),
+                    "reconcile should not run before the five-minute cadence elapses"
+                );
+            }
+
+            assert!(
+                should_run_world_model_runtime_mirror_reconcile(&mut state),
+                "reconcile should run exactly when the five-minute cadence elapses"
+            );
+            assert_eq!(state.ticks_since_last_reconcile, 0);
+            assert!(
+                !should_run_world_model_runtime_mirror_reconcile(&mut state),
+                "reconcile cadence should reset after a successful run"
+            );
+        }
+
+        #[test]
+        fn reconcile_world_model_runtime_mirror_loads_sqlite_snapshot_before_writer() {
+            let root = unique_temp_dir("runtime-mirror-reconcile-loads-sqlite-snapshot");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_reconcile_loads_sqlite_snapshot",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "霜烬纪",
+                    "sinceTick": 640,
+                    "globalEffect": "镜海回响"
+                })),
+                zone_history: BTreeMap::from([(
+                    "frost_marsh".to_string(),
+                    vec![serde_json::json!({
+                        "name": "frost_marsh",
+                        "spirit_qi": 0.71,
+                        "danger_level": 4,
+                        "active_events": ["frost_tide"],
+                        "player_count": 1
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
+                last_tick: Some(640),
+                last_state_ts: Some(1_711_555_640),
+            };
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed before reconcile");
+
+            let mut captured = None;
+            reconcile_world_model_runtime_mirror_with_writer(&settings, |loaded| {
+                captured = loaded.cloned();
+                Ok(())
+            })
+            .expect("reconcile helper should load sqlite authority before writer invocation");
+
+            assert_eq!(captured, Some(snapshot));
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn reconcile_world_model_runtime_mirror_passes_none_when_sqlite_is_empty() {
+            let root = unique_temp_dir("runtime-mirror-reconcile-empty-sqlite");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_reconcile_empty_sqlite",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let mut saw_none = false;
+            reconcile_world_model_runtime_mirror_with_writer(&settings, |loaded| {
+                saw_none = loaded.is_none();
+                Ok(())
+            })
+            .expect("reconcile helper should succeed when sqlite authority is empty");
+
+            assert!(
+                saw_none,
+                "reconcile should ask the mirror writer to clear stale state when sqlite has no snapshot"
+            );
 
             let _ = fs::remove_dir_all(root);
         }
