@@ -229,3 +229,40 @@ pub enum TrackState {
     /// 调用方应在存储层把 `Freshness.track / profile` 更新为 Spoil 配置。
     AgePostPeakSpoiled,
 }
+
+/// plan §3 / §8 — 容器对物品保质期的 rate 影响行为。
+///
+/// 不同行为对不同 track / formula 的物品作用不同 —
+/// 由 `container_storage_multiplier(behavior, profile)` 统一解析（见 container 模块）。
+///
+/// 实装映射：
+/// - 凡俗箱子 → `Normal`
+/// - 玉盒 / 灵匣 → `Halve`
+/// - 阵法护匣 → `Freeze`
+/// - 阴干架 / 干燥架 → `DryingRack`（仅 Stepwise 公式生效）
+/// - 冰窖 → `SpoilOnly`（仅 Spoil 路径生效）
+/// - 陈化窖 → `AgeAccelerate`（仅 Age 路径生效）
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContainerFreshnessBehavior {
+    /// 凡俗箱（基准）— rate ×1.0，全 track / formula 通行。
+    Normal,
+    /// 玉盒 / 灵匣 — Exp/Linear/Age 路径 rate ×0.5；对 Stepwise 公式不适用（退 Normal）。
+    Halve,
+    /// 阵法护匣 — 全 track 冻结；进入时记 `frozen_since_tick`，离开时 frozen_accumulated 增加。
+    Freeze,
+    /// 阴干架 / 干燥架 — 仅 Stepwise 公式生效，直接作用 multiplier；
+    /// 非 Stepwise item 在此容器退 Normal。
+    DryingRack { multiplier: f32 },
+    /// 冰窖 — 仅 Spoil 路径生效，rate 缩放；非 Spoil item 在此退 Normal。
+    SpoilOnly { rate: f32 },
+    /// 陈化窖 — 仅 Age 路径生效，加速 peak_at_ticks（实装为 storage_multiplier > 1.0）；
+    /// `factor: f32` 表 "peak_at 时间被压缩到 1/factor"。
+    AgeAccelerate { factor: f32 },
+}
+
+impl ContainerFreshnessBehavior {
+    /// 是否为冻结类容器（决定 enter/exit 时是否记 frozen_since_tick）。
+    pub fn is_freeze(&self) -> bool {
+        matches!(self, ContainerFreshnessBehavior::Freeze)
+    }
+}
