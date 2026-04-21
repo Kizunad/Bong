@@ -299,6 +299,7 @@ mod integration_tests {
             1000,
             crate::shelflife::SpoilCheckOutcome::NotApplicable,
             false,
+            crate::shelflife::AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);

@@ -7,11 +7,16 @@
 //! - `NotApplicable` / `Safe` → 正常消费
 //! - `Warn` → 消费 + 额外 push Sharp contam（按腐败程度放大）
 //! - `CriticalBlock` → 拒绝消费，返回 `PillConsumeOutcome.blocked = true`
+//!
+//! M5d：`consume_pill` 再接 `AgePeakCheck`（plan §5.3 陈丹峰值 bonus）：
+//! - `Peaking { bonus_strength }` → qi_gain × (1 + bonus_strength)；outcome 携 bonus 供
+//!   caller emit `AgeBonusRoll` event
+//! - `NotApplicable` / `NotPeaking` → 无影响
 
 use serde::{Deserialize, Serialize};
 
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
-use crate::shelflife::SpoilCheckOutcome;
+use crate::shelflife::{AgePeakCheck, SpoilCheckOutcome};
 
 /// plan-shelflife-v1 §5.2 — Spoil `Warn` 档额外污染系数。
 /// `extra_toxin = toxin_amount × (1 - current/threshold) × SPOIL_TOXIN_MULT`；
@@ -40,13 +45,16 @@ pub struct PillEffect {
 /// UI 二次确认（plan §5.2 "拒绝自动消费"）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PillConsumeOutcome {
-    /// 实际生效的 qi_gain（blocked 时为 0.0）。
+    /// 实际生效的 qi_gain（blocked 时为 0.0；含 M5d Age bonus 放大）。
     pub qi_gained: f64,
     /// CriticalBlock 触发自动拒绝时为 true；Normal / Safe / Warn 均 false。
     pub blocked: bool,
     /// Spoil `Warn` 档额外 push 的污染量（color 同 `effect.toxin_color`）。
     /// Normal / Safe / Blocked 时为 0.0。
     pub extra_toxin_added: f64,
+    /// plan §5.3 M5d — Age Peaking 触发时的 `peak_bonus`；caller emit `AgeBonusRoll` 用。
+    /// NotApplicable / NotPeaking / blocked 时为 None。
+    pub age_bonus_applied: Option<f32>,
 }
 
 /// plan §2.2 — 同色丹毒未排到阈值不允许再服。
@@ -67,7 +75,7 @@ pub fn can_take_pill(contam: &Contamination, color: ColorKind) -> bool {
     sum_drug_toxin(contam, color) < TOXIN_THRESHOLD
 }
 
-/// plan-alchemy-v1 §2.1 + plan-shelflife-v1 §5.2 — 服药流程。
+/// plan-alchemy-v1 §2.1 + plan-shelflife-v1 §5.2/5.3 — 服药流程。
 ///
 /// # 参数
 /// - `effect` — pill 基础效果（toxin_amount / color / qi_gain）
@@ -79,14 +87,23 @@ pub fn can_take_pill(contam: &Contamination, color: ColorKind) -> bool {
 ///   框确认"像吃屎也要吃"后，caller 再次调 `consume_pill` 并置 `force_consume=true`；
 ///   此时按 Warn 公式用实际 (current, threshold) 算 extra_toxin（ratio ≈ 0.9-1.0）放大
 ///   至最大污染，消费得以进行。对 Safe / Warn / NotApplicable 不影响。
+/// - `age` — shelflife `age_peak_check` 结果：`Peaking { bonus_strength }` 时把 qi_gain
+///   乘以 `(1 + bonus_strength)` 作为 Age 路径的峰值加成（plan §5.3 "峰值消费"）。
+///   NotApplicable / NotPeaking 时不影响。
 ///
-/// # 分支
+/// # 分支（Spoil）
 /// - `NotApplicable` / `Safe` → 正常消费：push 基础 contam + apply qi_gain
 /// - `Warn` → 消费 + 额外 push Sharp contam（按 `1 - current/threshold` 放大）
 /// - `CriticalBlock` + `force_consume=false` → 拒绝，无 contam / 无 qi / `blocked=true`
 /// - `CriticalBlock` + `force_consume=true` → 按 Warn 公式消费（extra 接近 100%）
 ///
-/// 调用侧应在 `Warn` / `CriticalBlock` 时 emit `SpoilConsumeWarning` event。
+/// # 分支（Age M5d）
+/// - `Peaking { bonus_strength }` → qi_gained × (1 + bonus_strength)，outcome 携 Some(bonus)
+/// - `NotApplicable` / `NotPeaking` → qi_gain 不变，outcome 携 None
+/// - **blocked 时不应用 Age bonus**（无消费 = 无加成）
+///
+/// 调用侧应在 `Warn` / `CriticalBlock` 时 emit `SpoilConsumeWarning`；
+/// `age_bonus_applied = Some(_)` 时 emit `AgeBonusRoll`。
 pub fn consume_pill(
     effect: &PillEffect,
     contam: &mut Contamination,
@@ -94,6 +111,7 @@ pub fn consume_pill(
     now_tick: u64,
     spoil: SpoilCheckOutcome,
     force_consume: bool,
+    age: AgePeakCheck,
 ) -> PillConsumeOutcome {
     // CriticalBlock + !force → 拒绝；+ force → 降级为 Warn 走标准逻辑。
     let effective_spoil = match spoil {
@@ -102,6 +120,7 @@ pub fn consume_pill(
                 qi_gained: 0.0,
                 blocked: true,
                 extra_toxin_added: 0.0,
+                age_bonus_applied: None,
             };
         }
         SpoilCheckOutcome::CriticalBlock {
@@ -147,11 +166,21 @@ pub fn consume_pill(
         _ => 0.0,
     };
 
-    // qi_gain
+    // M5d — Age Peaking 加成（乘在 qi_gain 上）
+    let age_bonus = match age {
+        AgePeakCheck::Peaking { bonus_strength } => Some(bonus_strength),
+        _ => None,
+    };
+
+    // qi_gain（含 Age bonus）
     let qi_gained = match effect.qi_gain {
         Some(q) => {
             let before = cultivation.qi_current;
-            cultivation.qi_current = (before + q).min(cultivation.qi_max);
+            let effective_q = match age_bonus {
+                Some(b) => q * (1.0 + b as f64),
+                None => q,
+            };
+            cultivation.qi_current = (before + effective_q).min(cultivation.qi_max);
             cultivation.qi_current - before
         }
         None => 0.0,
@@ -161,6 +190,7 @@ pub fn consume_pill(
         qi_gained,
         blocked: false,
         extra_toxin_added: extra_toxin,
+        age_bonus_applied: age_bonus,
     }
 }
 
@@ -208,6 +238,7 @@ mod tests {
             10,
             SpoilCheckOutcome::NotApplicable,
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -234,6 +265,7 @@ mod tests {
             0,
             SpoilCheckOutcome::NotApplicable,
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 10.0);
         assert_eq!(cult.qi_current, 100.0);
@@ -314,6 +346,7 @@ mod tests {
             10,
             SpoilCheckOutcome::Safe { current_qi: 80.0 },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -340,6 +373,7 @@ mod tests {
                 spoil_threshold: 50.0,
             },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -369,6 +403,7 @@ mod tests {
                 spoil_threshold: 50.0,
             },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.extra_toxin_added, 0.0);
         assert_eq!(contam.entries.len(), 1); // 仅基础，无 extra
@@ -393,6 +428,7 @@ mod tests {
                 spoil_threshold: 50.0,
             },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert!((outcome.extra_toxin_added - 0.27).abs() < 1e-9);
         assert_eq!(contam.entries.len(), 2);
@@ -416,6 +452,7 @@ mod tests {
                 spoil_threshold: 50.0,
             },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(outcome.qi_gained, 0.0);
         assert!(outcome.blocked);
@@ -446,6 +483,7 @@ mod tests {
                 spoil_threshold: 50.0,
             },
             true,
+            AgePeakCheck::NotApplicable,
         );
         assert!(!outcome.blocked, "force_consume should bypass block");
         assert_eq!(outcome.qi_gained, 24.0);
@@ -474,6 +512,7 @@ mod tests {
             10,
             SpoilCheckOutcome::Safe { current_qi: 80.0 },
             false,
+            AgePeakCheck::NotApplicable,
         );
         let b = consume_pill(
             &basic_effect(Some(24.0)),
@@ -482,6 +521,7 @@ mod tests {
             10,
             SpoilCheckOutcome::Safe { current_qi: 80.0 },
             true,
+            AgePeakCheck::NotApplicable,
         );
         assert_eq!(a, b);
         assert_eq!(cult_a.qi_current, cult_b.qi_current);
@@ -507,7 +547,142 @@ mod tests {
                 spoil_threshold: 0.0,
             },
             false,
+            AgePeakCheck::NotApplicable,
         );
         assert!((outcome.extra_toxin_added - 0.3).abs() < 1e-9);
+    }
+
+    // ============== M5d Age Peaking 分支 ==============
+
+    #[test]
+    fn age_peaking_applies_qi_bonus() {
+        // Peaking bonus_strength=0.5 → qi_gain 24 × (1 + 0.5) = 36
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::NotApplicable,
+            false,
+            AgePeakCheck::Peaking {
+                bonus_strength: 0.5,
+            },
+        );
+        assert_eq!(outcome.qi_gained, 36.0);
+        assert_eq!(outcome.age_bonus_applied, Some(0.5));
+        assert!(!outcome.blocked);
+        assert_eq!(cult.qi_current, 36.0);
+    }
+
+    #[test]
+    fn age_not_peaking_no_bonus() {
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::NotApplicable,
+            false,
+            AgePeakCheck::NotPeaking,
+        );
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert_eq!(outcome.age_bonus_applied, None);
+    }
+
+    #[test]
+    fn age_peaking_respects_qi_max_clamp() {
+        // qi_max=100, qi_current=90, qi_gain=50 × 1.5 = 75 → 实际补 10
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 90.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(50.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::NotApplicable,
+            false,
+            AgePeakCheck::Peaking {
+                bonus_strength: 0.5,
+            },
+        );
+        assert_eq!(outcome.qi_gained, 10.0);
+        assert_eq!(outcome.age_bonus_applied, Some(0.5));
+        assert_eq!(cult.qi_current, 100.0);
+    }
+
+    #[test]
+    fn blocked_suppresses_age_bonus() {
+        // CriticalBlock + !force：blocked=true 且 age_bonus_applied=None（无消费 = 无加成）。
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi: 2.0,
+                spoil_threshold: 50.0,
+            },
+            false,
+            AgePeakCheck::Peaking {
+                bonus_strength: 0.5,
+            },
+        );
+        assert!(outcome.blocked);
+        assert_eq!(outcome.qi_gained, 0.0);
+        assert_eq!(outcome.age_bonus_applied, None);
+        assert_eq!(cult.qi_current, 50.0);
+    }
+
+    #[test]
+    fn age_peaking_stacks_with_spoil_warn() {
+        // 同时 Warn（额外 contam）和 Peaking（qi bonus）：两种效果叠加。
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        // Warn: current=25, threshold=50 → extra = 0.3 × 0.5 × 1.0 = 0.15
+        // Peaking: bonus=0.5 → qi_gain = 24 × 1.5 = 36
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::Warn {
+                current_qi: 25.0,
+                spoil_threshold: 50.0,
+            },
+            false,
+            AgePeakCheck::Peaking {
+                bonus_strength: 0.5,
+            },
+        );
+        assert_eq!(outcome.qi_gained, 36.0);
+        assert!((outcome.extra_toxin_added - 0.15).abs() < 1e-9);
+        assert_eq!(outcome.age_bonus_applied, Some(0.5));
+        assert_eq!(contam.entries.len(), 2);
     }
 }
