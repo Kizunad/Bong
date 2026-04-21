@@ -92,9 +92,9 @@ else:
 
 - 路径：Age
 - 用于：陈酒、老坛丹、陈年灵茶
-- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, `post_peak_half_life`, **`post_peak_spoil_threshold`**（current_qi 跌至此值时强制路径迁移 Age → Spoil）, **`post_peak_spoil_profile`**（迁移后用哪个 Spoil profile）
+- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, **`peak_window_ratio`**（`Peaking` 窗口宽度 ±ratio × peak，0.1 = ±10%；陈年灵茶可宽 0.2、老坛丹可窄 0.05）, `post_peak_half_life`, **`post_peak_spoil_threshold`**（current_qi **严格**低于此值时强制路径迁移 Age → Spoil；**仅在 `effective_dt > peak_at_ticks` 后生效** — 避免 malformed `initial < threshold` 时物品一创建就误判 Spoiled）, **`post_peak_spoil_profile`**（迁移后用哪个 Spoil profile）
 - 物理意象：灌入灵气 / 药性随时间析出成熟，过峰则封印失效开始外泄；外泄到一定程度变质腐败（陈酒 → 醋 → 毒）
-- **路径迁移规则**：当 `current_qi < post_peak_spoil_threshold` 时，`Freshness.track` 由 `Age` 改为 `Spoil`，`profile` 改为 `post_peak_spoil_profile`，`created_at_tick` 重置为迁移当下 tick（重新开始 Spoil 的衰减计时）— 实装在 §6 lazy eval 的访问点统一处理
+- **路径迁移规则**：当 `effective_dt > peak_at_ticks` **且** `current_qi < post_peak_spoil_threshold`（**严格 `<`** — 边界值 `==` 不触发）时，`Freshness.track` 由 `Age` 改为 `Spoil`，`profile` 改为 `post_peak_spoil_profile`，`created_at_tick` 重置为迁移当下 tick（重新开始 Spoil 的衰减计时）— 实装在 §6 lazy eval 的访问点统一处理
 
 ---
 
@@ -112,8 +112,13 @@ pub struct Freshness {
     pub track: DecayTrack,
     /// 公式 + 参数（按 track 选）
     pub profile: DecayProfileId,
-    /// 进入"封印"容器后记账
+    /// 累积已冻结 ticks（历史进 Freeze 容器时长，lazy eval 时从 dt 减去）
+    #[serde(default)]
     pub frozen_accumulated: u64,
+    /// 当前进入 Freeze 容器的 tick；`Some` = 正在冻结，`None` = 未冻结
+    /// 离开容器时 `frozen_accumulated += now - frozen_since_tick`，然后置 None
+    #[serde(default)]
+    pub frozen_since_tick: Option<u64>,
 }
 
 pub enum DecayTrack {
@@ -123,31 +128,44 @@ pub enum DecayTrack {
 }
 ```
 
+> **注**：M0 落地时将字段名 `frozen_until_tick` 改为 `frozen_since_tick`（语义更准 —
+> 记录**进入 Freeze 容器的起点**，不是未来时间点）。
+
 ### 2.2 Spec Registry
 
+**M0 实装选 enum 分支**（每路径独立字段，避免 Option 堆砌）：
+
 ```rust
-pub struct DecayProfile {
-    pub id: DecayProfileId,
-    pub formula: DecayFormulaKind, // Exponential / Linear / Stepwise / PeakAndFall
-    pub params: DecayParams,
-    pub track: DecayTrack,          // 决定消费侧分支
-    pub floor_qi: f32,              // Decay 路径的"死物残值"
-    pub spoil_threshold: Option<f32>, // Spoil 路径：低于此值判腐败
-    pub peak_bonus_cap: Option<f32>,  // Age 路径：峰值上限
-    pub post_peak_spoil_threshold: Option<f32>, // Age 路径：触发 → Spoil 迁移的阈值
-    pub post_peak_spoil_profile: Option<DecayProfileId>, // Age 路径：迁移后挂的 Spoil profile
+pub enum DecayProfile {
+    Decay {
+        id: DecayProfileId,
+        formula: DecayFormula,
+        floor_qi: f32,
+    },
+    Spoil {
+        id: DecayProfileId,
+        formula: DecayFormula,
+        spoil_threshold: f32,
+    },
+    Age {
+        id: DecayProfileId,
+        peak_at_ticks: u64,
+        peak_bonus: f32,
+        peak_window_ratio: f32,          // ±ratio × peak 的 Peaking 窗口（0.1 = ±10%）
+        post_peak_half_life_ticks: u64,
+        post_peak_spoil_threshold: f32,
+        post_peak_spoil_profile: DecayProfileId,
+    },
+}
+
+pub enum DecayFormula {
+    Exponential { half_life_ticks: u64 },
+    Linear { decay_per_tick: f32 },
+    Stepwise,
 }
 ```
 
-> **注**：v1 用 Option struct 是为骨架阶段速成。M0 实装可重构为 enum 分支：
-> ```rust
-> pub enum DecayProfile {
->   Decay { formula, params, floor_qi },
->   Spoil { formula, params, spoil_threshold, contam_kind },
->   Age { formula, params, peak_bonus_cap, post_peak_spoil_threshold, post_peak_spoil_profile },
-> }
-> ```
-> 决策延后到 §10 开放问题。
+> **校验**：`DecayProfile::validate()` 在 registry 加载时 reject malformed config（`peak_at_ticks == 0` / `peak_bonus < 0` / `peak_window_ratio` 出 `[0, 1]` / 任意 `NaN`）。
 
 ---
 
@@ -184,10 +202,10 @@ pub struct DecayProfile {
 
 ### 5.2 Spoil 路径
 
-- [ ] **消费时鲜度校验**：
-  - 高于 `spoil_threshold` — 正常消费
-  - 低于 threshold — 触发 `SpoilConsumeWarning` event；强行消费时按腐败程度施加 contam（Sharp / Violent 档，对标 `plan-alchemy-v1` 丹毒色）
-  - 极低（<10%）— 拒绝自动消费，需玩家二次确认（像吃屎）
+- [ ] **消费时鲜度校验**（**严格 `<` 语义** — 边界值 `current == spoil_threshold` 不触发 Spoiled）：
+  - `current ≥ spoil_threshold` — 正常消费
+  - `current < spoil_threshold` — 触发 `SpoilConsumeWarning` event；强行消费时按腐败程度施加 contam（Sharp / Violent 档，对标 `plan-alchemy-v1` 丹毒色）
+  - 极低（`current < 0.1 × spoil_threshold`）— 拒绝自动消费，需玩家二次确认（像吃屎）
 - [ ] **丹药过期**：除 contam 外还 **减效 + 额外 side_effect_tag**（对接 alchemy plan）
 - [ ] **腐败品回收**：败体可走 botany 堆肥 / alchemy "败药粉" 作 Violent 辅料
 
@@ -298,7 +316,7 @@ pub struct DecayProfile {
 
 - [ ] **半衰期数值正式调参 + 时间换算**：§7 表只是骨架建议，需 M5 联调按实际玩家行为测；同时定义"1 现实日 = N 游戏日"的换算（与 cultivation/agent 时间系统协调）
 - [ ] **陈化物的最佳消费窗口 UX**：Age 路径的"巅峰"提示是硬通知（dialog 中断）还是软提示（HUD 角标）？玩家是否可关闭通知？
-- [ ] **DecayProfile spec：Option struct vs enum 分支**（§2.2 注）：M0 实装决策。enum 更类型安全；Option 更兼容序列化。倾向 enum
+- [x] ~~**DecayProfile spec：Option struct vs enum 分支**~~ — **M0 选 enum 分支**（已在 §2.2 落地）
 - [ ] **骨币续印成本**：worldview §六 L518 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置 / `created_at_tick` 是否归零
 - [ ] **冻结区间记账并发**：玩家同 tick 多次进出容器 — 需要事件合流 + idempotent key（`(item_uuid, tick)` 去重）
 - [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修 3 档粒度差是否太大？是否按 worldview §一 L68-72 的 6 境界（醒灵 / 引气 / 凝脉 / 固元 / 通灵 / 化虚）逐档细化感知精度

@@ -14,6 +14,8 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
+#[allow(dead_code)]
+mod shelflife;
 mod skill;
 mod world;
 
