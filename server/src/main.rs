@@ -14,7 +14,9 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
-#[allow(dead_code)] // compute_* / validate / DecayProfileId 在 M5 消费侧接入前未运行调用
+// shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
+// 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
+#[allow(dead_code)]
 mod shelflife;
 mod skill;
 mod world;
@@ -56,6 +58,7 @@ fn main() {
     combat::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);
+    shelflife::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);
 

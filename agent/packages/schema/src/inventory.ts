@@ -59,6 +59,31 @@ export const FreshnessV1 = Type.Object(
 );
 export type FreshnessV1 = Static<typeof FreshnessV1>;
 
+// plan-shelflife-v1 M3a — TrackState 路径机态（与 server crate::shelflife::TrackState 对齐）。
+// 7 档 PascalCase（与 DecayTrack 一致）— client M3b 由此 + current_qi 比率衍生 5 档显示位。
+export const TrackStateV1 = Type.Union([
+  Type.Literal("Fresh"),
+  Type.Literal("Declining"),
+  Type.Literal("Dead"),
+  Type.Literal("Spoiled"),
+  Type.Literal("Peaking"),
+  Type.Literal("PastPeak"),
+  Type.Literal("AgePostPeakSpoiled"),
+]);
+export type TrackStateV1 = Static<typeof TrackStateV1>;
+
+// plan-shelflife-v1 M3a — 衍生 freshness 数据（snapshot emit 时由 server 预算）。
+// client 不需内置 compute_* 逻辑 + DecayProfileRegistry。
+export const FreshnessDerivedV1 = Type.Object(
+  {
+    // current_qi 非负 — compute_current_qi 在所有路径保证（Decay floor_qi ≥ 0 / Spoil max(0) / Age .max(0.0)）
+    current_qi: Type.Number({ minimum: 0 }),
+    track_state: TrackStateV1,
+  },
+  { additionalProperties: false },
+);
+export type FreshnessDerivedV1 = Static<typeof FreshnessDerivedV1>;
+
 export const InventoryItemViewV1 = Type.Object(
   {
     instance_id: SafeIntegerV1,
@@ -74,6 +99,8 @@ export const InventoryItemViewV1 = Type.Object(
     durability: Type.Number({ minimum: 0, maximum: 1 }),
     // 物品保质期 NBT；缺省视作"无时间敏感"（凡俗工具 / 瑶器等）。
     freshness: Type.Optional(FreshnessV1),
+    // M3a 衍生数据；None = freshness 缺失 / profile 未在 registry / 无法衍生。
+    freshness_current: Type.Optional(FreshnessDerivedV1),
   },
   { additionalProperties: false },
 );

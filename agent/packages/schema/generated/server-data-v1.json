@@ -675,6 +675,52 @@
                         ]
                       }
                     }
+                  },
+                  "freshness_current": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "current_qi",
+                      "track_state"
+                    ],
+                    "properties": {
+                      "current_qi": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "track_state": {
+                        "anyOf": [
+                          {
+                            "const": "Fresh",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Declining",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Dead",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Spoiled",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Peaking",
+                            "type": "string"
+                          },
+                          {
+                            "const": "PastPeak",
+                            "type": "string"
+                          },
+                          {
+                            "const": "AgePostPeakSpoiled",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
                   }
                 }
               }
@@ -842,6 +888,52 @@
                           ]
                         }
                       }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
                     }
                   }
                 },
@@ -994,6 +1086,52 @@
                             },
                             {
                               "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
                             }
                           ]
                         }
@@ -1154,6 +1292,52 @@
                           ]
                         }
                       }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
                     }
                   }
                 },
@@ -1306,6 +1490,52 @@
                             },
                             {
                               "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
                             }
                           ]
                         }
@@ -1466,6 +1696,52 @@
                           ]
                         }
                       }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
                     }
                   }
                 },
@@ -1622,6 +1898,52 @@
                           ]
                         }
                       }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
                     }
                   }
                 },
@@ -1774,6 +2096,52 @@
                             },
                             {
                               "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "freshness_current": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "current_qi",
+                        "track_state"
+                      ],
+                      "properties": {
+                        "current_qi": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "track_state": {
+                          "anyOf": [
+                            {
+                              "const": "Fresh",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Declining",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Dead",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Spoiled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "Peaking",
+                              "type": "string"
+                            },
+                            {
+                              "const": "PastPeak",
+                              "type": "string"
+                            },
+                            {
+                              "const": "AgePostPeakSpoiled",
+                              "type": "string"
                             }
                           ]
                         }
@@ -1936,6 +2304,52 @@
                           },
                           {
                             "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "freshness_current": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "current_qi",
+                      "track_state"
+                    ],
+                    "properties": {
+                      "current_qi": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "track_state": {
+                        "anyOf": [
+                          {
+                            "const": "Fresh",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Declining",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Dead",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Spoiled",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Peaking",
+                            "type": "string"
+                          },
+                          {
+                            "const": "PastPeak",
+                            "type": "string"
+                          },
+                          {
+                            "const": "AgePostPeakSpoiled",
+                            "type": "string"
                           }
                         ]
                       }
@@ -2554,6 +2968,52 @@
                       ]
                     }
                   }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
@@ -2845,6 +3305,52 @@
                           },
                           {
                             "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "freshness_current": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "current_qi",
+                      "track_state"
+                    ],
+                    "properties": {
+                      "current_qi": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "track_state": {
+                        "anyOf": [
+                          {
+                            "const": "Fresh",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Declining",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Dead",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Spoiled",
+                            "type": "string"
+                          },
+                          {
+                            "const": "Peaking",
+                            "type": "string"
+                          },
+                          {
+                            "const": "PastPeak",
+                            "type": "string"
+                          },
+                          {
+                            "const": "AgePostPeakSpoiled",
+                            "type": "string"
                           }
                         ]
                       }

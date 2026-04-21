@@ -209,9 +209,11 @@ impl Freshness {
 /// plan §8 `compute_track_state` 返回的**内部路径机态**。
 ///
 /// **注意**：此枚举是 **机态**（path state），不是 UI **显示档位**。plan §4 要求 tooltip
-/// 显示 5 档（鲜品/微损/半衰/残留/死物 等），5 档细分应由 M3（tooltip 实装）阶段从
-/// `current_qi / initial_qi` 比率 + TrackState 共同衍生，不在本枚举范围。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 显示 5 档（鲜品/微损/半衰/残留/死物 等），5 档细分应由 M3b（client tooltip 实装）阶段
+/// 从 `current_qi / initial_qi` 比率 + TrackState 共同衍生，不在本枚举范围。
+///
+/// 本枚举走 wire schema（M3a snapshot 携带），用 PascalCase 与 DecayTrack 一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrackState {
     /// Decay/Spoil: headroom 剩余 > 50% · Age: 峰前。
     Fresh,
