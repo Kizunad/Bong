@@ -75,11 +75,16 @@ pub fn can_take_pill(contam: &Contamination, color: ColorKind) -> bool {
 /// - `cultivation` — 玩家修为（mut：增加 qi_current）
 /// - `now_tick` — 当前 server tick（contam 记录时间戳）
 /// - `spoil` — shelflife `spoil_check` 结果（caller 先查 registry + freshness 生成）
+/// - `force_consume` — plan §5.2 二次确认路径：`CriticalBlock` 档玩家通过 UI 对话
+///   框确认"像吃屎也要吃"后，caller 再次调 `consume_pill` 并置 `force_consume=true`；
+///   此时按 Warn 公式用实际 (current, threshold) 算 extra_toxin（ratio ≈ 0.9-1.0）放大
+///   至最大污染，消费得以进行。对 Safe / Warn / NotApplicable 不影响。
 ///
 /// # 分支
 /// - `NotApplicable` / `Safe` → 正常消费：push 基础 contam + apply qi_gain
 /// - `Warn` → 消费 + 额外 push Sharp contam（按 `1 - current/threshold` 放大）
-/// - `CriticalBlock` → 拒绝，无 contam / 无 qi / `blocked=true`
+/// - `CriticalBlock` + `force_consume=false` → 拒绝，无 contam / 无 qi / `blocked=true`
+/// - `CriticalBlock` + `force_consume=true` → 按 Warn 公式消费（extra 接近 100%）
 ///
 /// 调用侧应在 `Warn` / `CriticalBlock` 时 emit `SpoilConsumeWarning` event。
 pub fn consume_pill(
@@ -88,15 +93,26 @@ pub fn consume_pill(
     cultivation: &mut Cultivation,
     now_tick: u64,
     spoil: SpoilCheckOutcome,
+    force_consume: bool,
 ) -> PillConsumeOutcome {
-    // CriticalBlock — 立即退，不做任何副作用
-    if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
-        return PillConsumeOutcome {
-            qi_gained: 0.0,
-            blocked: true,
-            extra_toxin_added: 0.0,
-        };
-    }
+    // CriticalBlock + !force → 拒绝；+ force → 降级为 Warn 走标准逻辑。
+    let effective_spoil = match spoil {
+        SpoilCheckOutcome::CriticalBlock { .. } if !force_consume => {
+            return PillConsumeOutcome {
+                qi_gained: 0.0,
+                blocked: true,
+                extra_toxin_added: 0.0,
+            };
+        }
+        SpoilCheckOutcome::CriticalBlock {
+            current_qi,
+            spoil_threshold,
+        } => SpoilCheckOutcome::Warn {
+            current_qi,
+            spoil_threshold,
+        },
+        other => other,
+    };
 
     // 基础污染
     contam.entries.push(ContamSource {
@@ -107,7 +123,7 @@ pub fn consume_pill(
     });
 
     // Warn 档 — 额外污染
-    let extra_toxin = match spoil {
+    let extra_toxin = match effective_spoil {
         SpoilCheckOutcome::Warn {
             current_qi,
             spoil_threshold,
@@ -191,6 +207,7 @@ mod tests {
             &mut cult,
             10,
             SpoilCheckOutcome::NotApplicable,
+            false,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -216,6 +233,7 @@ mod tests {
             &mut cult,
             0,
             SpoilCheckOutcome::NotApplicable,
+            false,
         );
         assert_eq!(outcome.qi_gained, 10.0);
         assert_eq!(cult.qi_current, 100.0);
@@ -295,6 +313,7 @@ mod tests {
             &mut cult,
             10,
             SpoilCheckOutcome::Safe { current_qi: 80.0 },
+            false,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -320,6 +339,7 @@ mod tests {
                 current_qi: 25.0,
                 spoil_threshold: 50.0,
             },
+            false,
         );
         assert_eq!(outcome.qi_gained, 24.0);
         assert!(!outcome.blocked);
@@ -348,6 +368,7 @@ mod tests {
                 current_qi: 50.0,
                 spoil_threshold: 50.0,
             },
+            false,
         );
         assert_eq!(outcome.extra_toxin_added, 0.0);
         assert_eq!(contam.entries.len(), 1); // 仅基础，无 extra
@@ -371,6 +392,7 @@ mod tests {
                 current_qi: 5.0,
                 spoil_threshold: 50.0,
             },
+            false,
         );
         assert!((outcome.extra_toxin_added - 0.27).abs() < 1e-9);
         assert_eq!(contam.entries.len(), 2);
@@ -393,6 +415,7 @@ mod tests {
                 current_qi: 2.0,
                 spoil_threshold: 50.0,
             },
+            false,
         );
         assert_eq!(outcome.qi_gained, 0.0);
         assert!(outcome.blocked);
@@ -400,6 +423,69 @@ mod tests {
         // 无 contam 新增，qi 不变
         assert_eq!(contam.entries.len(), 0);
         assert_eq!(cult.qi_current, 50.0);
+    }
+
+    #[test]
+    fn consume_pill_spoil_critical_block_force_consume_goes_through() {
+        // Codex P2 (PR #38) 回归：CriticalBlock + force_consume=true 应按 Warn 公式消费，
+        // 不再永久 blocked；plan §5.2 "拒绝自动消费，需玩家二次确认"的二次确认路径。
+        let mut contam = fresh_contam();
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        // current=2, threshold=50 → ratio=0.96 → extra = 0.3 × 0.96 × 1.0 = 0.288
+        let outcome = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam,
+            &mut cult,
+            10,
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi: 2.0,
+                spoil_threshold: 50.0,
+            },
+            true,
+        );
+        assert!(!outcome.blocked, "force_consume should bypass block");
+        assert_eq!(outcome.qi_gained, 24.0);
+        assert!((outcome.extra_toxin_added - 0.288).abs() < 1e-9);
+        // 基础 + extra = 2 条 contam
+        assert_eq!(contam.entries.len(), 2);
+        assert_eq!(cult.qi_current, 74.0);
+    }
+
+    #[test]
+    fn consume_pill_force_consume_noop_when_not_critical() {
+        // Safe / Warn / NotApplicable 下 force_consume 应无副作用（行为一致）
+        let mut contam_a = fresh_contam();
+        let mut cult_a = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let mut contam_b = fresh_contam();
+        let mut cult_b = cult_a.clone();
+
+        let a = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam_a,
+            &mut cult_a,
+            10,
+            SpoilCheckOutcome::Safe { current_qi: 80.0 },
+            false,
+        );
+        let b = consume_pill(
+            &basic_effect(Some(24.0)),
+            &mut contam_b,
+            &mut cult_b,
+            10,
+            SpoilCheckOutcome::Safe { current_qi: 80.0 },
+            true,
+        );
+        assert_eq!(a, b);
+        assert_eq!(cult_a.qi_current, cult_b.qi_current);
+        assert_eq!(contam_a.entries.len(), contam_b.entries.len());
     }
 
     #[test]
@@ -420,6 +506,7 @@ mod tests {
                 current_qi: 0.0,
                 spoil_threshold: 0.0,
             },
+            false,
         );
         assert!((outcome.extra_toxin_added - 0.3).abs() < 1e-9);
     }
