@@ -21,40 +21,35 @@
 | C3 | IPC schema 扩展：新 Redis 通道 `bong:combat_realtime` / `bong:combat_summary`，TypeBox TS + Rust serde 双端对齐 | 本次做 |
 | C4+ | 终结归档、亡者博物馆、重生语义、CharacterRegistry | **禁止** |
 
-### 2. 前置契约修复清单（已验证）
+### 2. 前置契约修复清单（全部已完成 — 2026-04-21 核查）
 
-以下问题由本地代码核查发现，云端开工前**必须先修**：
+> 以下 5 项在 2026-04-13/14 随 `fix(cultivation): add combat identity anchors` (05eafd9f) / `fix(schema): align cultivation detail and negative zones` (ccdf5036) / `feat(npc): bridge melee ai into combat resolver` (d3f29055) 等 commit 并入 `main`。本节保留为落地记录，不再是开工阻塞项。
 
-#### 2a. `ContamSource` 无 `attacker_id` 字段【已验证 — 属实】
-- 文件：`server/src/cultivation/components.rs:185`
-- 现状：`ContamSource { amount, color, introduced_at }` — 无攻击者追溯字段
-- 修复：新增 `attacker_id: Option<String>`（`canonical_player_id` 或 NPC id）
-- 影响：战斗 plan §1.1 的污染事务依赖此字段写生平卷
+#### 2a. `ContamSource.attacker_id` ✅ 已完成（05eafd9f）
+- `server/src/cultivation/components.rs:185` — `ContamSource { amount, color, attacker_id: Option<String>, introduced_at }`
+- `server/src/combat/resolve.rs:290` — 攻击命中时写入 `Some(attacker_id.clone())`
+- Serde roundtrip 测试：`components.rs:392 contam_source_serde_roundtrip_preserves_attacker_id`
 
-#### 2b. `LifeRecord` 无 `character_id` 字段【已验证 — 属实】
-- 文件：`server/src/cultivation/life_record.rs:72`
-- 现状：`LifeRecord { created_at, biography, insights_taken, spirit_root_first }` — 无跨重生身份锚
-- 修复：新增 `character_id: String`（= `canonical_player_id(username)`，建档时写入，重生保持不变）
-- 影响：同名玩家重连、终结归档查询链路全部依赖此字段
+#### 2b. `LifeRecord.character_id` ✅ 已完成（05eafd9f）
+- `server/src/cultivation/life_record.rs:131` — `character_id: String` + `#[serde(default)]` 兼容旧档
+- `LifeRecord::new(canonical_player_id(...))` 建档
+- 6 个相关测试（legacy serde default / canonical anchor / combat hit 归属）全绿
 
-#### 2c. `zone.spirit_qi` 被硬限在 `[0.0, 1.0]`，`negative_zone.rs` 需要负值【已验证 — 属实，但有细节】
-- 文件：`server/src/world/zone.rs:238`（加载验证）和 `server/src/network/command_executor.rs:14-15`（`modify_zone` 执行 clamp）
-- 现状：`validate_zone` 拒绝 `spirit_qi` 不在 `[0.0, 1.0]` 的 zones.json；`execute_modify_zone` 用 `ZONE_SPIRIT_QI_MIN=0.0` 和 `ZONE_SPIRIT_QI_MAX=1.0` clamp
-- `negative_zone.rs:18` 的 `siphon_amount` 正确处理负值，但实际上**永远不会被触发**（无法通过 zones.json 或 `modify_zone` 命令令 `spirit_qi < 0`）
-- 修复：定义负灵域的表示方案（两种选择之一）：(A) 放开 `spirit_qi` 下限到 `-1.0`，同步更新验证与 clamp；(B) 用独立布尔 `is_negative_zone` 标志 + 负值字段分离。**选型前必须与 worldview §二 对齐**
+#### 2c. 负 `zone.spirit_qi` ✅ 已完成（ccdf5036，方案 A — 放开下限到 -1.0）
+- `server/src/world/zone.rs:18` — `MIN_ZONE_SPIRIT_QI = -1.0`；`validate_zone` 接受 `[-1.0, 1.0]`
+- `server/src/network/command_executor.rs:14-15` — `ZONE_SPIRIT_QI_MIN = -1.0`
+- `zone.rs:220` — `spirit_qi < -0.2` 判负灵域；实配置 `blood_valley spirit_qi = -0.35`
+- 测试：`accepts_zone_spirit_qi_at_full_negative_bound` / `rejects_zone_spirit_qi_below_negative_bound`
 
-#### 2d. Rust `CultivationDetail` 与 TS `ServerDataV1` schema 漂移【已验证 — 属实】
-- Rust：`server/src/schema/server_data.rs:73` 已有 `CultivationDetail { realm, opened, flow_rate, ... }` 分支
-- TS：`agent/packages/schema/src/server-data.ts:101` 的 `ServerDataV1` union 只有 7 个成员（welcome/heartbeat/narration/zone_info/event_alert/player_state/ui_open），**没有** `cultivation_detail` 分支
-- 修复：在 `server-data.ts` 补充 `ServerDataCultivationDetailV1` 类型并加入 union
-- 注意：此修复触碰 `agent/packages/schema/`，需要同步更新 sample JSON 并运行 `npm test` 验证
-- **紧迫性**：`network/cultivation_detail_emit.rs:18` 每 20 tick 已在发布该 payload，**当前分支 agent 端就在漏校验**，战斗 plan 开工前必须先补齐
+#### 2d. `ServerDataCultivationDetailV1` 漂移 ✅ 已完成（ccdf5036）
+- `agent/packages/schema/src/server-data.ts:165` — 类型定义
+- `server-data.ts:417` — 已加入 `ServerDataV1` union
+- Rust `server/src/schema/server_data.rs:99` 对齐（realm/opened/flow_rate/flow_capacity/integrity/open_progress/cracks_count/contamination_total）
 
-#### 2e. NPC 无 `Attacking` brain action【已验证 — 属实，C2 隐性前置】
-- 文件：`server/src/npc/brain.rs`
-- 现状：`NpcStateKind` 枚举包含 `Attacking` 变体，但 big-brain scorer / action 只实现了 `Patrol` / `Flee` / `Idle`；NPC 发起攻击的决策路径完全不存在
-- 修复：C2 攻击事务落地时必须配套实现 `AttackingScorer` + `AttackingAction`（触发 `AttackIntent`）
-- 影响：没有这一步，C2 测试只能验证"玩家→NPC"单向攻击，无法验证双向战斗回路
+#### 2e. NPC `Attacking` brain action ✅ 已完成（d3f29055）
+- `server/src/npc/brain.rs:627` — melee AI system 发 `AttackIntent` 进共享战斗解析器
+- `brain.rs:660` — 冷却到期时 `attack_intents.send(AttackIntent { ... })`
+- 测试：`CapturedAttackIntents` resource 验证单次触发
 
 ### 3. 禁碰目录
 
@@ -68,7 +63,7 @@
 - `server/src/schema/client_payload.rs`（同上）
 - `server/src/schema/client_request.rs`（同上）
 
-例外：`agent/packages/schema/src/server-data.ts` **允许**修改，仅补充 `CultivationDetail` 漂移修复（见 2d）。
+例外：`agent/packages/schema/src/server-data.ts` **允许**修改（2d 修复已并入 main，后续若需新增 combat-side 服务端 payload 仍走此文件）。
 
 ### 4. 观测通道
 
