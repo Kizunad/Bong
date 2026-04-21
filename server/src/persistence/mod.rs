@@ -4354,6 +4354,53 @@ mod persistence_tests {
     }
 
     #[test]
+    fn bootstrap_persistence_keeps_fallback_zone_registry_when_overlay_payload_is_invalid() {
+        let (settings, root) = persistence_settings("zone-overlays-invalid-payload-bootstrap");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        persist_zone_overlays(
+            &settings,
+            &[ZoneOverlayRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: serde_json::json!({
+                    "danger_level": "not-a-number",
+                    "active_events": ["realm_collapse"],
+                    "blocked_tiles": [[7, 8]],
+                })
+                .to_string(),
+                payload_version: 1,
+                since_wall: 100,
+            }],
+        )
+        .expect("invalid zone overlay payload row should still persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DailyBackupState::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.add_systems(Startup, bootstrap_persistence_system);
+
+        app.update();
+
+        let registry = app.world().resource::<crate::world::zone::ZoneRegistry>();
+        assert_eq!(
+            registry.zones.len(),
+            1,
+            "fallback registry should remain intact"
+        );
+
+        let spawn = &registry.zones[0];
+        assert_eq!(spawn.name, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(spawn.danger_level, 0);
+        assert!(spawn.active_events.is_empty());
+        assert!(spawn.blocked_tiles.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn export_zone_persistence_aggregates_runtime_and_overlays() {
         let (settings, root) = persistence_settings("zone-export-bundle");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
