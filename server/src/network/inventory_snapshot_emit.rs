@@ -214,6 +214,7 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         stack_count: item.stack_count as u64,
         spirit_quality: item.spirit_quality,
         durability: item.durability,
+        freshness: item.freshness.clone(),
     }
 }
 
@@ -342,6 +343,7 @@ mod tests {
             stack_count,
             spirit_quality: 0.5,
             durability: 1.0,
+            freshness: None,
         }
     }
 

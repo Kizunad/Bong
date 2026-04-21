@@ -36,6 +36,29 @@ export const ItemRarityV1 = Type.Union([
 ]);
 export type ItemRarityV1 = Static<typeof ItemRarityV1>;
 
+// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT 镜像（与 server 端
+// crate::shelflife::Freshness 对齐）。
+export const DecayTrackV1 = Type.Union([
+  Type.Literal("Decay"),
+  Type.Literal("Spoil"),
+  Type.Literal("Age"),
+]);
+export type DecayTrackV1 = Static<typeof DecayTrackV1>;
+
+export const FreshnessV1 = Type.Object(
+  {
+    created_at_tick: SafeIntegerV1,
+    // initial_qi 必须非负 — shelflife compute_* headroom / exp-decay 公式假设 >= 0
+    initial_qi: Type.Number({ minimum: 0 }),
+    track: DecayTrackV1,
+    profile: Type.String({ minLength: 1, maxLength: 128 }),
+    frozen_accumulated: Type.Optional(SafeIntegerV1),
+    frozen_since_tick: Type.Optional(Type.Union([SafeIntegerV1, Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+export type FreshnessV1 = Static<typeof FreshnessV1>;
+
 export const InventoryItemViewV1 = Type.Object(
   {
     instance_id: SafeIntegerV1,
@@ -49,6 +72,8 @@ export const InventoryItemViewV1 = Type.Object(
     stack_count: Type.Integer({ minimum: 1 }),
     spirit_quality: Type.Number({ minimum: 0, maximum: 1 }),
     durability: Type.Number({ minimum: 0, maximum: 1 }),
+    // 物品保质期 NBT；缺省视作"无时间敏感"（凡俗工具 / 瑶器等）。
+    freshness: Type.Optional(FreshnessV1),
   },
   { additionalProperties: false },
 );

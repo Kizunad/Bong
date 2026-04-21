@@ -139,6 +139,9 @@ pub struct ItemInstance {
     pub stack_count: u32,
     pub spirit_quality: f64,
     pub durability: f64,
+    /// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT。
+    /// `None` = 无时间敏感（凡俗工具 / 瑶器 等），`Some` = 接 shelflife 路径计算。
+    pub freshness: Option<crate::shelflife::Freshness>,
 }
 
 #[derive(Debug)]
@@ -324,6 +327,7 @@ fn instantiate_item_instance(
         stack_count: template_instance.stack_count,
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
+        freshness: None,
     })
 }
 
@@ -460,6 +464,7 @@ pub fn add_item_to_player_inventory(
         stack_count,
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
+        freshness: None,
     };
 
     let Some(main_pack) = inventory
@@ -1948,6 +1953,7 @@ fn build_item_instance_from_template(
         stack_count,
         spirit_quality,
         durability,
+        freshness: None,
     })
 }
 
@@ -2479,6 +2485,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -2582,6 +2589,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         });
 
         let outcome = apply_inventory_move(
@@ -2631,6 +2639,7 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 1.0,
+                freshness: None,
             },
         });
 
@@ -2733,6 +2742,7 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 1.0,
+                freshness: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -2747,6 +2757,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -2762,6 +2773,7 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 0.5,
+                freshness: None,
             },
         );
 
@@ -2818,6 +2830,7 @@ cols = 4
                     stack_count: 1,
                     spirit_quality: 1.0,
                     durability: 1.0,
+                    freshness: None,
                 },
             });
         }
@@ -2859,6 +2872,7 @@ cols = 4
                     stack_count: 1,
                     spirit_quality: 1.0,
                     durability: 1.0,
+                    freshness: None,
                 },
             }],
         );
@@ -2925,6 +2939,7 @@ cols = 4
             stack_count: 1,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -2940,6 +2955,7 @@ cols = 4
                 stack_count: 1,
                 spirit_quality: 1.0,
                 durability: 1.0,
+                freshness: None,
             },
         );
 

@@ -242,6 +242,7 @@ mod server_data_tests {
             stack_count: 1,
             spirit_quality: 0.5,
             durability: 0.9,
+            freshness: None,
         }
     }
 
@@ -601,6 +602,7 @@ mod server_data_tests {
                     stack_count: 1,
                     spirit_quality: 0.5,
                     durability: 1.0,
+                    freshness: None,
                 },
             },
         ));

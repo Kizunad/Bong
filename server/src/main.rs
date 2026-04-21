@@ -14,7 +14,7 @@ mod npc;
 mod player;
 #[allow(dead_code)]
 mod schema;
-#[allow(dead_code)]
+#[allow(dead_code)] // compute_* / validate / DecayProfileId 在 M5 消费侧接入前未运行调用
 mod shelflife;
 mod skill;
 mod world;
