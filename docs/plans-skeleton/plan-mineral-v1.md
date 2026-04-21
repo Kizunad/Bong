@@ -10,11 +10,18 @@
 
 ## §0 设计轴心
 
-- [ ] 矿物 = **有限资源**（矿脉挖完就没，与 botany 采集可再生形成对比）
-- [ ] 四品阶：`凡 (1) → 灵 (2) → 仙 (3) → 玄 (4)`，每阶 forge `tier` 硬门槛
+### 0.1 世界观硬约束
+
+- [ ] **末法命名原则**（worldview §63 "末法修士不配用上古称呼"）：禁用 **玄 / 陨 / 星 / 仙 / 太 / 古** 等上古仙侠词头。优选 **残 / 碎 / 锈 / 杂 / 粗 / 髓 / 朴 / 枯** 等衰败 / 素朴意象。矿物命名须传达"挖到的多半是上古仙门遗落的残渣"而非"自古神金"
+- [ ] **灵石不是货币**（worldview §518 "金银如废土，硬通货是骨币"）：本 plan 的 `ling_shi` 仅作**修炼 / 炼器 / 炼丹燃料**，**不**具货币属性。骨币系统归 `plan-fauna-v1`（异变兽骨 + 阵法锁真元）
+- [ ] 末法审美：资源包贴图方向是**褪色 / 锈蚀 / 朴拙**（汉代漆器、商周青铜锈），不是"七彩辉光 / 神光大作"
+
+### 0.2 结构性轴心
+
+- [ ] 矿物 = **有限资源**（worldview §六 557 矿脉挖完就没，与 botany 采集可再生形成对比）
+- [ ] 四品阶：`凡 (1) → 灵 (2) → 稀 (3) → 遗 (4)` — "遗"指"上古遗物级"，强调稀有而非神圣
 - [ ] **worldgen 层面固定锚点**（worldview 骨架大地图） + 程序生成脉（zone 内随机）双轨
 - [ ] **原版方块改色重绘** — 不引入自定义方块模型，贴 1.20.1 vanilla ore 方块 ID + 客户端资源包换贴图色（方案 §4）
-- [ ] 灵石 = 修炼 / 炼器 / 炼丹通用燃料，既是材料也是硬通货（worldview §六）
 - [ ] 极品矿脉触发天道劫气标记（worldview §七 492）— 挖掘玩法有劫后自悔的结构
 - [ ] 丹砂 / 朱砂作炼丹辅料（矿物跨 forge/alchemy 的唯一路径）
 
@@ -22,52 +29,58 @@
 
 ## §1 矿物分类表
 
+> **命名重构**：原草案用 `xuan_tie` / `yun_tie` / `xing_yin` 违反末法命名原则（§0.1），全部替换为衰败系词汇。`qing_gang` 保留（"青钢"是真实冶金术语，不算仙侠化）。
+
 ### 1.1 金属系（forge 主干）
 
 | 正典名 | 品阶 | 用途 | 世界分布 | 备注 |
 |---|---|---|---|---|
-| `fan_tie`（凡铁） | 1 | 基础兵胎 / 凡铁炉 | 地表至 y=0，青云/血谷外层 | 已在 `items/core.toml furnace_fantie` |
-| `jing_tie`（精铁） | 1 | 进阶兵胎 / 劣质护甲 | 深岩层 y=-32 至 -64 | fantie 冶炼升级 |
-| `qing_gang`（青钢） | 2 | 灵铁炉 / 中阶剑胎 | 青云残峰矿脉 | forge 现用 placeholder |
-| `ling_tie`（灵铁） | 2 | 储灵兵胎 / 法器 | 血谷矿脉 | 可注真元 |
-| `xuan_tie`（玄铁） | 3 | 仙铁炉 / 高阶剑胎 | 血谷灵眼附近 / 鲸落化石 | forge 现用 placeholder |
-| `yun_tie`（陨铁） | 3 | 飞剑 / 御空法器 | 陨石坑事件产物 | 稀有，event-only |
-| `xing_yin`（星银） | 4 | 仙器胎 / 渡劫法器 | 虚空遗迹 | v2+ |
+| `fan_tie`（凡铁） | 1 | 基础兵胎 / 凡铁炉 | 地表至 y=0，青云/血谷外层 | worldview §四 217 锚点 · 已在 `items/core.toml furnace_fantie` |
+| `cu_tie`（粗铁） | 1 | 劣质护甲 / 锈蚀兵器 | 深岩层 y=-32 至 -64 | 代替原 `jing_tie` — "精铁"偏仙侠，改"粗铁"贴末法 |
+| `za_gang`（杂钢） | 2 | 灵铁炉炉体 / 中阶剑胎 | 青云残峰矿脉 | forge 现用 `qing_steel` placeholder → 改 `za_gang`；末法时代钢含杂质是常态 |
+| `ling_tie`（灵铁） | 2 | 储灵兵胎 / 可注真元法器 | 血谷矿脉 | "灵"字在 worldview 中性可用（见 灵气 / 灵田 / 灵眼） |
+| `sui_tie`（髓铁） | 3 | 稀铁炉炉体 / 高阶剑胎 | 鲸落遗骸核心 / 血谷灵眼 | 代替原 `xuan_tie` — 呼应 worldview §九 429 "中心包裹固态灵矿" 的"髓"意象 |
+| `can_tie`（残铁） | 3 | 修复半仙器 / 旧式法器 | 上古遗迹 / event 掉落 | 代替原 `yun_tie` — 末法世界"陨铁"不存，只有"上古残铁"从废墟挖出 |
+| `ku_jin`（枯金） | 4 | 渡劫兵 / 传承法器胎 | 虚空遗迹 / 鲸落深处 | 代替原 `xing_yin`（"星银"违禁）— "枯金"表达**金本该有光但已枯** |
 
 ### 1.2 非金属 / 灵晶系
 
 | 正典名 | 品阶 | 用途 | 世界分布 | 备注 |
 |---|---|---|---|---|
-| `ling_shi`（灵石） | 1-4 | 修炼 / 炼器 / 炼丹燃料 · 硬通货 | 全域（品阶按深度 / zone） | 玩家可碎/合成 |
-| `ling_jing`（灵晶） | 2 | 法宝核 / 阵法阵眼 | 青云 / 血谷 | 七彩灵气 |
-| `yu_sui`（玉髓） | 2 | 温润法器 / 护身符 | 鲸落化石 | 炼丹容器内壁 |
-| `xuan_yao`（玄曜石） | 3 | 镇邪 / 阵旗 | 血谷深岩 | 与欺天阵相关 |
+| `ling_shi`（灵石） | 1-4 | 修炼 / 炼器 / 炼丹**燃料**（非货币） | 全域（品阶按深度 / zone） | worldview §518 明确不是货币；玩家可碎 / 合成 |
+| `ling_jing`（灵晶） | 2 | 法宝核 / 阵法阵眼 | 青云 / 血谷 | 浊辉内敛（非七彩辉光） |
+| `yu_sui`（玉髓） | 2 | 温润法器 / 护身符 / 炼丹容器内壁 | 鲸落化石 | 青白温润，末法审美代表 |
+| `wu_yao`（乌曜石） | 3 | 镇邪 / 阵旗 | 血谷深岩 | 代替原 `xuan_yao` — "玄"字去除，"乌"字保留黑曜矿物朴素意象；与欺天阵相关 |
 
 ### 1.3 炼丹辅料
 
+> 丹砂 / 朱砂 / 雄黄 / 硫磺 均为真实传统中医药学矿物名，不违反末法命名原则（worldview 的"禁用上古称呼"针对**境界名**如"筑基元婴"，不针对汉代以降已进入世俗医药的矿物）。
+
 | 正典名 | 品阶 | 用途 | 世界分布 | 备注 |
 |---|---|---|---|---|
-| `dan_sha`（丹砂） | 1 | 炼丹辅料 / 朱红染色 | 洞穴 / 地表红岩 | 辛度 Mellow |
-| `zhu_sha`（朱砂） | 2 | 高阶炼丹 / 药引 | 火山 / 血谷 | 辛度 Sharp |
-| `xie_yu`（邪玉粉） | 3 | 邪丹主料 | 负灵域 | 辛度 Violent |
+| `dan_sha`（丹砂） | 1 | 炼丹辅料 / 朱红染色 / 中和 Sharp 毒 | 洞穴 / 地表红岩 | 辛度 Mellow |
+| `zhu_sha`（朱砂） | 2 | 高阶炼丹 / 药引 / 提升成丹率 | 火山 / 血谷 | 辛度 Sharp |
+| `xiong_huang`（雄黄） | 2 | 驱邪辅料 / 解蛊丹原料 | 洞穴深层 / 尸骸附近 | 辛度 Sharp；v2+ |
+| `xie_fen`（邪粉） | 3 | 邪丹主料（魔修支线） | 负灵域 | 辛度 Violent；代替原 `xie_yu`（邪玉粉）— "邪粉"更贴末法"挖到啥算啥"的粗朴感，v2+ |
 
 ---
 
 ## §2 分布与产出
 
 - [ ] **worldgen 固定锚点**：青云残峰 / 血谷 / 鲸落遗骸 的矿脉位置由 `worldgen/blueprint` 写死（worldview §十 表格）
-- [ ] **程序生成脉**：zone 内按 `LAYER_REGISTRY::mineral_density` 随机散布，密度曲线 vs 品阶反比（玄铁极稀）
-- [ ] **鲸落化石**（worldview 906）：特殊大型 structure，中心固态灵矿 — worldgen 生成时 AABB tag
+- [ ] **程序生成脉**：zone 内按 `LAYER_REGISTRY::mineral_density` 随机散布，密度曲线 vs 品阶反比（髓铁 / 残铁 / 枯金 极稀）
+- [ ] **鲸落化石**（worldview 906）：特殊大型 structure，中心"固态灵矿"— 实装映射为 `sui_tie` + `ling_jing` + `yu_sui` 富集点；worldgen 生成时挂 AABB tag
 - [ ] **矿脉有限性**：每脉初始储量 N 块，挖完 despawn 脉体 / 标记永久耗尽（持久化落地 data/minerals/exhausted.json，归 plan-persistence-v1）
-- [ ] **血谷灵眼不固定**（worldview 893）— 灵眼实体等 `灵眼系统`立项（见 `docs/plans-skeleton/reminder.md §通用`）再挂玄铁/灵晶富集点
+- [ ] **血谷灵眼不固定**（worldview 893）— 灵眼实体等"灵眼系统"立项（见 `reminder.md §通用`）再挂 `sui_tie` / `ling_jing` 富集点
+- [ ] **上古遗迹** — `can_tie` / `ku_jin` 仅在遗迹 structure 里出现，不走 zone 密度生成
 
 ---
 
 ## §3 开采方式
 
-- [ ] 镐头品阶门槛：fan_tie pickaxe → 品 1，jing_tie → 品 2... 对标 `vanilla pickaxe tier`
+- [ ] 镐头品阶门槛：fan_tie pickaxe → 品 1，cu_tie → 品 2... 对标 `vanilla pickaxe tier`
 - [ ] **神识感知**：修为 ≥ 凝脉 的玩家右键矿脉方块触发 `MineralProbeIntent` → 返回矿种 / 剩余储量（不扣真元，低冷却）
-- [ ] **极品矿脉触发劫气**（worldview §七 492）：挖到品阶 ≥ 3 的矿块时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
+- [ ] **极品矿脉触发劫气**（worldview §七 492）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao`）时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
 - [ ] 采矿动作走 `plan-botany-v1` 同款 session 模式（长按 / 进度条）
 
 ---
@@ -78,42 +91,48 @@
 
 ### 4.1 MC 1.20.1 vanilla block 映射
 
+> **末法审美原则**：所有改色方向以**褪色 / 锈蚀 / 内敛**为主，禁止"七彩辉光 / 鲜亮饱和"。挖到的矿物应**看起来像上古仙门遗落的残渣**，不是"神金天银"。
+
 | 正典矿名 | vanilla block | 资源包改色方向 | 备注 |
 |---|---|---|---|
-| `fan_tie` | `iron_ore` / `deepslate_iron_ore` | 保留灰褐底，加粗颗粒 | y > 0 地表 |
-| `jing_tie` | `deepslate_iron_ore` | 偏蓝灰 + 金属光泽 | y < 0 |
-| `qing_gang` | `copper_ore` | 改青绿 / 淡银（去氧化斑） | — |
-| `ling_tie` | `redstone_ore` | 改冷紫 / 发光效果保留 | 脉动灵气 |
-| `xuan_tie` | `ancient_debris` | 改幽蓝黑 | 纹理加符文 |
-| `yun_tie` | `obsidian` 变体 | 改深灰 + 陨星光点 | event 掉落 |
-| `ling_shi` | `diamond_ore` | 改半透明白 | — |
-| `ling_jing` | `emerald_ore` | 改七彩辉光 | — |
-| `yu_sui` | `lapis_ore` | 改温润青白玉 | 去深蓝 |
-| `xuan_yao` | `coal_ore` | 改漆黑带红纹 | — |
-| `dan_sha` | `redstone_ore`（单独 biome 区分） | 保持朱红 / 减光强 | vs ling_tie 的 zone 隔离 |
-| `zhu_sha` | `nether_gold_ore` | 改深朱红 | 火山 biome |
-| `xie_yu` | `nether_quartz_ore` | 改暗紫白裂纹 | 负灵域 |
+| `fan_tie` | `iron_ore` / `deepslate_iron_ore` | 灰褐底 + 锈斑 / 颗粒粗糙 | y > 0 地表 |
+| `cu_tie` | `deepslate_iron_ore` | 暗灰 + 结块状锈 / 无金属光泽 | y < 0（"粗铁"朴素） |
+| `za_gang` | `copper_ore` | 暗青绿 / 斑驳锈蚀（像出土青铜） | — |
+| `ling_tie` | `redstone_ore` | 冷紫 / **暗淡内敛**（不要闪光，用 low emissive） | 脉动灵气但内敛 |
+| `sui_tie` | `ancient_debris` | 骨白 + 深褐纹理（像腐朽骨髓切面） | 鲸落化石意象 |
+| `can_tie` | `obsidian` 变体 | 暗褐 + 风化碎裂纹 | 上古遗迹掉落 |
+| `ku_jin` | `raw_gold_block` 变体 | **褪色的金黄 → 土黄** / 裂纹 | "枯金"核心美学 — 金本该亮但已枯 |
+| `ling_shi` | `diamond_ore` | 青白 + 半透明 / 低亮度（非高亮钻石辉光） | 燃料非货币 |
+| `ling_jing` | `emerald_ore` | 青翠偏暗 / 浊辉内敛（去七彩） | — |
+| `yu_sui` | `lapis_ore` | 温润青白玉 / 去深蓝 | 末法审美代表 |
+| `wu_yao` | `coal_ore` | 漆黑 + 赤红暗纹 | 镇邪 / 欺天阵材料 |
+| `dan_sha` | `redstone_ore`（biome 区分） | 朱红偏暗 / 减光强 | vs ling_tie 的 zone 隔离 |
+| `zhu_sha` | `nether_gold_ore` | 深朱红 + 硫磺黄晶簇 | 火山 biome |
+| `xiong_huang` | `nether_gold_ore` 变体 | 硫磺黄 + 结晶面 | 洞穴深层，v2+ |
+| `xie_fen` | `nether_quartz_ore` | 暗紫白裂纹 / 粉末感 | 负灵域，v2+ |
 
 ### 4.2 冲突消解
 
-- `redstone_ore` 同时被 `ling_tie` 和 `dan_sha` 占用 → 用 **biome 隔离**：青云/血谷生成的 `redstone_ore` = ling_tie，地表洞穴生成的 = dan_sha。客户端通过 zone 查询切换 tooltip / mineral_id 解析（server 权威，客户端 HUD 只显示）
+- `redstone_ore` 同时被 `ling_tie` 和 `dan_sha` 占用 → 用 **biome 隔离**：青云 / 血谷生成的 `redstone_ore` = `ling_tie`，地表洞穴生成的 = `dan_sha`。客户端通过 zone 查询切换 tooltip / mineral_id 解析（server 权威，客户端 HUD 只显示）
+- `nether_gold_ore` 同时被 `zhu_sha` 和 `xiong_huang` 占用 → `zhu_sha` 走火山 biome，`xiong_huang` 走普通洞穴深层（v2+ 实装时按 zone 分流）
 - 所有重绘不改 block ID / hitbox / sound — 仅贴图层变化，Valence 协议层无感
 
 ### 4.3 资源包交付
 
 - [ ] `client/src/main/resources/assets/bong/textures/block/*.png` 重绘贴图
 - [ ] `client/src/main/resources/assets/minecraft/models/block/*.json` 覆盖 vanilla 模型（仅贴图引用）
-- [ ] 贴图风格参考：国风水墨 / 汉代漆器朱红 / 商周青铜锈绿（避免 JRPG 鲜艳色）
+- [ ] 贴图风格参考：**汉代漆器暗朱** / **商周青铜锈绿** / **宋瓷朴素青白** / **敦煌壁画土色系**（避免 JRPG 鲜艳 / 明亮金属光）
+- [ ] 避免：`emerald_ore` 原版七彩、`diamond_ore` 原版冰蓝高亮 — 改为低饱和 + 低亮度
 - [ ] 延后：自定义 CustomModelData 让同 block 按 NBT 切换贴图（进阶 — v2）
 
 ---
 
 ## §5 forge 钩子
 
-- [ ] `plan-forge-v1.md §3.2` 的 blueprint 材料名**批量替换**：`xuan_iron → xuan_tie` / `qing_steel → qing_gang` / `yun_tie` 新增 / `yi_beast_bone` 改到 `plan-fauna-v1`
-- [ ] `plan-forge-v1.md §6` inventory 扩展表的 "载体材料" 行删除 placeholder 警告，改引用本 plan §1
+- [ ] `plan-forge-v1.md §3.2` 的 blueprint 材料名**批量替换**：`xuan_iron → sui_tie` / `qing_steel → za_gang` / 新增 `can_tie` / `ku_jin` / `yi_beast_bone` 移到 `plan-fauna-v1`
+- [ ] `plan-forge-v1.md §6` inventory 扩展表的"载体材料"行删除 placeholder 警告，改引用本 plan §1
 - [ ] `ForgeBlueprint.required[].material` 校验接入 `MineralRegistry::is_valid_mineral_id`
-- [ ] 炉阶 vs 主料品阶：凡铁炉（tier 1）只接 fan_tie/jing_tie；灵铁炉（tier 2）接 qing_gang/ling_tie；仙铁炉（tier 3）接 xuan_tie 及以上
+- [ ] 炉阶 vs 主料品阶：凡铁炉（tier 1）只接 `fan_tie` / `cu_tie`；灵铁炉（tier 2）接 `za_gang` / `ling_tie`；稀铁炉（tier 3，代替"仙铁炉"上古称呼）接 `sui_tie` / `can_tie` / `ku_jin`
 
 ---
 
@@ -122,7 +141,8 @@
 - [ ] `plan-alchemy-v1` 配方 JSON 新增 `auxiliary_materials[].mineral_id` 字段（现只有 botany 草药）
 - [ ] 丹砂（`dan_sha`）作 Mellow 辅料：解 Sharp 毒 / 中和剧烈药性（见 `docs/library/ecology/辛草试毒录.json`）
 - [ ] 朱砂（`zhu_sha`）作 Sharp 药引：提升高阶丹成丹率 + Sharp 毒副作用
-- [ ] 邪玉粉（`xie_yu`）作 Violent 主料：邪丹（v2+，与负灵域 + 魔修支线绑）
+- [ ] 雄黄（`xiong_huang`）作 Sharp 辅料：驱邪 / 解蛊丹原料（v2+）
+- [ ] 邪粉（`xie_fen`）作 Violent 主料：邪丹（v2+，与负灵域 + 魔修支线绑）
 
 ---
 
@@ -140,7 +160,7 @@
 ## §8 实施节点
 
 - [ ] **M0 — 正典定稿**：写 `docs/library/ecology/矿物录.json`（本 plan §1 三表）+ 与 worldview / botany / forge / alchemy 对齐命名
-- [ ] **M1 — 资源包改色**：客户端资源包 vanilla ore 重绘 13 种（§4.1 表），本地 runClient 目视验证
+- [ ] **M1 — 资源包改色**：客户端资源包 vanilla ore 重绘 15 种（§4.1 表），本地 runClient 目视验证；末法审美风格评审（朴素暗沉，禁七彩 / 高亮金属）
 - [ ] **M2 — worldgen 接入**：`worldgen/blueprint` 加矿脉固定锚点 + `LAYER_REGISTRY::mineral_density` 程序生成脉
 - [ ] **M3 — server 正典 runtime**：`MineralRegistry` + `MineralOreNode` + `MineralProbeIntent`
 - [ ] **M4 — forge 钩子**：batch 替换 `plan-forge-v1` blueprint JSON placeholder 材料名
@@ -151,12 +171,13 @@
 
 ## §9 开放问题
 
-- [ ] 矿脉被挖完后是否 respawn（按真实世界观：不 respawn，除非全服事件刷新）— 需设计长期经济平衡
+- [ ] 矿脉被挖完后是否 respawn（按世界观 §六 557 倾向：不 respawn，除非全服事件刷新）— 需设计长期经济平衡
 - [ ] 玩家之间矿脉所有权 / 争夺：worldview §九"盲盒死信箱"文化下，先挖先得 vs 灵龛领地覆盖
-- [ ] 灵石作通用货币的汇率：灵石 ↔ 普通矿 ↔ 丹药（经济设计要不要独立 `plan-economy-v1`）
-- [ ] 陨铁 / 星银如何产出：event-driven（天劫落下陨石）vs 固定遗迹 — 与 `plan-tribulation-v1` 协调
-- [ ] 客户端资源包是否走 **自动下载**（Valence `ResourcePackPrompt`）还是手动放入 — 延后到 client mod 发包时决定
+- [ ] 矿物交易的"物物交换"设计：worldview §518 明确**骨币**（归 `plan-fauna-v1`）才是硬通货，矿物本身作**交易筹码**（worldview §六 557"交易硬通货"），这俩的关系要单独立 `plan-economy-v1` 还是就在 fauna 里定义
+- [ ] `can_tie`（残铁）/ `ku_jin`（枯金）只出遗迹的话，遗迹生成节奏如何 — 与 `plan-worldgen-v3.1.md` structure 系统协调
+- [ ] 客户端资源包是否走**自动下载**（Valence `ResourcePackPrompt`）还是手动放入 — 延后到 client mod 发包时决定
 - [ ] CustomModelData 方案：v1 先不碰，v2 看是否要同 block 跨 biome 切贴图
+- [ ] **worldgen 层面：鲸落遗骸 structure 的生成算法**（worldview §九 906 "白色巨型化石方块"）— 是独立 structure generator 还是借 vanilla ancient_city 变体
 
 ---
 
