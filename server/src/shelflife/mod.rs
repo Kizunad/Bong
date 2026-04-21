@@ -10,24 +10,34 @@
 //! - **M1** — Item NBT 接入 inventory（Freshness 字段写入 ItemInstance / wire schema）
 //! - **M2** — 容器行为（ContainerFreshnessBehavior + enter/exit 冻结记账，纯函数层）
 //! - **M3a** — DecayProfileRegistry resource + snapshot 衍生数据（current_qi / track_state）
-//! - M3b+ — client tooltip / 神识感知 / 消费侧接入 / 死物变体 / 跨 plan 参数定稿
+//! - **M4a** — 神识感知 FreshnessProbeIntent + 凝脉+ 修为 gate 解析器
+//! - M4b+ — client tooltip / 消费侧接入 / 死物变体 / 跨 plan 参数定稿
 
 pub mod compute;
 pub mod container;
+pub mod probe;
 pub mod registry;
 pub mod types;
 
 pub use compute::{compute_current_qi, compute_track_state};
 pub use container::{container_storage_multiplier, enter_container, exit_container};
+pub use probe::{
+    resolve_freshness_probe_intents, FreshnessProbeIntent, FreshnessProbeResponse,
+    ProbeDenialReason, ProbeResult,
+};
 pub use registry::DecayProfileRegistry;
 pub use types::{
     ContainerFreshnessBehavior, DecayFormula, DecayProfile, DecayProfileId, DecayTrack, Freshness,
     TrackState,
 };
 
-/// plan-shelflife-v1 M3a — 将 DecayProfileRegistry 作为默认空 resource 插入 App。
-/// M7 正式定稿时由各 plan（mineral / fauna / botany / alchemy / food / forge）
-/// 调用 `app.world_mut().resource_mut::<DecayProfileRegistry>().insert(...)` 填充。
+/// plan-shelflife-v1 M3a + M4a — 注册 shelflife 资源 + 事件 + 系统。
+/// - DecayProfileRegistry 空骨架，M7 由各消费 plan 填充
+/// - FreshnessProbeIntent/Response 事件 + resolver 系统
 pub fn register(app: &mut valence::prelude::App) {
+    use valence::prelude::Update;
     app.insert_resource(DecayProfileRegistry::default());
+    app.add_event::<FreshnessProbeIntent>();
+    app.add_event::<FreshnessProbeResponse>();
+    app.add_systems(Update, resolve_freshness_probe_intents);
 }
