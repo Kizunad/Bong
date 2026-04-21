@@ -14,7 +14,7 @@ use super::container::container_storage_multiplier;
 use super::registry::DecayProfileRegistry;
 use super::types::{ContainerFreshnessBehavior, DecayTrack, TrackState};
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::inventory::{inventory_item_by_instance, PlayerInventory};
+use crate::inventory::{inventory_item_by_instance_borrow, PlayerInventory};
 
 /// plan §4 — 神识感知查询意图。`issued_at_tick` 由 caller（chat 命令 / 未来
 /// ClientRequest wire）在构造时设置当前 server tick。
@@ -112,8 +112,8 @@ fn resolve_one_probe(
         return denied(intent, ProbeDenialReason::RealmTooLow);
     }
 
-    // 3. Inventory 查 instance_id
-    let Some(item) = inventory_item_by_instance(inventory, intent.instance_id) else {
+    // 3. Inventory 查 instance_id — 用 borrow 版本避免 clone ~5-6 次 String heap alloc
+    let Some(item) = inventory_item_by_instance_borrow(inventory, intent.instance_id) else {
         return denied(intent, ProbeDenialReason::ItemNotFound);
     };
 
