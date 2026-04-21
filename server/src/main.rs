@@ -18,11 +18,17 @@ use persistence::{
     bootstrap_sqlite, export_zone_persistence, import_zone_persistence, PersistenceSettings,
     ZoneExportBundle,
 };
+use player::state::{
+    export_player_bundle, import_player_bundle, PlayerExportBundle, PlayerStatePersistence,
+};
 use valence::log::LogPlugin;
 use valence::prelude::*;
 
 fn init_tracing() {
-    let _ = tracing_subscriber::fmt().with_target(false).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 fn main() {
@@ -70,16 +76,16 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
     match command.as_str() {
         "export" => {
             let Some(target) = args.next() else {
-                eprintln!("用法: bong-server export zones");
+                eprintln!("用法: bong-server export zones | bong-server export --player <name>");
                 return Err(2);
             };
-            if args.next().is_some() {
-                eprintln!("用法: bong-server export zones");
-                return Err(2);
-            }
 
             match target.as_str() {
                 "zones" => {
+                    if args.next().is_some() {
+                        eprintln!("用法: bong-server export zones");
+                        return Err(2);
+                    }
                     let settings = PersistenceSettings::default();
                     if let Err(error) = bootstrap_sqlite(settings.db_path(), "cli-export-zones") {
                         eprintln!("初始化导出数据库失败: {error}");
@@ -99,6 +105,36 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
                         }
                     }
                 }
+                "--player" => {
+                    let Some(username) = args.next() else {
+                        eprintln!("用法: bong-server export --player <name>");
+                        return Err(2);
+                    };
+                    if args.next().is_some() {
+                        eprintln!("用法: bong-server export --player <name>");
+                        return Err(2);
+                    }
+
+                    let persistence = PlayerStatePersistence::default();
+                    if let Err(error) = bootstrap_sqlite(persistence.db_path(), "cli-export-player")
+                    {
+                        eprintln!("初始化导出数据库失败: {error}");
+                        return Err(1);
+                    }
+
+                    match export_player_bundle(&persistence, username.as_str()) {
+                        Ok(bundle) => {
+                            let rendered = serde_json::to_string_pretty(&bundle)
+                                .expect("player export should serialize");
+                            println!("{rendered}");
+                            Err(0)
+                        }
+                        Err(error) => {
+                            eprintln!("导出 player 失败: {error}");
+                            Err(1)
+                        }
+                    }
+                }
                 _ => {
                     eprintln!("未知导出目标: {target}");
                     Err(2)
@@ -111,38 +147,53 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
                 return Err(2);
             }
 
-            let Some(target) = args.next() else {
-                eprintln!("用法: bong-server import zones --file <path>");
+            let Some(first_arg) = args.next() else {
+                eprintln!("用法: bong-server import zones --file <path> | bong-server import --file <path>");
                 return Err(2);
             };
-            let Some(flag) = args.next() else {
-                eprintln!("用法: bong-server import zones --file <path>");
-                return Err(2);
-            };
-            let Some(path) = args.next() else {
-                eprintln!("用法: bong-server import zones --file <path>");
-                return Err(2);
-            };
-            if flag != "--file" || args.next().is_some() {
-                eprintln!("用法: bong-server import zones --file <path>");
-                return Err(2);
-            }
 
-            match target.as_str() {
-                "zones" => {
+            let (target, path) = if first_arg == "--file" {
+                let Some(path) = args.next() else {
+                    eprintln!("用法: bong-server import --file <path>");
+                    return Err(2);
+                };
+                if args.next().is_some() {
+                    eprintln!("用法: bong-server import --file <path>");
+                    return Err(2);
+                }
+                (None, path)
+            } else {
+                let Some(flag) = args.next() else {
+                    eprintln!("用法: bong-server import zones --file <path>");
+                    return Err(2);
+                };
+                let Some(path) = args.next() else {
+                    eprintln!("用法: bong-server import zones --file <path>");
+                    return Err(2);
+                };
+                if flag != "--file" || args.next().is_some() {
+                    eprintln!("用法: bong-server import zones --file <path>");
+                    return Err(2);
+                }
+                (Some(first_arg), path)
+            };
+
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    eprintln!("读取导入文件失败: {error}");
+                    return Err(1);
+                }
+            };
+
+            match target.as_deref() {
+                Some("zones") => {
                     let settings = PersistenceSettings::default();
                     if let Err(error) = bootstrap_sqlite(settings.db_path(), "cli-import-zones") {
                         eprintln!("初始化导入数据库失败: {error}");
                         return Err(1);
                     }
 
-                    let raw = match std::fs::read_to_string(&path) {
-                        Ok(raw) => raw,
-                        Err(error) => {
-                            eprintln!("读取导入文件失败: {error}");
-                            return Err(1);
-                        }
-                    };
                     let bundle: ZoneExportBundle = match serde_json::from_str(&raw) {
                         Ok(bundle) => bundle,
                         Err(error) => {
@@ -159,9 +210,75 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
                         }
                     }
                 }
-                _ => {
-                    eprintln!("未知导入目标: {target}");
+                Some(other) => {
+                    eprintln!("未知导入目标: {other}");
                     Err(2)
+                }
+                None => {
+                    let kind: serde_json::Value = match serde_json::from_str(&raw) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            eprintln!("解析导入文件失败: {error}");
+                            return Err(1);
+                        }
+                    };
+                    let Some(kind) = kind.get("kind").and_then(|value| value.as_str()) else {
+                        eprintln!("解析导入文件失败: 缺少 kind 字段");
+                        return Err(1);
+                    };
+
+                    match kind {
+                        "zones_export_v1" => {
+                            let settings = PersistenceSettings::default();
+                            if let Err(error) =
+                                bootstrap_sqlite(settings.db_path(), "cli-import-zones")
+                            {
+                                eprintln!("初始化导入数据库失败: {error}");
+                                return Err(1);
+                            }
+                            let bundle: ZoneExportBundle = match serde_json::from_str(&raw) {
+                                Ok(bundle) => bundle,
+                                Err(error) => {
+                                    eprintln!("解析导入文件失败: {error}");
+                                    return Err(1);
+                                }
+                            };
+                            match import_zone_persistence(&settings, &bundle) {
+                                Ok(()) => Err(0),
+                                Err(error) => {
+                                    eprintln!("导入 zones 失败: {error}");
+                                    Err(1)
+                                }
+                            }
+                        }
+                        "player_export_v1" => {
+                            let persistence = PlayerStatePersistence::default();
+                            if let Err(error) =
+                                bootstrap_sqlite(persistence.db_path(), "cli-import-player")
+                            {
+                                eprintln!("初始化导入数据库失败: {error}");
+                                return Err(1);
+                            }
+                            let bundle: PlayerExportBundle = match serde_json::from_str(&raw) {
+                                Ok(bundle) => bundle,
+                                Err(error) => {
+                                    eprintln!("解析导入文件失败: {error}");
+                                    return Err(1);
+                                }
+                            };
+                            match import_player_bundle(&persistence, &bundle) {
+                                Ok(()) => Err(0),
+                                Err(error) => {
+                                    eprintln!("导入 player 失败: {error}");
+                                    Err(1)
+                                }
+                            }
+                        }
+                        other => {
+                            eprintln!("未知导入 kind: {other}");
+                            Err(2)
+                        }
+                    }
                 }
             }
         }
@@ -234,6 +351,34 @@ mod cli_tests {
     }
 
     #[test]
+    fn export_player_cli_requires_name_argument() {
+        let result = run_cli(
+            [
+                "bong-server".to_string(),
+                "export".to_string(),
+                "--player".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn export_player_cli_rejects_extra_arguments() {
+        let result = run_cli(
+            [
+                "bong-server".to_string(),
+                "export".to_string(),
+                "--player".to_string(),
+                "Azure".to_string(),
+                "extra".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
     fn export_zones_cli_rejects_missing_target() {
         let result = run_cli(["bong-server".to_string(), "export".to_string()].into_iter());
         assert_eq!(result, Err(2));
@@ -267,6 +412,21 @@ mod cli_tests {
             .into_iter(),
         );
         assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn import_cli_accepts_kind_routed_player_bundle_path() {
+        let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some("1"));
+        let result = run_cli(
+            [
+                "bong-server".to_string(),
+                "import".to_string(),
+                "--file".to_string(),
+                "/tmp/player-export.json".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert!(matches!(result, Err(1) | Err(2)));
     }
 
     #[test]

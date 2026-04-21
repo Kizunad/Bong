@@ -58,6 +58,17 @@ pub struct LoadedPlayerSlices {
     pub inventory: Option<PlayerInventory>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerExportBundle {
+    pub kind: String,
+    pub username: String,
+    pub current_char_id: String,
+    pub state: PlayerState,
+    pub position: [f64; 3],
+    pub inventory: Option<PlayerInventory>,
+    pub ui_prefs: serde_json::Value,
+}
+
 impl PlayerState {
     pub fn normalized(&self) -> Self {
         let spirit_qi_max = self.spirit_qi_max.max(1.0);
@@ -357,6 +368,181 @@ pub fn save_player_inventory_slice(
     let mut connection = open_player_connection(persistence)?;
     persist_player_inventory_slice_in_sqlite(&mut connection, username, inventory)?;
     Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn export_player_bundle(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<PlayerExportBundle> {
+    let loaded = load_player_slices(persistence, username);
+    let connection = open_player_connection(persistence)?;
+    let current_char_id: String = connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .map_err(io::Error::other)?;
+    let ui_prefs_json: String = connection
+        .query_row(
+            "SELECT prefs_json FROM player_ui_prefs WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .map_err(io::Error::other)?;
+    let ui_prefs = serde_json::from_str(&ui_prefs_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    Ok(PlayerExportBundle {
+        kind: "player_export_v1".to_string(),
+        username: username.to_string(),
+        current_char_id,
+        state: loaded.state,
+        position: loaded.position,
+        inventory: loaded.inventory,
+        ui_prefs,
+    })
+}
+
+pub fn import_player_bundle(
+    persistence: &PlayerStatePersistence,
+    bundle: &PlayerExportBundle,
+) -> io::Result<()> {
+    if bundle.kind != "player_export_v1" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected player export kind: {}", bundle.kind),
+        ));
+    }
+
+    let _ = Uuid::parse_str(&bundle.current_char_id)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let ui_prefs = serde_json::from_value::<PlayerUiPrefs>(bundle.ui_prefs.clone())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let ui_prefs_json = serde_json::to_string(&ui_prefs)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let inventory_json = serialize_inventory_json(bundle.inventory.as_ref())?;
+    let normalized = bundle.state.normalized();
+    let experience = experience_to_sql(normalized.experience)?;
+    let [pos_x, pos_y, pos_z] = bundle.position;
+    let last_updated_wall = current_unix_seconds();
+    let mut connection = open_player_connection(persistence)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    transaction
+        .execute(
+            "
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                realm,
+                spirit_qi,
+                spirit_qi_max,
+                karma,
+                experience,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                realm = excluded.realm,
+                spirit_qi = excluded.spirit_qi,
+                spirit_qi_max = excluded.spirit_qi_max,
+                karma = excluded.karma,
+                experience = excluded.experience,
+                inventory_score = excluded.inventory_score,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                bundle.current_char_id,
+                normalized.realm,
+                normalized.spirit_qi,
+                normalized.spirit_qi_max,
+                normalized.karma,
+                experience,
+                normalized.inventory_score,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_slow (
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                pos_x,
+                pos_y,
+                pos_z,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO inventories (
+                username,
+                inventory_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                inventory_json = excluded.inventory_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_ui_prefs (
+                username,
+                prefs_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                prefs_json = excluded.prefs_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                ui_prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    transaction.commit().map_err(io::Error::other)
 }
 
 fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Connection> {
@@ -1066,6 +1252,115 @@ mod player_state_tests {
         assert_eq!(prefs, PlayerUiPrefs::default());
 
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_export_bundle_roundtrips_back_into_sqlite() {
+        let (source_persistence, source_data_dir) = sqlite_persistence("export-bundle-source");
+        let exported_state = PlayerState {
+            realm: "qi_refining_4".to_string(),
+            spirit_qi: 88.0,
+            spirit_qi_max: 120.0,
+            karma: 0.25,
+            experience: 2_400,
+            inventory_score: 0.7,
+        };
+        save_player_slices(
+            &source_persistence,
+            "Azure",
+            &exported_state,
+            [64.0, 80.0, -12.0],
+            None,
+        )
+        .expect("source player slices should persist");
+
+        let bundle = export_player_bundle(&source_persistence, "Azure")
+            .expect("player export bundle should load");
+
+        let (target_persistence, target_data_dir) = sqlite_persistence("export-bundle-target");
+        import_player_bundle(&target_persistence, &bundle)
+            .expect("player export bundle should import");
+
+        let connection =
+            Connection::open(target_persistence.db_path()).expect("sqlite db should open");
+        let current_char_id: String = connection
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_core row should exist after import");
+        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score): (
+            String,
+            f64,
+            f64,
+            f64,
+            i64,
+            f64,
+        ) = connection
+            .query_row(
+                "
+                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                FROM player_core
+                WHERE username = ?1
+                ",
+                params!["Azure"],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("player_core payload should exist after import");
+        let (pos_x, pos_y, pos_z): (f64, f64, f64) = connection
+            .query_row(
+                "SELECT pos_x, pos_y, pos_z FROM player_slow WHERE username = ?1",
+                params!["Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("player_slow row should exist after import");
+        let inventory_json: String = connection
+            .query_row(
+                "SELECT inventory_json FROM inventories WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("inventories row should exist after import");
+        let prefs_json: String = connection
+            .query_row(
+                "SELECT prefs_json FROM player_ui_prefs WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_ui_prefs row should exist after import");
+
+        assert_eq!(bundle.kind, "player_export_v1");
+        assert_eq!(current_char_id, bundle.current_char_id);
+        assert_eq!(realm, "qi_refining_4");
+        assert_eq!(spirit_qi, 88.0);
+        assert_eq!(spirit_qi_max, 120.0);
+        assert_eq!(karma, 0.25);
+        assert_eq!(experience, 2_400);
+        assert_eq!(inventory_score, 0.7);
+        assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&inventory_json)
+                .expect("inventory_json should decode"),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&prefs_json)
+                .expect("prefs_json should decode"),
+            bundle.ui_prefs
+        );
+
+        let _ = fs::remove_dir_all(&source_data_dir);
+        let _ = fs::remove_dir_all(&target_data_dir);
     }
 
     #[test]
