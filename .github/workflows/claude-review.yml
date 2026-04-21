@@ -1,0 +1,48 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "server/**"
+      - "client/**"
+      - "agent/**"
+      - "worldgen/**"
+      - "scripts/**"
+      - "docs/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-7"
+          prompt: |
+            请用中文审核这个 PR，重点关注：
+
+            1. **Bug 与正确性**：逻辑错误、边界条件、并发安全、IPC schema 对齐（TypeBox ↔ Rust serde）
+            2. **安全**：命令注入、反序列化、未校验的外部输入
+            3. **性能**：Rust 端的分配/克隆、Agent 端的 Redis 调用频率、worldgen 的 O(n²) 热路径
+            4. **架构一致性**：是否符合 CLAUDE.md 里定义的三层架构（server / agent / client）和 LAYER_REGISTRY 约定
+            5. **世界观对齐**：涉及境界/命名/经济的改动是否遵循 worldview.md（醒灵/引气/凝脉/固元/通灵/化虚 · 骨币 · 灵石）
+
+            请在 PR 上留下**具体的行内评论**，指出文件+行号。
+            如果整体没问题，只需一条简短总结即可，不要为了凑数写评论。
