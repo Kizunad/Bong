@@ -685,6 +685,7 @@
                     ],
                     "properties": {
                       "current_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track_state": {
@@ -897,6 +898,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -1098,6 +1100,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -1299,6 +1302,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -1500,6 +1504,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -1701,6 +1706,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -1902,6 +1908,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -2103,6 +2110,7 @@
                       ],
                       "properties": {
                         "current_qi": {
+                          "minimum": 0,
                           "type": "number"
                         },
                         "track_state": {
@@ -2310,6 +2318,7 @@
                     ],
                     "properties": {
                       "current_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track_state": {
@@ -2969,6 +2978,7 @@
                   ],
                   "properties": {
                     "current_qi": {
+                      "minimum": 0,
                       "type": "number"
                     },
                     "track_state": {
@@ -3309,6 +3319,7 @@
                     ],
                     "properties": {
                       "current_qi": {
+                        "minimum": 0,
                         "type": "number"
                       },
                       "track_state": {

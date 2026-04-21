@@ -800,4 +800,93 @@ mod tests {
         );
         assert_eq!(derived.track_state, crate::shelflife::TrackState::Fresh);
     }
+
+    #[test]
+    fn enrich_with_spoil_profile_derives_spoiled_state() {
+        // Spoil 端到端：兽肉 half_life=1000 @ spoil_threshold=20
+        // 3000 tick (3 half_lives) → current = 12.5 < 20 → Spoiled
+        let p = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            spoil_threshold: 20.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            3000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 12.5).abs() < 0.1);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Spoiled);
+    }
+
+    #[test]
+    fn enrich_with_age_profile_derives_peaking_state() {
+        // Age 端到端：陈酒 peak@1000, bonus=0.5, window=0.1 → Peaking @ tick 1000
+        let p = crate::shelflife::DecayProfile::Age {
+            id: crate::shelflife::DecayProfileId::new("test_age"),
+            peak_at_ticks: 1000,
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 500,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: crate::shelflife::DecayProfileId::new("test_age_post_spoil"),
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 150.0).abs() < 1e-3);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Peaking);
+    }
+
+    #[test]
+    fn enrich_with_age_past_peak_derives_past_peak_state() {
+        // Age 过峰：peak=1000, post_half=500, tick 1500 → current = 75 > threshold 30 → PastPeak
+        let p = crate::shelflife::DecayProfile::Age {
+            id: crate::shelflife::DecayProfileId::new("test_age_pp"),
+            peak_at_ticks: 1000,
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 500,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: crate::shelflife::DecayProfileId::new("test_age_pp_spoil"),
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1500,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 75.0).abs() < 1e-3);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::PastPeak);
+    }
 }

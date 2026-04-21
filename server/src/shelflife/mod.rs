@@ -24,3 +24,10 @@ pub use types::{
     ContainerFreshnessBehavior, DecayFormula, DecayProfile, DecayProfileId, DecayTrack, Freshness,
     TrackState,
 };
+
+/// plan-shelflife-v1 M3a — 将 DecayProfileRegistry 作为默认空 resource 插入 App。
+/// M7 正式定稿时由各 plan（mineral / fauna / botany / alchemy / food / forge）
+/// 调用 `app.world_mut().resource_mut::<DecayProfileRegistry>().insert(...)` 填充。
+pub fn register(app: &mut valence::prelude::App) {
+    app.insert_resource(DecayProfileRegistry::default());
+}

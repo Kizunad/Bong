@@ -76,7 +76,8 @@ export type TrackStateV1 = Static<typeof TrackStateV1>;
 // client 不需内置 compute_* 逻辑 + DecayProfileRegistry。
 export const FreshnessDerivedV1 = Type.Object(
   {
-    current_qi: Type.Number(),
+    // current_qi 非负 — compute_current_qi 在所有路径保证（Decay floor_qi ≥ 0 / Spoil max(0) / Age .max(0.0)）
+    current_qi: Type.Number({ minimum: 0 }),
     track_state: TrackStateV1,
   },
   { additionalProperties: false },
