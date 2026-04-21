@@ -93,7 +93,8 @@ pub fn compute_track_state(
         DecayProfile::Spoil {
             spoil_threshold, ..
         } => {
-            if current <= *spoil_threshold {
+            // 严格 `<` 语义（plan §6.3 "current_qi < spoil_threshold"）— 边界值（current == threshold）仍算 Fresh / Declining，不触发 contam 警告。
+            if current < *spoil_threshold {
                 TrackState::Spoiled
             } else {
                 let headroom = initial - *spoil_threshold;
@@ -111,6 +112,13 @@ pub fn compute_track_state(
             post_peak_spoil_threshold,
             ..
         } => {
+            // Zero-peak guard: 与 compute_current_qi / compute_age 的 peak_at_ticks == 0
+            // 短路保持一致 — Current 永远是 initial，状态也应稳定 Fresh，不走 PastPeak。
+            // validate() 已 reject 该情形，但防御性处理保护未经校验的 profile。
+            if *peak_at_ticks == 0 {
+                return TrackState::Fresh;
+            }
+
             let effective_dt = effective_dt_ticks(freshness, now_tick, multiplier);
             let window_ratio = peak_window_ratio.clamp(0.0, 1.0);
             let peak = *peak_at_ticks as f64;
@@ -119,8 +127,8 @@ pub fn compute_track_state(
             let peak_hi = peak_at_ticks.saturating_add(half_window);
 
             // Spoil 迁移仅在真过峰后生效（避免 malformed initial_qi < spoil_threshold 时
-            // 物品一创建就误判为 AgePostPeakSpoiled）。
-            if effective_dt > *peak_at_ticks && current <= *post_peak_spoil_threshold {
+            // 物品一创建就误判为 AgePostPeakSpoiled）。严格 `<` 语义（plan §6.3）。
+            if effective_dt > *peak_at_ticks && current < *post_peak_spoil_threshold {
                 TrackState::AgePostPeakSpoiled
             } else if effective_dt >= peak_lo && effective_dt <= peak_hi {
                 TrackState::Peaking
@@ -794,6 +802,62 @@ mod tests {
             floor_qi: 0.0,
         };
         assert!(p.validate().is_err());
+    }
+
+    // =========== Codex P2-1: compute_track_state zero-peak guard ===========
+
+    #[test]
+    fn age_zero_peak_track_state_stays_fresh() {
+        // Regression for Codex review P2-1: compute_current_qi has peak_at_ticks==0 guard
+        // (returns initial), but compute_track_state lacked matching guard and would compute
+        // peak_hi=0, classifying any future tick as PastPeak — inconsistent with current_qi
+        // behavior. Guard now explicitly returns Fresh.
+        let p = age_profile(0, 0.5, 500, 30.0);
+        let f = fresh_item(&p, 100.0, 0);
+
+        assert_eq!(compute_track_state(&f, &p, 0, 1.0), TrackState::Fresh);
+        assert_eq!(compute_track_state(&f, &p, 1000, 1.0), TrackState::Fresh);
+        assert_eq!(
+            compute_track_state(&f, &p, 10_000_000, 1.0),
+            TrackState::Fresh
+        );
+    }
+
+    // =========== Codex P2-2: Spoil/Age 阈值严格 `<` ===========
+
+    #[test]
+    fn spoil_exactly_at_threshold_is_not_spoiled() {
+        // Regression for Codex P2-2: plan §6.3 spec says `current_qi < spoil_threshold`,
+        // boundary (current == threshold) should stay Fresh/Declining, not trigger Spoiled.
+        let p = spoil_exp_profile(1000, 50.0);
+        let mut f = fresh_item(&p, 100.0, 0);
+        f.initial_qi = 100.0;
+
+        // 构造 current 恰好 = 50.0：0.5^n = 0.5 → n=1 → dt=1000
+        let state = compute_track_state(&f, &p, 1000, 1.0);
+        assert_ne!(
+            state,
+            TrackState::Spoiled,
+            "at exactly spoil_threshold should NOT trigger Spoiled (plan §6.3 strict `<`)"
+        );
+    }
+
+    #[test]
+    fn age_exactly_at_post_peak_spoil_threshold_not_migrated() {
+        // 同上，Age 路径 post_peak_spoil_threshold 也应严格 `<`。
+        // peak_at=1000, initial=100, bonus=0.5, peak_current=150, post_half=500,
+        // post_peak_spoil_threshold=75.0（正好是 1 post-half-life 值：150 * 0.5 = 75）
+        let p = age_profile(1000, 0.5, 500, 75.0);
+        let f = fresh_item(&p, 100.0, 0);
+
+        // tick 1500: post_peak_dt=500, current = 150 * 0.5 = 75.0 (exactly threshold)
+        let state = compute_track_state(&f, &p, 1500, 1.0);
+        assert_ne!(
+            state,
+            TrackState::AgePostPeakSpoiled,
+            "at exactly post_peak_spoil_threshold should NOT trigger migration (plan §6.3 strict `<`)"
+        );
+        assert_eq!(state, TrackState::PastPeak);
     }
 
     #[test]

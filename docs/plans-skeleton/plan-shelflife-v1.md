@@ -92,9 +92,9 @@ else:
 
 - 路径：Age
 - 用于：陈酒、老坛丹、陈年灵茶
-- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, **`peak_window_ratio`**（`Peaking` 窗口宽度 ±ratio × peak，0.1 = ±10%；陈年灵茶可宽 0.2、老坛丹可窄 0.05）, `post_peak_half_life`, **`post_peak_spoil_threshold`**（current_qi 跌至此值时强制路径迁移 Age → Spoil，**仅在 `effective_dt > peak_at_ticks` 后生效** — 避免 malformed `initial < threshold` 时物品一创建就误判 Spoiled）, **`post_peak_spoil_profile`**（迁移后用哪个 Spoil profile）
+- 参数：`peak_at_ticks`, `peak_bonus`（比如 0.5 = 峰值是初始的 1.5×）, **`peak_window_ratio`**（`Peaking` 窗口宽度 ±ratio × peak，0.1 = ±10%；陈年灵茶可宽 0.2、老坛丹可窄 0.05）, `post_peak_half_life`, **`post_peak_spoil_threshold`**（current_qi **严格**低于此值时强制路径迁移 Age → Spoil；**仅在 `effective_dt > peak_at_ticks` 后生效** — 避免 malformed `initial < threshold` 时物品一创建就误判 Spoiled）, **`post_peak_spoil_profile`**（迁移后用哪个 Spoil profile）
 - 物理意象：灌入灵气 / 药性随时间析出成熟，过峰则封印失效开始外泄；外泄到一定程度变质腐败（陈酒 → 醋 → 毒）
-- **路径迁移规则**：当 `effective_dt > peak_at_ticks` 且 `current_qi ≤ post_peak_spoil_threshold` 时，`Freshness.track` 由 `Age` 改为 `Spoil`，`profile` 改为 `post_peak_spoil_profile`，`created_at_tick` 重置为迁移当下 tick（重新开始 Spoil 的衰减计时）— 实装在 §6 lazy eval 的访问点统一处理
+- **路径迁移规则**：当 `effective_dt > peak_at_ticks` **且** `current_qi < post_peak_spoil_threshold`（**严格 `<`** — 边界值 `==` 不触发）时，`Freshness.track` 由 `Age` 改为 `Spoil`，`profile` 改为 `post_peak_spoil_profile`，`created_at_tick` 重置为迁移当下 tick（重新开始 Spoil 的衰减计时）— 实装在 §6 lazy eval 的访问点统一处理
 
 ---
 
@@ -202,10 +202,10 @@ pub enum DecayFormula {
 
 ### 5.2 Spoil 路径
 
-- [ ] **消费时鲜度校验**：
-  - 高于 `spoil_threshold` — 正常消费
-  - 低于 threshold — 触发 `SpoilConsumeWarning` event；强行消费时按腐败程度施加 contam（Sharp / Violent 档，对标 `plan-alchemy-v1` 丹毒色）
-  - 极低（<10%）— 拒绝自动消费，需玩家二次确认（像吃屎）
+- [ ] **消费时鲜度校验**（**严格 `<` 语义** — 边界值 `current == spoil_threshold` 不触发 Spoiled）：
+  - `current ≥ spoil_threshold` — 正常消费
+  - `current < spoil_threshold` — 触发 `SpoilConsumeWarning` event；强行消费时按腐败程度施加 contam（Sharp / Violent 档，对标 `plan-alchemy-v1` 丹毒色）
+  - 极低（`current < 0.1 × spoil_threshold`）— 拒绝自动消费，需玩家二次确认（像吃屎）
 - [ ] **丹药过期**：除 contam 外还 **减效 + 额外 side_effect_tag**（对接 alchemy plan）
 - [ ] **腐败品回收**：败体可走 botany 堆肥 / alchemy "败药粉" 作 Violent 辅料
 
