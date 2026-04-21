@@ -17,7 +17,10 @@ use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
-use self::events::{ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DefenseIntent};
+use self::events::{
+    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DebugCombatCommand,
+    DefenseIntent,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub enum CombatSystemSet {
@@ -90,6 +93,7 @@ pub fn register(app: &mut App) {
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
+    app.add_event::<DebugCombatCommand>();
 
     app.configure_sets(
         Update,
@@ -128,6 +132,9 @@ pub fn register(app: &mut App) {
             debug::drain_combat_events_for_debug
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
+            // plan §13 C1 调试命令消费 — 放 Intent 阶段，早于 WoundBleedTick，
+            // 使 !health set / !wound add 当 tick 即可被后续 tick 系统感知。
+            debug::apply_debug_combat_commands.in_set(CombatSystemSet::Intent),
             // plan-weapon-v1 §2.3: 装备槽 → Weapon component 同步。放 Intent 阶段,
             // 让 resolve 阶段查 Weapon 时已经是当前 tick 的最新装备状态。
             weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),

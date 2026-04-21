@@ -154,6 +154,18 @@
 
 ---
 
+## plan-combat-no_ui
+
+### ✅ 已落地（2026-04-21，§13 C1 调试命令）
+- `!wound add <part> [severity]` / `!health set <n>` / `!stamina set <n>` 三条开发命令接入 `DebugCombatCommand` 事件通道，走 `server/src/combat/debug.rs::apply_debug_combat_commands` 消费（直接改写目标实体 `Wounds` / `Stamina`，不经 AttackIntent 管线）
+- **约定偏离**：plan §13 C1 checklist 2702 行原文写 `/wound add`（斜杠前缀），实装改为 `!wound`（叹号前缀），与现有 `!spawn` / `!gm` / `!tpzone` 等 dev 命令一致。原因：项目里 `/` 前缀走 `GameplayAction` 队列（需 tick 处理），`!` 前缀是直接快捷注入，更贴调试语义
+
+### C1 仍未做（低优先，非阻塞）
+- `AntiCheatCounter` component + CHANNEL_ANTICHEAT 推送（plan §1.5.6）：当前 reach/cooldown/qi_invest 三道 clamp 分散在 `resolve.rs`，无统一的违规计数 + 上报通道
+- 遗念 agent `deathInsight` tool：跨到修炼 plan + agent-v2 scope，等 death-lifecycle 立项时再对齐
+
+---
+
 ## 通用 / 跨 plan
 
 - [ ] 所有 plan 的"开放问题"节尚未做过一次 review pass — 可能有早期假设已被后续决策推翻

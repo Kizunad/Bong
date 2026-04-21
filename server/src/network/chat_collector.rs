@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use valence::message::ChatMessageEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    Client, DVec3, Entity, EventReader, GameMode, ParamSet, Position, Query, Res, Resource,
-    Username, With,
+    Client, DVec3, Entity, EventReader, EventWriter, GameMode, ParamSet, Position, Query, Res,
+    Resource, Username, With,
 };
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use crate::combat::components::{BodyPart, WoundKind};
+use crate::combat::events::{DebugCombatCommand, DebugCombatCommandKind};
 use crate::npc::scenario::{PendingScenario, ScenarioType};
 use crate::player::{
     gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction},
@@ -44,6 +46,7 @@ pub fn collect_player_chat(
     mut rate_limit: valence::prelude::ResMut<ChatCollectorRateLimit>,
     mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
     mut pending_scenario: Option<valence::prelude::ResMut<PendingScenario>>,
+    mut debug_combat_tx: EventWriter<DebugCombatCommand>,
 ) {
     rate_limit.per_player_count.clear();
 
@@ -76,6 +79,7 @@ pub fn collect_player_chat(
             terrain.as_deref(),
             &mut rate_limit,
             pending_scenario.as_deref_mut(),
+            &mut debug_combat_tx,
         ) else {
             continue;
         };
@@ -118,6 +122,7 @@ fn classify_player_message(
     terrain: Option<&TerrainProvider>,
     rate_limit: &mut ChatCollectorRateLimit,
     pending_scenario: Option<&mut PendingScenario>,
+    debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
 ) -> Option<CollectedPlayerMessage> {
     let too_long = is_oversize_message(message);
     let over_budget = exceeds_rate_budget(player_entity, rate_limit);
@@ -136,6 +141,7 @@ fn classify_player_message(
         zone_registry,
         terrain,
         pending_scenario,
+        debug_combat_tx,
     ) {
         return None;
     }
@@ -194,6 +200,7 @@ fn parse_gameplay_action(message: &str) -> Option<GameplayAction> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_handle_dev_command(
     player_entity: Entity,
     message: &str,
@@ -202,6 +209,7 @@ fn try_handle_dev_command(
     zone_registry: &ZoneRegistry,
     terrain: Option<&TerrainProvider>,
     pending_scenario: Option<&mut PendingScenario>,
+    debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
 ) -> bool {
     let trimmed = message.trim();
     if !trimmed.starts_with('!') {
@@ -323,6 +331,77 @@ fn try_handle_dev_command(
             client.send_chat_message(format!("Zones: {names}"));
             true
         }
+        "!wound" => {
+            // plan §13 C1 调试命令 — 用法: !wound add <part> [severity]
+            let sub = tokens.next();
+            let part_raw = tokens.next();
+            let severity_raw = tokens.next();
+            let (Some("add"), Some(part_str)) = (sub, part_raw) else {
+                client.send_chat_message(
+                    "Usage: !wound add <head|chest|abdomen|arml|armr|legl|legr> [severity=0.3]",
+                );
+                return true;
+            };
+            let Some(location) = parse_body_part(part_str) else {
+                client.send_chat_message(
+                    "Unknown body part. Use: head, chest, abdomen, arml, armr, legl, legr",
+                );
+                return true;
+            };
+            let severity = severity_raw
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(0.3);
+            debug_combat_tx.send(DebugCombatCommand {
+                target: player_entity,
+                kind: DebugCombatCommandKind::AddWound {
+                    location,
+                    kind: WoundKind::Blunt,
+                    severity,
+                },
+            });
+            client.send_chat_message(format!(
+                "Queued !wound add {part_str} severity={severity:.2}"
+            ));
+            true
+        }
+        "!health" => {
+            // plan §13 C1 调试命令 — 用法: !health set <n>
+            let sub = tokens.next();
+            let value_raw = tokens.next();
+            let (Some("set"), Some(val_str)) = (sub, value_raw) else {
+                client.send_chat_message("Usage: !health set <n>");
+                return true;
+            };
+            let Ok(value) = val_str.parse::<f32>() else {
+                client.send_chat_message("!health set value must be a number");
+                return true;
+            };
+            debug_combat_tx.send(DebugCombatCommand {
+                target: player_entity,
+                kind: DebugCombatCommandKind::SetHealth(value),
+            });
+            client.send_chat_message(format!("Queued !health set {value:.1}"));
+            true
+        }
+        "!stamina" => {
+            // plan §13 C1 调试命令 — 用法: !stamina set <n>
+            let sub = tokens.next();
+            let value_raw = tokens.next();
+            let (Some("set"), Some(val_str)) = (sub, value_raw) else {
+                client.send_chat_message("Usage: !stamina set <n>");
+                return true;
+            };
+            let Ok(value) = val_str.parse::<f32>() else {
+                client.send_chat_message("!stamina set value must be a number");
+                return true;
+            };
+            debug_combat_tx.send(DebugCombatCommand {
+                target: player_entity,
+                kind: DebugCombatCommandKind::SetStamina(value),
+            });
+            client.send_chat_message(format!("Queued !stamina set {value:.1}"));
+            true
+        }
         "!npc_scenario" | "!scenario" => {
             let Some(scenario_name) = tokens.next() else {
                 client.send_chat_message(
@@ -365,6 +444,19 @@ fn is_command_like(message: &str) -> bool {
     message.trim_start().starts_with('/')
 }
 
+fn parse_body_part(s: &str) -> Option<BodyPart> {
+    match s.to_ascii_lowercase().as_str() {
+        "head" => Some(BodyPart::Head),
+        "chest" => Some(BodyPart::Chest),
+        "abdomen" => Some(BodyPart::Abdomen),
+        "arml" => Some(BodyPart::ArmL),
+        "armr" => Some(BodyPart::ArmR),
+        "legl" => Some(BodyPart::LegL),
+        "legr" => Some(BodyPart::LegR),
+        _ => None,
+    }
+}
+
 fn is_oversize_message(message: &str) -> bool {
     message.chars().count() > CHAT_MESSAGE_MAX_LENGTH
 }
@@ -395,6 +487,7 @@ mod chat_collector_tests {
 
         let mut app = App::new();
         app.add_event::<ChatMessageEvent>();
+        app.add_event::<DebugCombatCommand>();
         app.insert_resource(RedisBridgeResource {
             tx_outbound,
             rx_inbound,
@@ -577,6 +670,71 @@ mod chat_collector_tests {
                 target: "Crimson".to_string(),
                 qi_invest: 12.5,
             }))
+        );
+    }
+
+    /// plan §13 C1 — `!wound add` / `!health set` / `!stamina set` 走 DebugCombatCommand 事件通道。
+    #[test]
+    fn debug_combat_commands_emit_events() {
+        let (mut app, _rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+        send_chat_event(&mut app, alice, "!wound add chest 0.7", 1);
+        send_chat_event(&mut app, alice, "!health set 25", 2);
+        send_chat_event(&mut app, alice, "!stamina set 10", 3);
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<DebugCombatCommand>>();
+        let mut reader = events.get_reader();
+        let collected: Vec<_> = reader.read(events).cloned().collect();
+        assert_eq!(collected.len(), 3);
+
+        match &collected[0].kind {
+            DebugCombatCommandKind::AddWound {
+                location,
+                kind,
+                severity,
+            } => {
+                assert_eq!(*location, BodyPart::Chest);
+                assert_eq!(*kind, WoundKind::Blunt);
+                assert!((severity - 0.7).abs() < 1e-6);
+            }
+            other => panic!("expected AddWound, got {other:?}"),
+        }
+        match &collected[1].kind {
+            DebugCombatCommandKind::SetHealth(n) => assert!((n - 25.0).abs() < 1e-6),
+            other => panic!("expected SetHealth, got {other:?}"),
+        }
+        match &collected[2].kind {
+            DebugCombatCommandKind::SetStamina(n) => assert!((n - 10.0).abs() < 1e-6),
+            other => panic!("expected SetStamina, got {other:?}"),
+        }
+    }
+
+    /// 用法串错 (!wound 缺 part / !health 缺 value) 只回显 usage，不发事件。
+    #[test]
+    fn debug_combat_commands_reject_malformed_usage() {
+        let (mut app, _rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+        send_chat_event(&mut app, alice, "!wound add bogus_part", 1);
+        send_chat_event(&mut app, alice, "!wound", 2);
+        send_chat_event(&mut app, alice, "!health", 3);
+        send_chat_event(&mut app, alice, "!stamina set not_a_number", 4);
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<DebugCombatCommand>>();
+        let mut reader = events.get_reader();
+        let collected: Vec<_> = reader.read(events).cloned().collect();
+        assert!(
+            collected.is_empty(),
+            "malformed debug commands should not emit events, got {collected:?}"
         );
     }
 }
