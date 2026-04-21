@@ -893,6 +893,7 @@ fn award_item_to_inventory(
                     stack_count: 1,
                     spirit_quality: template.spirit_quality_initial,
                     durability: 1.0,
+                    freshness: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1278,6 +1279,7 @@ mod tests {
             stack_count: 1,
             spirit_quality: 1.0,
             durability,
+            freshness: None,
         }
     }
 
@@ -1449,6 +1451,7 @@ mod tests {
                 stack_count: 1,
                 spirit_quality: 0.8,
                 durability: 1.0,
+                freshness: None,
             },
         );
         let inv = PlayerInventory {
@@ -1764,6 +1767,7 @@ mod tests {
             stack_count: stack,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         }
     }
 
@@ -2208,6 +2212,7 @@ mod tests {
                     stack_count: 3,
                     spirit_quality: 0.85,
                     durability: 1.0,
+                    freshness: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2329,6 +2334,7 @@ mod tests {
                     stack_count: stack,
                     spirit_quality: 0.7,
                     durability: 1.0,
+                    freshness: None,
                 },
             });
         inv

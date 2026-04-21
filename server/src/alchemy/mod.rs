@@ -337,6 +337,7 @@ mod integration_tests {
             stack_count: stack,
             spirit_quality: 1.0,
             durability: 1.0,
+            freshness: None,
         }
     }
 
