@@ -1364,6 +1364,74 @@ mod player_state_tests {
     }
 
     #[test]
+    fn import_player_bundle_rejects_invalid_current_char_id() {
+        let (persistence, data_dir) = sqlite_persistence("import-invalid-char-id");
+        let bundle = PlayerExportBundle {
+            kind: "player_export_v1".to_string(),
+            username: "Azure".to_string(),
+            current_char_id: "not-a-uuid".to_string(),
+            state: PlayerState {
+                realm: "qi_refining_4".to_string(),
+                spirit_qi: 88.0,
+                spirit_qi_max: 120.0,
+                karma: 0.25,
+                experience: 2_400,
+                inventory_score: 0.7,
+            },
+            position: [64.0, 80.0, -12.0],
+            inventory: None,
+            ui_prefs: serde_json::json!({
+                "quick_slots": [null, null, null, null, null, null, null, null, null]
+            }),
+        };
+
+        let error = import_player_bundle(&persistence, &bundle)
+            .expect_err("invalid current_char_id should be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let player_core_exists: Option<String> = connection
+            .query_row(
+                "SELECT username FROM player_core WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("player_core query should succeed");
+        let player_slow_exists: Option<String> = connection
+            .query_row(
+                "SELECT username FROM player_slow WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("player_slow query should succeed");
+        let inventories_exists: Option<String> = connection
+            .query_row(
+                "SELECT username FROM inventories WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("inventories query should succeed");
+        let prefs_exists: Option<String> = connection
+            .query_row(
+                "SELECT username FROM player_ui_prefs WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("player_ui_prefs query should succeed");
+
+        assert!(player_core_exists.is_none());
+        assert!(player_slow_exists.is_none());
+        assert!(inventories_exists.is_none());
+        assert!(prefs_exists.is_none());
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn computes_composite_power() {
         let state = PlayerState {
             realm: "qi_refining_3".to_string(),
