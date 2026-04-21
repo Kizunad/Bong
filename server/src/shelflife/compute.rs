@@ -2,7 +2,16 @@
 //!
 //! 两个核心 API：
 //! - `compute_current_qi` — 按 lazy eval 算出当下 qi
-//! - `compute_track_state` — 按 lazy eval 算出当下路径状态（用于消费分支 / tooltip 分档）
+//! - `compute_track_state` — 按 lazy eval 算出当下内部路径机态（非 UI 显示档位）
+//!
+//! # 精度注意事项
+//!
+//! - `effective_dt` 用 u64 承载，`(f64 * multiplier).round() as u64` 丢失亚 tick 精度。
+//!   对 `half_life < 100` 的极短场景，单次 round 误差可达 5%。M0 场景（最短 half_life ≈
+//!   数小时 = 数十万 tick）无实际影响。
+//! - Exponential/Age 公式内部走 f32 `.powf()`，`dt as f32` 在 dt > 2^24 (~16M tick ≈ 9.7
+//!   real-days @ 20 TPS) 时可能丢精度。骨币走 Linear decay ~1y，Linear 内部已转 f64 规避。
+//! - Linear 公式特意走 f64 内部算 — 骨币 real-year scale decay 精度关键。
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
 
@@ -49,7 +58,8 @@ pub fn compute_current_qi(
             *peak_at_ticks,
             *peak_bonus,
             *post_peak_half_life_ticks,
-        ),
+        )
+        .max(0.0),
     }
 }
 
@@ -68,10 +78,16 @@ pub fn compute_track_state(
         DecayProfile::Decay { floor_qi, .. } => {
             if current <= *floor_qi + f32::EPSILON {
                 TrackState::Dead
-            } else if current / initial <= 0.5 {
-                TrackState::Declining
             } else {
-                TrackState::Fresh
+                // 用 headroom-based ratio 而非原生 current/initial：确保 initial 接近 floor 的
+                // 小 headroom 物品也能经过 Declining 中段而不是 Fresh → Dead 直跳。
+                let headroom = initial - *floor_qi;
+                let remaining = (current - *floor_qi).max(0.0);
+                if headroom <= f32::EPSILON || remaining / headroom <= 0.5 {
+                    TrackState::Declining
+                } else {
+                    TrackState::Fresh
+                }
             }
         }
         DecayProfile::Spoil {
@@ -79,23 +95,32 @@ pub fn compute_track_state(
         } => {
             if current <= *spoil_threshold {
                 TrackState::Spoiled
-            } else if current / initial <= 0.5 {
-                TrackState::Declining
             } else {
-                TrackState::Fresh
+                let headroom = initial - *spoil_threshold;
+                let remaining = (current - *spoil_threshold).max(0.0);
+                if headroom <= f32::EPSILON || remaining / headroom <= 0.5 {
+                    TrackState::Declining
+                } else {
+                    TrackState::Fresh
+                }
             }
         }
         DecayProfile::Age {
             peak_at_ticks,
+            peak_window_ratio,
             post_peak_spoil_threshold,
             ..
         } => {
             let effective_dt = effective_dt_ticks(freshness, now_tick, multiplier);
-            let peak = *peak_at_ticks as f32;
-            let peak_lo = (peak * 0.9) as u64;
-            let peak_hi = (peak * 1.1) as u64;
+            let window_ratio = peak_window_ratio.clamp(0.0, 1.0);
+            let peak = *peak_at_ticks as f64;
+            let half_window = (peak * window_ratio as f64).round() as u64;
+            let peak_lo = peak_at_ticks.saturating_sub(half_window);
+            let peak_hi = peak_at_ticks.saturating_add(half_window);
 
-            if current <= *post_peak_spoil_threshold {
+            // Spoil 迁移仅在真过峰后生效（避免 malformed initial_qi < spoil_threshold 时
+            // 物品一创建就误判为 AgePostPeakSpoiled）。
+            if effective_dt > *peak_at_ticks && current <= *post_peak_spoil_threshold {
                 TrackState::AgePostPeakSpoiled
             } else if effective_dt >= peak_lo && effective_dt <= peak_hi {
                 TrackState::Peaking
@@ -131,7 +156,9 @@ fn apply_formula(initial: f32, effective_dt: u64, formula: &DecayFormula, multip
             initial * (0.5_f32).powf(n)
         }
         DecayFormula::Linear { decay_per_tick } => {
-            (initial - decay_per_tick * (effective_dt as f32)).max(0.0)
+            // f64 内部算 — 骨币 ~1y 级 scale 时 f32 精度不够（见文件头精度注记）。
+            let d = (*decay_per_tick as f64) * (effective_dt as f64);
+            ((initial as f64) - d).max(0.0) as f32
         }
         DecayFormula::Stepwise => {
             // Stepwise 不用 dt；storage_multiplier 直接作用于 current。
@@ -215,10 +242,21 @@ mod tests {
     }
 
     fn age_profile(peak: u64, bonus: f32, post_half: u64, spoil_th: f32) -> DecayProfile {
+        age_profile_with_window(peak, bonus, post_half, spoil_th, 0.1)
+    }
+
+    fn age_profile_with_window(
+        peak: u64,
+        bonus: f32,
+        post_half: u64,
+        spoil_th: f32,
+        window: f32,
+    ) -> DecayProfile {
         DecayProfile::Age {
             id: DecayProfileId::new("test_age"),
             peak_at_ticks: peak,
             peak_bonus: bonus,
+            peak_window_ratio: window,
             post_peak_half_life_ticks: post_half,
             post_peak_spoil_threshold: spoil_th,
             post_peak_spoil_profile: DecayProfileId::new("test_age_post_spoil"),
@@ -516,5 +554,257 @@ mod tests {
         let f = fresh_item(&p, 100.0, 0);
         let current = compute_current_qi(&f, &p, 10_000, -0.5);
         assert!((current - 100.0).abs() < 1e-3);
+    }
+
+    // =========== 组合冻结状态（问题 7） ===========
+
+    #[test]
+    fn frozen_accumulated_and_frozen_since_both_subtract() {
+        // 玩家历史累积 500 tick 冻结 + 当前从 tick 800 起继续冻结。
+        // raw_dt=1000, frozen_accumulated=500, inflight=1000-800=200
+        // effective_dt = 1000 - 500 - 200 = 300, half_life=1000 → 300/1000=0.3
+        // current = 100 * 0.5^0.3 ≈ 81.225
+        let p = decay_exp_profile(1000, 0.0);
+        let mut f = fresh_item(&p, 100.0, 0);
+        f.frozen_accumulated = 500;
+        f.frozen_since_tick = Some(800);
+
+        let current = compute_current_qi(&f, &p, 1000, 1.0);
+        assert!((current - 81.225).abs() < 0.1);
+    }
+
+    #[test]
+    fn frozen_cannot_go_negative_when_over_subtracted() {
+        // 极端 malformed 数据：frozen_accumulated > raw_dt
+        let p = decay_exp_profile(1000, 0.0);
+        let mut f = fresh_item(&p, 100.0, 0);
+        f.frozen_accumulated = 10_000_000;
+
+        // saturating_sub 保护：effective_dt = 0 → current = initial
+        let current = compute_current_qi(&f, &p, 1000, 1.0);
+        assert!((current - 100.0).abs() < 1e-3);
+    }
+
+    // =========== Stepwise + 冻结交互（问题 7） ===========
+
+    #[test]
+    fn stepwise_ignores_frozen_state() {
+        let p = decay_stepwise_profile(0.0);
+        let mut f = fresh_item(&p, 100.0, 0);
+        f.frozen_accumulated = 500;
+        f.frozen_since_tick = Some(700);
+
+        // Stepwise 不用 dt，只看 multiplier
+        let current = compute_current_qi(&f, &p, 1000, 0.7);
+        assert!((current - 70.0).abs() < 1e-3);
+    }
+
+    // =========== 峰值窗口 ratio 参数化（问题 2） ===========
+
+    #[test]
+    fn age_peaking_window_narrow_5pct() {
+        let p = age_profile_with_window(1000, 0.5, 500, 30.0, 0.05);
+        let f = fresh_item(&p, 100.0, 0);
+        // 窗口 950-1050
+        assert_eq!(compute_track_state(&f, &p, 949, 1.0), TrackState::Fresh);
+        assert_eq!(compute_track_state(&f, &p, 950, 1.0), TrackState::Peaking);
+        assert_eq!(compute_track_state(&f, &p, 1050, 1.0), TrackState::Peaking);
+        assert_eq!(compute_track_state(&f, &p, 1051, 1.0), TrackState::PastPeak);
+    }
+
+    #[test]
+    fn age_peaking_window_wide_20pct() {
+        let p = age_profile_with_window(1000, 0.5, 500, 30.0, 0.2);
+        let f = fresh_item(&p, 100.0, 0);
+        // 窗口 800-1200
+        assert_eq!(compute_track_state(&f, &p, 800, 1.0), TrackState::Peaking);
+        assert_eq!(compute_track_state(&f, &p, 1200, 1.0), TrackState::Peaking);
+    }
+
+    // =========== Decay/Spoil headroom ratio（问题 3） ===========
+
+    #[test]
+    fn decay_declining_uses_headroom_not_raw_initial() {
+        // initial=10, floor=5, headroom=5。 current=8 → remaining=3 / headroom=5 = 0.6 → Fresh
+        // current=6 → remaining=1 / 5 = 0.2 → Declining（原 raw 0.6 比率公式会判 Fresh）
+        let p = decay_exp_profile(10_000, 5.0);
+        let mut f = fresh_item(&p, 10.0, 0);
+
+        f.initial_qi = 10.0;
+        // 手工设置 created_at 让 current 达到指定值
+        // At half_life=10000, dt 使 current=6：0.5^n = 0.6 → n=0.737 → dt≈7370
+        let state_at_6 = compute_track_state(&f, &p, 7370, 1.0);
+        // current ≈ 6 (initial 10, floor 5, headroom 5, remaining 1)
+        assert_eq!(
+            state_at_6,
+            TrackState::Declining,
+            "current≈6 near floor should be Declining not Fresh"
+        );
+    }
+
+    #[test]
+    fn spoil_declining_uses_headroom() {
+        // initial=50, spoil_threshold=30, headroom=20
+        // current=45 → remaining=15/20=0.75 → Fresh
+        // current=35 → remaining=5/20=0.25 → Declining
+        let p = spoil_exp_profile(10_000, 30.0);
+        let f = fresh_item(&p, 50.0, 0);
+
+        // At dt where current=35：0.5^n = 35/50 = 0.7 → n=0.515 → dt≈5146
+        let state = compute_track_state(&f, &p, 5146, 1.0);
+        assert_eq!(state, TrackState::Declining);
+    }
+
+    // =========== Age 迁移顺序修正（问题 5） ===========
+
+    #[test]
+    fn malformed_age_initial_below_threshold_is_fresh_not_spoiled() {
+        // malformed config: initial=20 但 post_peak_spoil_threshold=30
+        // 旧代码：current 起始就 <= 30 → AgePostPeakSpoiled（错误）
+        // 修正后：未过 peak 不触发 Spoiled 迁移 → Fresh
+        let p = age_profile(1000, 0.5, 500, 30.0);
+        let f = fresh_item(&p, 20.0, 0);
+
+        assert_eq!(
+            compute_track_state(&f, &p, 0, 1.0),
+            TrackState::Fresh,
+            "malformed config: initial < threshold pre-peak should be Fresh, not AgePostPeakSpoiled"
+        );
+        // 到峰值时：current = 20 * 1.5 = 30 > threshold 30 边界 → Peaking
+        assert_eq!(compute_track_state(&f, &p, 1000, 1.0), TrackState::Peaking);
+    }
+
+    // =========== Linear f64 精度保护（问题 9） ===========
+
+    #[test]
+    fn linear_long_range_decay_precision() {
+        // 骨币场景：initial=100, ~1y=6.3e8 ticks @ 20 TPS
+        // decay_per_tick = 100 / 6.3e8 ≈ 1.587e-7（1y 完全衰减）
+        let p = decay_linear_profile(1.0e-7, 0.0);
+        let f = fresh_item(&p, 100.0, 0);
+
+        // 半年 ≈ 3.15e8 tick
+        let half_year = compute_current_qi(&f, &p, 315_000_000, 1.0);
+        // 期望 100 - 1e-7 * 3.15e8 = 100 - 31.5 = 68.5
+        assert!(
+            (half_year - 68.5).abs() < 0.01,
+            "linear half-year: expected ~68.5, got {half_year}"
+        );
+    }
+
+    // =========== Serde roundtrip（问题 6） ===========
+
+    #[test]
+    fn freshness_serde_roundtrip() {
+        let p = decay_exp_profile(1000, 5.0);
+        let mut f = Freshness::new(100, 80.0, &p);
+        f.frozen_accumulated = 42;
+        f.frozen_since_tick = Some(200);
+
+        let json = serde_json::to_string(&f).expect("serialize");
+        let decoded: Freshness = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(decoded.created_at_tick, 100);
+        assert!((decoded.initial_qi - 80.0).abs() < 1e-3);
+        assert_eq!(decoded.track, DecayTrack::Decay);
+        assert_eq!(decoded.profile.as_str(), "test_decay_exp");
+        assert_eq!(decoded.frozen_accumulated, 42);
+        assert_eq!(decoded.frozen_since_tick, Some(200));
+    }
+
+    #[test]
+    fn freshness_serde_legacy_missing_frozen_fields_defaults() {
+        // v1 初版 NBT（缺 frozen_accumulated / frozen_since_tick）应能正确 deserialize。
+        let legacy_json = serde_json::json!({
+            "created_at_tick": 100,
+            "initial_qi": 80.0,
+            "track": "Decay",
+            "profile": "legacy_profile",
+        });
+
+        let decoded: Freshness =
+            serde_json::from_value(legacy_json).expect("legacy deserialize with #[serde(default)]");
+        assert_eq!(decoded.frozen_accumulated, 0);
+        assert!(decoded.frozen_since_tick.is_none());
+    }
+
+    #[test]
+    fn decay_profile_serde_roundtrip_all_three_variants() {
+        let decay = decay_exp_profile(1000, 5.0);
+        let spoil = spoil_exp_profile(500, 20.0);
+        let age = age_profile_with_window(1000, 0.5, 500, 30.0, 0.1);
+
+        for p in [decay, spoil, age] {
+            let j = serde_json::to_string(&p).expect("ser");
+            let back: DecayProfile = serde_json::from_str(&j).expect("de");
+            assert_eq!(back, p);
+        }
+    }
+
+    // =========== DecayProfile::validate（问题 10） ===========
+
+    #[test]
+    fn validate_accepts_valid_profiles() {
+        assert!(decay_exp_profile(1000, 5.0).validate().is_ok());
+        assert!(spoil_exp_profile(500, 20.0).validate().is_ok());
+        assert!(age_profile(1000, 0.5, 500, 30.0).validate().is_ok());
+        assert!(decay_stepwise_profile(0.0).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_age_zero_peak() {
+        let p = age_profile(0, 0.5, 500, 30.0);
+        let err = p.validate().unwrap_err();
+        assert!(err.contains("peak_at_ticks"));
+    }
+
+    #[test]
+    fn validate_rejects_age_negative_peak_bonus() {
+        let p = age_profile(1000, -0.1, 500, 30.0);
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_age_window_ratio_out_of_range() {
+        let over = age_profile_with_window(1000, 0.5, 500, 30.0, 1.5);
+        let neg = age_profile_with_window(1000, 0.5, 500, 30.0, -0.1);
+        assert!(over.validate().is_err());
+        assert!(neg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_decay_negative_floor() {
+        let p = DecayProfile::Decay {
+            id: DecayProfileId::new("bad"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: -1.0,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_linear_negative_rate() {
+        let p = DecayProfile::Decay {
+            id: DecayProfileId::new("bad"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: -0.1,
+            },
+            floor_qi: 0.0,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_nan_parameters() {
+        let nan_decay = DecayProfile::Decay {
+            id: DecayProfileId::new("bad"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: f32::NAN,
+        };
+        assert!(nan_decay.validate().is_err());
     }
 }

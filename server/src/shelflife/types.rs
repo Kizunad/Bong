@@ -66,9 +66,12 @@ pub enum DecayProfile {
         peak_at_ticks: u64,
         /// 峰值加成系数（0.5 = 峰值为 initial × 1.5）。
         peak_bonus: f32,
+        /// 峰值 `Peaking` 窗口比例：`[peak_at_ticks * (1 - r), peak_at_ticks * (1 + r)]`。
+        /// 例 0.1 = ±10% 峰值窗口；陈年灵茶可宽 0.2，老坛丹可窄 0.05。
+        peak_window_ratio: f32,
         /// 过峰后的指数衰减半衰期。
         post_peak_half_life_ticks: u64,
-        /// 过峰后跌至此值时路径迁移 Age → Spoil。
+        /// 过峰后跌至此值时路径迁移 Age → Spoil（仅在 `effective_dt > peak_at_ticks` 后生效）。
         post_peak_spoil_threshold: f32,
         /// 迁移后挂的 Spoil profile。
         post_peak_spoil_profile: DecayProfileId,
@@ -90,6 +93,82 @@ impl DecayProfile {
             DecayProfile::Spoil { .. } => DecayTrack::Spoil,
             DecayProfile::Age { .. } => DecayTrack::Age,
         }
+    }
+
+    /// plan §10 开放问题 — registry 加载时校验配置合法性。
+    /// 非全量校验（跨 profile 引用由 registry 层保证），仅保护单 profile 可算性。
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            DecayProfile::Decay {
+                formula, floor_qi, ..
+            } => {
+                validate_formula(formula)?;
+                if *floor_qi < 0.0 || !floor_qi.is_finite() {
+                    return Err(format!(
+                        "DecayProfile::Decay.floor_qi must be finite and ≥ 0, got {floor_qi}"
+                    ));
+                }
+                Ok(())
+            }
+            DecayProfile::Spoil {
+                formula,
+                spoil_threshold,
+                ..
+            } => {
+                validate_formula(formula)?;
+                if *spoil_threshold < 0.0 || !spoil_threshold.is_finite() {
+                    return Err(format!(
+                        "DecayProfile::Spoil.spoil_threshold must be finite and ≥ 0, got {spoil_threshold}"
+                    ));
+                }
+                Ok(())
+            }
+            DecayProfile::Age {
+                peak_at_ticks,
+                peak_bonus,
+                peak_window_ratio,
+                post_peak_spoil_threshold,
+                ..
+            } => {
+                if *peak_at_ticks == 0 {
+                    return Err("DecayProfile::Age.peak_at_ticks must be > 0".into());
+                }
+                if !peak_bonus.is_finite() || *peak_bonus < 0.0 {
+                    return Err(format!(
+                        "DecayProfile::Age.peak_bonus must be finite and ≥ 0, got {peak_bonus}"
+                    ));
+                }
+                if !peak_window_ratio.is_finite()
+                    || *peak_window_ratio < 0.0
+                    || *peak_window_ratio > 1.0
+                {
+                    return Err(format!(
+                        "DecayProfile::Age.peak_window_ratio must be in [0.0, 1.0], got {peak_window_ratio}"
+                    ));
+                }
+                if *post_peak_spoil_threshold < 0.0 || !post_peak_spoil_threshold.is_finite() {
+                    return Err(format!(
+                        "DecayProfile::Age.post_peak_spoil_threshold must be finite and ≥ 0, got {post_peak_spoil_threshold}"
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn validate_formula(formula: &DecayFormula) -> Result<(), String> {
+    match formula {
+        DecayFormula::Exponential { .. } => Ok(()),
+        DecayFormula::Linear { decay_per_tick } => {
+            if !decay_per_tick.is_finite() || *decay_per_tick < 0.0 {
+                return Err(format!(
+                    "DecayFormula::Linear.decay_per_tick must be finite and ≥ 0, got {decay_per_tick}"
+                ));
+            }
+            Ok(())
+        }
+        DecayFormula::Stepwise => Ok(()),
     }
 }
 
@@ -127,22 +206,26 @@ impl Freshness {
     }
 }
 
-/// plan §8 `compute_track_state` 返回的当下路径状态。
+/// plan §8 `compute_track_state` 返回的**内部路径机态**。
+///
+/// **注意**：此枚举是 **机态**（path state），不是 UI **显示档位**。plan §4 要求 tooltip
+/// 显示 5 档（鲜品/微损/半衰/残留/死物 等），5 档细分应由 M3（tooltip 实装）阶段从
+/// `current_qi / initial_qi` 比率 + TrackState 共同衍生，不在本枚举范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackState {
-    /// Decay — 未跌至 floor_qi，或 Spoil 未跌至 spoil_threshold，或 Age 峰前。
+    /// Decay/Spoil: headroom 剩余 > 50% · Age: 峰前。
     Fresh,
-    /// Decay 路径 — 已跌破半衰期但未达 floor_qi。
+    /// Decay: 已低于 half headroom 但未 Dead · Spoil: 同理但未 Spoiled。
     Declining,
-    /// Decay 路径 — 已至 floor_qi，item ID 应切"死 X"。
+    /// Decay: current ≤ floor_qi，item ID 应切"死 X"。
     Dead,
-    /// Spoil 路径 — 已跌至 spoil_threshold 以下，消费触发 contam 警告。
+    /// Spoil: current ≤ spoil_threshold，消费触发 contam 警告。
     Spoiled,
-    /// Age 路径 — 处于 peak_at_ticks 附近 ±10% 窗口，消费触发 bonus。
+    /// Age: 处于 `peak_at_ticks ± peak_window_ratio` 窗口，消费触发 bonus。
     Peaking,
-    /// Age 路径 — 已过峰值，尚未到 post_peak_spoil_threshold。
+    /// Age: 已过 `peak_hi`，但 current 仍 > post_peak_spoil_threshold。
     PastPeak,
-    /// Age 路径已跌破 post_peak_spoil_threshold，路径迁移为 Spoil。
-    /// 此状态下调用方应在存储层把 `Freshness.track/profile` 更新为 Spoil 配置。
+    /// Age: 已过 `peak_at_ticks` 且 current ≤ post_peak_spoil_threshold。
+    /// 调用方应在存储层把 `Freshness.track / profile` 更新为 Spoil 配置。
     AgePostPeakSpoiled,
 }
