@@ -3383,7 +3383,8 @@ fn read_zstd_bundle(reference: &Path, relative_path: &str) -> io::Result<Vec<u8>
         resolve_persistence_relative_path(&settings, relative_path)
     };
     let compressed = fs::read(absolute_path)?;
-    zstd::stream::decode_all(compressed.as_slice()).map_err(io::Error::other)
+    zstd::stream::decode_all(compressed.as_slice())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn utc_year_from_unix_seconds(unix_seconds: i64) -> i32 {
@@ -6115,6 +6116,69 @@ mod persistence_tests {
                 .expect("npc digest query should succeed")
                 .is_none(),
             "dead NPC should be removed from hot npc_digests table"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_npc_deceased_archive_rejects_corrupted_zstd_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-corrupt-read");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_corrupt");
+        persist_npc_capture(&settings, &capture)
+            .expect("npc capture should persist before archive");
+
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 888,
+            archived_at_wall: 1_704_067_300,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 3,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(LifeRecord {
+                biography: vec![BiographyEntry::Terminated {
+                    cause: "fortune_exhausted".to_string(),
+                    tick: 888,
+                }],
+                ..sample_npc_life_record(capture.state.char_id.as_str())
+            }),
+        };
+
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("npc archive should persist before corruption");
+
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        fs::write(&archive_path, b"not a zstd bundle")
+            .expect("corrupted archive fixture should overwrite bundle");
+
+        let error = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+            .expect_err("corrupted archive bundle should fail to load");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let path: String = connection
+            .query_row(
+                "SELECT path FROM npc_deceased_index WHERE char_id = ?1",
+                params![archive.char_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("npc_deceased_index row should still exist");
+        assert_eq!(
+            path,
+            format!(
+                "data/archive/npc_deceased/{}/{}.json.zst",
+                utc_year_from_unix_seconds(archive.archived_at_wall),
+                archive.char_id
+            )
         );
 
         let _ = fs::remove_dir_all(root);
