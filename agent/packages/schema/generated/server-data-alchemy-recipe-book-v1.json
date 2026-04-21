@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "learned",
+    "current_index"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_recipe_book",
+      "type": "string"
+    },
+    "learned": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "body_text",
+          "author",
+          "era",
+          "max_known"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "body_text": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "era": {
+            "type": "string"
+          },
+          "max_known": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "current_index": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

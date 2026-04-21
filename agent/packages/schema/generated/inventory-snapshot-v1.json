@@ -190,6 +190,111 @@
                 "minimum": 0,
                 "maximum": 1,
                 "type": "number"
+              },
+              "freshness": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "created_at_tick",
+                  "initial_qi",
+                  "track",
+                  "profile"
+                ],
+                "properties": {
+                  "created_at_tick": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "initial_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track": {
+                    "anyOf": [
+                      {
+                        "const": "Decay",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoil",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Age",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profile": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "frozen_accumulated": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "frozen_since_tick": {
+                    "anyOf": [
+                      {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "freshness_current": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "current_qi",
+                  "track_state"
+                ],
+                "properties": {
+                  "current_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track_state": {
+                    "anyOf": [
+                      {
+                        "const": "Fresh",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Declining",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Dead",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoiled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Peaking",
+                        "type": "string"
+                      },
+                      {
+                        "const": "PastPeak",
+                        "type": "string"
+                      },
+                      {
+                        "const": "AgePostPeakSpoiled",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -298,6 +403,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -395,6 +605,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -492,6 +807,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -589,6 +1009,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -686,6 +1211,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -783,6 +1413,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -880,6 +1615,111 @@
                   "minimum": 0,
                   "maximum": 1,
                   "type": "number"
+                },
+                "freshness": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "created_at_tick",
+                    "initial_qi",
+                    "track",
+                    "profile"
+                  ],
+                  "properties": {
+                    "created_at_tick": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "initial_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track": {
+                      "anyOf": [
+                        {
+                          "const": "Decay",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoil",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Age",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "frozen_accumulated": {
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "frozen_since_tick": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "freshness_current": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "current_qi",
+                    "track_state"
+                  ],
+                  "properties": {
+                    "current_qi": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "track_state": {
+                      "anyOf": [
+                        {
+                          "const": "Fresh",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Declining",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Dead",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Spoiled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "Peaking",
+                          "type": "string"
+                        },
+                        {
+                          "const": "PastPeak",
+                          "type": "string"
+                        },
+                        {
+                          "const": "AgePostPeakSpoiled",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -983,6 +1823,111 @@
                 "minimum": 0,
                 "maximum": 1,
                 "type": "number"
+              },
+              "freshness": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "created_at_tick",
+                  "initial_qi",
+                  "track",
+                  "profile"
+                ],
+                "properties": {
+                  "created_at_tick": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "initial_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track": {
+                    "anyOf": [
+                      {
+                        "const": "Decay",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoil",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Age",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profile": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "frozen_accumulated": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "frozen_since_tick": {
+                    "anyOf": [
+                      {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "freshness_current": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "current_qi",
+                  "track_state"
+                ],
+                "properties": {
+                  "current_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track_state": {
+                    "anyOf": [
+                      {
+                        "const": "Fresh",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Declining",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Dead",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoiled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Peaking",
+                        "type": "string"
+                      },
+                      {
+                        "const": "PastPeak",
+                        "type": "string"
+                      },
+                      {
+                        "const": "AgePostPeakSpoiled",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
               }
             }
           },

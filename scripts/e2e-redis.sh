@@ -895,7 +895,7 @@ else
   finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
 fi
 
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command and bong:agent_narrate" 300; then
+if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command, bong:agent_narrate(, .+)?" 300; then
   pass "server redis subscribed"
 else
   finalize_failure "server" "missing redis subscribed anchor in $SERVER_LOG"

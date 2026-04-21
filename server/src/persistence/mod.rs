@@ -3252,6 +3252,12 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::NearDeath { .. } => "near_death",
         BiographyEntry::Terminated { .. } => "terminated",
+        BiographyEntry::AlchemyAttempt { .. } => "alchemy_attempt",
+        BiographyEntry::PlotHarvestedByOther { .. } => "plot_harvested_by_other",
+        BiographyEntry::PlotHarvestedFromOther { .. } => "plot_harvested_from_other",
+        BiographyEntry::PlotQiDrainedByOther { .. } => "plot_qi_drained_by_other",
+        BiographyEntry::PlotQiDrainedFromOther { .. } => "plot_qi_drained_from_other",
+        BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
     }
 }
 
@@ -3269,7 +3275,13 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::Rebirth { tick, .. }
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::NearDeath { tick, .. }
-        | BiographyEntry::Terminated { tick, .. } => *tick,
+        | BiographyEntry::Terminated { tick, .. }
+        | BiographyEntry::AlchemyAttempt { tick, .. }
+        | BiographyEntry::PlotHarvestedByOther { tick, .. }
+        | BiographyEntry::PlotHarvestedFromOther { tick, .. }
+        | BiographyEntry::PlotQiDrainedByOther { tick, .. }
+        | BiographyEntry::PlotQiDrainedFromOther { tick, .. }
+        | BiographyEntry::PlotDestroyedByOther { tick, .. } => *tick,
     }
 }
 

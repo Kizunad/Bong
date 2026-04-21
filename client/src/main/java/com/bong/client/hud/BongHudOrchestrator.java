@@ -53,6 +53,19 @@ public final class BongHudOrchestrator {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(snapshot, combat, nowMillis, widthMeasurer, maxTextWidth, screenWidth, screenHeight, null);
+    }
+
+    public static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         int normalizedWidth = normalizeWidth(maxTextWidth);
@@ -79,6 +92,10 @@ public final class BongHudOrchestrator {
             nextY += LINE_HEIGHT;
         }
 
+        commands.addAll(OverweightHudPlanner.buildCommands(widthMeasurer, normalizedWidth));
+        // 地面 dropped loot 改走 world-space billboard（DroppedItemWorldRenderer），
+        // HUD marker 路径已下线——两套定位系统并存会让文字标签相对图标"乱飘"。
+
         if (BongClientFeatures.ENABLE_VISUAL_EFFECTS) {
             VisualHudRenderer.append(
                 commands,
@@ -103,10 +120,13 @@ public final class BongHudOrchestrator {
                 combatSnapshot.quickSlotConfig(),
                 combatSnapshot.selectedHotbarSlot(),
                 combatSnapshot.castState(),
+                com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),
                 nowMillis,
                 screenWidth,
                 screenHeight
             ));
+            // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
+            commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(EventStreamHudPlanner.buildCommands(
                 combatSnapshot.eventStream(),
                 nowMillis,
@@ -132,6 +152,31 @@ public final class BongHudOrchestrator {
                 nowMillis,
                 screenWidth,
                 screenHeight
+            ));
+            commands.addAll(StaminaBarHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(ThroughputPeakHudPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(NearDeathOverlayPlanner.buildCommands(
+                combatSnapshot.combatHudState(), screenWidth, screenHeight
+            ));
+            // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
+            // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
+            // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));
+        }
+        if (BongClientFeatures.ENABLE_BOTANY_HUD) {
+            commands.addAll(BotanyHudPlanner.buildCommands(
+                widthMeasurer,
+                screenWidth,
+                screenHeight,
+                botanyAnchor
             ));
         }
 

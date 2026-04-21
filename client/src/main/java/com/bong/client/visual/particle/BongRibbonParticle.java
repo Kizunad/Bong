@@ -66,6 +66,23 @@ public class BongRibbonParticle extends SpriteBillboardParticle {
         return this;
     }
 
+    public BongRibbonParticle setSpritePublic(net.minecraft.client.texture.Sprite sprite) {
+        if (sprite != null) {
+            this.setSprite(sprite);
+        }
+        return this;
+    }
+
+    public BongRibbonParticle setAlphaPublic(float alpha) {
+        this.setAlpha(alpha);
+        return this;
+    }
+
+    public BongRibbonParticle setMaxAgePublic(int maxAge) {
+        this.maxAge = maxAge;
+        return this;
+    }
+
     @Override
     public void tick() {
         super.tick();

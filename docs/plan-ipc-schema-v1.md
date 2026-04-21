@@ -10,8 +10,8 @@
 
 ## §0 设计轴心
 
-- [ ] 单一真相源（TypeBox in TS）
-- [ ] 双端强校验（samples/*.json）
+- [x] 单一真相源（TypeBox in TS）
+- [x] 双端强校验（samples/*.json）
 - [ ] channel 命名规范
 - [ ] 版本化策略
 
@@ -40,14 +40,14 @@
 
 ## §4 测试与校验
 
-- [ ] samples/*.json 双端 round-trip 测试
+- [x] samples/*.json 双端 round-trip 测试
 - [ ] 新增 channel checklist
 
 ## §5 实施节点
 
-- [ ] P1 · 盘点现有 channel → 补档
+- [x] P1 · 盘点现有 channel → 补档
 - [ ] P2 · 版本字段加入
-- [ ] P3 · CI schema 校验
+- [x] P3 · CI schema 校验
 
 ## §6 开放问题
 

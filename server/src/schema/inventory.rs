@@ -58,6 +58,28 @@ pub struct InventoryItemViewV1 {
     pub spirit_quality: f64,
     #[serde(deserialize_with = "deserialize_unit_interval_f64")]
     pub durability: f64,
+    /// plan-shelflife-v1 §0.4 — 物品保质期 NBT；缺省视作"无时间敏感"。
+    /// 为旧 client snapshot / 未挂 freshness 的物品兼容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<crate::shelflife::Freshness>,
+    /// plan-shelflife-v1 M3a — 衍生数据（snapshot emit 时由 server 预算，供 client tooltip
+    /// 直接渲染；client 不需要内置 compute_* 逻辑 + DecayProfileRegistry）。
+    /// `None` = freshness 字段缺失 / profile 未在 registry / 无法衍生。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_current: Option<FreshnessDerivedV1>,
+}
+
+/// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
+/// 由 server snapshot emit 时调 `compute_current_qi` + `compute_track_state` 算出，
+/// 塞 InventoryItemViewV1 携带到 client。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FreshnessDerivedV1 {
+    /// 当下灵气 / 真元 / 药力含量。
+    pub current_qi: f32,
+    /// 当下路径机态 — 7 档（Fresh / Declining / Dead / Spoiled / Peaking / PastPeak /
+    /// AgePostPeakSpoiled）。client M3b 由此 + current_qi/initial_qi 比率衍生 5 档显示位。
+    pub track_state: crate::shelflife::TrackState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -151,6 +173,13 @@ pub enum InventoryEventV1 {
         instance_id: u64,
         from: InventoryLocationV1,
         to: InventoryLocationV1,
+    },
+    Dropped {
+        revision: u64,
+        instance_id: u64,
+        from: InventoryLocationV1,
+        world_pos: [f64; 3],
+        item: InventoryItemViewV1,
     },
     StackChanged {
         revision: u64,
@@ -269,6 +298,7 @@ impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
 #[serde(untagged)]
 enum RawInventoryEventV1 {
     Moved(RawInventoryEventMovedV1),
+    Dropped(RawInventoryEventDroppedV1),
     StackChanged(RawInventoryEventStackChangedV1),
     DurabilityChanged(RawInventoryEventDurabilityChangedV1),
 }
@@ -293,6 +323,18 @@ struct RawInventoryEventStackChangedV1 {
     pub instance_id: u64,
     #[serde(deserialize_with = "deserialize_non_negative_u64")]
     pub stack_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInventoryEventDroppedV1 {
+    kind: String,
+    pub revision: u64,
+    #[serde(deserialize_with = "deserialize_js_safe_integer")]
+    pub instance_id: u64,
+    pub from: InventoryLocationV1,
+    pub world_pos: [f64; 3],
+    pub item: InventoryItemViewV1,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +366,22 @@ impl TryFrom<RawInventoryEventV1> for InventoryEventV1 {
                     instance_id: event.instance_id,
                     from: event.from,
                     to: event.to,
+                })
+            }
+            RawInventoryEventV1::Dropped(event) => {
+                if event.kind != "dropped" {
+                    return Err(format!(
+                        "InventoryEventV1.kind must be 'dropped', got '{}'",
+                        event.kind
+                    ));
+                }
+
+                Ok(Self::Dropped {
+                    revision: event.revision,
+                    instance_id: event.instance_id,
+                    from: event.from,
+                    world_pos: event.world_pos,
+                    item: event.item,
                 })
             }
             RawInventoryEventV1::StackChanged(event) => {
@@ -677,6 +735,40 @@ mod tests {
     }
 
     #[test]
+    fn inventory_event_dropped_roundtrip_preserves_content() {
+        let event = InventoryEventV1::Dropped {
+            revision: 21,
+            instance_id: 2002,
+            from: InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            world_pos: [8.0, 66.0, 8.0],
+            item: InventoryItemViewV1 {
+                instance_id: 2002,
+                item_id: "starter_talisman".to_string(),
+                display_name: "启程护符".to_string(),
+                grid_width: 1,
+                grid_height: 1,
+                weight: 0.2,
+                rarity: ItemRarityV1::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                freshness_current: None,
+            },
+        };
+        let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
+        let roundtrip: InventoryEventV1 =
+            serde_json::from_str(&reserialized).expect("dropped event should deserialize");
+
+        assert_eq!(event, roundtrip);
+    }
+
+    #[test]
     fn deserialize_server_data_inventory_snapshot_sample() {
         let payload: ServerDataV1 = serde_json::from_str(SERVER_DATA_INVENTORY_SNAPSHOT_SAMPLE)
             .expect("server-data inventory snapshot sample should deserialize into ServerDataV1");
@@ -697,16 +789,31 @@ mod tests {
 
         match payload.payload {
             ServerDataPayloadV1::InventoryEvent(event) => match event {
-                InventoryEventV1::StackChanged {
+                InventoryEventV1::Dropped {
                     revision,
                     instance_id,
-                    stack_count,
+                    from,
+                    world_pos,
+                    item,
                 } => {
                     assert_eq!(revision, 13);
                     assert_eq!(instance_id, 1004);
-                    assert_eq!(stack_count, 1);
+                    assert_eq!(world_pos, [8.0, 66.0, 8.0]);
+                    assert_eq!(item.item_id, "starter_talisman");
+                    match from {
+                        InventoryLocationV1::Container {
+                            container_id,
+                            row,
+                            col,
+                        } => {
+                            assert_eq!(container_id, ContainerIdV1::MainPack);
+                            assert_eq!(row, 0);
+                            assert_eq!(col, 0);
+                        }
+                        other => panic!("expected container source, got {other:?}"),
+                    }
                 }
-                other => panic!("expected stack_changed inventory event, got {other:?}"),
+                other => panic!("expected dropped inventory event, got {other:?}"),
             },
             other => panic!("expected inventory_event payload, got {other:?}"),
         }
@@ -752,5 +859,143 @@ mod tests {
         let mut event = sample_value(SERVER_DATA_INVENTORY_EVENT_SAMPLE);
         event["extra_delta"] = json!(true);
         assert!(serde_json::from_value::<ServerDataV1>(event).is_err());
+    }
+
+    // =========== plan-shelflife-v1 M1 — InventoryItemViewV1.freshness ===========
+
+    #[test]
+    fn item_view_freshness_legacy_json_without_field_defaults_to_none() {
+        // 旧 client snapshot 不带 freshness 字段 → 应能正确反序列化为 None。
+        let legacy = json!({
+            "instance_id": 42,
+            "item_id": "ling_shi_fan",
+            "display_name": "凡品灵石",
+            "grid_width": 1,
+            "grid_height": 1,
+            "weight": 0.5,
+            "rarity": "common",
+            "description": "末法残石",
+            "stack_count": 1,
+            "spirit_quality": 0.7,
+            "durability": 1.0,
+        });
+
+        let view: InventoryItemViewV1 =
+            serde_json::from_value(legacy).expect("legacy snapshot must deserialize");
+        assert!(view.freshness.is_none());
+    }
+
+    #[test]
+    fn item_view_freshness_some_roundtrip_preserves_all_fields() {
+        use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
+
+        let view = InventoryItemViewV1 {
+            instance_id: 42,
+            item_id: "ling_shi_fan".to_string(),
+            display_name: "凡品灵石".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            weight: 0.5,
+            rarity: ItemRarityV1::Common,
+            description: "末法残石".to_string(),
+            stack_count: 1,
+            spirit_quality: 0.7,
+            durability: 1.0,
+            freshness: Some(Freshness {
+                created_at_tick: 12345,
+                initial_qi: 8.0,
+                track: DecayTrack::Decay,
+                profile: DecayProfileId::new("ling_shi_fan_v1"),
+                frozen_accumulated: 200,
+                frozen_since_tick: Some(1000),
+            }),
+            freshness_current: None,
+        };
+
+        let json = serde_json::to_string(&view).expect("serialize");
+        let back: InventoryItemViewV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, view);
+    }
+
+    #[test]
+    fn item_view_freshness_none_omitted_from_serialization() {
+        // skip_serializing_if = "Option::is_none" — None 时不写入 JSON，wire 字节减少。
+        let view = InventoryItemViewV1 {
+            instance_id: 1,
+            item_id: "iron_axe".to_string(),
+            display_name: "凡铁斧".to_string(),
+            grid_width: 1,
+            grid_height: 2,
+            weight: 1.5,
+            rarity: ItemRarityV1::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            freshness_current: None,
+        };
+
+        let json = serde_json::to_string(&view).expect("serialize");
+        assert!(
+            !json.contains("freshness"),
+            "freshness=None should be skipped, got: {json}"
+        );
+    }
+
+    #[test]
+    fn item_view_freshness_legacy_json_missing_frozen_fields_defaults() {
+        // Freshness 字段缺 frozen_accumulated / frozen_since_tick（v0 NBT）
+        // 应经 #[serde(default)] 默认回 0 / None。
+        let json = json!({
+            "instance_id": 42,
+            "item_id": "ling_shi_fan",
+            "display_name": "凡品灵石",
+            "grid_width": 1,
+            "grid_height": 1,
+            "weight": 0.5,
+            "rarity": "common",
+            "description": "",
+            "stack_count": 1,
+            "spirit_quality": 0.7,
+            "durability": 1.0,
+            "freshness": {
+                "created_at_tick": 0,
+                "initial_qi": 8.0,
+                "track": "Decay",
+                "profile": "ling_shi_fan_v1",
+            },
+        });
+
+        let view: InventoryItemViewV1 = serde_json::from_value(json)
+            .expect("legacy Freshness (without frozen_*) must deserialize");
+        let f = view.freshness.expect("freshness should be Some");
+        assert_eq!(f.frozen_accumulated, 0);
+        assert!(f.frozen_since_tick.is_none());
+    }
+
+    #[test]
+    fn item_view_freshness_invalid_track_rejected() {
+        // 枚举字段必须严格匹配 DecayTrack 三值之一
+        let bad = json!({
+            "instance_id": 1,
+            "item_id": "x",
+            "display_name": "x",
+            "grid_width": 1,
+            "grid_height": 1,
+            "weight": 0.0,
+            "rarity": "common",
+            "description": "",
+            "stack_count": 1,
+            "spirit_quality": 0.0,
+            "durability": 1.0,
+            "freshness": {
+                "created_at_tick": 0,
+                "initial_qi": 1.0,
+                "track": "BogusTrack",
+                "profile": "x",
+            },
+        });
+        assert!(serde_json::from_value::<InventoryItemViewV1>(bad).is_err());
     }
 }

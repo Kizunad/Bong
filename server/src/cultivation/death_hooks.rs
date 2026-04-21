@@ -21,6 +21,7 @@ pub enum CultivationDeathCause {
     MeridianCollapse,
     NegativeZoneDrain,
     ContaminationOverflow,
+    NaturalAging,
 }
 
 #[derive(Debug, Clone, Event)]

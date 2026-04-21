@@ -316,4 +316,61 @@ describe("WorldModel", () => {
 
     expect(restored.getKeyPlayers().flatMap((player) => player.reasons)).toContain("新入世(0.03)");
   });
+
+  it("preserves optional faction and disciple summaries in latest state", () => {
+    const model = new WorldModel();
+
+    model.updateState({
+      v: 1,
+      ts: 1_710_000_123,
+      tick: 123,
+      players: [createPlayer("DiscipleHost")],
+      npcs: [
+        {
+          id: "npc_disciple_001",
+          kind: "zombie",
+          pos: [1, 64, 1],
+          state: "idle",
+          blackboard: {},
+          digest: {
+            archetype: "disciple",
+            age_band: "adult",
+            age_ratio: 0.55,
+            disciple: {
+              faction_id: "neutral",
+              rank: "disciple",
+              loyalty: 0.72,
+              lineage: {
+                master_id: "npc_master_001",
+                disciple_count: 2,
+              },
+              mission_queue: {
+                pending_count: 1,
+                top_mission_id: "mission:hold_spawn_gate",
+              },
+            },
+          },
+        },
+      ],
+      factions: [
+        { id: "attack", loyalty_bias: 0.5 },
+        { id: "defend", loyalty_bias: 0.5 },
+        {
+          id: "neutral",
+          loyalty_bias: 0.7,
+          leader_lineage: { disciple_count: 0 },
+          mission_queue: { pending_count: 1, top_mission_id: "mission:hold_spawn_gate" },
+        },
+      ],
+      zones: [createZone("starter_zone", 0.5, { player_count: 1 })],
+      recent_events: [],
+    });
+
+    expect(model.latestState?.factions?.length).toBe(3);
+    expect(model.latestState?.npcs[0]?.digest?.disciple?.faction_id).toBe("neutral");
+    expect(model.latestState?.npcs[0]?.digest?.disciple?.lineage?.master_id).toBe("npc_master_001");
+    expect(model.latestState?.npcs[0]?.digest?.disciple?.mission_queue?.top_mission_id).toBe(
+      "mission:hold_spawn_gate",
+    );
+  });
 });

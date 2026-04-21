@@ -1,0 +1,94 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "session_id",
+    "target_id",
+    "target_name",
+    "plant_kind",
+    "mode",
+    "progress",
+    "auto_selectable",
+    "request_pending",
+    "interrupted",
+    "completed",
+    "detail"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "botany_harvest_progress",
+      "type": "string"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "plant_kind": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "const": "manual",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "type": "string"
+        }
+      ]
+    },
+    "progress": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "auto_selectable": {
+      "type": "boolean"
+    },
+    "request_pending": {
+      "type": "boolean"
+    },
+    "interrupted": {
+      "type": "boolean"
+    },
+    "completed": {
+      "type": "boolean"
+    },
+    "detail": {
+      "type": "string"
+    },
+    "target_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    }
+  }
+}

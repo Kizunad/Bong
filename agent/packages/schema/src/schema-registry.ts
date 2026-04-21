@@ -2,6 +2,14 @@ import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
+import {
+  AlchemyContaminationLevelV1,
+  AlchemyInterventionV1,
+  AlchemyOutcomeBucket,
+  AlchemyRecipeEntryV1,
+  AlchemyStageHintV1,
+} from "./alchemy.js";
+import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
@@ -15,6 +23,15 @@ import {
   ZoneInfoPayloadV1,
 } from "./client-payload.js";
 import {
+  AlchemyFeedSlotRequestV1,
+  AlchemyIgniteRequestV1,
+  AlchemyInterventionRequestV1,
+  AlchemyLearnRecipeRequestV1,
+  AlchemyOpenFurnaceRequestV1,
+  AlchemyTakeBackRequestV1,
+  AlchemyTakePillRequestV1,
+  AlchemyTurnPageRequestV1,
+  BotanyHarvestRequestV1,
   BreakthroughRequestV1,
   ClientRequestV1,
   ForgeRequestV1,
@@ -28,7 +45,17 @@ import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import { NarrationV1 } from "./narration.js";
-import { ServerDataV1 } from "./server-data.js";
+import {
+  ServerDataAlchemyContaminationV1,
+  ServerDataAlchemyFurnaceV1,
+  ServerDataAlchemyOutcomeForecastV1,
+  ServerDataAlchemyOutcomeResolvedV1,
+  ServerDataAlchemyRecipeBookV1,
+  ServerDataAlchemySessionV1,
+  ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanySkillV1,
+  ServerDataV1,
+} from "./server-data.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -63,7 +90,31 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
+  serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
+  serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
+  // 炼丹 (plan-alchemy-v1 §4)
+  alchemyOutcomeBucket: AlchemyOutcomeBucket,
+  alchemyInterventionV1: AlchemyInterventionV1,
+  alchemyRecipeEntryV1: AlchemyRecipeEntryV1,
+  alchemyStageHintV1: AlchemyStageHintV1,
+  alchemyContaminationLevelV1: AlchemyContaminationLevelV1,
+  serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
+  serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
+  serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
+  serverDataAlchemyOutcomeResolvedV1: ServerDataAlchemyOutcomeResolvedV1,
+  serverDataAlchemyRecipeBookV1: ServerDataAlchemyRecipeBookV1,
+  serverDataAlchemyContaminationV1: ServerDataAlchemyContaminationV1,
+  clientRequestAlchemyOpenFurnaceV1: AlchemyOpenFurnaceRequestV1,
+  clientRequestAlchemyFeedSlotV1: AlchemyFeedSlotRequestV1,
+  clientRequestAlchemyTakeBackV1: AlchemyTakeBackRequestV1,
+  clientRequestAlchemyIgniteV1: AlchemyIgniteRequestV1,
+  clientRequestAlchemyInterventionV1: AlchemyInterventionRequestV1,
+  clientRequestAlchemyTurnPageV1: AlchemyTurnPageRequestV1,
+  clientRequestAlchemyLearnRecipeV1: AlchemyLearnRecipeRequestV1,
+  clientRequestAlchemyTakePillV1: AlchemyTakePillRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -99,7 +150,49 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-botany-harvest-v1.json":
+    SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
+  "server-data-botany-harvest-progress-v1.json":
+    SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
+  "server-data-botany-skill-v1.json":
+    SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
+  // 炼丹 (plan-alchemy-v1 §4)
+  "alchemy-outcome-bucket.json": SCHEMA_REGISTRY.alchemyOutcomeBucket,
+  "alchemy-intervention-v1.json": SCHEMA_REGISTRY.alchemyInterventionV1,
+  "alchemy-recipe-entry-v1.json": SCHEMA_REGISTRY.alchemyRecipeEntryV1,
+  "alchemy-stage-hint-v1.json": SCHEMA_REGISTRY.alchemyStageHintV1,
+  "alchemy-contamination-level-v1.json":
+    SCHEMA_REGISTRY.alchemyContaminationLevelV1,
+  "server-data-alchemy-furnace-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
+  "server-data-alchemy-session-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemySessionV1,
+  "server-data-alchemy-outcome-forecast-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemyOutcomeForecastV1,
+  "server-data-alchemy-outcome-resolved-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemyOutcomeResolvedV1,
+  "server-data-alchemy-recipe-book-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemyRecipeBookV1,
+  "server-data-alchemy-contamination-v1.json":
+    SCHEMA_REGISTRY.serverDataAlchemyContaminationV1,
+  "client-request-alchemy-open-furnace-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyOpenFurnaceV1,
+  "client-request-alchemy-feed-slot-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyFeedSlotV1,
+  "client-request-alchemy-take-back-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyTakeBackV1,
+  "client-request-alchemy-ignite-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyIgniteV1,
+  "client-request-alchemy-intervention-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyInterventionV1,
+  "client-request-alchemy-turn-page-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyTurnPageV1,
+  "client-request-alchemy-learn-recipe-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyLearnRecipeV1,
+  "client-request-alchemy-take-pill-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyTakePillV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

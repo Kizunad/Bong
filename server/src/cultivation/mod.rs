@@ -422,6 +422,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.add_event::<tribulation::TribulationWaveCleared>();
+        app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_systems(
             Update,
             (

@@ -48,8 +48,43 @@
       "kind": "zombie",
       "pos": [14.0, 66.0, 14.0],
       "state": "idle",
+      "digest": {
+        "archetype": "zombie",
+        "age_band": "young",
+        "age_ratio": 0.1,
+        "disciple": {
+          "faction_id": "neutral",
+          "rank": "disciple",
+          "loyalty": 0.5,
+          "lineage": {
+            "master_id": "npc_master_001",
+            "disciple_count": 2
+          },
+          "mission_queue": {
+            "pending_count": 1,
+            "top_mission_id": "mission:hold_spawn_gate"
+          }
+        }
+      },
       "blackboard": {
         "nearest_player_dist": 12.5
+      }
+    }
+  ],
+  "factions": [
+    {
+      "id": "attack",
+      "loyalty_bias": 0.5
+    },
+    {
+      "id": "defend",
+      "loyalty_bias": 0.5
+    },
+    {
+      "id": "neutral",
+      "loyalty_bias": 0.5,
+      "leader_lineage": {
+        "disciple_count": 0
       }
     }
   ],

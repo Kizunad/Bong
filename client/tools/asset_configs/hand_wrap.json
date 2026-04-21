@@ -1,0 +1,17 @@
+{
+  "_comment": "hand_wrap (armored_gauntlets mesh) iter1: mesh 是双手整套护甲 Z-long 6 X=3.75 Y=2.75。拳套贴手,scale 0.35 看比例。FP 近距推远",
+  "thirdperson_righthand": {
+    "scale": [0.35, 0.35, 0.35]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.35, 0.35, 0.35]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -4],
+    "scale": [0.25, 0.25, 0.25]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -4],
+    "scale": [0.25, 0.25, 0.25]
+  }
+}

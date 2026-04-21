@@ -1,7 +1,16 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
+use super::alchemy::{
+    AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
+    AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
+};
+use super::combat_hud::{
+    CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
+    QuickSlotConfigV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
+};
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
-use super::inventory::{InventoryEventV1, InventorySnapshotV1};
+use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
+use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
 use super::world_state::PlayerPowerBreakdown;
 
@@ -27,6 +36,26 @@ pub enum ServerDataType {
     CultivationDetail,
     InventorySnapshot,
     InventoryEvent,
+    DroppedLootSync,
+    BotanyHarvestProgress,
+    BotanySkill,
+    AlchemyFurnace,
+    AlchemySession,
+    AlchemyOutcomeForecast,
+    AlchemyOutcomeResolved,
+    AlchemyRecipeBook,
+    AlchemyContamination,
+    CombatHudState,
+    WoundsSnapshot,
+    DefenseWindow,
+    CastSync,
+    QuickSlotConfig,
+    UnlocksSync,
+    EventStreamPush,
+    DefenseSync,
+    WeaponEquipped,
+    WeaponBroken,
+    LingtianSession,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +112,44 @@ pub enum ServerDataPayloadV1 {
     },
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
+    DroppedLootSync(Vec<DroppedLootEntryV1>),
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
+    },
+    AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
+    AlchemySession(Box<AlchemySessionDataV1>),
+    AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
+    AlchemyOutcomeResolved(Box<AlchemyOutcomeResolvedDataV1>),
+    AlchemyRecipeBook(Box<AlchemyRecipeBookDataV1>),
+    AlchemyContamination(Box<AlchemyContaminationDataV1>),
+    CombatHudState(CombatHudStateV1),
+    WoundsSnapshot(WoundsSnapshotV1),
+    DefenseWindow(DefenseWindowV1),
+    CastSync(CastSyncV1),
+    QuickSlotConfig(QuickSlotConfigV1),
+    UnlocksSync(UnlocksSyncV1),
+    EventStreamPush(EventStreamPushV1),
+    DefenseSync(DefenseSyncV1),
+    WeaponEquipped(WeaponEquippedV1),
+    WeaponBroken(WeaponBrokenV1),
+    LingtianSession(Box<LingtianSessionDataV1>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,12 +212,108 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         event: ServerDataInventoryEventWireV1,
     },
+    DroppedLootSync {
+        drops: Vec<DroppedLootEntryV1>,
+    },
+    BotanyHarvestProgress {
+        session_id: String,
+        target_id: String,
+        target_name: String,
+        plant_kind: String,
+        mode: String,
+        progress: f64,
+        auto_selectable: bool,
+        request_pending: bool,
+        interrupted: bool,
+        completed: bool,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_pos: Option<[f64; 3]>,
+    },
+    BotanySkill {
+        level: u64,
+        xp: u64,
+        xp_to_next_level: u64,
+        auto_unlock_level: u64,
+    },
+    AlchemyFurnace {
+        #[serde(flatten)]
+        data: Box<AlchemyFurnaceDataV1>,
+    },
+    AlchemySession {
+        #[serde(flatten)]
+        data: Box<AlchemySessionDataV1>,
+    },
+    AlchemyOutcomeForecast {
+        #[serde(flatten)]
+        data: Box<AlchemyOutcomeForecastDataV1>,
+    },
+    AlchemyOutcomeResolved {
+        #[serde(flatten)]
+        data: Box<AlchemyOutcomeResolvedDataV1>,
+    },
+    AlchemyRecipeBook {
+        #[serde(flatten)]
+        data: Box<AlchemyRecipeBookDataV1>,
+    },
+    AlchemyContamination {
+        #[serde(flatten)]
+        data: Box<AlchemyContaminationDataV1>,
+    },
+    CombatHudState {
+        #[serde(flatten)]
+        state: CombatHudStateV1,
+    },
+    WoundsSnapshot {
+        #[serde(flatten)]
+        snapshot: WoundsSnapshotV1,
+    },
+    DefenseWindow {
+        #[serde(flatten)]
+        window: DefenseWindowV1,
+    },
+    CastSync {
+        #[serde(flatten)]
+        state: CastSyncV1,
+    },
+    // 显式 rename 因为默认 snake_case 会得到 "quick_slot_config"，
+    // 但 plan §11.4 / client handler 注册的是无下划线 "quickslot_config"。
+    #[serde(rename = "quickslot_config")]
+    QuickSlotConfig {
+        #[serde(flatten)]
+        config: QuickSlotConfigV1,
+    },
+    UnlocksSync {
+        #[serde(flatten)]
+        unlocks: UnlocksSyncV1,
+    },
+    EventStreamPush {
+        #[serde(flatten)]
+        event: EventStreamPushV1,
+    },
+    DefenseSync {
+        #[serde(flatten)]
+        state: DefenseSyncV1,
+    },
+    WeaponEquipped {
+        #[serde(flatten)]
+        weapon_equipped: WeaponEquippedV1,
+    },
+    WeaponBroken {
+        #[serde(flatten)]
+        weapon_broken: WeaponBrokenV1,
+    },
+    LingtianSession {
+        #[serde(flatten)]
+        lingtian_session: LingtianSessionDataV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum InventoryEventKindWireV1 {
     Moved,
+    Dropped,
     StackChanged,
     DurabilityChanged,
 }
@@ -166,9 +329,24 @@ struct ServerDataInventoryEventWireV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     to: Option<super::inventory::InventoryLocationV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    world_pos: Option<[f64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    item: Option<Box<super::inventory::InventoryItemViewV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stack_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     durability: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DroppedLootEntryV1 {
+    pub instance_id: u64,
+    pub source_container_id: String,
+    pub source_row: u64,
+    pub source_col: u64,
+    pub world_pos: [f64; 3],
+    pub item: InventoryItemViewV1,
 }
 
 impl TryFrom<ServerDataInventoryEventWireV1> for InventoryEventV1 {
@@ -194,6 +372,25 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: Some(from.clone()),
                 to: Some(to.clone()),
+                world_pos: None,
+                item: None,
+                stack_count: None,
+                durability: None,
+            },
+            InventoryEventV1::Dropped {
+                revision,
+                instance_id,
+                from,
+                world_pos,
+                item,
+            } => Self {
+                kind: InventoryEventKindWireV1::Dropped,
+                revision: *revision,
+                instance_id: *instance_id,
+                from: Some(from.clone()),
+                to: None,
+                world_pos: Some(*world_pos),
+                item: Some(Box::new(item.clone())),
                 stack_count: None,
                 durability: None,
             },
@@ -207,6 +404,8 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: None,
                 to: None,
+                world_pos: None,
+                item: None,
                 stack_count: Some(*stack_count),
                 durability: None,
             },
@@ -220,6 +419,8 @@ impl From<&InventoryEventV1> for ServerDataInventoryEventWireV1 {
                 instance_id: *instance_id,
                 from: None,
                 to: None,
+                world_pos: None,
+                item: None,
                 stack_count: None,
                 durability: Some(*durability),
             },
@@ -299,6 +500,80 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::InventoryEvent { event } => {
                 Ok(Self::InventoryEvent(event.try_into()?))
+            }
+            ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
+            ServerDataPayloadWireV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Ok(Self::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            }),
+            ServerDataPayloadWireV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Ok(Self::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            }),
+            ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
+            ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
+            ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
+                Ok(Self::AlchemyOutcomeForecast(data))
+            }
+            ServerDataPayloadWireV1::AlchemyOutcomeResolved { data } => {
+                Ok(Self::AlchemyOutcomeResolved(data))
+            }
+            ServerDataPayloadWireV1::AlchemyRecipeBook { data } => {
+                Ok(Self::AlchemyRecipeBook(data))
+            }
+            ServerDataPayloadWireV1::AlchemyContamination { data } => {
+                Ok(Self::AlchemyContamination(data))
+            }
+            ServerDataPayloadWireV1::CombatHudState { state } => Ok(Self::CombatHudState(state)),
+            ServerDataPayloadWireV1::WoundsSnapshot { snapshot } => {
+                Ok(Self::WoundsSnapshot(snapshot))
+            }
+            ServerDataPayloadWireV1::DefenseWindow { window } => Ok(Self::DefenseWindow(window)),
+            ServerDataPayloadWireV1::CastSync { state } => Ok(Self::CastSync(state)),
+            ServerDataPayloadWireV1::QuickSlotConfig { config } => {
+                Ok(Self::QuickSlotConfig(config))
+            }
+            ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
+            ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
+            ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
+            ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
+                Ok(Self::WeaponEquipped(weapon_equipped))
+            }
+            ServerDataPayloadWireV1::WeaponBroken { weapon_broken } => {
+                Ok(Self::WeaponBroken(weapon_broken))
+            }
+            ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
+                Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
         }
     }
@@ -383,6 +658,88 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::InventoryEvent(event) => Self::InventoryEvent {
                 event: event.into(),
+            },
+            ServerDataPayloadV1::DroppedLootSync(drops) => Self::DroppedLootSync {
+                drops: drops.clone(),
+            },
+            ServerDataPayloadV1::BotanyHarvestProgress {
+                session_id,
+                target_id,
+                target_name,
+                plant_kind,
+                mode,
+                progress,
+                auto_selectable,
+                request_pending,
+                interrupted,
+                completed,
+                detail,
+                target_pos,
+            } => Self::BotanyHarvestProgress {
+                session_id: session_id.clone(),
+                target_id: target_id.clone(),
+                target_name: target_name.clone(),
+                plant_kind: plant_kind.clone(),
+                mode: mode.clone(),
+                progress: *progress,
+                auto_selectable: *auto_selectable,
+                request_pending: *request_pending,
+                interrupted: *interrupted,
+                completed: *completed,
+                detail: detail.clone(),
+                target_pos: *target_pos,
+            },
+            ServerDataPayloadV1::BotanySkill {
+                level,
+                xp,
+                xp_to_next_level,
+                auto_unlock_level,
+            } => Self::BotanySkill {
+                level: *level,
+                xp: *xp,
+                xp_to_next_level: *xp_to_next_level,
+                auto_unlock_level: *auto_unlock_level,
+            },
+            ServerDataPayloadV1::AlchemyFurnace(data) => {
+                Self::AlchemyFurnace { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemySession(data) => {
+                Self::AlchemySession { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyOutcomeForecast(data) => {
+                Self::AlchemyOutcomeForecast { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyOutcomeResolved(data) => {
+                Self::AlchemyOutcomeResolved { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyRecipeBook(data) => {
+                Self::AlchemyRecipeBook { data: data.clone() }
+            }
+            ServerDataPayloadV1::AlchemyContamination(data) => {
+                Self::AlchemyContamination { data: data.clone() }
+            }
+            ServerDataPayloadV1::CombatHudState(state) => Self::CombatHudState { state: *state },
+            ServerDataPayloadV1::WoundsSnapshot(snapshot) => Self::WoundsSnapshot {
+                snapshot: snapshot.clone(),
+            },
+            ServerDataPayloadV1::DefenseWindow(window) => Self::DefenseWindow { window: *window },
+            ServerDataPayloadV1::CastSync(state) => Self::CastSync { state: *state },
+            ServerDataPayloadV1::QuickSlotConfig(config) => Self::QuickSlotConfig {
+                config: config.clone(),
+            },
+            ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
+            ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
+                event: event.clone(),
+            },
+            ServerDataPayloadV1::DefenseSync(state) => Self::DefenseSync { state: *state },
+            ServerDataPayloadV1::WeaponEquipped(w) => Self::WeaponEquipped {
+                weapon_equipped: w.clone(),
+            },
+            ServerDataPayloadV1::WeaponBroken(b) => Self::WeaponBroken {
+                weapon_broken: b.clone(),
+            },
+            ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
+                lingtian_session: (**s).clone(),
             },
         }
     }
@@ -479,6 +836,26 @@ impl ServerDataPayloadV1 {
             Self::CultivationDetail { .. } => ServerDataType::CultivationDetail,
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
+            Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
+            Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::BotanySkill { .. } => ServerDataType::BotanySkill,
+            Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
+            Self::AlchemySession(..) => ServerDataType::AlchemySession,
+            Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
+            Self::AlchemyOutcomeResolved(..) => ServerDataType::AlchemyOutcomeResolved,
+            Self::AlchemyRecipeBook(..) => ServerDataType::AlchemyRecipeBook,
+            Self::AlchemyContamination(..) => ServerDataType::AlchemyContamination,
+            Self::CombatHudState(..) => ServerDataType::CombatHudState,
+            Self::WoundsSnapshot(..) => ServerDataType::WoundsSnapshot,
+            Self::DefenseWindow(..) => ServerDataType::DefenseWindow,
+            Self::CastSync(..) => ServerDataType::CastSync,
+            Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
+            Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
+            Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
+            Self::DefenseSync(..) => ServerDataType::DefenseSync,
+            Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
+            Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
+            Self::LingtianSession(..) => ServerDataType::LingtianSession,
         }
     }
 }
@@ -486,6 +863,69 @@ impl ServerDataPayloadV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::agent_bridge::payload_type_label;
+
+    /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
+    /// (would have routed `quick_slot_config` while client expected `quickslot_config`).
+    #[test]
+    fn hud_payload_wire_type_matches_label() {
+        use crate::schema::combat_hud::*;
+        let cases: Vec<ServerDataPayloadV1> = vec![
+            ServerDataPayloadV1::CombatHudState(CombatHudStateV1 {
+                hp_percent: 1.0,
+                qi_percent: 1.0,
+                stamina_percent: 1.0,
+                derived: DerivedAttrFlagsV1::default(),
+            }),
+            ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 { wounds: vec![] }),
+            ServerDataPayloadV1::DefenseWindow(DefenseWindowV1 {
+                duration_ms: 200,
+                started_at_ms: 0,
+                expires_at_ms: 200,
+            }),
+            ServerDataPayloadV1::CastSync(CastSyncV1 {
+                phase: CastPhaseV1::Idle,
+                slot: 0,
+                duration_ms: 0,
+                started_at_ms: 0,
+                outcome: CastOutcomeV1::None,
+            }),
+            ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            }),
+            ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
+            ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
+                channel: EventChannelV1::Combat,
+                priority: EventPriorityV1::P1Important,
+                source_tag: String::new(),
+                text: "x".to_string(),
+                color: 0,
+                created_at_ms: 0,
+            }),
+            ServerDataPayloadV1::DefenseSync(DefenseSyncV1 {
+                stance: DefenseStanceV1::None,
+                fake_skin_layers: 0,
+                vortex_active: false,
+                vortex_ready_at_ms: 0,
+            }),
+        ];
+
+        for payload in cases {
+            let label = payload_type_label(payload.payload_type());
+            let envelope = ServerDataV1::new(payload);
+            let bytes = serde_json::to_vec(&envelope).expect("serialize");
+            let value: serde_json::Value = serde_json::from_slice(&bytes).expect("decode");
+            let wire_type = value
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            assert_eq!(
+                wire_type, label,
+                "wire type {wire_type} does not match payload_type_label {label}"
+            );
+        }
+    }
 
     #[test]
     fn cultivation_detail_roundtrip_and_size_budget() {
@@ -545,6 +985,33 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.inventory-event.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.dropped-loot-sync.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-furnace.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-session.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-forecast.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-resolved.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-recipe-book.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
             ),
         ];
 

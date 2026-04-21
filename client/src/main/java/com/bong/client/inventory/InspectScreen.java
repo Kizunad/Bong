@@ -1,10 +1,15 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.QuickSlotEntry;
+import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.inventory.state.MeridianStateStore;
 import com.bong.client.inventory.state.PhysicalBodyStore;
+import net.minecraft.client.MinecraftClient;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
@@ -16,6 +21,8 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 
@@ -27,8 +34,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_ACTIVE_COLOR = 0xFFCCCCCC;
     private static final int TAB_INACTIVE_COLOR = 0xFF555555;
 
-    private final InventoryModel model;
+    private InventoryModel model;
     private final DragState dragState = new DragState();
+    /** Screen 存活期间持有的 InventoryStateStore 订阅，close 时解绑避免泄漏。 */
+    private Consumer<InventoryModel> inventoryListener;
 
     // --- Container grids (driven by model.containers()) ---
     private BackpackGridPanel[] containerGrids;
@@ -44,14 +53,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Tabs (left panel)
     private int activeTab = 0;
-    private final LabelComponent[] tabLabels = new LabelComponent[2];
+    // plan-skill-v1 §5.1 第三个 tab "技艺"
+    private final LabelComponent[] tabLabels = new LabelComponent[3];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
+    private FlowLayout skillTabContent;
+    // plan-skill-v1 §5.1 三行固定（herbalism / alchemy / forging）
+    private com.bong.client.skill.SkillRowComponent[] skillRows;
+    /** Screen 存活期间持有的 SkillSetStore 订阅，close 时解绑避免泄漏。 */
+    private java.util.function.Consumer<com.bong.client.skill.SkillSetSnapshot> skillListener;
 
     // Hotbar
     private final GridSlotComponent[] hotbarSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] hotbarItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout hotbarStrip;
+
+    // Quick-use bar (F1-F9, plan-HUD-v1 §2.2 上层)
+    private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
+    private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
+    private FlowLayout quickUseStrip;
 
     // Discard
     private FlowLayout discardStrip;
@@ -66,6 +86,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private Consumer<MeridianBody> meridianBodyListener;
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
+    record PillMenuAction(String label, ActionKind kind) {}
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET }
+    record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
+    record PendingMeridianUse(InventoryItem item) {}
+
+    private PillContextMenuState pillContextMenu;
+    private PendingMeridianUse pendingMeridianUse;
+
+    private static final int PILL_MENU_WIDTH = 112;
+    private static final int PILL_MENU_ROW_HEIGHT = 16;
+    private static final int PILL_MENU_PADDING = 4;
+    private static final int PILL_MENU_BG = 0xEE151515;
+    private static final int PILL_MENU_BORDER = 0xFF777777;
+    private static final int PILL_MENU_TEXT = 0xFFE8E8E8;
+    private static final int PILL_MENU_HOVER = 0xFF2A2A2A;
+    private static final int PILL_TARGET_HINT = 0xFFFFD060;
+
     public InspectScreen(InventoryModel model) {
         super(TITLE);
         this.model = model == null ? InventoryModel.empty() : model;
@@ -77,6 +114,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (meridianBodyListener != null) {
             MeridianStateStore.removeListener(meridianBodyListener);
             meridianBodyListener = null;
+        }
+        if (inventoryListener != null) {
+            InventoryStateStore.removeListener(inventoryListener);
+            inventoryListener = null;
+        }
+        if (skillListener != null) {
+            com.bong.client.skill.SkillSetStore.removeListener(skillListener);
+            skillListener = null;
         }
         super.removed();
     }
@@ -97,9 +142,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         outerRow.gap(2);
         outerRow.verticalAlignment(VerticalAlignment.CENTER);
 
-        // === FAR LEFT: Hotbar ===
+        // === FAR LEFT: Hotbar (1-9 战斗栏) + Quick-use (F1-F9 快捷使用栏) ===
         hotbarStrip = buildHotbarStrip();
         outerRow.child(hotbarStrip);
+        quickUseStrip = buildQuickUseStrip();
+        outerRow.child(quickUseStrip);
+        hydrateQuickUseFromStore();
 
         // === CENTER: Main panel ===
         FlowLayout mainPanel = Containers.verticalFlow(Sizing.content(), Sizing.content());
@@ -119,8 +167,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         tabBar.gap(6);
         tabBar.padding(Insets.of(1, 2, 1, 2));
-        String[] tabNames = {"装备", "修仙"};
-        for (int i = 0; i < 2; i++) {
+        String[] tabNames = {"装备", "修仙", "技艺"};
+        for (int i = 0; i < tabNames.length; i++) {
             final int idx = i;
             var label = Components.label(Text.literal(tabNames[i]));
             label.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
@@ -287,6 +335,40 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
+        // Tab 2: 技艺 (plan-skill-v1 §5.1)
+        //   实装范围：左列 380 三行固定（herbalism/alchemy/forging）；中列 1020 留空占位；
+        //   右列由现有 BackpackGridPanel 渲染。详情四象限 / 曲线 canvas / 里程碑 / 残卷拖入槽留 P4/P6。
+        skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+        skillTabContent.gap(2);
+        skillTabContent.padding(Insets.of(2));
+
+        skillRows = new com.bong.client.skill.SkillRowComponent[3];
+        com.bong.client.skill.SkillId[] order = {
+            com.bong.client.skill.SkillId.HERBALISM,
+            com.bong.client.skill.SkillId.ALCHEMY,
+            com.bong.client.skill.SkillId.FORGING,
+        };
+        for (int i = 0; i < order.length; i++) {
+            skillRows[i] = new com.bong.client.skill.SkillRowComponent(order[i]);
+            skillTabContent.child(skillRows[i].component());
+        }
+        // 中列占位 —— 详情面板见后续迭代（P3 effective_lv 灰显 / P4 残卷槽 / P5 里程碑）。
+        LabelComponent skillDetailPlaceholder = Components.label(Text.of("详情 —— 见后续迭代"));
+        skillDetailPlaceholder.color(Color.ofArgb(0xFF606060));
+        skillTabContent.child(skillDetailPlaceholder);
+
+        // 初次填充
+        refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+        // 订阅更新 —— 回主线程再刷 UI，避免网络线程 mutate owo-lib 组件。
+        skillListener = next -> {
+            if (next == null) return;
+            MinecraftClient.getInstance().execute(() -> refreshSkillRows(next));
+        };
+        com.bong.client.skill.SkillSetStore.addListener(skillListener);
+
+        leftCol.child(skillTabContent);
+        skillTabContent.positioning(Positioning.absolute(-9999, -9999));
+
         middle.child(leftCol);
 
         // 经脉详情直接绘制在 body 画布内部（见 BodyInspectComponent.drawMeridianDetailInline）
@@ -365,6 +447,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         root.child(outerRow);
         populateFromModel();
+
+        // Server 增量到达时（InventoryEventHandler 写入或新 snapshot 落地）刷新 UI。
+        // listener 在网络线程触发，UI mutation 必须回主线程。
+        inventoryListener = next -> {
+            if (next == null) return;
+            MinecraftClient.getInstance().execute(() -> {
+                this.model = next;
+                populateFromModel();
+            });
+        };
+        InventoryStateStore.addListener(inventoryListener);
     }
 
     // ==================== Build helpers ====================
@@ -418,6 +511,70 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return strip;
     }
 
+    /** plan-HUD-v1 §2.2 上层：F1-F9 快捷使用栏（绿色背景 + 顶部 F 头标区分）。 */
+    private FlowLayout buildQuickUseStrip() {
+        int cs = GridSlotComponent.CELL_SIZE;
+        FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
+        strip.surface(Surface.flat(0xFF0F1A14));
+        strip.padding(Insets.of(3));
+        strip.gap(1);
+        strip.horizontalAlignment(HorizontalAlignment.CENTER);
+
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            GridSlotComponent slot = new GridSlotComponent(i, 0);
+            quickUseSlots[i] = slot;
+            strip.child(slot);
+        }
+        return strip;
+    }
+
+    private void hydrateQuickUseFromStore() {
+        QuickSlotConfig config = QuickUseSlotStore.snapshot();
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            QuickSlotEntry entry = config.slot(i);
+            if (entry == null) {
+                quickUseItems[i] = null;
+                if (quickUseSlots[i] != null) quickUseSlots[i].clearItem();
+                continue;
+            }
+            InventoryItem matched = findItemInModel(entry.itemId());
+            quickUseItems[i] = matched;
+            if (quickUseSlots[i] != null) {
+                if (matched != null) quickUseSlots[i].setItem(matched, true);
+                else quickUseSlots[i].clearItem();
+            }
+        }
+    }
+
+    private InventoryItem findItemInModel(String itemId) {
+        if (itemId == null || itemId.isEmpty()) return null;
+        for (InventoryItem h : model.hotbar()) {
+            if (h != null && itemId.equals(h.itemId())) return h;
+        }
+        for (var entry : model.gridItems()) {
+            InventoryItem it = entry.item();
+            if (it != null && itemId.equals(it.itemId())) return it;
+        }
+        return null;
+    }
+
+    private void publishQuickUseSlot(int index, InventoryItem item) {
+        QuickSlotConfig current = QuickUseSlotStore.snapshot();
+        QuickSlotEntry entry = item == null ? null : new QuickSlotEntry(
+            item.itemId(),
+            item.displayName(),
+            QUICK_USE_DEFAULT_CAST_MS,
+            QUICK_USE_DEFAULT_COOLDOWN_MS,
+            ""
+        );
+        QuickUseSlotStore.replace(current.withSlot(index, entry));
+        com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
+            index, item == null ? null : item.itemId());
+    }
+
+    private static final int QUICK_USE_DEFAULT_CAST_MS = 1500;
+    private static final int QUICK_USE_DEFAULT_COOLDOWN_MS = 500;
+
     private FlowLayout buildDiscardStrip() {
         int cs = GridSlotComponent.CELL_SIZE;
         FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
@@ -442,19 +599,39 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchTab(int idx) {
         if (idx == activeTab) return;
         activeTab = idx;
-        for (int i = 0; i < 2; i++)
+        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, skillTabContent};
+        for (int i = 0; i < tabs.length; i++) {
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        FlowLayout[] tabs = {equipTabContent, cultivationTabContent};
-        for (int i = 0; i < 2; i++)
-            tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
+            if (tabs[i] != null) {
+                tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
+            }
+        }
+        // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
+        if (idx == 2) {
+            refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+        }
+    }
+
+    /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
+    private void refreshSkillRows(com.bong.client.skill.SkillSetSnapshot snapshot) {
+        if (skillRows == null || snapshot == null) return;
+        long now = System.currentTimeMillis();
+        for (com.bong.client.skill.SkillRowComponent row : skillRows) {
+            if (row == null) continue;
+            row.update(snapshot.get(row.skill()), now);
+        }
     }
 
     private void switchBodyLayer(BodyInspectComponent.Layer layer) {
         if (bodyInspect == null) return;
         bodyInspect.setActiveLayer(layer);
         boolean isPhys = layer == BodyInspectComponent.Layer.PHYSICAL;
-        physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+        if (physicalLayerLabel != null) {
+            physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
+        }
+        if (meridianLayerLabel != null) {
+            meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
+        }
         if (meridianFilterBar != null) {
             meridianFilterBar.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
         }
@@ -505,6 +682,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 else hotbarSlots[i].clearItem();
             }
         }
+
+        hydrateQuickUseFromStore();
     }
 
     static void populateContainerGrids(InventoryModel model, BackpackGridPanel[] containerGrids) {
@@ -521,6 +700,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     InventoryModel model() {
         return model;
+    }
+
+    void setBodyInspectForTests(BodyInspectComponent bodyInspect) {
+        this.bodyInspect = bodyInspect;
     }
 
     static InventoryModel.ContainerDef containerDefAt(InventoryModel model, int index) {
@@ -549,6 +732,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return -1;
     }
 
+    private int quickUseSlotAtScreen(double sx, double sy) {
+        int cs = GridSlotComponent.CELL_SIZE;
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            GridSlotComponent s = quickUseSlots[i];
+            if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
+                return i;
+        }
+        return -1;
+    }
+
     private boolean isOverDiscard(double sx, double sy) {
         return sx >= discardStrip.x() && sx < discardStrip.x() + discardStrip.width()
             && sy >= discardStrip.y() && sy < discardStrip.y() + discardStrip.height();
@@ -558,6 +751,45 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
+            return true;
+        }
+
+        if (button == 1) {
+            if (pillContextMenu != null) {
+                int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
+                if (actionIdx >= 0) {
+                    triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
+                } else {
+                    pillContextMenu = null;
+                    pendingMeridianUse = null;
+                }
+                return true;
+            }
+
+            BackpackGridPanel grid = activeGrid();
+            if (grid.containsPoint(mouseX, mouseY)) {
+                var pos = grid.screenToGrid(mouseX, mouseY);
+                if (pos != null) {
+                    InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                    if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                        return true;
+                    }
+                }
+            }
+
+            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            if (hIdx >= 0 && hotbarItems[hIdx] != null
+                    && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
+                return true;
+            }
+
+            if (pendingMeridianUse != null) {
+                pendingMeridianUse = null;
+                return true;
+            }
+        }
+
         if (button == 0) {
             boolean shift = hasShiftDown();
             BackpackGridPanel grid = activeGrid();
@@ -573,7 +805,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                             var anchor = grid.anchorOf(item);
                             if (anchor != null) {
                                 grid.remove(item);
-                                dragState.pickup(item, anchor.row(), anchor.col());
+                                dragState.pickup(item, grid.containerId(), anchor.row(), anchor.col());
                             }
                         }
                         return true;
@@ -635,6 +867,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
                 return true;
             }
+
+            // Quick-use bar (F1-F9)
+            int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
+            if (qIdx >= 0 && quickUseItems[qIdx] != null) {
+                InventoryItem item = quickUseItems[qIdx];
+                if (shift) quickMoveQuickUseToGrid(qIdx);
+                else {
+                    quickUseItems[qIdx] = null;
+                    quickUseSlots[qIdx].clearItem();
+                    publishQuickUseSlot(qIdx, null);
+                    dragState.pickupFromQuickUse(item, qIdx);
+                }
+                return true;
+            }
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
@@ -665,9 +911,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) { dragState.cancel(); clearAllHighlights(); return; }
 
+        // Capture source before drop() resets dragState; needed for the C2S move intent.
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc = snapshotSourceLocation();
+
         // Discard
         if (isOverDiscard(mouseX, mouseY)) {
-            dragState.drop();
+            if (dispatchDiscardIntent(dragged, fromLoc)) {
+                dragState.drop();
+            } else {
+                returnDragToSource();
+            }
             clearAllHighlights();
             return;
         }
@@ -679,6 +932,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (pos != null && grid.canPlace(dragged, pos.row(), pos.col())) {
                 grid.place(dragged, pos.row(), pos.col());
                 dragState.drop();
+                dispatchMoveIntent(dragged, fromLoc,
+                    new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                        grid.containerId(), pos.row(), pos.col()));
                 clearAllHighlights();
                 return;
             }
@@ -704,6 +960,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     dragState.drop();
                     placeItemAnywhere(old);
                 }
+                dispatchMoveIntent(dragged, fromLoc,
+                    new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                        eq.slotType().name().toLowerCase()));
                 clearAllHighlights();
                 return;
             }
@@ -749,12 +1008,236 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 placeItemAnywhere(old);
             }
+            dispatchMoveIntent(dragged, fromLoc,
+                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx));
+            clearAllHighlights();
+            return;
+        }
+
+        // Quick-use bar (F1-F9)
+        int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
+        if (qIdx >= 0 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
+            InventoryItem old = quickUseItems[qIdx];
+            quickUseItems[qIdx] = dragged;
+            quickUseSlots[qIdx].setItem(dragged, true);
+            publishQuickUseSlot(qIdx, dragged);
+            dragState.drop();
+            if (old != null) placeItemAnywhere(old);
             clearAllHighlights();
             return;
         }
 
         returnDragToSource();
         clearAllHighlights();
+    }
+
+    /**
+     * 在 dragState.drop() 之前调用，从当前 dragState 计算 server-shaped {@code from}。
+     * 仅 GRID/EQUIP/HOTBAR 三种来源对应 server 库存；QUICK_USE/MERIDIAN/BODY_PART 返回 null
+     * （server 端无对应表示，move intent 不发）。
+     */
+    private com.bong.client.network.ClientRequestProtocol.InvLocation snapshotSourceLocation() {
+        if (dragState.sourceKind() == null) return null;
+        return switch (dragState.sourceKind()) {
+            case GRID -> {
+                String cid = dragState.sourceContainerId();
+                if (cid == null) yield null;
+                yield new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    cid, dragState.sourceRow(), dragState.sourceCol());
+            }
+            case EQUIP -> dragState.sourceEquipSlot() == null ? null
+                : new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                    dragState.sourceEquipSlot().name().toLowerCase());
+            case HOTBAR -> dragState.sourceHotbarIndex() < 0 ? null
+                : new com.bong.client.network.ClientRequestProtocol.HotbarLoc(
+                    dragState.sourceHotbarIndex());
+            case QUICK_USE, MERIDIAN, BODY_PART -> null;
+        };
+    }
+
+    boolean dispatchApplyPillSelf(InventoryItem item) {
+        if (item == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillSelf skipped: item is null");
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillSelf skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        if (!"guyuan_pill".equals(item.itemId()) && !"huiyuan_pill_forbidden".equals(item.itemId())) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchApplyPillSelf instance={} item={}",
+            item.instanceId(), item.itemId());
+        com.bong.client.network.ClientRequestSender.sendApplyPillSelf(item.instanceId());
+        return true;
+    }
+
+    boolean dispatchApplyPillMeridian(InventoryItem item) {
+        if (item == null || bodyInspect == null) {
+            return false;
+        }
+        MeridianChannel selected = bodyInspect.selectedChannel();
+        if (selected == null) {
+            return false;
+        }
+        return dispatchApplyPillMeridianToChannel(item, selected);
+    }
+
+    boolean dispatchApplyPillMeridianToChannel(InventoryItem item, MeridianChannel target) {
+        if (item == null || target == null) {
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchApplyPillMeridian skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        if (!"ningmai_powder".equals(item.itemId())) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchApplyPillMeridian instance={} item={} meridian={}",
+            item.instanceId(), item.itemId(), target);
+        com.bong.client.network.ClientRequestSender.sendApplyPill(
+            item.instanceId(),
+            new com.bong.client.network.ClientRequestProtocol.MeridianTarget(
+                com.bong.client.network.ClientRequestProtocol.toMeridianId(target)
+            )
+        );
+        return true;
+    }
+
+    List<PillMenuAction> availablePillMenuActions(InventoryItem item) {
+        List<PillMenuAction> actions = new ArrayList<>();
+        if (item == null || item.instanceId() == 0L) {
+            return actions;
+        }
+        if ("guyuan_pill".equals(item.itemId()) || "huiyuan_pill_forbidden".equals(item.itemId())) {
+            actions.add(new PillMenuAction("服用", ActionKind.SELF_USE));
+        }
+        if ("ningmai_powder".equals(item.itemId())) {
+            actions.add(new PillMenuAction("外敷（选经脉）", ActionKind.MERIDIAN_TARGET));
+        }
+        return actions;
+    }
+
+    boolean openPillContextMenu(InventoryItem item, int x, int y) {
+        List<PillMenuAction> actions = availablePillMenuActions(item);
+        if (actions.isEmpty()) {
+            pillContextMenu = null;
+            return false;
+        }
+        pillContextMenu = new PillContextMenuState(item, x, y, List.copyOf(actions));
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    boolean hasOpenPillContextMenu() {
+        return pillContextMenu != null;
+    }
+
+    boolean hasPendingMeridianUse() {
+        return pendingMeridianUse != null;
+    }
+
+    void triggerPillMenuAction(ActionKind kind) {
+        if (pillContextMenu == null || kind == null) {
+            return;
+        }
+        InventoryItem item = pillContextMenu.item();
+        pillContextMenu = null;
+        switch (kind) {
+            case SELF_USE -> {
+                pendingMeridianUse = null;
+                dispatchApplyPillSelf(item);
+            }
+            case MERIDIAN_TARGET -> {
+                if (tabLabels[0] != null && tabLabels[1] != null) {
+                    switchTab(1);
+                } else {
+                    activeTab = 1;
+                }
+                if (bodyInspect != null) {
+                    switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN);
+                }
+                pendingMeridianUse = new PendingMeridianUse(item);
+            }
+        }
+    }
+
+    boolean confirmPendingMeridianUse() {
+        if (pendingMeridianUse == null || bodyInspect == null) {
+            return false;
+        }
+        MeridianChannel target = bodyInspect.focusedChannel();
+        if (!dispatchApplyPillMeridianToChannel(pendingMeridianUse.item(), target)) {
+            return false;
+        }
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    void dispatchMoveIntent(
+        InventoryItem item,
+        com.bong.client.network.ClientRequestProtocol.InvLocation from,
+        com.bong.client.network.ClientRequestProtocol.InvLocation to
+    ) {
+        if (item == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchMoveIntent skipped: item is null");
+            return;
+        }
+        if (from == null || to == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchMoveIntent skipped: from={} to={} item={}",
+                from, to, item.itemId());
+            return;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchMoveIntent skipped: item {} has instanceId=0 "
+                    + "(likely Mock data — server snapshot didn't load)",
+                item.itemId());
+            return;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchMoveIntent instance={} from={} to={} item={}",
+            item.instanceId(), from, to, item.itemId());
+        com.bong.client.network.ClientRequestSender.sendInventoryMove(item.instanceId(), from, to);
+    }
+
+    boolean dispatchDiscardIntent(
+        InventoryItem item,
+        com.bong.client.network.ClientRequestProtocol.InvLocation from
+    ) {
+        if (item == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: item is null");
+            return false;
+        }
+        if (from == null) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: from={} item={}",
+                from, item.itemId());
+            return false;
+        }
+        if (item.instanceId() == 0L) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchDiscardIntent skipped: item {} has instanceId=0",
+                item.itemId());
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchDiscardIntent instance={} from={} item={}",
+            item.instanceId(), from, item.itemId());
+        com.bong.client.network.ClientRequestSender.sendInventoryDiscardItem(item.instanceId(), from);
+        return true;
     }
 
     private void returnDragToSource() {
@@ -781,6 +1264,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (idx >= 0 && idx < HOTBAR_SLOTS) {
                     hotbarItems[idx] = item;
                     hotbarSlots[idx].setItem(item, true);
+                }
+            }
+            case QUICK_USE -> {
+                int idx = r.sourceQuickUseIndex();
+                if (idx >= 0 && idx < HOTBAR_SLOTS) {
+                    quickUseItems[idx] = item;
+                    quickUseSlots[idx].setItem(item, true);
+                    publishQuickUseSlot(idx, item);
                 }
             }
             case MERIDIAN -> {
@@ -864,14 +1355,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
         }
 
+        int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
+        if (qIdx >= 0) {
+            boolean valid = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
+            quickUseSlots[qIdx].setHighlightState(
+                valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
+        }
+
         discardStrip.surface(Surface.flat(isOverDiscard(mouseX, mouseY) ? 0xFF331111 : 0xFF201010));
     }
 
     private void clearAllHighlights() {
         for (BackpackGridPanel g : containerGrids) g.clearHighlights();
         equipPanel.clearHighlights();
-        for (int i = 0; i < HOTBAR_SLOTS; i++)
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+            if (quickUseSlots[i] != null) quickUseSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+        }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         discardStrip.surface(Surface.flat(0xFF201010));
     }
@@ -919,6 +1419,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
+    private void quickMoveQuickUseToGrid(int index) {
+        InventoryItem item = quickUseItems[index];
+        if (item == null) return;
+        var pos = activeGrid().findFreeSpace(item);
+        if (pos != null) {
+            quickUseItems[index] = null;
+            quickUseSlots[index].clearItem();
+            publishQuickUseSlot(index, null);
+            activeGrid().place(item, pos.row(), pos.col());
+        }
+    }
+
     // ==================== Render ====================
 
     @Override
@@ -926,6 +1438,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         super.render(context, mouseX, mouseY, delta);
         drawMultiCellItems(context);
         updateTooltipFromHover(mouseX, mouseY);
+        drawPillMenuOverlay(context, mouseX, mouseY);
+        drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
         if (activeTab == 1 && bodyInspect != null) {
@@ -1005,6 +1519,53 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         RenderSystem.disableBlend();
     }
 
+    private int pillMenuHeight() {
+        return pillContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + pillContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
+    }
+
+    private int pillMenuActionIndexAt(double mouseX, double mouseY) {
+        if (pillContextMenu == null) return -1;
+        int left = pillContextMenu.x();
+        int top = pillContextMenu.y();
+        int height = pillMenuHeight();
+        if (mouseX < left || mouseX >= left + PILL_MENU_WIDTH || mouseY < top || mouseY >= top + height) {
+            return -1;
+        }
+        int row = ((int) mouseY - top - PILL_MENU_PADDING) / PILL_MENU_ROW_HEIGHT;
+        return row >= 0 && row < pillContextMenu.actions().size() ? row : -1;
+    }
+
+    private void drawPillMenuOverlay(DrawContext context, int mouseX, int mouseY) {
+        if (pillContextMenu == null) return;
+        int left = pillContextMenu.x();
+        int top = pillContextMenu.y();
+        int height = pillMenuHeight();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 450);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BG);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + 1, PILL_MENU_BORDER);
+        context.fill(left, top + height - 1, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        context.fill(left, top, left + 1, top + height, PILL_MENU_BORDER);
+        context.fill(left + PILL_MENU_WIDTH - 1, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        int hovered = pillMenuActionIndexAt(mouseX, mouseY);
+        var textRenderer = MinecraftClient.getInstance().textRenderer;
+        for (int i = 0; i < pillContextMenu.actions().size(); i++) {
+            int rowTop = top + PILL_MENU_PADDING + i * PILL_MENU_ROW_HEIGHT;
+            if (i == hovered) {
+                context.fill(left + 1, rowTop, left + PILL_MENU_WIDTH - 1, rowTop + PILL_MENU_ROW_HEIGHT, PILL_MENU_HOVER);
+            }
+            context.drawTextWithShadow(
+                textRenderer,
+                Text.literal(pillContextMenu.actions().get(i).label()),
+                left + 6,
+                rowTop + 4,
+                PILL_MENU_TEXT
+            );
+        }
+        matrices.pop();
+    }
+
     private void updateTooltipFromHover(double mx, double my) {
         if (dragState.isDragging()) { tooltipPanel.setHoveredItem(dragState.draggedItem()); return; }
         InventoryItem hovered = null;
@@ -1030,6 +1591,29 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int idx = hotbarSlotAtScreen(mx, my);
             if (idx >= 0) hovered = hotbarItems[idx];
         }
+        if (hovered == null) {
+            int idx = quickUseSlotAtScreen(mx, my);
+            if (idx >= 0) hovered = quickUseItems[idx];
+        }
         tooltipPanel.setHoveredItem(hovered);
+    }
+
+    private void drawPendingMeridianPrompt(DrawContext context) {
+        if (pendingMeridianUse == null || bodyInspect == null) return;
+        MeridianChannel focus = bodyInspect.focusedChannel();
+        String text = focus == null
+            ? "外敷：请先选择经脉（左键确认 / 右键取消）"
+            : "外敷：左键确认至 " + focus.name();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 430);
+        context.drawTextWithShadow(
+            MinecraftClient.getInstance().textRenderer,
+            Text.literal(text),
+            12,
+            26,
+            PILL_TARGET_HINT
+        );
+        matrices.pop();
     }
 }

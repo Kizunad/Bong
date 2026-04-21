@@ -5,7 +5,12 @@
 //! 当 agent runtime 就绪后，只需把 `process_insight_request` 替换为读 agent 通道，
 //! 触发点与 Apply 子系统可完全复用。
 
-use valence::prelude::{bevy_ecs, Commands, Component, EventReader, EventWriter, Query, Res};
+use valence::prelude::{
+    bevy_ecs, Commands, Component, EventReader, EventWriter, Position, Query, Res,
+};
+
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::breakthrough::{BreakthroughError, BreakthroughOutcome};
 use super::components::{Cultivation, MeridianSystem, QiColor, Realm};
@@ -36,6 +41,8 @@ pub fn insight_trigger_on_breakthrough(
     mut outcomes: EventReader<BreakthroughOutcome>,
     mut requests: EventWriter<InsightRequest>,
     mut players: Query<(&Cultivation, &mut InsightQuota)>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for ev in outcomes.read() {
         let Ok((cultivation, mut quota)) = players.get_mut(ev.entity) else {
@@ -51,6 +58,22 @@ pub fn insight_trigger_on_breakthrough(
                         trigger_id: trigger,
                         realm: cultivation.realm,
                     });
+                    // plan-particle-system-v1 §4.4：首次达成新境界 → enlightenment_aura 顿悟光辉。
+                    if let Ok(pos) = positions.get(ev.entity) {
+                        let p = pos.get();
+                        vfx_events.send(VfxEventRequest::new(
+                            p,
+                            VfxEventPayloadV1::SpawnParticle {
+                                event_id: "bong:enlightenment_aura".to_string(),
+                                origin: [p.x, p.y, p.z],
+                                direction: None,
+                                color: Some("#FFE8B0".to_string()),
+                                strength: Some(0.9),
+                                count: Some(24),
+                                duration_ticks: Some(50),
+                            },
+                        ));
+                    }
                 }
             }
             Err(BreakthroughError::RolledFailure { severity }) if *severity < 0.5 => {

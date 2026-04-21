@@ -30,6 +30,26 @@ pub struct Zone {
     pub blocked_tiles: Vec<(i32, i32)>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BotanyZoneTag {
+    Plains,
+    Mountain,
+    Marsh,
+    BloodValley,
+    Cave,
+    Wastes,
+    /// 负灵域（噬脉根 / 浮尘草 生长地）。plan §1.1 特殊路径，不扣 zone spirit_qi。
+    /// 判定：zone.spirit_qi < -0.2 即视为负灵域（阈值可调）。
+    NegativeField,
+    // 注：原计划加 DeathEdge / ResidueAsh / FakeVeinBurn，但调查后发现它们不是 zone 属性：
+    //  - DeathEdge 是动态的"灵气衰退锋线"
+    //  - ResidueAsh 是 block 级（残灰方块表面）
+    //  - FakeVeinBurn 是事件级临时焦土
+    // 这些生境对应的植物 (yang_jing_tai / hui_jin_tai / tian_nu_jiao) 全部走 EventTriggered
+    // 路径，由专属事件系统（plan-residue / plan-tribulation）触发，不挂 zone tag。
+}
+
 impl Zone {
     fn spawn() -> Self {
         Self {
@@ -263,6 +283,47 @@ fn merge_overlay_blocked_tiles(target: &mut Vec<(i32, i32)>, additions: Vec<[i32
     }
 }
 
+impl Zone {
+    pub fn botany_tags(&self) -> Vec<BotanyZoneTag> {
+        let mut tags = Vec::new();
+        if self.name.eq_ignore_ascii_case("spawn") {
+            tags.push(BotanyZoneTag::Plains);
+        }
+        if self.name.eq_ignore_ascii_case("qingyun_peaks") {
+            tags.push(BotanyZoneTag::Mountain);
+        }
+        if self.name.eq_ignore_ascii_case("lingquan_marsh") {
+            tags.push(BotanyZoneTag::Marsh);
+        }
+        if self.name.eq_ignore_ascii_case("blood_valley") {
+            tags.push(BotanyZoneTag::BloodValley);
+        }
+        if self.name.eq_ignore_ascii_case("youan_depths") {
+            tags.push(BotanyZoneTag::Cave);
+        }
+        if self.name.eq_ignore_ascii_case("north_wastes") {
+            tags.push(BotanyZoneTag::Wastes);
+        }
+
+        // 负灵域判定（plan §1.1 特殊路径）：spirit_qi 持续低于 -0.2 即视为负灵域，
+        // 可让 shi_mai_gen / fu_chen_cao / zhong_yan_teng 等 NegativeField 植物
+        // 走 ZoneRefresh / StaticPoint 生长链（event-triggered 植物不受此影响）。
+        if self.spirit_qi < -0.2 {
+            tags.push(BotanyZoneTag::NegativeField);
+        }
+
+        if tags.is_empty() {
+            tags.push(BotanyZoneTag::Plains);
+        }
+
+        tags
+    }
+
+    pub fn supports_botany_tag(&self, tag: BotanyZoneTag) -> bool {
+        self.botany_tags().contains(&tag)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ZonesFileConfig {
     zones: Vec<ZoneConfig>,
@@ -464,6 +525,7 @@ fn dvec3_from_array(value: [f64; 3]) -> DVec3 {
 #[cfg(test)]
 mod zone_tests {
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -710,6 +772,27 @@ mod zone_tests {
             registry.zones[0].blocked_tiles,
             vec![(1, 2), (3, 4), (5, 6)]
         );
+    }
+
+    #[test]
+    fn botany_tags_are_derived_from_zone_name_without_biome_field() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+
+        let spawn = registry
+            .find_zone_by_name("spawn")
+            .expect("spawn zone should exist");
+        assert!(spawn.supports_botany_tag(super::BotanyZoneTag::Plains));
+
+        let marsh = registry
+            .find_zone_by_name("lingquan_marsh")
+            .expect("lingquan_marsh should exist");
+        assert!(marsh.supports_botany_tag(super::BotanyZoneTag::Marsh));
+
+        let blood = registry
+            .find_zone_by_name("blood_valley")
+            .expect("blood_valley should exist");
+        assert!(blood.supports_botany_tag(super::BotanyZoneTag::BloodValley));
     }
 
     fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {

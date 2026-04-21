@@ -1,8 +1,17 @@
 #!/bin/bash
 # start.sh — 一键启动 Redis + Server + Agent（tmux 三面板）
+# 用法: start.sh [--mock]    # --mock 走 npm run start:mock，不调真实 LLM
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+AGENT_CMD="npx tsx src/main.ts"
+for arg in "$@"; do
+  case "$arg" in
+    --mock) AGENT_CMD="npm run start:mock" ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
 
 # Rust 工具链
 export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
@@ -10,6 +19,17 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
 RUNTIME_PATH="$PATH"
 
 SESSION="bong"
+
+# 地形 raster manifest（server 读 BONG_TERRAIN_RASTER_PATH 决定是否加载真实地图）
+RASTER_MANIFEST="$ROOT/worldgen/generated/terrain-gen/rasters/manifest.json"
+if [ -f "$RASTER_MANIFEST" ]; then
+  BONG_TERRAIN_RASTER_PATH="$RASTER_MANIFEST"
+  echo "[bong] terrain raster: $RASTER_MANIFEST"
+else
+  BONG_TERRAIN_RASTER_PATH=""
+  echo "[bong] WARN: raster manifest not found at $RASTER_MANIFEST — 将 fallback 扁平世界"
+  echo "       先跑: bash scripts/dev-reload.sh  (或 cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster)"
+fi
 
 # 检查 Redis
 if ! command -v redis-server &>/dev/null; then
@@ -35,6 +55,7 @@ tmux split-window -h -t "$SESSION:main"
 tmux send-keys -t "$SESSION:main.1" \
   "export PATH='${RUNTIME_PATH}' && \
    export CARGO_TARGET_DIR='${CARGO_TARGET_DIR}' && \
+   export BONG_TERRAIN_RASTER_PATH='${BONG_TERRAIN_RASTER_PATH}' && \
    cd '$ROOT/server' && \
    echo '[bong] starting server...' && \
    cargo run --release 2>&1" Enter
@@ -44,8 +65,8 @@ tmux split-window -v -t "$SESSION:main.1"
 tmux send-keys -t "$SESSION:main.2" \
   "sleep 8 && \
    cd '$ROOT/agent/packages/tiandao' && \
-   echo '[bong] starting tiandao agent...' && \
-   npx tsx src/main.ts 2>&1" Enter
+   echo '[bong] starting tiandao agent ($AGENT_CMD)...' && \
+   $AGENT_CMD 2>&1" Enter
 
 # 布局均匀
 tmux select-layout -t "$SESSION:main" main-vertical
@@ -58,4 +79,4 @@ echo ""
 echo "Panes:"
 echo "  0: Redis"
 echo "  1: Rust server (:25565)"
-echo "  2: Tiandao agent (3 agents)"
+echo "  2: Tiandao agent ($AGENT_CMD)"

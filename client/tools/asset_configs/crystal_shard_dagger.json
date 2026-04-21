@@ -1,0 +1,16 @@
+{
+  "_comment": "水晶碎片匕首 display 定制。scale 0.2 ≈ 1/5 让匕首比剑小。tint [R,G,B] 把灰色顶点色染色（1.0 不改此通道，>1 clip 到 1，<1 压暗）——当前冰蓝水晶；紫水晶 [1.5, 0.6, 1.6]，青水晶 [0.5, 1.5, 1.2]。",
+  "tint": [0.4, 0.9, 1.6],
+  "thirdperson_righthand": {
+    "scale": [0.2, 0.2, 0.2]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.2, 0.2, 0.2]
+  },
+  "firstperson_righthand": {
+    "scale": [0.2, 0.2, 0.2]
+  },
+  "firstperson_lefthand": {
+    "scale": [0.2, 0.2, 0.2]
+  }
+}

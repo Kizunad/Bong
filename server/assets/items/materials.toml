@@ -1,0 +1,192 @@
+# plan-HUD-v1 / worldview §五·六：末法残土的常见物品。
+# 所有 id 与 client/src/main/resources/assets/bong-client/textures/gui/items/{id}.png 对应。
+# 尺寸参考 worldview 描述 + 视觉合理性（长条武器 1×2、护甲 2×2、丹药/果实 1×1）。
+
+# ─── 草药 ─────────────────────────────────────────────────────────────────
+[[item]]
+id = "spirit_grass"
+name = "灵草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.85
+description = "末法残土最常见的灵草。生于灵气 0.3 之上的馈赠区。炼丹基础。"
+
+# ─── 材料 / 兽产 ──────────────────────────────────────────────────────────
+[[item]]
+id = "spirit_wood"
+name = "灵木"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.2
+rarity = "common"
+spirit_quality_initial = 0.8
+description = "蕴含微量灵气的木材。器修最便宜的真元载体。"
+
+[[item]]
+id = "ash_spider_silk"
+name = "拟态灰烬蛛丝"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "拟态灰烬蛛吐出的丝。质轻韧极。替尸流伪灵皮的核心原料。"
+
+[[item]]
+id = "rat_tail"
+name = "噬元鼠膨胀鼠尾"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.7
+description = "噬元鼠偷食真元后膨胀的尾巴。可作炼器辅材。"
+
+[[item]]
+id = "mutant_beast_core"
+name = "异变兽核"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "缝合兽内丹，固元 → 通灵突破必需。吸收时引发幻觉。"
+
+# ─── 武器 / 暗器 ──────────────────────────────────────────────────────────
+[[item]]
+id = "bone_spike"
+name = "骨刺"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.6
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "异变兽骨削成的暗器载体。封 80% 真元可飞五十格。"
+# plan-weapon-v1 §1.1：暗器 → Dagger 类,低耐久一次性偏消耗。
+[item.weapon]
+kind = "dagger"
+base_attack = 6.0
+quality_tier = 0
+durability_max = 80.0
+
+[[item]]
+id = "poison_needle"
+name = "毒蛊飞针"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "毒蛊师专用极小飞针。只附 1 点脏真元，但慢性侵蚀经脉。"
+# 毒性附魔体现在 base_attack 低但 tier 1 灵器(毒性是灵蕴)。
+[item.weapon]
+kind = "dagger"
+base_attack = 3.0
+quality_tier = 1
+durability_max = 50.0
+
+[[item]]
+id = "zhenyuan_mine"
+name = "真元诡雷"
+category = "weapon"
+grid_w = 2
+grid_h = 1
+base_weight = 1.5
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "封真元于环境方块的地师陷阱。踩中瞬间穿腿。"
+# 陷阱类,一次性爆发高伤害低耐久。后续如分离 category 再调整。
+[item.weapon]
+kind = "dagger"
+base_attack = 15.0
+quality_tier = 0
+durability_max = 30.0
+
+# ─── 防御 / 替身 ──────────────────────────────────────────────────────────
+[[item]]
+id = "fake_spirit_hide"
+name = "伪灵皮"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 1.8
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "拟态蛛丝缝制，注入少量真元模拟气息。挨打时优先承受污染并蜕落。"
+
+[[item]]
+id = "decoy_stake"
+name = "替身木桩"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 2.0
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "欺天阵法器。向天道广播假劫气权重，引开本该劈你的雷。"
+
+# ─── 残卷 / 法宝 ──────────────────────────────────────────────────────────
+[[item]]
+id = "broken_artifact"
+name = "破碎法宝"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 3.0
+rarity = "epic"
+spirit_quality_initial = 0.25
+description = "残破上古法器，仍有微弱灵力波动。修复或可化器。"
+
+[[item]]
+id = "broken_artifact_scroll"
+name = "残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.1
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "击杀道伥所获古卷残片。学习术法的唯一途径。"
+
+[[item]]
+id = "baomai_scripture"
+name = "《爆脉流正法》"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.3
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "记载爆脉流修炼法门的残卷。读之经脉作痒。"
+
+# ─── 货币 / 交易 ──────────────────────────────────────────────────────────
+[[item]]
+id = "fengling_bone_coin"
+name = "封灵骨币"
+category = "bone_coin"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "异变兽骨封 10 点真元成币。半月折半，三月仅余四分之一。"
+
+[[item]]
+id = "blind_box"
+name = "盲盒死信箱"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 4.0
+rarity = "uncommon"
+spirit_quality_initial = 0.9
+description = "上锁特制储物箱。非对应破坏即化灰 + 引爆毒气雷。"

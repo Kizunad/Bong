@@ -6,7 +6,12 @@
   "mixins": [],
   "client": [
     "MixinCamera",
-    "MixinGameRenderer"
+    "MixinGameRenderer",
+    "MixinHeldItemRenderer",
+    "MixinInGameHud",
+    "MixinMinecraftClient",
+    "MixinMouse",
+    "MixinPlayerEntityHeldItem"
   ],
   "injectors": {
     "defaultRequire": 1

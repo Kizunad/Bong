@@ -1,0 +1,32 @@
+{
+    "sources": [
+        { "type": "single", "resource": "bong:particle/breakthrough_pillar" },
+        { "type": "single", "resource": "bong:particle/enlightenment_dust" },
+        { "type": "single", "resource": "bong:particle/flying_sword_trail" },
+        { "type": "single", "resource": "bong:particle/lingqi_ripple" },
+        { "type": "single", "resource": "bong:particle/qi_aura" },
+        { "type": "single", "resource": "bong:particle/rune_char_4ee4_cang" },
+        { "type": "single", "resource": "bong:particle/rune_char_4ee4_cao" },
+        { "type": "single", "resource": "bong:particle/rune_char_4ee4_kai" },
+        { "type": "single", "resource": "bong:particle/rune_char_4ee4_xing" },
+        { "type": "single", "resource": "bong:particle/rune_char_5c01_cang" },
+        { "type": "single", "resource": "bong:particle/rune_char_5c01_cao" },
+        { "type": "single", "resource": "bong:particle/rune_char_5c01_kai" },
+        { "type": "single", "resource": "bong:particle/rune_char_5c01_xing" },
+        { "type": "single", "resource": "bong:particle/rune_char_6555_cang" },
+        { "type": "single", "resource": "bong:particle/rune_char_6555_cao" },
+        { "type": "single", "resource": "bong:particle/rune_char_6555_kai" },
+        { "type": "single", "resource": "bong:particle/rune_char_6555_xing" },
+        { "type": "single", "resource": "bong:particle/rune_char_7834_cang" },
+        { "type": "single", "resource": "bong:particle/rune_char_7834_cao" },
+        { "type": "single", "resource": "bong:particle/rune_char_7834_kai" },
+        { "type": "single", "resource": "bong:particle/rune_char_7834_xing" },
+        { "type": "single", "resource": "bong:particle/rune_char_9053_cang" },
+        { "type": "single", "resource": "bong:particle/rune_char_9053_cao" },
+        { "type": "single", "resource": "bong:particle/rune_char_9053_kai" },
+        { "type": "single", "resource": "bong:particle/rune_char_9053_xing" },
+        { "type": "single", "resource": "bong:particle/sword_qi_trail" },
+        { "type": "single", "resource": "bong:particle/sword_slash_arc" },
+        { "type": "single", "resource": "bong:particle/tribulation_spark" }
+    ]
+}

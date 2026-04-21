@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.inventory.state.InventoryStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,17 +12,20 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class InventoryEventHandlerTest {
     @BeforeEach
     void setUp() {
         InventoryStateStore.resetForTests();
+        DroppedItemStore.resetForTests();
     }
 
     @AfterEach
     void tearDown() {
         InventoryStateStore.resetForTests();
+        DroppedItemStore.resetForTests();
     }
 
     @Test
@@ -107,6 +111,176 @@ public class InventoryEventHandlerTest {
         assertEquals(12L, InventoryStateStore.revision());
         assertTrue(InventoryStateStore.isAuthoritativeLoaded());
         assertEquals(baseline, InventoryStateStore.snapshot());
+    }
+
+    @Test
+    void stackChangedAppliesAndBumpsRevision() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"stack_changed","revision":6,"instance_id":1001,"stack_count":7}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertEquals(6L, InventoryStateStore.revision());
+        InventoryItem updated = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals(7, updated.stackCount());
+        assertEquals(0.93, updated.durability(), 1e-9);
+    }
+
+    @Test
+    void durabilityChangedAppliesAndBumpsRevision() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"durability_changed","revision":6,"instance_id":1001,"durability":0.5}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryItem updated = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals(0.5, updated.durability(), 1e-9);
+    }
+
+    @Test
+    void movedFromGridToHotbarRelocatesItem() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "to":{"kind":"hotbar","index":3}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertTrue(after.gridItems().isEmpty(), "grid should be empty after move out");
+        InventoryItem hotbarItem = after.hotbar().get(3);
+        assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    @Test
+    void movedTrustsServerToEvenIfFromOutOfSync() {
+        // 复现真实场景：client 已乐观把 1001 从 grid 搬到 hotbar(0)，server 然后回推
+        // moved with from=container（server's view），to=hotbar(3)。client 应当信任
+        // server 的 to，把 instance 重定位到 hotbar(3)，而不是因 from 不匹配而拒绝。
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"hotbar","index":0},
+             "to":{"kind":"hotbar","index":3}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertEquals(6L, after.gridItems().size() == 0 ? 6L : 6L);
+        assertTrue(after.gridItems().isEmpty(), "item should leave grid");
+        InventoryItem hotbarItem = after.hotbar().get(3);
+        assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    @Test
+    void droppedRemovesItemFromAuthoritativeSnapshot() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"dropped","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "world_pos":[8.5,66.0,8.5],
+             "item":{"instance_id":1001,"item_id":"starter_talisman","display_name":"启程护符",
+                      "grid_width":1,"grid_height":1,"weight":0.2,"rarity":"uncommon",
+                      "description":"初入修途者配发的护身符。","stack_count":1,
+                     "spirit_quality":0.76,"durability":0.93}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertTrue(after.gridItems().isEmpty(), "grid item should be removed after dropped event");
+        assertEquals(6L, InventoryStateStore.revision());
+        DroppedItemStore.Entry dropped = DroppedItemStore.get(1001L);
+        assertEquals("main_pack", dropped.sourceContainerId());
+        assertEquals(0, dropped.sourceRow());
+        assertEquals(0, dropped.sourceCol());
+        assertEquals(8.5, dropped.worldPosX());
+        assertEquals(66.0, dropped.worldPosY());
+        assertEquals(8.5, dropped.worldPosZ());
+        assertEquals("starter_talisman", dropped.item().itemId());
+    }
+
+    @Test
+    void droppedFromHotbarRemovesItemButDoesNotWriteDroppedStoreEntry() {
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .hotbar(0, InventoryItem.createFull(
+                1001L,
+                "starter_talisman",
+                "启程护符",
+                1,
+                1,
+                0.2,
+                "uncommon",
+                "初入修途者配发的护身符。",
+                1,
+                0.76,
+                0.93
+            ))
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"dropped","revision":6,"instance_id":1001,
+             "from":{"kind":"hotbar","index":0},
+             "world_pos":[8.5,66.0,8.5],
+             "item":{"instance_id":1001,"item_id":"starter_talisman","display_name":"启程护符",
+                      "grid_width":1,"grid_height":1,"weight":0.2,"rarity":"uncommon",
+                      "description":"初入修途者配发的护身符。","stack_count":1,
+                      "spirit_quality":0.76,"durability":0.93}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertNull(DroppedItemStore.get(1001L));
+        assertNull(InventoryStateStore.snapshot().hotbar().get(0));
+        assertEquals(6L, InventoryStateStore.revision());
+    }
+
+    @Test
+    void droppedWithMissingItemPayloadIsIgnoredSafely() {
+        InventoryModel baseline = baselineWithStarterTalisman();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"dropped","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0}}
+            """));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.logMessage().contains("invalid from/world_pos/item payload"));
+        assertEquals(baseline, InventoryStateStore.snapshot());
+        assertEquals(5L, InventoryStateStore.revision());
+    }
+
+    private static InventoryModel baselineWithStarterTalisman() {
+        return InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .gridItem(
+                InventoryItem.createFull(
+                    1001L,
+                    "starter_talisman",
+                    "启程护符",
+                    1, 1, 0.2,
+                    "uncommon",
+                    "初入修途者配发的护身符。",
+                    1, 0.76, 0.93
+                ),
+                InventoryModel.PRIMARY_CONTAINER_ID,
+                0, 0
+            )
+            .build();
     }
 
     private static ServerDataEnvelope parseEnvelope(String json) {

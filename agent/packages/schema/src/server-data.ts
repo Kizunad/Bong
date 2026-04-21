@@ -1,14 +1,24 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import {
+  AlchemyContaminationLevelV1,
+  AlchemyOutcomeBucket,
+  AlchemyRecipeEntryV1,
+  AlchemyStageHintV1,
+} from "./alchemy.js";
+import { BotanyHarvestModeV1 } from "./botany.js";
+import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
+import { ColorKind } from "./cultivation.js";
+import {
+  InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
   InventoryEventMovedV1,
   InventoryEventStackChangedV1,
+  InventoryItemViewV1,
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
-import { PlayerPowerBreakdown } from "./world-state.js";
+import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -57,6 +67,15 @@ export const ServerDataType = Type.Union([
   Type.Literal("cultivation_detail"),
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
+  Type.Literal("dropped_loot_sync"),
+  Type.Literal("botany_harvest_progress"),
+  Type.Literal("botany_skill"),
+  Type.Literal("alchemy_furnace"),
+  Type.Literal("alchemy_session"),
+  Type.Literal("alchemy_outcome_forecast"),
+  Type.Literal("alchemy_outcome_resolved"),
+  Type.Literal("alchemy_recipe_book"),
+  Type.Literal("alchemy_contamination"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -174,6 +193,29 @@ export type ServerDataInventorySnapshotV1 = Static<
   typeof ServerDataInventorySnapshotV1
 >;
 
+export const DroppedLootEntryV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    source_container_id: Type.String(),
+    source_row: Type.Integer({ minimum: 0 }),
+    source_col: Type.Integer({ minimum: 0 }),
+    world_pos: Vec3,
+    item: InventoryItemViewV1,
+  },
+  { additionalProperties: false },
+);
+export type DroppedLootEntryV1 = Static<typeof DroppedLootEntryV1>;
+
+export const ServerDataDroppedLootSyncV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("dropped_loot_sync"),
+    drops: Type.Array(DroppedLootEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDroppedLootSyncV1 = Static<typeof ServerDataDroppedLootSyncV1>;
+
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -192,6 +234,15 @@ const ServerDataInventoryEventStackChangedV1 = Type.Object(
   { additionalProperties: false },
 );
 
+const ServerDataInventoryEventDroppedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("inventory_event"),
+    ...InventoryEventDroppedV1.properties,
+  },
+  { additionalProperties: false },
+);
+
 const ServerDataInventoryEventDurabilityChangedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -203,10 +254,157 @@ const ServerDataInventoryEventDurabilityChangedV1 = Type.Object(
 
 export const ServerDataInventoryEventV1 = Type.Union([
   ServerDataInventoryEventMovedV1,
+  ServerDataInventoryEventDroppedV1,
   ServerDataInventoryEventStackChangedV1,
   ServerDataInventoryEventDurabilityChangedV1,
 ]);
 export type ServerDataInventoryEventV1 = Static<typeof ServerDataInventoryEventV1>;
+
+export const ServerDataBotanyHarvestProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_harvest_progress"),
+    session_id: Type.String({ minLength: 1 }),
+    target_id: Type.String({ minLength: 1 }),
+    target_name: Type.String({ minLength: 1 }),
+    plant_kind: Type.String({ minLength: 1 }),
+    mode: BotanyHarvestModeV1,
+    progress: Type.Number({ minimum: 0, maximum: 1 }),
+    auto_selectable: Type.Boolean(),
+    request_pending: Type.Boolean(),
+    interrupted: Type.Boolean(),
+    completed: Type.Boolean(),
+    detail: Type.String(),
+    // plan §1.3 投影锚定：目标植物世界坐标，client 侧做 world→screen 投影定位浮窗。
+    // 省略时 client 回退到准星右侧锚点。
+    target_pos: Type.Optional(
+      Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanyHarvestProgressV1 = Static<
+  typeof ServerDataBotanyHarvestProgressV1
+>;
+
+export const ServerDataBotanySkillV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_skill"),
+    level: Type.Integer({ minimum: 0 }),
+    xp: Type.Integer({ minimum: 0 }),
+    xp_to_next_level: Type.Integer({ minimum: 1 }),
+    auto_unlock_level: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanySkillV1 = Static<typeof ServerDataBotanySkillV1>;
+
+// ─── 炼丹推送（plan-alchemy-v1 §4） ────────────────────────────────────────
+
+export const ServerDataAlchemyFurnaceV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_furnace"),
+    furnace_id: Type.String(),
+    tier: Type.Integer({ minimum: 1, maximum: 9 }),
+    integrity: Type.Number({ minimum: 0 }),
+    integrity_max: Type.Number({ minimum: 0 }),
+    owner_name: Type.String(),
+    has_session: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemyFurnaceV1 = Static<typeof ServerDataAlchemyFurnaceV1>;
+
+export const ServerDataAlchemySessionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_session"),
+    /** null = 未起炉。 */
+    recipe_id: Type.Union([Type.String(), Type.Null()]),
+    active: Type.Boolean(),
+    elapsed_ticks: Type.Integer({ minimum: 0 }),
+    target_ticks: Type.Integer({ minimum: 0 }),
+    temp_current: Type.Number({ minimum: 0, maximum: 1 }),
+    temp_target: Type.Number({ minimum: 0, maximum: 1 }),
+    temp_band: Type.Number({ minimum: 0 }),
+    qi_injected: Type.Number({ minimum: 0 }),
+    qi_target: Type.Number({ minimum: 0 }),
+    status_label: Type.String(),
+    stages: Type.Array(AlchemyStageHintV1),
+    /** 服务端预格式化后给 client 直接显示（含色码）。 */
+    interventions_recent: Type.Array(Type.String(), { maxItems: 8 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemySessionV1 = Static<typeof ServerDataAlchemySessionV1>;
+
+export const ServerDataAlchemyOutcomeForecastV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_outcome_forecast"),
+    perfect_pct: Type.Number({ minimum: 0, maximum: 100 }),
+    good_pct: Type.Number({ minimum: 0, maximum: 100 }),
+    flawed_pct: Type.Number({ minimum: 0, maximum: 100 }),
+    waste_pct: Type.Number({ minimum: 0, maximum: 100 }),
+    explode_pct: Type.Number({ minimum: 0, maximum: 100 }),
+    perfect_note: Type.String(),
+    good_note: Type.String(),
+    flawed_note: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemyOutcomeForecastV1 = Static<
+  typeof ServerDataAlchemyOutcomeForecastV1
+>;
+
+export const ServerDataAlchemyOutcomeResolvedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_outcome_resolved"),
+    bucket: AlchemyOutcomeBucket,
+    recipe_id: Type.Union([Type.String(), Type.Null()]),
+    pill: Type.Optional(Type.String()),
+    quality: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+    toxin_amount: Type.Optional(Type.Number({ minimum: 0 })),
+    toxin_color: Type.Optional(ColorKind),
+    qi_gain: Type.Optional(Type.Number({ minimum: 0 })),
+    side_effect_tag: Type.Optional(Type.String()),
+    flawed_path: Type.Boolean(),
+    damage: Type.Optional(Type.Number({ minimum: 0 })),
+    meridian_crack: Type.Optional(Type.Number({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemyOutcomeResolvedV1 = Static<
+  typeof ServerDataAlchemyOutcomeResolvedV1
+>;
+
+export const ServerDataAlchemyRecipeBookV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_recipe_book"),
+    learned: Type.Array(AlchemyRecipeEntryV1),
+    current_index: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemyRecipeBookV1 = Static<typeof ServerDataAlchemyRecipeBookV1>;
+
+export const ServerDataAlchemyContaminationV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_contamination"),
+    /** 通常 mellow + violent 各一条；可扩展更多色。 */
+    levels: Type.Array(AlchemyContaminationLevelV1, { minItems: 0, maxItems: 10 }),
+    metabolism_note: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAlchemyContaminationV1 = Static<
+  typeof ServerDataAlchemyContaminationV1
+>;
 
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
@@ -219,5 +417,14 @@ export const ServerDataV1 = Type.Union([
   ServerDataCultivationDetailV1,
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
+  ServerDataDroppedLootSyncV1,
+  ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanySkillV1,
+  ServerDataAlchemyFurnaceV1,
+  ServerDataAlchemySessionV1,
+  ServerDataAlchemyOutcomeForecastV1,
+  ServerDataAlchemyOutcomeResolvedV1,
+  ServerDataAlchemyRecipeBookV1,
+  ServerDataAlchemyContaminationV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

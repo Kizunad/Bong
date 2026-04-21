@@ -9,6 +9,7 @@ export const CultivationDeathCause = Type.Union([
   Type.Literal("MeridianCollapse"),
   Type.Literal("NegativeZoneDrain"),
   Type.Literal("ContaminationOverflow"),
+  Type.Literal("NaturalAging"),
 ]);
 export type CultivationDeathCause = Static<typeof CultivationDeathCause>;
 

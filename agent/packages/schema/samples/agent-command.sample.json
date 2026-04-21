@@ -19,6 +19,27 @@
       "params": {
         "spirit_qi_delta": -0.15
       }
+    },
+    {
+      "type": "spawn_npc",
+      "target": "spawn",
+      "params": {
+        "archetype": "zombie"
+      }
+    },
+    {
+      "type": "despawn_npc",
+      "target": "npc_2v1",
+      "params": {}
+    },
+    {
+      "type": "faction_event",
+      "target": "neutral",
+      "params": {
+        "kind": "enqueue_mission",
+        "faction_id": "neutral",
+        "mission_id": "mission:hold_spawn_gate"
+      }
     }
   ]
 }

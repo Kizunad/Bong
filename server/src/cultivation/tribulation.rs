@@ -9,8 +9,16 @@
 //!
 //! P1/P5：本文件只定义状态机 + 事件；真实天劫伤害由战斗 plan 实施。
 
-use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Query};
+use valence::prelude::{
+    bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Position, Query,
+};
 
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::skill::components::SkillId;
+use crate::skill::events::SkillCapChanged;
+
+use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use crate::persistence::{
@@ -57,6 +65,8 @@ pub fn start_tribulation_system(
     mut announce: EventWriter<TribulationAnnounce>,
     mut players: Query<(&Cultivation, &crate::combat::components::Lifecycle)>,
     mut commands: valence::prelude::Commands,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for ev in events.read() {
         if let Ok((c, lifecycle)) = players.get_mut(ev.entity) {
@@ -94,6 +104,22 @@ pub fn start_tribulation_system(
                 ev.entity,
                 ev.waves_total
             );
+            // plan-particle-system-v1 §4.4：渡劫开场一道预警雷。
+            if let Ok(pos) = positions.get(ev.entity) {
+                let p = pos.get();
+                vfx_events.send(VfxEventRequest::new(
+                    p,
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id: "bong:tribulation_lightning".to_string(),
+                        origin: [p.x, p.y, p.z],
+                        direction: None,
+                        color: Some("#D0C8FF".to_string()),
+                        strength: Some(1.0),
+                        count: Some(3),
+                        duration_ticks: Some(14),
+                    },
+                ));
+            }
         }
     }
 }
@@ -108,6 +134,7 @@ pub fn tribulation_wave_system(
         &crate::combat::components::Lifecycle,
     )>,
     mut commands: valence::prelude::Commands,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for ev in cleared.read() {
         if let Ok((mut c, mut state, _, lifecycle)) = players.get_mut(ev.entity) {
@@ -123,6 +150,15 @@ pub fn tribulation_wave_system(
                         "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
                         ev.entity,
                     );
+                }
+                // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
+                let new_cap = skill_cap_for_realm(Realm::Void);
+                for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                    skill_cap_events.send(SkillCapChanged {
+                        char_entity: ev.entity,
+                        skill,
+                        new_cap,
+                    });
                 }
                 commands.entity(ev.entity).remove::<TribulationState>();
                 tracing::info!(

@@ -74,6 +74,46 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    /// plan-alchemy-v1 §1.3 — 每次炼丹结算写一条（精确或残缺路径）。
+    AlchemyAttempt {
+        recipe_id: String,
+        #[serde(default)]
+        pill: Option<String>,
+        #[serde(default)]
+        flawed_path: bool,
+        #[serde(default)]
+        side_effect_tag: Option<String>,
+        tick: u64,
+    },
+    /// plan-lingtian-v1 §1.7 — 自家田被他人收（owner 视角）。匿名：只记位置。
+    PlotHarvestedByOther {
+        plot_pos: [i32; 3],
+        plant_id: String,
+        tick: u64,
+    },
+    /// plan-lingtian-v1 §1.7 — 自己收了别人家的田（operator 视角）。
+    PlotHarvestedFromOther {
+        plot_pos: [i32; 3],
+        plant_id: String,
+        tick: u64,
+    },
+    /// plan-lingtian-v1 §1.7 — 自家 plot_qi 被他人吸（owner 视角）。
+    PlotQiDrainedByOther {
+        plot_pos: [i32; 3],
+        amount_drained: f32,
+        tick: u64,
+    },
+    /// plan-lingtian-v1 §1.7 — 自己吸了别人家的 plot_qi（operator 视角）。
+    PlotQiDrainedFromOther {
+        plot_pos: [i32; 3],
+        amount_drained: f32,
+        tick: u64,
+    },
+    /// plan-lingtian-v1 §1.7 — 自家田被铲（owner 视角）。
+    PlotDestroyedByOther {
+        plot_pos: [i32; 3],
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +226,54 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
+        BiographyEntry::AlchemyAttempt {
+            recipe_id,
+            pill,
+            flawed_path,
+            side_effect_tag,
+            tick,
+        } => {
+            let flag = if *flawed_path { "flawed" } else { "exact" };
+            let pill = pill.as_deref().unwrap_or("-");
+            let side = side_effect_tag.as_deref().unwrap_or("-");
+            format!("t{tick}:alchemy:{recipe_id}:{flag}:{pill}:{side}")
+        }
+        BiographyEntry::PlotHarvestedByOther {
+            plot_pos,
+            plant_id,
+            tick,
+        } => format!(
+            "t{tick}:lingtian:harvested_by_other:[{},{},{}]:{plant_id}",
+            plot_pos[0], plot_pos[1], plot_pos[2]
+        ),
+        BiographyEntry::PlotHarvestedFromOther {
+            plot_pos,
+            plant_id,
+            tick,
+        } => format!(
+            "t{tick}:lingtian:harvested_from_other:[{},{},{}]:{plant_id}",
+            plot_pos[0], plot_pos[1], plot_pos[2]
+        ),
+        BiographyEntry::PlotQiDrainedByOther {
+            plot_pos,
+            amount_drained,
+            tick,
+        } => format!(
+            "t{tick}:lingtian:drained_by_other:[{},{},{}]:{amount_drained:.2}",
+            plot_pos[0], plot_pos[1], plot_pos[2]
+        ),
+        BiographyEntry::PlotQiDrainedFromOther {
+            plot_pos,
+            amount_drained,
+            tick,
+        } => format!(
+            "t{tick}:lingtian:drained_from_other:[{},{},{}]:{amount_drained:.2}",
+            plot_pos[0], plot_pos[1], plot_pos[2]
+        ),
+        BiographyEntry::PlotDestroyedByOther { plot_pos, tick } => format!(
+            "t{tick}:lingtian:destroyed_by_other:[{},{},{}]",
+            plot_pos[0], plot_pos[1], plot_pos[2]
+        ),
     }
 }
 

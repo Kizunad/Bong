@@ -22,6 +22,46 @@ public final class ServerDataRouter {
         CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
+        DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
+        BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
+        BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
+        com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
+            new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
+        com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
+            new com.bong.client.network.alchemy.AlchemySessionHandler();
+        com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler alchemyForecastHandler =
+            new com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler();
+        com.bong.client.network.alchemy.AlchemyRecipeBookHandler alchemyRecipeBookHandler =
+            new com.bong.client.network.alchemy.AlchemyRecipeBookHandler();
+        com.bong.client.network.alchemy.AlchemyContaminationHandler alchemyContaminationHandler =
+            new com.bong.client.network.alchemy.AlchemyContaminationHandler();
+        com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler alchemyOutcomeResolvedHandler =
+            new com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler();
+        com.bong.client.combat.handler.CombatEventHandler combatEventHandler =
+            new com.bong.client.combat.handler.CombatEventHandler();
+        com.bong.client.combat.handler.StatusSnapshotHandler statusSnapshotHandler =
+            new com.bong.client.combat.handler.StatusSnapshotHandler();
+        com.bong.client.combat.handler.DerivedAttrsHandler derivedAttrsHandler =
+            new com.bong.client.combat.handler.DerivedAttrsHandler();
+        com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
+            new com.bong.client.combat.handler.DeathScreenHandler();
+        com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
+            new com.bong.client.combat.handler.TerminateScreenHandler();
+        com.bong.client.combat.handler.WoundsSnapshotHandler woundsSnapshotHandler =
+            new com.bong.client.combat.handler.WoundsSnapshotHandler();
+        com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
+            new com.bong.client.combat.handler.TribulationBroadcastHandler();
+        CombatHudStateHandler combatHudStateHandler = new CombatHudStateHandler();
+        DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
+        CastSyncHandler castSyncHandler = new CastSyncHandler();
+        QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
+        UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
+        EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
+        DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
+        WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
+        WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
+        com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
+            new com.bong.client.network.lingtian.LingtianSessionHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -34,6 +74,37 @@ public final class ServerDataRouter {
         handlers.put("cultivation_detail", cultivationDetailHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
+        handlers.put("dropped_loot_sync", droppedLootSyncHandler);
+        handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
+        handlers.put("botany_skill", botanySkillHandler);
+        handlers.put("alchemy_furnace", alchemyFurnaceHandler);
+        handlers.put("alchemy_session", alchemySessionHandler);
+        handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);
+        handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);
+        handlers.put("alchemy_contamination", alchemyContaminationHandler);
+        handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
+        handlers.put("combat_event", combatEventHandler);
+        handlers.put("status_snapshot", statusSnapshotHandler);
+        handlers.put("derived_attrs_sync", derivedAttrsHandler);
+        handlers.put("death_screen", deathScreenHandler);
+        handlers.put("terminate_screen", terminateScreenHandler);
+        handlers.put("wounds_snapshot", woundsSnapshotHandler);
+        handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
+        handlers.put("combat_hud_state", combatHudStateHandler);
+        handlers.put("defense_window", defenseWindowHandler);
+        handlers.put("cast_sync", castSyncHandler);
+        handlers.put("quickslot_config", quickSlotConfigHandler);
+        handlers.put("unlocks_sync", unlocksSyncHandler);
+        handlers.put("event_stream_push", eventStreamPushHandler);
+        handlers.put("defense_sync", defenseSyncHandler);
+        handlers.put("weapon_equipped", weaponEquippedHandler);
+        handlers.put("weapon_broken", weaponBrokenHandler);
+        handlers.put("lingtian_session", lingtianSessionHandler);
+        // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
+        handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
+        handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
+        handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
+        handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
         return new ServerDataRouter(handlers);
     }
 

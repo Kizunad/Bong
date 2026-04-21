@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "at_tick",
+    "window",
+    "summary",
+    "completed",
+    "missed"
+  ],
+  "properties": {
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "window": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "completed": {
+      "type": "boolean"
+    },
+    "missed": {
+      "type": "boolean"
+    }
+  }
+}

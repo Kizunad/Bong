@@ -1,0 +1,17 @@
+{
+  "_comment": "flying_sword_feixuan iter6: pixel 算法证实 0.3 还大 2-3x (ratio 0.009 vs ref 0.003)。按 sqrt(0.003/0.009)=0.58, scale 0.3 × 0.58 = 0.17。TP 0.17",
+  "thirdperson_righthand": {
+    "scale": [0.17, 0.17, 0.17]
+  },
+  "thirdperson_lefthand": {
+    "scale": [0.17, 0.17, 0.17]
+  },
+  "firstperson_righthand": {
+    "translation": [0, 0, -5],
+    "scale": [0.1, 0.1, 0.1]
+  },
+  "firstperson_lefthand": {
+    "translation": [0, 0, -5],
+    "scale": [0.1, 0.1, 0.1]
+  }
+}

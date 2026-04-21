@@ -7,9 +7,10 @@ use valence::prelude::{
 };
 
 use crate::npc::brain::{
-    canonical_npc_id, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction,
-    MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
+    ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction, MeleeAttackAction,
+    MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
 };
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -17,10 +18,6 @@ use crate::npc::spawn::{
     DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype,
 };
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
-use crate::{
-    combat::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds},
-    cultivation::components::{Contamination, Cultivation, MeridianSystem},
-};
 
 /// Marker component for NPCs spawned by the `!npc_scenario` command.
 /// Used for bulk cleanup on `!npc_scenario clear`.
@@ -135,6 +132,14 @@ fn process_pending_scenarios(
                 loadout,
                 melee_archetype,
                 melee_profile,
+                ScenarioNpc,
+            ))
+            .id();
+
+        commands
+            .entity(entity)
+            .insert((
+                NpcArchetype::Zombie,
                 Navigator::new(),
                 MovementController::new(),
                 movement_capabilities,
@@ -143,25 +148,9 @@ fn process_pending_scenarios(
                     DEFAULT_SPAWN_ZONE_NAME,
                     DVec3::new(spawn_pos.x, spawn_pos.y, spawn_pos.z),
                 ),
-                ScenarioNpc,
                 thinker,
             ))
-            .id();
-
-        commands.entity(entity).insert((
-            Cultivation::default(),
-            MeridianSystem::default(),
-            Contamination::default(),
-            Wounds::default(),
-            Stamina::default(),
-            CombatState::default(),
-            StatusEffects::default(),
-            DerivedAttrs::default(),
-            Lifecycle {
-                character_id: canonical_npc_id(entity),
-                ..Default::default()
-            },
-        ));
+            .insert(npc_runtime_bundle(entity, NpcArchetype::Zombie));
 
         spawned_entities.push(entity);
     }
@@ -244,6 +233,8 @@ mod tests {
 
     use crate::combat::components::{Lifecycle, Stamina, StatusEffects, Wounds};
     use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+    use crate::npc::brain::canonical_npc_id;
+    use crate::npc::lifecycle::NpcLifespan;
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
     use valence::prelude::{Entity, Update, With};
     use valence::testing::ScenarioSingleClient;
@@ -304,6 +295,10 @@ mod tests {
                 lifecycle.character_id,
                 canonical_npc_id(npc),
                 "scenario NPC Lifecycle should use canonical npc identity"
+            );
+            assert!(
+                entity_ref.get::<NpcLifespan>().is_some(),
+                "scenario NPC should include shared lifespan component"
             );
         }
     }

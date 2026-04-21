@@ -1,5 +1,11 @@
 package com.bong.client.hud;
 
+import com.bong.client.botany.BotanySkillStore;
+import com.bong.client.botany.BotanySkillViewModel;
+import com.bong.client.botany.HarvestSessionStore;
+import com.bong.client.botany.HarvestSessionViewModel;
+import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -17,6 +23,9 @@ public class BongHudOrchestratorTest {
     @AfterEach
     void resetToastState() {
         BongToast.resetForTests();
+        InventoryStateStore.resetForTests();
+        HarvestSessionStore.resetForTests();
+        BotanySkillStore.resetForTests();
     }
 
     @Test
@@ -118,5 +127,58 @@ public class BongHudOrchestratorTest {
 
         assertEquals(1, commands.size());
         assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+    }
+
+    @Test
+    void overweightIndicatorAppearsBelowBaselineWhenInventoryExceedsLimit() {
+        InventoryStateStore.applyAuthoritativeSnapshot(
+            InventoryModel.builder()
+                .containers(InventoryModel.DEFAULT_CONTAINERS)
+                .weight(60.0, 50.0)
+                .build(),
+            3L
+        );
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            0L,
+            FIXED_WIDTH,
+            220
+        );
+
+        assertEquals(2, commands.size());
+        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+        assertEquals(HudRenderLayer.BASELINE, commands.get(1).layer());
+        assertTrue(commands.get(1).text().contains("超载"));
+    }
+
+    @Test
+    void activeBotanySessionAddsBotanyLayerCommands() {
+        HarvestSessionStore.replace(HarvestSessionViewModel.create(
+            "session-botany-01",
+            "plant-1",
+            "开脉草",
+            "ning_mai_cao",
+            null,
+            0.0,
+            true,
+            false,
+            false,
+            false,
+            "晨露未散",
+            10L
+        ));
+        BotanySkillStore.replace(BotanySkillViewModel.create(2, 90L, 120L, 3));
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            0L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
     }
 }

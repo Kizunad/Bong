@@ -70,6 +70,7 @@
 - 改 `.gitignore`、`package.json`、`Cargo.toml` 的依赖版本（除非当前 plan 明确要求）
 - 向 `docs/worldview.md` 回写（世界观锚点，只在核心 canon 改动时手动修）
 - 向 `docs/library/` 主动回写（图书馆域由专门的 `library-curator` agent 负责，plan 流水线不跨界）
+- **`git stash push` 无对等 `git stash pop`**：任何在主仓库 auto-stash 的流程，完成时必须把自己产生的 WIP stash pop 回来；不得在主仓库留下 `WIP before inspecting ...` 孤儿 stash（历史教训：曾 stash + `reset --hard` 主仓库但不 pop，用户 worktree 改动凭空"消失"直到从 stash 捞出）
 
 ---
 

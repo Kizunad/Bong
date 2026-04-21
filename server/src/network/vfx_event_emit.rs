@@ -58,16 +58,179 @@ pub fn is_within_vfx_broadcast_radius(origin: DVec3, target: DVec3) -> bool {
     origin.distance_squared(target) <= VFX_BROADCAST_RADIUS * VFX_BROADCAST_RADIUS
 }
 
+/// plan-particle-system-v1 §2.5：合批 bin 边长（米）。
+/// 同 tick 内同 event_id 且 origin floor 到同一整数格的 SpawnParticle 事件 → 合并 count。
+pub const VFX_COALESCE_BIN_METERS: f64 = 1.0;
+
+/// plan §2.5：单 chunk 每 tick 最多发出的 VFX 事件数。超出按优先级从低到高丢。
+pub const VFX_PER_CHUNK_PER_TICK_MAX: u32 = 8;
+
+/// plan §2.5：单 client 每 tick 最多收到的 VFX payload 数。
+pub const VFX_PER_CLIENT_PER_TICK_MAX: u32 = 32;
+
+/// plan §2.5 / §6.3：VFX 优先级。合批后按 priority desc 排序,超上限时低优先被丢。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VfxPriority {
+    /// P3 verbose：灵田 tick / 自然恢复 / 低价值环境粒子。
+    /// 保留为未来 ambient 粒子(灵田脉动、区域灵气涌动等)使用,当前 gameplay 路径暂未触达。
+    #[allow(dead_code)]
+    Verbose = 0,
+    /// P2 normal：普通命中、合批后的常规战斗事件（`sword_qi_slash` / `formation_activate`）。
+    Normal = 1,
+    /// P1 important：顿悟 / 大招 / buff 施加（`enlightenment_aura`）。
+    Important = 2,
+    /// P0 critical：死亡 / 击杀 / 渡劫 / 境界突破（`tribulation_lightning` / `breakthrough_pillar` / `death_soul_dissipate`）。
+    Critical = 3,
+}
+
+/// 按 event_id 推导默认优先级。匿名/未知 event 归 Normal。
+///
+/// 策略性选择——plan §6.3 分级原本面向事件流,粒子 VFX 此处映射粗分：
+/// critical 事件(渡劫/突破/死亡) 全服可见,永不丢;normal 战斗事件可在拥挤 chunk 时牺牲。
+pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
+    match event_id {
+        "bong:tribulation_lightning" | "bong:breakthrough_pillar" | "bong:death_soul_dissipate" => {
+            VfxPriority::Critical
+        }
+        "bong:enlightenment_aura" => VfxPriority::Important,
+        _ => VfxPriority::Normal,
+    }
+}
+
+/// plan §2.5：把 origin 归入 16×16 chunk 坐标(仅 x/z,y 不参与)。
+fn chunk_of(origin: [f64; 3]) -> (i32, i32) {
+    (
+        (origin[0].floor() as i32).div_euclid(16),
+        (origin[2].floor() as i32).div_euclid(16),
+    )
+}
+
+/// 合批阶段：聚合同 tick 内 event_id+origin_bin 相同的 SpawnParticle 请求，count 累加。
+/// 非 SpawnParticle（PlayAnim/StopAnim）不合并，因为它们是 per-player 意图，语义独立。
+fn coalesce_requests(requests: Vec<VfxEventRequest>) -> Vec<VfxEventRequest> {
+    use std::collections::HashMap;
+    let mut particles: HashMap<(String, [i64; 3]), VfxEventRequest> = HashMap::new();
+    let mut order: Vec<(String, [i64; 3])> = Vec::new();
+    let mut others: Vec<VfxEventRequest> = Vec::new();
+
+    for req in requests {
+        match &req.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id, origin, ..
+            } => {
+                let bin = [
+                    (origin[0] / VFX_COALESCE_BIN_METERS).floor() as i64,
+                    (origin[1] / VFX_COALESCE_BIN_METERS).floor() as i64,
+                    (origin[2] / VFX_COALESCE_BIN_METERS).floor() as i64,
+                ];
+                let key = (event_id.clone(), bin);
+                if let Some(existing) = particles.get_mut(&key) {
+                    merge_spawn_particle_count(existing, &req);
+                } else {
+                    order.push(key.clone());
+                    particles.insert(key, req);
+                }
+            }
+            _ => others.push(req),
+        }
+    }
+
+    let mut out: Vec<VfxEventRequest> = order
+        .into_iter()
+        .map(|k| particles.remove(&k).expect("key present"))
+        .collect();
+    out.extend(others);
+    out
+}
+
+/// 把 `incoming` 的 SpawnParticle count 累加到 `acc`，clamp 到 VFX_PARTICLE_COUNT_MAX。
+/// 其余字段(color/strength/direction/duration) 保留 `acc` 首发值——同 bin 通常参数相近，
+/// 简单策略。后续如需加权平均可在此扩展。
+fn merge_spawn_particle_count(acc: &mut VfxEventRequest, incoming: &VfxEventRequest) {
+    if let (
+        VfxEventPayloadV1::SpawnParticle {
+            count: acc_count, ..
+        },
+        VfxEventPayloadV1::SpawnParticle {
+            count: inc_count, ..
+        },
+    ) = (&mut acc.payload, &incoming.payload)
+    {
+        let base = acc_count.unwrap_or(1) as u32;
+        let add = inc_count.unwrap_or(1) as u32;
+        let merged = (base + add).min(VFX_PARTICLE_COUNT_MAX as u32) as u16;
+        *acc_count = Some(merged);
+    }
+}
+
+/// 按 priority desc 排序的 request(高优先在前)。稳定排序以保证同优先级保持原序。
+fn priority_of(req: &VfxEventRequest) -> VfxPriority {
+    match &req.payload {
+        VfxEventPayloadV1::SpawnParticle { event_id, .. } => vfx_default_priority(event_id),
+        // PlayAnim / StopAnim 默认 Important(UI 动画不能随便丢)。
+        _ => VfxPriority::Important,
+    }
+}
+
+/// plan §2.5：per-chunk / per-client 限流,低优先级先丢。返回允许发送的请求列表 +
+/// per-client 上限映射表(用于发送阶段逐 client 计数)。
+///
+/// 算法:
+///   1. 按 priority desc 稳定排序(Critical 先)
+///   2. 遍历,对每个 request 查 per-chunk counter; 超 `VFX_PER_CHUNK_PER_TICK_MAX` 丢
+///   3. 通过的 request 加入输出; chunk counter++
+///   4. per-client 上限在发送循环里即时判,这里只做 chunk 层过滤
+fn enforce_per_chunk_cap(mut requests: Vec<VfxEventRequest>) -> Vec<VfxEventRequest> {
+    use std::collections::HashMap;
+    // 稳定排序(sort_by + Reverse 不够稳定某些情况,用 sort_by_key + Reverse 保稳)
+    requests.sort_by_key(|r| std::cmp::Reverse(priority_of(r)));
+
+    let mut per_chunk: HashMap<(i32, i32), u32> = HashMap::new();
+    let mut out: Vec<VfxEventRequest> = Vec::with_capacity(requests.len());
+
+    for req in requests {
+        // 非 SpawnParticle 不受 per-chunk 限制(PlayAnim/StopAnim 走 target_player 寻人)
+        let VfxEventPayloadV1::SpawnParticle {
+            origin, event_id, ..
+        } = &req.payload
+        else {
+            out.push(req);
+            continue;
+        };
+        let chunk = chunk_of(*origin);
+        let entry = per_chunk.entry(chunk).or_insert(0);
+        if *entry >= VFX_PER_CHUNK_PER_TICK_MAX {
+            tracing::debug!(
+                "[bong][vfx_event] per-chunk cap {} dropped event={event_id} chunk={chunk:?}",
+                VFX_PER_CHUNK_PER_TICK_MAX
+            );
+            continue;
+        }
+        *entry += 1;
+        out.push(req);
+    }
+    out
+}
+
 /// 将 [`VfxEventRequest`] → [`VfxEventV1`] JSON → `send_custom_payload`。
 ///
 /// - 序列化失败（priority / fade_ticks 越界、payload oversize、json 编码失败）
 ///   记 warn 并跳过，单事件失败不影响同 tick 其余事件。
 /// - 半径过滤走 `distance_squared`（省 sqrt），<200 玩家场景下线性扫描足够。
+/// - 合批（plan §2.5）：同 event_id + 同 1m 原点 bin 的 SpawnParticle 合并 count。
+/// - per-chunk 上限 8 / per-client 上限 32（plan §2.5）：低优先级先丢。
 pub fn emit_vfx_event_payloads(
     mut reader: EventReader<VfxEventRequest>,
-    mut clients: Query<(&mut Client, &Position), With<Client>>,
+    mut clients: Query<(Entity, &mut Client, &Position), With<Client>>,
 ) {
-    for request in reader.read() {
+    use std::collections::HashMap;
+    let collected: Vec<VfxEventRequest> = reader.read().cloned().collect();
+    let coalesced = coalesce_requests(collected);
+    let capped = enforce_per_chunk_cap(coalesced);
+
+    let mut per_client_sent: HashMap<Entity, u32> = HashMap::new();
+
+    for request in capped {
         let event = VfxEventV1::new(request.payload.clone());
         let payload_type = event.payload_type();
         let bytes = match event.to_json_bytes_checked() {
@@ -82,12 +245,18 @@ pub fn emit_vfx_event_payloads(
         };
 
         let mut recipients = 0usize;
-        for (mut client, position) in &mut clients {
+        for (entity, mut client, position) in &mut clients {
             if !is_within_vfx_broadcast_radius(request.origin, position.get()) {
+                continue;
+            }
+            let sent = per_client_sent.entry(entity).or_insert(0);
+            if *sent >= VFX_PER_CLIENT_PER_TICK_MAX {
+                // 已达 per-client 上限,跳过(此 client 本 tick 不再收 VFX)
                 continue;
             }
             let _ = VFX_EVENT_CHANNEL; // channel 常量，对应下面的 ident! 字面量
             client.send_custom_payload(ident!("bong:vfx_event"), &bytes);
+            *sent += 1;
             recipients += 1;
         }
 
@@ -311,6 +480,213 @@ mod tests {
 
     fn test_uuid() -> Uuid {
         Uuid::parse_str(TEST_UUID).unwrap()
+    }
+
+    fn make_particle_request(event_id: &str, origin: [f64; 3], count: u16) -> VfxEventRequest {
+        VfxEventRequest::new(
+            DVec3::new(origin[0], origin[1], origin[2]),
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: event_id.to_string(),
+                origin,
+                direction: None,
+                color: None,
+                strength: None,
+                count: Some(count),
+                duration_ticks: None,
+            },
+        )
+    }
+
+    // ========== §2.5 优先级 / per-chunk 上限 ==========
+
+    #[test]
+    fn default_priority_covers_all_known_events() {
+        assert_eq!(
+            vfx_default_priority("bong:tribulation_lightning"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
+            vfx_default_priority("bong:breakthrough_pillar"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
+            vfx_default_priority("bong:death_soul_dissipate"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
+            vfx_default_priority("bong:enlightenment_aura"),
+            VfxPriority::Important
+        );
+        assert_eq!(
+            vfx_default_priority("bong:sword_qi_slash"),
+            VfxPriority::Normal
+        );
+        assert_eq!(
+            vfx_default_priority("bong:unknown_event"),
+            VfxPriority::Normal
+        );
+    }
+
+    #[test]
+    fn priority_ordering_is_correct() {
+        // 确保 Ord 派生按数值升序:Critical > Important > Normal > Verbose
+        assert!(VfxPriority::Critical > VfxPriority::Important);
+        assert!(VfxPriority::Important > VfxPriority::Normal);
+        assert!(VfxPriority::Normal > VfxPriority::Verbose);
+    }
+
+    #[test]
+    fn per_chunk_cap_drops_excess_normal_keeps_critical() {
+        // 同 chunk 塞 20 个事件:8 个 critical + 12 个 normal → critical 全过 + 剩 0 个 normal
+        let mut reqs: Vec<VfxEventRequest> = (0..8)
+            .map(|i| {
+                make_particle_request("bong:breakthrough_pillar", [i as f64 * 0.1, 64.0, 0.0], 1)
+            })
+            .collect();
+        reqs.extend(
+            (0..12).map(|i| {
+                make_particle_request("bong:sword_qi_slash", [i as f64 * 0.1, 64.0, 0.1], 1)
+            }),
+        );
+        let out = enforce_per_chunk_cap(reqs);
+        // 合批前 20 个,8 critical 全过,normal 全丢(cap=8 已被 critical 占满)
+        // 但合批在 cap 前执行——这里我们没 coalesce,所以 8 critical 不合批(因为不同 bin 但 same chunk)
+        // 实际上 chunk 是 16x16,8 个 [0.x, 0.x] 都在同 chunk (0,0)
+        // 12 个 sword_qi_slash 也在 chunk (0,0),但前面 8 个 critical 已占满 cap
+        assert_eq!(out.len(), 8);
+        for r in &out {
+            if let VfxEventPayloadV1::SpawnParticle { event_id, .. } = &r.payload {
+                assert_eq!(event_id, "bong:breakthrough_pillar");
+            }
+        }
+    }
+
+    #[test]
+    fn per_chunk_cap_keeps_different_chunks_separate() {
+        // 16 个 sword_qi_slash,分在 2 个 chunk,每 chunk 8 个 → 全过
+        let mut reqs: Vec<VfxEventRequest> = (0..8)
+            .map(|i| make_particle_request("bong:sword_qi_slash", [i as f64 * 0.1, 64.0, 0.0], 1))
+            .collect();
+        reqs.extend((0..8).map(|i| {
+            make_particle_request("bong:sword_qi_slash", [20.0 + i as f64 * 0.1, 64.0, 0.0], 1)
+        }));
+        let out = enforce_per_chunk_cap(reqs);
+        assert_eq!(out.len(), 16, "16 events across 2 chunks within cap");
+    }
+
+    #[test]
+    fn per_chunk_cap_ignores_non_spawn_particle() {
+        let mut reqs: Vec<VfxEventRequest> = (0..10)
+            .map(|_| {
+                VfxEventRequest::new(
+                    DVec3::ZERO,
+                    VfxEventPayloadV1::PlayAnim {
+                        target_player: TEST_UUID.to_string(),
+                        anim_id: "bong:swing".to_string(),
+                        priority: 1000,
+                        fade_in_ticks: Some(3),
+                    },
+                )
+            })
+            .collect();
+        reqs.extend(
+            (0..20).map(|i| {
+                make_particle_request("bong:sword_qi_slash", [i as f64 * 0.1, 64.0, 0.0], 1)
+            }),
+        );
+        let out = enforce_per_chunk_cap(reqs);
+        // 10 PlayAnim 全过(不限流) + 8 SpawnParticle(chunk 限流) = 18
+        assert_eq!(out.len(), 18);
+    }
+
+    // ========== §2.5 合批 ==========
+
+    #[test]
+    fn coalesce_merges_same_id_and_bin_particles() {
+        let reqs = vec![
+            make_particle_request("bong:sword_qi_slash", [10.2, 64.0, 10.5], 4),
+            make_particle_request("bong:sword_qi_slash", [10.6, 64.4, 10.1], 4),
+            make_particle_request("bong:sword_qi_slash", [10.0, 64.0, 10.9], 4),
+        ];
+        let out = coalesce_requests(reqs);
+        assert_eq!(out.len(), 1, "three hits in same 1m bin should merge");
+        if let VfxEventPayloadV1::SpawnParticle { count, .. } = &out[0].payload {
+            assert_eq!(count.unwrap(), 12);
+        } else {
+            panic!("expected SpawnParticle");
+        }
+    }
+
+    #[test]
+    fn coalesce_keeps_different_bins_separate() {
+        let reqs = vec![
+            make_particle_request("bong:sword_qi_slash", [10.0, 64.0, 10.0], 4),
+            make_particle_request("bong:sword_qi_slash", [12.0, 64.0, 10.0], 4),
+        ];
+        let out = coalesce_requests(reqs);
+        assert_eq!(out.len(), 2, "events in different 1m bins must not merge");
+    }
+
+    #[test]
+    fn coalesce_keeps_different_event_ids_separate() {
+        let reqs = vec![
+            make_particle_request("bong:sword_qi_slash", [10.0, 64.0, 10.0], 4),
+            make_particle_request("bong:breakthrough_pillar", [10.3, 64.0, 10.3], 12),
+        ];
+        let out = coalesce_requests(reqs);
+        assert_eq!(
+            out.len(),
+            2,
+            "different event ids share bin but stay separate"
+        );
+    }
+
+    #[test]
+    fn coalesce_clamps_to_count_max() {
+        let big = VFX_PARTICLE_COUNT_MAX / 2 + 5;
+        let reqs = vec![
+            make_particle_request("bong:sword_qi_slash", [10.0, 64.0, 10.0], big),
+            make_particle_request("bong:sword_qi_slash", [10.2, 64.0, 10.1], big),
+        ];
+        let out = coalesce_requests(reqs);
+        assert_eq!(out.len(), 1);
+        if let VfxEventPayloadV1::SpawnParticle { count, .. } = &out[0].payload {
+            assert_eq!(count.unwrap(), VFX_PARTICLE_COUNT_MAX, "saturate at max");
+        } else {
+            panic!("expected SpawnParticle");
+        }
+    }
+
+    #[test]
+    fn coalesce_preserves_non_particle_payloads() {
+        let mut reqs = Vec::new();
+        reqs.push(VfxEventRequest::new(
+            DVec3::ZERO,
+            VfxEventPayloadV1::PlayAnim {
+                target_player: TEST_UUID.to_string(),
+                anim_id: "bong:sword_swing".to_string(),
+                priority: 1000,
+                fade_in_ticks: Some(3),
+            },
+        ));
+        reqs.push(make_particle_request(
+            "bong:sword_qi_slash",
+            [10.0, 64.0, 10.0],
+            4,
+        ));
+        reqs.push(make_particle_request(
+            "bong:sword_qi_slash",
+            [10.1, 64.0, 10.2],
+            4,
+        ));
+        let out = coalesce_requests(reqs);
+        assert_eq!(out.len(), 2, "particles merge, anim passes through");
+        // 顺序:particles 先,others 后
+        assert!(matches!(
+            out[0].payload,
+            VfxEventPayloadV1::SpawnParticle { .. }
+        ));
+        assert!(matches!(out[1].payload, VfxEventPayloadV1::PlayAnim { .. }));
     }
 
     // ========== is_within_vfx_broadcast_radius ==========

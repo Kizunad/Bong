@@ -4,7 +4,7 @@ import {
   MAX_COMMANDS_PER_TICK,
   NEWBIE_POWER_THRESHOLD,
 } from "@bong/schema";
-import type { Command, Narration, WorldStateV1 } from "@bong/schema";
+import type { Command, CommandType, Narration, WorldStateV1 } from "@bong/schema";
 import type { AgentDecision } from "./parse.js";
 import type { CurrentEra } from "./world-model.js";
 
@@ -125,7 +125,7 @@ export class Arbiter {
 
   private passesHardConstraints(tagged: TaggedCommand): boolean {
     const { command } = tagged;
-    if (isZoneScopedCommand(command) && !this.hasZone(command.target)) {
+    if (targetsKnownZone(command) && !this.hasZone(command.target)) {
       return false;
     }
 
@@ -222,7 +222,7 @@ export class Arbiter {
 
     for (const tagged of commands) {
       const { command } = tagged;
-      if (!isZoneScopedCommand(command)) {
+      if (!isZoneConflictCommand(command)) {
         passthrough.push({ order: tagged.index, tagged });
         continue;
       }
@@ -441,7 +441,13 @@ export class Arbiter {
   }
 }
 
-function isZoneScopedCommand(command: Command): command is Command & { type: "spawn_event" | "modify_zone" } {
+function targetsKnownZone(
+  command: Command,
+): command is Command & { type: Extract<CommandType, "spawn_event" | "spawn_npc" | "modify_zone"> } {
+  return ["spawn_event", "spawn_npc", "modify_zone"].includes(command.type);
+}
+
+function isZoneConflictCommand(command: Command): command is Command & { type: "spawn_event" | "modify_zone" } {
   return command.type === "spawn_event" || command.type === "modify_zone";
 }
 

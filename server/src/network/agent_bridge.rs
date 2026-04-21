@@ -41,6 +41,26 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::CultivationDetail => "cultivation_detail",
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
+        ServerDataType::DroppedLootSync => "dropped_loot_sync",
+        ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
+        ServerDataType::BotanySkill => "botany_skill",
+        ServerDataType::AlchemyFurnace => "alchemy_furnace",
+        ServerDataType::AlchemySession => "alchemy_session",
+        ServerDataType::AlchemyOutcomeForecast => "alchemy_outcome_forecast",
+        ServerDataType::AlchemyOutcomeResolved => "alchemy_outcome_resolved",
+        ServerDataType::AlchemyRecipeBook => "alchemy_recipe_book",
+        ServerDataType::AlchemyContamination => "alchemy_contamination",
+        ServerDataType::CombatHudState => "combat_hud_state",
+        ServerDataType::WoundsSnapshot => "wounds_snapshot",
+        ServerDataType::DefenseWindow => "defense_window",
+        ServerDataType::CastSync => "cast_sync",
+        ServerDataType::QuickSlotConfig => "quickslot_config",
+        ServerDataType::UnlocksSync => "unlocks_sync",
+        ServerDataType::EventStreamPush => "event_stream_push",
+        ServerDataType::DefenseSync => "defense_sync",
+        ServerDataType::WeaponEquipped => "weapon_equipped",
+        ServerDataType::WeaponBroken => "weapon_broken",
+        ServerDataType::LingtianSession => "lingtian_session",
     }
 }
 
@@ -222,6 +242,8 @@ mod server_data_tests {
             stack_count: 1,
             spirit_quality: 0.5,
             durability: 0.9,
+            freshness: None,
+            freshness_current: None,
         }
     }
 
@@ -532,6 +554,14 @@ mod server_data_tests {
             payload_type_label(ServerDataType::InventoryEvent),
             "inventory_event"
         );
+        assert_eq!(
+            payload_type_label(ServerDataType::BotanyHarvestProgress),
+            "botany_harvest_progress"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::BotanySkill),
+            "botany_skill"
+        );
     }
 
     #[test]
@@ -552,10 +582,30 @@ mod server_data_tests {
         assert_eq!(snapshot_json.get("bone_coins"), Some(&json!(57)));
 
         let event_payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
-            InventoryEventV1::StackChanged {
+            InventoryEventV1::Dropped {
                 revision: 13,
                 instance_id: 1004,
-                stack_count: 1,
+                from: crate::schema::inventory::InventoryLocationV1::Container {
+                    container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                    row: 0,
+                    col: 0,
+                },
+                world_pos: [8.0, 66.0, 8.0],
+                item: crate::schema::inventory::InventoryItemViewV1 {
+                    instance_id: 1004,
+                    item_id: "starter_talisman".to_string(),
+                    display_name: "启程护符".to_string(),
+                    grid_width: 1,
+                    grid_height: 1,
+                    weight: 0.2,
+                    rarity: crate::schema::inventory::ItemRarityV1::Common,
+                    description: "fixture".to_string(),
+                    stack_count: 1,
+                    spirit_quality: 0.5,
+                    durability: 1.0,
+                    freshness: None,
+                    freshness_current: None,
+                },
             },
         ));
         let event_bytes = serialize_server_data_payload(&event_payload)
@@ -567,7 +617,52 @@ mod server_data_tests {
             event_json.get("type"),
             Some(&json!(payload_type_label(event_payload.payload_type())))
         );
-        assert_eq!(event_json.get("kind"), Some(&json!("stack_changed")));
+        assert_eq!(event_json.get("kind"), Some(&json!("dropped")));
         assert_eq!(event_json.get("instance_id"), Some(&json!(1004)));
+
+        let botany_payload = ServerDataV1::new(ServerDataPayloadV1::BotanyHarvestProgress {
+            session_id: "session-botany-01".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "开脉草".to_string(),
+            plant_kind: "ning_mai_cao".to_string(),
+            mode: "manual".to_string(),
+            progress: 0.5,
+            auto_selectable: true,
+            request_pending: false,
+            interrupted: false,
+            completed: false,
+            detail: "晨露未散".to_string(),
+            target_pos: Some([10.5, 64.0, 10.5]),
+        });
+        let botany_bytes = serialize_server_data_payload(&botany_payload)
+            .expect("botany payload should serialize");
+        let botany_json: serde_json::Value = serde_json::from_slice(&botany_bytes)
+            .expect("serialized botany state should decode as JSON");
+
+        assert_eq!(
+            botany_json.get("type"),
+            Some(&json!(payload_type_label(botany_payload.payload_type())))
+        );
+        assert_eq!(
+            botany_json.get("session_id"),
+            Some(&json!("session-botany-01"))
+        );
+
+        let skill_payload = ServerDataV1::new(ServerDataPayloadV1::BotanySkill {
+            level: 3,
+            xp: 250,
+            xp_to_next_level: 400,
+            auto_unlock_level: 3,
+        });
+        let skill_bytes = serialize_server_data_payload(&skill_payload)
+            .expect("botany skill payload should serialize");
+        let skill_json: serde_json::Value = serde_json::from_slice(&skill_bytes)
+            .expect("serialized botany skill should decode as JSON");
+
+        assert_eq!(
+            skill_json.get("type"),
+            Some(&json!(payload_type_label(skill_payload.payload_type())))
+        );
+        assert_eq!(skill_json.get("xp"), Some(&json!(250)));
     }
 }

@@ -9,6 +9,14 @@ client/build/
 client/run/
 client/.idea/
 client/*.iml
+# Eclipse / VSCode Java 项目文件（per-developer，勿 commit）
+client/.classpath
+client/.factorypath
+client/.project
+client/.settings/
+client/bin/
+# MC 运行时 log
+client/logs/
 
 # Worldgen server runtime (generated, cached, too large for git)
 worldgen/server/*.jar
@@ -73,3 +81,12 @@ third_party/
 .sisyphus/
 # 全自动 plan 消费脚本（scripts/bong-plan-auto.sh）生成的 worktrees
 .worktrees/
+# 手动评审用的 worktree
+.worktree/
+tmp/
+
+# Serena MCP 本仓库 local state
+.serena/
+
+# Reference 3D 模型（Tripo / 素材站下载），只作本地建模参考不进 repo
+local_models/

@@ -1,0 +1,14 @@
+[
+  {
+    "v": 1,
+    "char_id": 1001,
+    "skill": "herbalism",
+    "new_cap": 5
+  },
+  {
+    "v": 1,
+    "char_id": 1001,
+    "skill": "alchemy",
+    "new_cap": 3
+  }
+]

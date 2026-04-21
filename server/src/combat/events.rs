@@ -53,6 +53,9 @@ pub enum StatusEffectKind {
     Stunned,
     DamageAmp,
     DamageReduction,
+    /// plan-cultivation-v1 §3.1：服用突破辅助丹药后附加的临时 buff。
+    /// `magnitude` 作 material_bonus（0.0..=0.30），突破事务聚合后一次性消费。
+    BreakthroughBoost,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
@@ -81,4 +84,27 @@ pub struct DeathEvent {
     pub target: Entity,
     pub cause: String,
     pub at_tick: u64,
+}
+
+/// plan-combat-no_ui §13 C1 — 调试命令注入通道 (`!wound add` / `!health set` / `!stamina set`)。
+///
+/// 由 `chat_collector.rs` 在开发命令分支写入，`combat::debug::apply_debug_combat_commands`
+/// 消费并直接改写目标实体的 `Wounds` / `Stamina`。
+///
+/// **仅调试用** — 不走 AttackIntent 管线，不触发污染/防御/状态效果。
+#[derive(Debug, Clone, Event)]
+pub struct DebugCombatCommand {
+    pub target: Entity,
+    pub kind: DebugCombatCommandKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum DebugCombatCommandKind {
+    AddWound {
+        location: BodyPart,
+        kind: WoundKind,
+        severity: f32,
+    },
+    SetHealth(f32),
+    SetStamina(f32),
 }

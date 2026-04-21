@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use valence::prelude::{Added, Client, Entity, Query, Username, With};
+use valence::prelude::{bevy_ecs, Added, Client, Entity, Query, Username, With};
 
+use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
-    ContainerState, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET,
-    EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
-    EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
+    calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
+    EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
+    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
     SMALL_POUCH_CONTAINER_ID,
 };
 use crate::network::agent_bridge::{
@@ -37,28 +38,70 @@ pub fn emit_join_inventory_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
     for (entity, mut client, username, inventory, player_state) in &mut joined_clients {
-        let snapshot = build_inventory_snapshot(inventory, player_state);
-        let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-        tracing::info!(
-            "[bong][network] sent {} {} payload to client entity {entity:?} for `{}`",
-            SERVER_DATA_CHANNEL,
-            payload_type,
-            canonical_player_id(username.0.as_str())
+        send_inventory_snapshot_to_client(
+            entity,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            "join",
         );
     }
 }
 
-fn build_inventory_snapshot(
+pub fn emit_revive_inventory_resyncs(
+    mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut clients: Query<(&mut Client, &Username, &PlayerInventory, &PlayerState), With<Client>>,
+) {
+    for ev in revived.read() {
+        let Ok((mut client, username, inventory, player_state)) = clients.get_mut(ev.entity) else {
+            continue;
+        };
+        send_inventory_snapshot_to_client(
+            ev.entity,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            "revive_death_drop_resync",
+        );
+    }
+}
+
+/// Push a fresh inventory_snapshot payload to a single client. Used for both
+/// join hydration and corrective resync after a rejected move intent.
+pub(crate) fn send_inventory_snapshot_to_client(
+    entity: Entity,
+    client: &mut Client,
+    username: &str,
+    inventory: &PlayerInventory,
+    player_state: &PlayerState,
+    reason: &str,
+) {
+    let snapshot = build_inventory_snapshot(inventory, player_state);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+
+    send_server_data_payload(client, payload_bytes.as_slice());
+    tracing::info!(
+        "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` ({reason})",
+        SERVER_DATA_CHANNEL,
+        payload_type,
+        canonical_player_id(username)
+    );
+}
+
+/// Build a full inventory snapshot from current ECS state.
+/// Exposed for callers that need to push a corrective resync (e.g. after a
+/// rejected client move intent left the optimistic UI diverged).
+pub(crate) fn build_inventory_snapshot(
     inventory: &PlayerInventory,
     player_state: &PlayerState,
 ) -> InventorySnapshotV1 {
@@ -149,28 +192,6 @@ fn equipped_slot_item(inventory: &PlayerInventory, slot: &str) -> Option<Invento
     inventory.equipped.get(slot).map(item_view_from_instance)
 }
 
-fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
-    let container_weight = inventory
-        .containers
-        .iter()
-        .flat_map(|container| container.items.iter())
-        .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
-        .sum::<f64>();
-    let equipped_weight = inventory
-        .equipped
-        .values()
-        .map(|item| item.weight * item.stack_count as f64)
-        .sum::<f64>();
-    let hotbar_weight = inventory
-        .hotbar
-        .iter()
-        .flatten()
-        .map(|item| item.weight * item.stack_count as f64)
-        .sum::<f64>();
-
-    container_weight + equipped_weight + hotbar_weight
-}
-
 fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
     match container_id {
         MAIN_PACK_CONTAINER_ID => ContainerIdV1::MainPack,
@@ -180,7 +201,7 @@ fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
     }
 }
 
-fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
+pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
     InventoryItemViewV1 {
         instance_id: item.instance_id,
         item_id: item.template_id.clone(),
@@ -193,7 +214,37 @@ fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
         stack_count: item.stack_count as u64,
         spirit_quality: item.spirit_quality,
         durability: item.durability,
+        freshness: item.freshness.clone(),
+        // M3a — 衍生数据由 caller 调 `enrich_with_derived_freshness` 后填；
+        // 默认 None 防止未注入 registry 的 caller 漏算。
+        freshness_current: None,
     }
+}
+
+/// plan-shelflife-v1 M3a — 用 DecayProfileRegistry + clock + 容器行为，把当下
+/// `current_qi` + `track_state` 算好挂到 `view.freshness_current`。
+///
+/// **None 早返**：freshness 字段缺失 / profile 未在 registry / item.freshness 为 None
+/// 时静默返，不修改 view（防止误覆盖）。
+pub(crate) fn enrich_with_derived_freshness(
+    view: &mut InventoryItemViewV1,
+    registry: &crate::shelflife::DecayProfileRegistry,
+    now_tick: u64,
+    container_behavior: &crate::shelflife::ContainerFreshnessBehavior,
+) {
+    let Some(freshness) = view.freshness.as_ref() else {
+        return;
+    };
+    let Some(profile) = registry.get(&freshness.profile) else {
+        return;
+    };
+    let multiplier = crate::shelflife::container_storage_multiplier(container_behavior, profile);
+    view.freshness_current = Some(crate::schema::inventory::FreshnessDerivedV1 {
+        current_qi: crate::shelflife::compute_current_qi(freshness, profile, now_tick, multiplier),
+        track_state: crate::shelflife::compute_track_state(
+            freshness, profile, now_tick, multiplier,
+        ),
+    });
 }
 
 fn rarity_from_runtime(rarity: ItemRarity) -> ItemRarityV1 {
@@ -216,12 +267,21 @@ mod tests {
 
     use super::*;
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        ContainerState, DroppedItemEvent, DroppedItemRecord, InventoryRevision, ItemInstance,
+        ItemRarity, PlacedItemState,
     };
+    use crate::schema::inventory::InventoryEventV1;
 
     fn setup_app() -> App {
         let mut app = App::new();
-        app.add_systems(Update, emit_join_inventory_snapshots);
+        app.add_event::<DroppedItemEvent>();
+        app.add_systems(
+            Update,
+            (
+                emit_join_inventory_snapshots,
+                crate::network::inventory_event_emit::emit_dropped_item_inventory_events,
+            ),
+        );
         app
     }
 
@@ -273,6 +333,26 @@ mod tests {
         payloads
     }
 
+    fn collect_inventory_event_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+
+            let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data payload should decode");
+            if matches!(payload.payload, ServerDataPayloadV1::InventoryEvent(_)) {
+                payloads.push(payload);
+            }
+        }
+
+        payloads
+    }
+
     fn make_item(
         instance_id: u64,
         template_id: &str,
@@ -292,6 +372,7 @@ mod tests {
             stack_count,
             spirit_quality: 0.5,
             durability: 1.0,
+            freshness: None,
         }
     }
 
@@ -511,5 +592,301 @@ mod tests {
             payloads.is_empty(),
             "oversize inventory_snapshot must be rejected without any send"
         );
+    }
+
+    #[test]
+    fn dropped_item_event_emits_inventory_event_payload() {
+        let mut app = setup_app();
+        let state = PlayerState::default();
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Some(make_inventory(21, true)),
+        );
+
+        app.world_mut().send_event(DroppedItemEvent {
+            entity,
+            revision: InventoryRevision(21),
+            dropped: vec![DroppedItemRecord {
+                container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                row: 0,
+                col: 0,
+                instance: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
+            }],
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_inventory_event_payloads(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::Dropped {
+                revision,
+                instance_id,
+                from,
+                world_pos,
+                item,
+            }) => {
+                assert_eq!(*revision, 21);
+                assert_eq!(*instance_id, 1004);
+                assert!(world_pos[0] > 8.0);
+                assert_eq!(world_pos[1], 66.0);
+                assert!(world_pos[2] > 8.0);
+                assert_eq!(item.item_id, "starter_talisman");
+                assert_eq!(item.display_name, "启程护符");
+                assert_eq!(item.stack_count, 1);
+                match from {
+                    crate::schema::inventory::InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } => {
+                        assert_eq!(
+                            *container_id,
+                            crate::schema::inventory::ContainerIdV1::MainPack
+                        );
+                        assert_eq!(*row, 0);
+                        assert_eq!(*col, 0);
+                    }
+                    other => panic!("expected container from location, got {other:?}"),
+                }
+            }
+            other => panic!("expected dropped inventory_event payload, got {other:?}"),
+        }
+    }
+
+    // =========== plan-shelflife-v1 M3a — enrich_with_derived_freshness ===========
+
+    fn make_test_item_with_freshness(
+        instance_id: u64,
+        profile: &crate::shelflife::DecayProfile,
+        initial_qi: f32,
+        created_at_tick: u64,
+    ) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "ling_shi_fan".to_string(),
+            display_name: "凡品灵石".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: "末法残石".to_string(),
+            stack_count: 1,
+            spirit_quality: 0.7,
+            durability: 1.0,
+            freshness: Some(crate::shelflife::Freshness::new(
+                created_at_tick,
+                initial_qi,
+                profile,
+            )),
+        }
+    }
+
+    #[test]
+    fn enrich_with_no_freshness_is_noop() {
+        let registry = crate::shelflife::DecayProfileRegistry::new();
+        let item = ItemInstance {
+            instance_id: 1,
+            template_id: "iron_axe".to_string(),
+            display_name: "凡铁斧".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 1.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+        };
+        let mut view = item_view_from_instance(&item);
+        assert!(view.freshness_current.is_none());
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            10_000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+        assert!(
+            view.freshness_current.is_none(),
+            "no-freshness item should stay None"
+        );
+    }
+
+    #[test]
+    fn enrich_with_unknown_profile_is_noop() {
+        let registry = crate::shelflife::DecayProfileRegistry::new(); // 空 registry
+        let p = crate::shelflife::DecayProfile::Decay {
+            id: crate::shelflife::DecayProfileId::new("unknown_profile"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            500,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+        assert!(
+            view.freshness_current.is_none(),
+            "unknown profile should leave freshness_current None"
+        );
+    }
+
+    #[test]
+    fn enrich_with_known_profile_computes_current_and_state() {
+        let p = crate::shelflife::DecayProfile::Decay {
+            id: crate::shelflife::DecayProfileId::new("test_decay"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        // 1 half_life @ Normal multiplier 1.0 → current = 50
+        assert!((derived.current_qi - 50.0).abs() < 1e-3);
+        // 50/100 = 0.5 → Declining (headroom-based)
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Declining);
+    }
+
+    #[test]
+    fn enrich_with_freeze_container_preserves_initial_via_derive() {
+        // Freeze 容器下，time-based 公式应保留 initial_qi（multiplier=0）
+        let p = crate::shelflife::DecayProfile::Decay {
+            id: crate::shelflife::DecayProfileId::new("test_decay"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1_000_000,
+            &crate::shelflife::ContainerFreshnessBehavior::Freeze,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!(
+            (derived.current_qi - 100.0).abs() < 1e-3,
+            "Freeze should preserve initial"
+        );
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Fresh);
+    }
+
+    #[test]
+    fn enrich_with_spoil_profile_derives_spoiled_state() {
+        // Spoil 端到端：兽肉 half_life=1000 @ spoil_threshold=20
+        // 3000 tick (3 half_lives) → current = 12.5 < 20 → Spoiled
+        let p = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            spoil_threshold: 20.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            3000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 12.5).abs() < 0.1);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Spoiled);
+    }
+
+    #[test]
+    fn enrich_with_age_profile_derives_peaking_state() {
+        // Age 端到端：陈酒 peak@1000, bonus=0.5, window=0.1 → Peaking @ tick 1000
+        let p = crate::shelflife::DecayProfile::Age {
+            id: crate::shelflife::DecayProfileId::new("test_age"),
+            peak_at_ticks: 1000,
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 500,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: crate::shelflife::DecayProfileId::new("test_age_post_spoil"),
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 150.0).abs() < 1e-3);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::Peaking);
+    }
+
+    #[test]
+    fn enrich_with_age_past_peak_derives_past_peak_state() {
+        // Age 过峰：peak=1000, post_half=500, tick 1500 → current = 75 > threshold 30 → PastPeak
+        let p = crate::shelflife::DecayProfile::Age {
+            id: crate::shelflife::DecayProfileId::new("test_age_pp"),
+            peak_at_ticks: 1000,
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 500,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: crate::shelflife::DecayProfileId::new("test_age_pp_spoil"),
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let mut view = item_view_from_instance(&item);
+
+        enrich_with_derived_freshness(
+            &mut view,
+            &registry,
+            1500,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+
+        let derived = view.freshness_current.expect("derived should be Some");
+        assert!((derived.current_qi - 75.0).abs() < 1e-3);
+        assert_eq!(derived.track_state, crate::shelflife::TrackState::PastPeak);
     }
 }

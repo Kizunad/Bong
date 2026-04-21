@@ -343,17 +343,17 @@ echo "启动 Valence: cd server && cargo run"
 
 ### Step 1 — 先跑通 Phase A [当前]
 
-- [ ] 搭 datapack 骨架（pack.mcmeta + 1 个自定义 biome）
-- [ ] 本地 Fabric 1.20.1 服务端 + Chunky 验证生成效果
-- [ ] 迭代 biome 参数直到视觉风格满意
-- [ ] 测试 Valence `AnvilLevel` 加载生成的存档
+- [x] 搭 datapack 骨架（pack.mcmeta + 1 个自定义 biome）
+- [x] 本地 Fabric 1.20.1 服务端 + Chunky 验证生成效果
+- [x] 迭代 biome 参数直到视觉风格满意
+- [x] 测试 Valence `AnvilLevel` 加载生成的存档
 
 ### Step 2 — 补全 Datapack
 
-- [ ] 完成 6 个 biome 定义
-- [ ] 配置 multi_noise biome 分布
+- [x] 完成 6 个 biome 定义
+- [x] 配置 multi_noise biome 分布
 - [ ] 添加自定义 feature（枯树、残灰斑块等）
-- [ ] 编写预生成脚本 `scripts/worldgen.sh`
+- [x] 编写预生成脚本 `scripts/worldgen.sh`
 
 ### Step 3 — Phase B 后处理
 
@@ -362,11 +362,11 @@ echo "启动 Valence: cd server && cargo run"
 - [x] 实现地表检测 + 分层装饰散布（`scripts/postprocess.py`）
 - [ ] 实现 zone → 方块退化替换逻辑（需 zones.json）
 - [ ] Schematic 加载与放置
-- [ ] 完整 pipeline 脚本
+- [x] 完整 pipeline 脚本
 
 ### Step 4 — Valence 集成
 
-- [ ] `server/src/world/terrain.rs` 接入 AnvilLevel
+- [x] `server/src/world/terrain.rs` 接入 AnvilLevel
 - [ ] 运行时方块替换系统（灵气退化）
 - [ ] AgentCommand 扩展地形控制指令
 

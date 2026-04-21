@@ -36,6 +36,54 @@ export const ItemRarityV1 = Type.Union([
 ]);
 export type ItemRarityV1 = Static<typeof ItemRarityV1>;
 
+// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT 镜像（与 server 端
+// crate::shelflife::Freshness 对齐）。
+export const DecayTrackV1 = Type.Union([
+  Type.Literal("Decay"),
+  Type.Literal("Spoil"),
+  Type.Literal("Age"),
+]);
+export type DecayTrackV1 = Static<typeof DecayTrackV1>;
+
+export const FreshnessV1 = Type.Object(
+  {
+    created_at_tick: SafeIntegerV1,
+    // initial_qi 必须非负 — shelflife compute_* headroom / exp-decay 公式假设 >= 0
+    initial_qi: Type.Number({ minimum: 0 }),
+    track: DecayTrackV1,
+    profile: Type.String({ minLength: 1, maxLength: 128 }),
+    frozen_accumulated: Type.Optional(SafeIntegerV1),
+    frozen_since_tick: Type.Optional(Type.Union([SafeIntegerV1, Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+export type FreshnessV1 = Static<typeof FreshnessV1>;
+
+// plan-shelflife-v1 M3a — TrackState 路径机态（与 server crate::shelflife::TrackState 对齐）。
+// 7 档 PascalCase（与 DecayTrack 一致）— client M3b 由此 + current_qi 比率衍生 5 档显示位。
+export const TrackStateV1 = Type.Union([
+  Type.Literal("Fresh"),
+  Type.Literal("Declining"),
+  Type.Literal("Dead"),
+  Type.Literal("Spoiled"),
+  Type.Literal("Peaking"),
+  Type.Literal("PastPeak"),
+  Type.Literal("AgePostPeakSpoiled"),
+]);
+export type TrackStateV1 = Static<typeof TrackStateV1>;
+
+// plan-shelflife-v1 M3a — 衍生 freshness 数据（snapshot emit 时由 server 预算）。
+// client 不需内置 compute_* 逻辑 + DecayProfileRegistry。
+export const FreshnessDerivedV1 = Type.Object(
+  {
+    // current_qi 非负 — compute_current_qi 在所有路径保证（Decay floor_qi ≥ 0 / Spoil max(0) / Age .max(0.0)）
+    current_qi: Type.Number({ minimum: 0 }),
+    track_state: TrackStateV1,
+  },
+  { additionalProperties: false },
+);
+export type FreshnessDerivedV1 = Static<typeof FreshnessDerivedV1>;
+
 export const InventoryItemViewV1 = Type.Object(
   {
     instance_id: SafeIntegerV1,
@@ -49,6 +97,10 @@ export const InventoryItemViewV1 = Type.Object(
     stack_count: Type.Integer({ minimum: 1 }),
     spirit_quality: Type.Number({ minimum: 0, maximum: 1 }),
     durability: Type.Number({ minimum: 0, maximum: 1 }),
+    // 物品保质期 NBT；缺省视作"无时间敏感"（凡俗工具 / 瑶器等）。
+    freshness: Type.Optional(FreshnessV1),
+    // M3a 衍生数据；None = freshness 缺失 / profile 未在 registry / 无法衍生。
+    freshness_current: Type.Optional(FreshnessDerivedV1),
   },
   { additionalProperties: false },
 );
@@ -157,6 +209,20 @@ export const InventoryEventMovedV1 = Type.Object(
   { additionalProperties: false },
 );
 
+import { Vec3 } from "./world-state.js";
+
+export const InventoryEventDroppedV1 = Type.Object(
+  {
+    kind: Type.Literal("dropped"),
+    revision: RevisionV1,
+    instance_id: SafeIntegerV1,
+    from: InventoryLocationV1,
+    world_pos: Vec3,
+    item: InventoryItemViewV1,
+  },
+  { additionalProperties: false },
+);
+
 export const InventoryEventStackChangedV1 = Type.Object(
   {
     kind: Type.Literal("stack_changed"),
@@ -179,6 +245,7 @@ export const InventoryEventDurabilityChangedV1 = Type.Object(
 
 export const InventoryEventV1 = Type.Union([
   InventoryEventMovedV1,
+  InventoryEventDroppedV1,
   InventoryEventStackChangedV1,
   InventoryEventDurabilityChangedV1,
 ]);

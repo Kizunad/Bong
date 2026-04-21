@@ -21,3 +21,19 @@ rarity = "uncommon"
 spirit_quality_initial = 1.0
 description = "外敷经脉，缓解走火入魔。"
 effect = { kind = "meridian_heal", magnitude = 0.2, target = "any_meridian" }
+
+# plan-HUD-v1 §10.4 huiyuan_pill_forbidden — 禁药版回元丹。
+# 强力清污染，但 cast 时长 / 冷却均加倍以体现"禁药"代价。
+[[item]]
+id = "huiyuan_pill_forbidden"
+name = "回元丹·禁药"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "禁药版回元丹，可瞬间排尽异种真元，然代价为反噬经脉。"
+effect = { kind = "contamination_cleanse", magnitude = 0.6 }
+cast_duration_ms = 2500
+cooldown_ms = 8000

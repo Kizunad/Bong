@@ -11,6 +11,7 @@ use valence::prelude::{
 
 use super::zone::ZoneRegistry;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::player::state::canonical_player_id;
@@ -274,6 +275,7 @@ impl ActiveEventsResource {
         layer_entity: Option<Entity>,
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
+        npc_spawn_budget: Option<usize>,
     ) {
         let Some(zone_registry) = zone_registry else {
             self.tick_metadata_only(None);
@@ -350,7 +352,17 @@ impl ActiveEventsResource {
                             continue;
                         };
 
-                        let beast_count = beast_count_for_intensity(event.intensity);
+                        let desired_beast_count = beast_count_for_intensity(event.intensity);
+                        let beast_count = npc_spawn_budget
+                            .map(|budget| desired_beast_count.min(budget))
+                            .unwrap_or(desired_beast_count);
+                        if beast_count == 0 {
+                            tracing::info!(
+                                "[bong][world] beast_tide runtime for zone `{}` skipped: npc registry budget exhausted",
+                                event.zone_name
+                            );
+                            continue;
+                        }
                         for beast_index in 0..beast_count {
                             let spawn_position =
                                 beast_spawn_position_on_zone_edge(&zone, beast_index, beast_count);
@@ -479,6 +491,7 @@ fn tick_active_events(
     mut commands: Commands,
     mut active_events: ResMut<ActiveEventsResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
+    mut npc_registry: Option<ResMut<NpcRegistry>>,
     layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
     players: Query<(&Username, &Position), With<Client>>,
 ) {
@@ -488,11 +501,34 @@ fn tick_active_events(
         .map(|(username, position)| (canonical_player_id(username.0.as_str()), position.get()))
         .collect::<Vec<_>>();
 
+    let npc_spawn_budget = if let Some(registry) = npc_registry.as_deref_mut() {
+        let desired = active_events
+            .active_events
+            .iter()
+            .filter(|event| event.event_name == EVENT_BEAST_TIDE && event.elapsed_ticks == 0)
+            .map(|event| beast_count_for_intensity(event.intensity))
+            .sum::<usize>();
+        let reserved = registry.reserve_spawn_batch(desired);
+        if reserved < desired {
+            tracing::info!(
+                "[bong][world] beast_tide spawn clamped by npc registry: desired={} reserved={} live_npc_count={} max_npc_count={}",
+                desired,
+                reserved,
+                registry.live_npc_count,
+                registry.max_npc_count
+            );
+        }
+        Some(reserved)
+    } else {
+        None
+    };
+
     active_events.tick(
         zone_registry.as_deref_mut(),
         layer_entity,
         Some(&mut commands),
         Some(player_positions.as_slice()),
+        npc_spawn_budget,
     );
 }
 
@@ -648,7 +684,7 @@ fn spawn_beast_tide_zombie(
     spawn_position: DVec3,
     zone_center: DVec3,
 ) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             ZombieEntityBundle {
                 kind: EntityKind::ZOMBIE,
@@ -664,6 +700,7 @@ fn spawn_beast_tide_zombie(
             GlobalTransform::default(),
             NpcMarker,
             NpcBlackboard::default(),
+            NpcArchetype::Beast,
             NpcPatrol::new(zone_name, zone_center),
             Thinker::build()
                 .picker(FirstToScore {
@@ -671,7 +708,13 @@ fn spawn_beast_tide_zombie(
                 })
                 .when(PlayerProximityScorer, FleeAction),
         ))
-        .id()
+        .id();
+
+    commands
+        .entity(entity)
+        .insert(npc_runtime_bundle(entity, NpcArchetype::Beast));
+
+    entity
 }
 
 #[cfg(test)]

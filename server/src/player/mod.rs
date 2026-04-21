@@ -434,6 +434,7 @@ mod tests {
                         stack_count: 1,
                         spirit_quality: 1.0,
                         durability: 1.0,
+                        freshness: None,
                     },
                 }],
             }],

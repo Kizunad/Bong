@@ -1,4 +1,4 @@
-use valence::prelude::{Entity, EventReader, EventWriter, Query, Res};
+use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res};
 
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
@@ -6,10 +6,12 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathTrigger, PlayerRevived, PlayerTerminated,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::persistence::{
     persist_near_death_transition, persist_revival_transition, persist_termination_transition,
     LifespanEventRecord, PersistenceSettings,
 };
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::components::{
     CombatState, Lifecycle, LifecycleState, Stamina, StaminaState, Wounds, ATTACK_STAMINA_COST,
@@ -285,6 +287,8 @@ pub fn near_death_tick(
     mut revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for (
         (entity, mut lifecycle, wounds, stamina, combat_state),
@@ -427,6 +431,23 @@ pub fn near_death_tick(
         }
         lifecycle.terminate(clock.tick);
         terminated.send(PlayerTerminated { entity });
+
+        // plan-particle-system-v1 §4.4：终结时发 `death_soul_dissipate` 魂散。
+        if let Ok(pos) = positions.get(entity) {
+            let p = pos.get();
+            vfx_events.send(VfxEventRequest::new(
+                p,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: "bong:death_soul_dissipate".to_string(),
+                    origin: [p.x, p.y, p.z],
+                    direction: None,
+                    color: Some("#CFEFFF".to_string()),
+                    strength: Some(0.9),
+                    count: Some(20),
+                    duration_ticks: Some(40),
+                },
+            ));
+        }
     }
 }
 
@@ -733,6 +754,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -797,6 +819,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -901,6 +924,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
@@ -1031,6 +1055,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (

@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Component, Entity, Query, Resource, Without,
+    bevy_ecs, Added, App, Client, Commands, Component, Entity, Position, Query, Resource, Update,
+    Without,
 };
+
+use crate::cultivation::death_hooks::PlayerRevived;
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
@@ -29,6 +32,11 @@ type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInvento
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRevision(pub u64);
 
+/// plan-HUD-v1 §10.4 cast 默认时长（无 template 字段时使用）。
+pub const DEFAULT_CAST_DURATION_MS: u32 = 1500;
+/// plan-HUD-v1 §4.4 cooldown 默认（完成后冷却 ms）。
+pub const DEFAULT_COOLDOWN_MS: u32 = 1500;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemTemplate {
     pub id: String,
@@ -41,6 +49,24 @@ pub struct ItemTemplate {
     pub spirit_quality_initial: f64,
     pub description: String,
     pub effect: Option<ItemEffect>,
+    /// plan-HUD-v1 §10.4 / §4.1 cast 持续时间（ms）。
+    pub cast_duration_ms: u32,
+    /// plan-HUD-v1 §4.4 完成后冷却（ms）。中断短冷却另算固定值。
+    pub cooldown_ms: u32,
+    /// plan-weapon-v1 §1.1：武器特有属性。非武器恒为 None。
+    pub weapon_spec: Option<WeaponSpec>,
+}
+
+/// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeaponSpec {
+    pub weapon_kind: crate::combat::weapon::WeaponKind,
+    pub base_attack: f32,
+    /// 0=凡铁 · 1=灵器 · 2=法宝 · 3=仙器。
+    pub quality_tier: u8,
+    pub durability_max: f32,
+    /// qi 技能消耗倍率（v1 默认 1.0）。
+    pub qi_cost_mul: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +139,9 @@ pub struct ItemInstance {
     pub stack_count: u32,
     pub spirit_quality: f64,
     pub durability: f64,
+    /// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT。
+    /// `None` = 无时间敏感（凡俗工具 / 瑶器 等），`Some` = 接 shelflife 路径计算。
+    pub freshness: Option<crate::shelflife::Freshness>,
 }
 
 #[derive(Debug)]
@@ -165,6 +194,20 @@ pub struct PlayerInventory {
     pub max_weight: f64,
 }
 
+#[derive(Debug, Clone, Copy, Component, PartialEq)]
+pub struct OverloadedMarker {
+    pub current_weight: f64,
+    pub max_weight: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryGrantReceipt {
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub template_id: String,
+    pub stack_count: u32,
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][inventory] registering inventory resources and join attach system");
 
@@ -179,6 +222,9 @@ pub fn register(app: &mut App) {
     app.insert_resource(item_registry);
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
+    app.insert_resource(DroppedLootRegistry::default());
+    app.add_event::<DroppedItemEvent>();
+    app.add_systems(Update, (apply_death_drop_on_revive, sync_overloaded_marker));
 }
 
 pub(crate) fn attach_inventory_to_joined_clients(
@@ -196,6 +242,24 @@ pub(crate) fn attach_inventory_to_joined_clients(
             });
 
         commands.entity(entity).insert(player_inventory);
+        // plan-HUD-v1 §10.4 quickslot bindings — 加入空 default，后续 quick_slot_bind
+        // 客户端 intent 会写入。挂在 inventory attach 旁边方便一起看。
+        commands
+            .entity(entity)
+            .insert(crate::combat::components::QuickSlotBindings::default());
+        // plan-HUD-v1 §1.3 默认全解锁（v1 演示）。后续接入修炼系统按真实条件 mutate。
+        commands
+            .entity(entity)
+            .insert(crate::combat::components::UnlockedStyles::default());
+        // plan-HUD-v1 §3.4 默认 stance=None，伪皮 0，涡流未激活。switch 后才出现指示器。
+        commands
+            .entity(entity)
+            .insert(crate::combat::components::DefenseStance::default());
+        // plan-skill-v1 §8 SkillSet 挂玩家 entity；consumed_scrolls 一生累积（死透重生由
+        // plan-death-lifecycle §4/§5 新建 default 实例，不迁移）。
+        commands
+            .entity(entity)
+            .insert(crate::skill::components::SkillSet::default());
         tracing::info!("[bong][inventory] attached PlayerInventory to joined client {entity:?}");
     }
 }
@@ -263,6 +327,7 @@ fn instantiate_item_instance(
         stack_count: template_instance.stack_count,
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
+        freshness: None,
     })
 }
 
@@ -359,10 +424,73 @@ impl ItemRegistry {
         self.templates.get(template_id)
     }
 
+    /// 测试用:从手动构造的 templates map 建 registry。
+    #[cfg(test)]
+    pub fn from_map(templates: HashMap<String, ItemTemplate>) -> Self {
+        Self { templates }
+    }
+
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.templates.len()
     }
+}
+
+pub fn add_item_to_player_inventory(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    template_id: &str,
+    stack_count: u32,
+) -> Result<InventoryGrantReceipt, String> {
+    if stack_count == 0 {
+        return Err("add_item_to_player_inventory requires stack_count >= 1".to_string());
+    }
+
+    let template = registry
+        .get(template_id)
+        .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
+
+    let instance_id = allocator.next_id()?;
+    let instance = ItemInstance {
+        instance_id,
+        template_id: template.id.clone(),
+        display_name: template.display_name.clone(),
+        grid_w: template.grid_w,
+        grid_h: template.grid_h,
+        weight: template.base_weight,
+        rarity: template.rarity,
+        description: template.description.clone(),
+        stack_count,
+        spirit_quality: template.spirit_quality_initial,
+        durability: 1.0,
+        freshness: None,
+    };
+
+    let Some(main_pack) = inventory
+        .containers
+        .iter_mut()
+        .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+    else {
+        return Err(format!(
+            "player inventory missing required `{MAIN_PACK_CONTAINER_ID}` container"
+        ));
+    };
+
+    main_pack.items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance,
+    });
+
+    inventory.revision.0 = inventory.revision.0.saturating_add(1);
+
+    Ok(InventoryGrantReceipt {
+        revision: inventory.revision,
+        instance_id,
+        template_id: template.id.clone(),
+        stack_count,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -384,6 +512,31 @@ struct ItemTemplateToml {
     spirit_quality_initial: f64,
     description: String,
     effect: Option<ItemEffectToml>,
+    /// 缺省 → DEFAULT_CAST_DURATION_MS。
+    #[serde(default)]
+    cast_duration_ms: Option<u32>,
+    /// 缺省 → DEFAULT_COOLDOWN_MS。
+    #[serde(default)]
+    cooldown_ms: Option<u32>,
+    /// plan-weapon-v1 §1.1：category == "Weapon" 时必填，否则须缺省。
+    #[serde(default)]
+    weapon: Option<WeaponSpecToml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WeaponSpecToml {
+    /// `sword` / `saber` / `staff` / `fist` / `spear` / `dagger` / `bow`。
+    kind: String,
+    base_attack: f32,
+    quality_tier: u8,
+    durability_max: f32,
+    #[serde(default = "default_qi_cost_mul")]
+    qi_cost_mul: f32,
+}
+
+fn default_qi_cost_mul() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,6 +589,26 @@ impl ItemTemplateToml {
             .map(|raw| parse_item_effect(raw, source_path, id.as_str()))
             .transpose()?;
 
+        // plan-weapon-v1 §1.1：weapon 块与 category=Weapon 必须一致。
+        let weapon_spec = match (&category, self.weapon) {
+            (ItemCategory::Weapon, Some(raw)) => {
+                Some(parse_weapon_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::Weapon, None) => {
+                return Err(format!(
+                    "{} item `{id}` has category=Weapon but missing [item.weapon] block",
+                    source_path.display()
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.weapon] block but category != Weapon",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
+
         Ok(ItemTemplate {
             id,
             display_name,
@@ -447,8 +620,69 @@ impl ItemTemplateToml {
             spirit_quality_initial: self.spirit_quality_initial,
             description,
             effect,
+            cast_duration_ms: self.cast_duration_ms.unwrap_or(DEFAULT_CAST_DURATION_MS),
+            cooldown_ms: self.cooldown_ms.unwrap_or(DEFAULT_COOLDOWN_MS),
+            weapon_spec,
         })
     }
+}
+
+fn parse_weapon_spec(
+    raw: WeaponSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<WeaponSpec, String> {
+    use crate::combat::weapon::WeaponKind;
+    let weapon_kind = match raw.kind.as_str() {
+        "sword" => WeaponKind::Sword,
+        "saber" => WeaponKind::Saber,
+        "staff" => WeaponKind::Staff,
+        "fist" => WeaponKind::Fist,
+        "spear" => WeaponKind::Spear,
+        "dagger" => WeaponKind::Dagger,
+        "bow" => WeaponKind::Bow,
+        other => {
+            return Err(format!(
+                "{} item `{item_id}` has invalid weapon.kind `{other}`; expected sword/saber/staff/fist/spear/dagger/bow",
+                source_path.display()
+            ));
+        }
+    };
+    if !raw.base_attack.is_finite() || raw.base_attack < 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.base_attack {}; expected finite >= 0",
+            source_path.display(),
+            raw.base_attack
+        ));
+    }
+    if raw.quality_tier > 3 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.quality_tier {}; expected 0..=3",
+            source_path.display(),
+            raw.quality_tier
+        ));
+    }
+    if !raw.durability_max.is_finite() || raw.durability_max <= 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.durability_max {}; expected finite > 0",
+            source_path.display(),
+            raw.durability_max
+        ));
+    }
+    if !raw.qi_cost_mul.is_finite() || raw.qi_cost_mul <= 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid weapon.qi_cost_mul {}; expected finite > 0",
+            source_path.display(),
+            raw.qi_cost_mul
+        ));
+    }
+    Ok(WeaponSpec {
+        weapon_kind,
+        base_attack: raw.base_attack,
+        quality_tier: raw.quality_tier,
+        durability_max: raw.durability_max,
+        qi_cost_mul: raw.qi_cost_mul,
+    })
 }
 
 fn parse_item_category(
@@ -775,6 +1009,864 @@ impl LoadoutToml {
     }
 }
 
+// ─── Inventory move (client → server intent application) ────────────────────
+
+/// Outcome of a successful `apply_inventory_move`.
+///
+/// `Swapped` means the target slot was occupied by a same-footprint item; the
+/// occupant has been bounced back to the source location. Caller should
+/// resync the client (full snapshot) since two moves can't be expressed as
+/// one ordered `inventory_event::moved` without ordering hazards.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InventoryMoveOutcome {
+    Moved {
+        revision: InventoryRevision,
+    },
+    Swapped {
+        revision: InventoryRevision,
+        displaced_instance_id: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryConsumeOutcome {
+    pub revision: InventoryRevision,
+    pub remaining_stack: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroppedItemRecord {
+    pub container_id: String,
+    pub row: u8,
+    pub col: u8,
+    pub instance: ItemInstance,
+}
+
+#[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
+pub struct DroppedItemEvent {
+    pub entity: Entity,
+    pub revision: InventoryRevision,
+    pub dropped: Vec<DroppedItemRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeathDropOutcome {
+    pub revision: InventoryRevision,
+    pub dropped: Vec<DroppedItemRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroppedLootEntry {
+    pub instance_id: u64,
+    pub source_container_id: String,
+    pub source_row: u8,
+    pub source_col: u8,
+    pub world_pos: [f64; 3],
+    pub item: ItemInstance,
+}
+
+#[derive(Default, Resource, Debug)]
+pub struct DroppedLootRegistry {
+    pub by_owner: HashMap<Entity, Vec<DroppedLootEntry>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryDiscardOutcome {
+    pub revision: InventoryRevision,
+    pub dropped: DroppedLootEntry,
+}
+
+/// Apply an `inventory_move_intent` to a player's inventory.
+///
+/// On success returns a [`InventoryMoveOutcome`] describing whether it was a
+/// plain move or a same-footprint swap. On rejection returns the failure
+/// reason; the caller is responsible for resyncing the client (e.g. via a
+/// fresh `inventory_snapshot`) since the client UI optimistically updated.
+///
+/// Rejection paths:
+/// - source location does not actually hold the named instance
+/// - target out of bounds / unknown container
+/// - target collides with a multi-cell item or the occupant footprint differs
+pub fn apply_inventory_move(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    to: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<InventoryMoveOutcome, String> {
+    if !location_holds_instance(inventory, instance_id, from) {
+        return Err(format!(
+            "from-location {from:?} does not hold instance {instance_id}"
+        ));
+    }
+
+    let item = clone_item_at(inventory, instance_id)
+        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+
+    let displaced = displaced_at_target(inventory, &item, instance_id, to)?;
+
+    match displaced {
+        None => {
+            // Plain move.
+            detach_instance(inventory, instance_id);
+            attach_at_location(inventory, item, to)?;
+            bump_revision(inventory);
+            Ok(InventoryMoveOutcome::Moved {
+                revision: inventory.revision,
+            })
+        }
+        Some(occupant) => {
+            // Footprint-matched swap. Validate occupant fits at `from`.
+            if occupant.grid_w != item.grid_w || occupant.grid_h != item.grid_h {
+                return Err(format!(
+                    "swap rejected: occupant {} footprint {}x{} differs from dragged {}x{}",
+                    occupant.instance_id,
+                    occupant.grid_w,
+                    occupant.grid_h,
+                    item.grid_w,
+                    item.grid_h
+                ));
+            }
+            // Build a temp inventory after detaching both, then check occupant
+            // fits at `from` against remaining items.
+            let occupant_id = occupant.instance_id;
+            detach_instance(inventory, instance_id);
+            detach_instance(inventory, occupant_id);
+            // Validate occupant fits at `from` (excluding both — both detached).
+            if let Err(reason) = validate_attach_fits(inventory, &occupant, from) {
+                // Restore originals to keep server state coherent on rare rejection.
+                attach_at_location(inventory, item, from)
+                    .expect("restoring original from is always valid (just detached)");
+                attach_at_location(inventory, occupant, to)
+                    .expect("restoring original to is always valid (just detached)");
+                return Err(format!("swap rejected: {reason}"));
+            }
+            attach_at_location(inventory, item, to)?;
+            attach_at_location(inventory, occupant, from)?;
+            bump_revision(inventory);
+            Ok(InventoryMoveOutcome::Swapped {
+                revision: inventory.revision,
+                displaced_instance_id: occupant_id,
+            })
+        }
+    }
+}
+
+pub fn inventory_item_by_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<ItemInstance> {
+    clone_item_at(inventory, instance_id)
+}
+
+pub fn consume_item_instance_once(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+) -> Result<InventoryConsumeOutcome, String> {
+    for idx in 0..inventory.containers.len() {
+        let maybe_remaining = {
+            let container = &mut inventory.containers[idx];
+            container
+                .items
+                .iter()
+                .position(|p| p.instance.instance_id == instance_id)
+                .map(|pos| {
+                    if container.items[pos].instance.stack_count > 1 {
+                        container.items[pos].instance.stack_count -= 1;
+                        container.items[pos].instance.stack_count
+                    } else {
+                        container.items.remove(pos);
+                        0
+                    }
+                })
+        };
+        if let Some(remaining_stack) = maybe_remaining {
+            bump_revision(inventory);
+            return Ok(InventoryConsumeOutcome {
+                revision: inventory.revision,
+                remaining_stack,
+            });
+        }
+    }
+
+    if let Some(slot_key) = inventory
+        .equipped
+        .iter()
+        .find_map(|(key, item)| (item.instance_id == instance_id).then(|| key.clone()))
+    {
+        let remove = inventory
+            .equipped
+            .get(&slot_key)
+            .map(|item| item.stack_count <= 1)
+            .unwrap_or(false);
+        let remaining_stack = if remove {
+            inventory.equipped.remove(&slot_key);
+            0
+        } else {
+            let item = inventory
+                .equipped
+                .get_mut(&slot_key)
+                .expect("equipped slot key should still exist");
+            item.stack_count -= 1;
+            item.stack_count
+        };
+        bump_revision(inventory);
+        return Ok(InventoryConsumeOutcome {
+            revision: inventory.revision,
+            remaining_stack,
+        });
+    }
+
+    for idx in 0..inventory.hotbar.len() {
+        let maybe_remaining = match &mut inventory.hotbar[idx] {
+            Some(item) if item.instance_id == instance_id => {
+                if item.stack_count > 1 {
+                    item.stack_count -= 1;
+                    Some(item.stack_count)
+                } else {
+                    inventory.hotbar[idx] = None;
+                    Some(0)
+                }
+            }
+            _ => None,
+        };
+        if let Some(remaining_stack) = maybe_remaining {
+            bump_revision(inventory);
+            return Ok(InventoryConsumeOutcome {
+                revision: inventory.revision,
+                remaining_stack,
+            });
+        }
+    }
+
+    Err(format!("instance {instance_id} not found in inventory"))
+}
+
+pub fn apply_death_drop_on_revive(
+    mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut inventories: Query<&mut PlayerInventory>,
+    positions: Query<&Position>,
+    mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
+    mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
+) {
+    for ev in revived.read() {
+        let Ok(mut inventory) = inventories.get_mut(ev.entity) else {
+            continue;
+        };
+        let seed = death_drop_seed(ev.entity, inventory.revision.0);
+
+        let outcome = apply_death_drop_to_inventory(&mut inventory, seed);
+
+        if outcome.dropped.is_empty() {
+            continue;
+        }
+
+        let base = positions
+            .get(ev.entity)
+            .map(|pos| pos.0)
+            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
+        let drops = outcome
+            .dropped
+            .iter()
+            .enumerate()
+            .map(|(idx, dropped)| DroppedLootEntry {
+                instance_id: dropped.instance.instance_id,
+                source_container_id: dropped.container_id.clone(),
+                source_row: dropped.row,
+                source_col: dropped.col,
+                world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                item: dropped.instance.clone(),
+            })
+            .collect::<Vec<_>>();
+        dropped_registry.by_owner.insert(ev.entity, drops);
+
+        dropped_events.send(DroppedItemEvent {
+            entity: ev.entity,
+            revision: outcome.revision,
+            dropped: outcome.dropped,
+        });
+    }
+}
+
+pub fn apply_death_drop_to_inventory(
+    inventory: &mut PlayerInventory,
+    seed: u64,
+) -> DeathDropOutcome {
+    let mut candidate_ids = Vec::new();
+    for container in &inventory.containers {
+        for placed in &container.items {
+            candidate_ids.push(placed.instance.instance_id);
+        }
+    }
+
+    let drop_count = candidate_ids.len() / 2;
+    if drop_count == 0 {
+        return DeathDropOutcome {
+            revision: inventory.revision,
+            dropped: Vec::new(),
+        };
+    }
+
+    let selected_ids = select_drop_instance_ids(candidate_ids, drop_count, seed);
+    let selected: HashSet<u64> = selected_ids.into_iter().collect();
+
+    let mut dropped = Vec::new();
+    for container in &mut inventory.containers {
+        let container_id = container.id.clone();
+        let mut kept = Vec::with_capacity(container.items.len());
+        for placed in container.items.drain(..) {
+            if selected.contains(&placed.instance.instance_id) {
+                dropped.push(DroppedItemRecord {
+                    container_id: container_id.clone(),
+                    row: placed.row,
+                    col: placed.col,
+                    instance: placed.instance,
+                });
+            } else {
+                kept.push(placed);
+            }
+        }
+        container.items = kept;
+    }
+
+    if !dropped.is_empty() {
+        bump_revision(inventory);
+    }
+
+    DeathDropOutcome {
+        revision: inventory.revision,
+        dropped,
+    }
+}
+
+pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
+    let container_weight = inventory
+        .containers
+        .iter()
+        .flat_map(|container| container.items.iter())
+        .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
+        .sum::<f64>();
+    let equipped_weight = inventory
+        .equipped
+        .values()
+        .map(|item| item.weight * item.stack_count as f64)
+        .sum::<f64>();
+    let hotbar_weight = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .map(|item| item.weight * item.stack_count as f64)
+        .sum::<f64>();
+
+    container_weight + equipped_weight + hotbar_weight
+}
+
+pub fn dropped_loot_snapshot(
+    registry: &DroppedLootRegistry,
+    owner: Entity,
+) -> Vec<DroppedLootEntry> {
+    registry.by_owner.get(&owner).cloned().unwrap_or_default()
+}
+
+pub fn pickup_dropped_loot_instance(
+    inventory: &mut PlayerInventory,
+    registry: &mut DroppedLootRegistry,
+    owner: Entity,
+    player_pos: [f64; 3],
+    instance_id: u64,
+) -> Result<InventoryRevision, String> {
+    let entries = registry
+        .by_owner
+        .get_mut(&owner)
+        .ok_or_else(|| format!("no dropped loot registered for {owner:?}"))?;
+    let idx = entries
+        .iter()
+        .position(|entry| entry.instance_id == instance_id)
+        .ok_or_else(|| format!("dropped instance {instance_id} not found"))?;
+
+    let entry = entries[idx].clone();
+    let dx = entry.world_pos[0] - player_pos[0];
+    let dy = entry.world_pos[1] - player_pos[1];
+    let dz = entry.world_pos[2] - player_pos[2];
+    if dx * dx + dy * dy + dz * dz > 2.5f64 * 2.5f64 {
+        return Err(format!(
+            "dropped instance {instance_id} out of pickup range"
+        ));
+    }
+
+    let location = find_first_fit_container_location(inventory, &entry.item)
+        .ok_or_else(|| format!("no free container slot for dropped instance {instance_id}"))?;
+    attach_at_location(inventory, entry.item, &location)?;
+    bump_revision(inventory);
+
+    entries.remove(idx);
+    if entries.is_empty() {
+        registry.by_owner.remove(&owner);
+    }
+
+    Ok(inventory.revision)
+}
+
+pub fn discard_inventory_item_to_dropped_loot(
+    inventory: &mut PlayerInventory,
+    registry: &mut DroppedLootRegistry,
+    owner: Entity,
+    player_pos: [f64; 3],
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<InventoryDiscardOutcome, String> {
+    if !location_holds_instance(inventory, instance_id, from) {
+        return Err(format!(
+            "from-location {from:?} does not hold instance {instance_id}"
+        ));
+    }
+
+    let item = clone_item_at(inventory, instance_id)
+        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+
+    detach_instance(inventory, instance_id);
+    bump_revision(inventory);
+
+    let (source_container_id, source_row, source_col) = match from {
+        crate::schema::inventory::InventoryLocationV1::Container {
+            container_id,
+            row,
+            col,
+        } => (
+            container_id_str(container_id).to_string(),
+            *row as u8,
+            *col as u8,
+        ),
+        crate::schema::inventory::InventoryLocationV1::Equip { slot } => {
+            (equip_slot_key(slot).to_string(), 0, 0)
+        }
+        crate::schema::inventory::InventoryLocationV1::Hotbar { index } => {
+            ("hotbar".to_string(), 0, u64::from(*index) as u8)
+        }
+    };
+
+    let next_idx = registry
+        .by_owner
+        .get(&owner)
+        .map(|entries| entries.len())
+        .unwrap_or(0);
+    let dropped = DroppedLootEntry {
+        instance_id,
+        source_container_id,
+        source_row,
+        source_col,
+        world_pos: [
+            player_pos[0] + 0.35 + next_idx as f64 * 0.1,
+            player_pos[1],
+            player_pos[2] + 0.35,
+        ],
+        item,
+    };
+    registry
+        .by_owner
+        .entry(owner)
+        .or_default()
+        .push(dropped.clone());
+
+    Ok(InventoryDiscardOutcome {
+        revision: inventory.revision,
+        dropped,
+    })
+}
+
+pub fn sync_overloaded_marker(
+    mut commands: Commands,
+    players: Query<(Entity, &PlayerInventory, Option<&OverloadedMarker>)>,
+) {
+    for (entity, inventory, existing_marker) in &players {
+        let current_weight = calculate_current_weight(inventory);
+        let should_mark = current_weight > inventory.max_weight;
+
+        match (should_mark, existing_marker) {
+            (true, Some(marker))
+                if (marker.current_weight - current_weight).abs() < f64::EPSILON
+                    && (marker.max_weight - inventory.max_weight).abs() < f64::EPSILON => {}
+            (true, _) => {
+                commands.entity(entity).insert(OverloadedMarker {
+                    current_weight,
+                    max_weight: inventory.max_weight,
+                });
+            }
+            (false, Some(_)) => {
+                commands.entity(entity).remove::<OverloadedMarker>();
+            }
+            (false, None) => {}
+        }
+    }
+}
+
+fn death_drop_seed(entity: Entity, revision: u64) -> u64 {
+    entity
+        .to_bits()
+        .rotate_left(17)
+        .wrapping_add(revision.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+fn select_drop_instance_ids(
+    mut instance_ids: Vec<u64>,
+    drop_count: usize,
+    mut seed: u64,
+) -> Vec<u64> {
+    for idx in (1..instance_ids.len()).rev() {
+        seed = xorshift64(seed);
+        let swap_idx = (seed as usize) % (idx + 1);
+        instance_ids.swap(idx, swap_idx);
+    }
+    instance_ids.truncate(drop_count);
+    instance_ids
+}
+
+fn xorshift64(mut x: u64) -> u64 {
+    if x == 0 {
+        x = 0x9E37_79B9_7F4A_7C15;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    x
+}
+
+fn bump_revision(inventory: &mut PlayerInventory) {
+    inventory.revision = InventoryRevision(inventory.revision.0.saturating_add(1));
+}
+
+/// Returns Some(occupant) if `to` is occupied by another item, None if free.
+/// Returns Err if the target is structurally invalid (unknown container, out
+/// of bounds, multi-cell overlap that isn't a clean swap candidate).
+fn displaced_at_target(
+    inventory: &PlayerInventory,
+    item: &ItemInstance,
+    moving_instance_id: u64,
+    location: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<Option<ItemInstance>, String> {
+    use crate::schema::inventory::InventoryLocationV1;
+    match location {
+        InventoryLocationV1::Container {
+            container_id,
+            row,
+            col,
+        } => {
+            let cid = container_id_str(container_id);
+            let container = inventory
+                .containers
+                .iter()
+                .find(|c| c.id == cid)
+                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
+
+            let row_u8 = u8::try_from(*row).map_err(|_| format!("row {row} out of u8 range"))?;
+            let col_u8 = u8::try_from(*col).map_err(|_| format!("col {col} out of u8 range"))?;
+            if u16::from(row_u8) + u16::from(item.grid_h) > u16::from(container.rows)
+                || u16::from(col_u8) + u16::from(item.grid_w) > u16::from(container.cols)
+            {
+                return Err("target rectangle exceeds container bounds".to_string());
+            }
+
+            let candidate = PlacedItemState {
+                row: row_u8,
+                col: col_u8,
+                instance: item.clone(),
+            };
+            // Find ALL items whose footprints overlap the target rectangle,
+            // excluding the moving instance itself. If exactly one and its
+            // anchor sits at (row,col) with same footprint → swap candidate.
+            // Anything else → reject (multi-overlap not supported in v1).
+            let mut overlapping = container
+                .items
+                .iter()
+                .filter(|p| {
+                    p.instance.instance_id != moving_instance_id
+                        && placed_item_footprints_overlap(p, &candidate)
+                })
+                .collect::<Vec<_>>();
+            match overlapping.len() {
+                0 => Ok(None),
+                1 => {
+                    let occ = overlapping.pop().unwrap();
+                    if occ.row != row_u8 || occ.col != col_u8 {
+                        return Err(format!(
+                            "target overlaps instance {} at ({},{}) but anchors mismatch — multi-cell swap not supported",
+                            occ.instance.instance_id, occ.row, occ.col
+                        ));
+                    }
+                    Ok(Some(occ.instance.clone()))
+                }
+                n => Err(format!(
+                    "target overlaps {n} items — multi-overlap not supported"
+                )),
+            }
+        }
+        InventoryLocationV1::Equip { slot } => {
+            let key = equip_slot_key(slot);
+            match inventory.equipped.get(key) {
+                None => Ok(None),
+                Some(occupant) if occupant.instance_id == moving_instance_id => Ok(None),
+                Some(occupant) => Ok(Some(occupant.clone())),
+            }
+        }
+        InventoryLocationV1::Hotbar { index } => {
+            let idx = *index as usize;
+            if idx >= inventory.hotbar.len() {
+                return Err(format!("hotbar index {idx} out of range"));
+            }
+            match &inventory.hotbar[idx] {
+                None => Ok(None),
+                Some(occupant) if occupant.instance_id == moving_instance_id => Ok(None),
+                Some(occupant) => Ok(Some(occupant.clone())),
+            }
+        }
+    }
+}
+
+/// Validate that {item} would fit at {location} given the current state of the
+/// inventory (assumes both swap participants have been detached).
+fn validate_attach_fits(
+    inventory: &PlayerInventory,
+    item: &ItemInstance,
+    location: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<(), String> {
+    use crate::schema::inventory::InventoryLocationV1;
+    match location {
+        InventoryLocationV1::Container {
+            container_id,
+            row,
+            col,
+        } => {
+            let cid = container_id_str(container_id);
+            let container = inventory
+                .containers
+                .iter()
+                .find(|c| c.id == cid)
+                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
+            let row_u8 = u8::try_from(*row).map_err(|_| format!("row {row} out of u8 range"))?;
+            let col_u8 = u8::try_from(*col).map_err(|_| format!("col {col} out of u8 range"))?;
+            if u16::from(row_u8) + u16::from(item.grid_h) > u16::from(container.rows)
+                || u16::from(col_u8) + u16::from(item.grid_w) > u16::from(container.cols)
+            {
+                return Err("target rectangle exceeds container bounds".to_string());
+            }
+            let candidate = PlacedItemState {
+                row: row_u8,
+                col: col_u8,
+                instance: item.clone(),
+            };
+            for existing in &container.items {
+                if placed_item_footprints_overlap(existing, &candidate) {
+                    return Err(format!(
+                        "target overlaps instance {}",
+                        existing.instance.instance_id
+                    ));
+                }
+            }
+            Ok(())
+        }
+        InventoryLocationV1::Equip { slot } => {
+            let key = equip_slot_key(slot);
+            if inventory.equipped.contains_key(key) {
+                return Err(format!("equip slot '{key}' occupied"));
+            }
+            Ok(())
+        }
+        InventoryLocationV1::Hotbar { index } => {
+            let idx = *index as usize;
+            if idx >= inventory.hotbar.len() {
+                return Err(format!("hotbar index {idx} out of range"));
+            }
+            if inventory.hotbar[idx].is_some() {
+                return Err(format!("hotbar index {idx} occupied"));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn location_holds_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+    location: &crate::schema::inventory::InventoryLocationV1,
+) -> bool {
+    use crate::schema::inventory::InventoryLocationV1;
+    match location {
+        InventoryLocationV1::Container {
+            container_id,
+            row,
+            col,
+        } => {
+            let container = match inventory
+                .containers
+                .iter()
+                .find(|c| c.id == container_id_str(container_id))
+            {
+                Some(c) => c,
+                None => return false,
+            };
+            container.items.iter().any(|p| {
+                p.instance.instance_id == instance_id
+                    && u64::from(p.row) == *row
+                    && u64::from(p.col) == *col
+            })
+        }
+        InventoryLocationV1::Equip { slot } => {
+            let key = equip_slot_key(slot);
+            inventory
+                .equipped
+                .get(key)
+                .map(|item| item.instance_id == instance_id)
+                .unwrap_or(false)
+        }
+        InventoryLocationV1::Hotbar { index } => {
+            let idx = *index as usize;
+            if idx >= inventory.hotbar.len() {
+                return false;
+            }
+            inventory.hotbar[idx]
+                .as_ref()
+                .map(|item| item.instance_id == instance_id)
+                .unwrap_or(false)
+        }
+    }
+}
+
+fn clone_item_at(inventory: &PlayerInventory, instance_id: u64) -> Option<ItemInstance> {
+    for c in &inventory.containers {
+        if let Some(p) = c
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == instance_id)
+        {
+            return Some(p.instance.clone());
+        }
+    }
+    for item in inventory.equipped.values() {
+        if item.instance_id == instance_id {
+            return Some(item.clone());
+        }
+    }
+    for item in inventory.hotbar.iter().flatten() {
+        if item.instance_id == instance_id {
+            return Some(item.clone());
+        }
+    }
+    None
+}
+
+fn detach_instance(inventory: &mut PlayerInventory, instance_id: u64) {
+    for c in &mut inventory.containers {
+        c.items.retain(|p| p.instance.instance_id != instance_id);
+    }
+    inventory
+        .equipped
+        .retain(|_, item| item.instance_id != instance_id);
+    for slot in inventory.hotbar.iter_mut() {
+        if let Some(item) = slot {
+            if item.instance_id == instance_id {
+                *slot = None;
+            }
+        }
+    }
+}
+
+fn attach_at_location(
+    inventory: &mut PlayerInventory,
+    item: ItemInstance,
+    location: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<(), String> {
+    use crate::schema::inventory::InventoryLocationV1;
+    match location {
+        InventoryLocationV1::Container {
+            container_id,
+            row,
+            col,
+        } => {
+            let cid = container_id_str(container_id);
+            let container = inventory
+                .containers
+                .iter_mut()
+                .find(|c| c.id == cid)
+                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
+            let row_u8 = u8::try_from(*row).map_err(|_| "row out of range".to_string())?;
+            let col_u8 = u8::try_from(*col).map_err(|_| "col out of range".to_string())?;
+            container.items.push(PlacedItemState {
+                row: row_u8,
+                col: col_u8,
+                instance: item,
+            });
+            Ok(())
+        }
+        InventoryLocationV1::Equip { slot } => {
+            let key = equip_slot_key(slot).to_string();
+            inventory.equipped.insert(key, item);
+            Ok(())
+        }
+        InventoryLocationV1::Hotbar { index } => {
+            let idx = *index as usize;
+            if idx >= inventory.hotbar.len() {
+                return Err(format!("hotbar index {idx} out of range"));
+            }
+            inventory.hotbar[idx] = Some(item);
+            Ok(())
+        }
+    }
+}
+
+fn find_first_fit_container_location(
+    inventory: &PlayerInventory,
+    item: &ItemInstance,
+) -> Option<crate::schema::inventory::InventoryLocationV1> {
+    use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+
+    let ordered = [
+        (MAIN_PACK_CONTAINER_ID, ContainerIdV1::MainPack),
+        (SMALL_POUCH_CONTAINER_ID, ContainerIdV1::SmallPouch),
+        (FRONT_SATCHEL_CONTAINER_ID, ContainerIdV1::FrontSatchel),
+    ];
+
+    for (runtime_id, wire_id) in ordered {
+        let Some(container) = inventory.containers.iter().find(|c| c.id == runtime_id) else {
+            continue;
+        };
+        for row in 0..container.rows {
+            for col in 0..container.cols {
+                let location = InventoryLocationV1::Container {
+                    container_id: wire_id.clone(),
+                    row: u64::from(row),
+                    col: u64::from(col),
+                };
+                if validate_attach_fits(inventory, item, &location).is_ok() {
+                    return Some(location);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn container_id_str(cid: &crate::schema::inventory::ContainerIdV1) -> &str {
+    use crate::schema::inventory::ContainerIdV1;
+    match cid {
+        ContainerIdV1::MainPack => MAIN_PACK_CONTAINER_ID,
+        ContainerIdV1::SmallPouch => SMALL_POUCH_CONTAINER_ID,
+        ContainerIdV1::FrontSatchel => FRONT_SATCHEL_CONTAINER_ID,
+    }
+}
+
+fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str {
+    use crate::schema::inventory::EquipSlotV1;
+    match slot {
+        EquipSlotV1::Head => EQUIP_SLOT_HEAD,
+        EquipSlotV1::Chest => EQUIP_SLOT_CHEST,
+        EquipSlotV1::Legs => EQUIP_SLOT_LEGS,
+        EquipSlotV1::Feet => EQUIP_SLOT_FEET,
+        EquipSlotV1::MainHand => EQUIP_SLOT_MAIN_HAND,
+        EquipSlotV1::OffHand => EQUIP_SLOT_OFF_HAND,
+        EquipSlotV1::TwoHand => EQUIP_SLOT_TWO_HAND,
+    }
+}
+
 fn placed_item_footprints_overlap(left: &PlacedItemState, right: &PlacedItemState) -> bool {
     let left_row_start = u16::from(left.row);
     let left_row_end = left_row_start + u16::from(left.instance.grid_h);
@@ -861,6 +1953,7 @@ fn build_item_instance_from_template(
         stack_count,
         spirit_quality,
         durability,
+        freshness: None,
     })
 }
 
@@ -980,6 +2073,9 @@ mod tests {
                     spirit_quality_initial: 1.0,
                     description: "test template".to_string(),
                     effect: None,
+                    cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                    cooldown_ms: DEFAULT_COOLDOWN_MS,
+                    weapon_spec: None,
                 },
             );
         }
@@ -995,26 +2091,37 @@ mod tests {
     }
 
     #[test]
-    fn loads_default_loadout_with_starter_talisman() {
+    fn loads_default_loadout_includes_textured_starter_kit() {
+        // 默认 loadout 改用有 client PNG 的物品（避免 missing_texture 渲染）。
+        // 至少应包含 spirit_grass / ningmai_powder（plan-HUD-v1 起手套件）。
         let registry = load_item_registry().expect("item registry should load");
         let loadout = load_default_loadout(&registry).expect("default loadout should load");
 
-        let contains_starter_talisman = loadout
+        let all_template_ids: Vec<&str> = loadout
             .containers
             .iter()
-            .flat_map(|container| container.items.iter())
-            .any(|item| item.instance.template_id == "starter_talisman")
-            || loadout
-                .equipped
-                .values()
-                .any(|item| item.template_id == "starter_talisman")
-            || loadout
-                .hotbar
-                .iter()
-                .flatten()
-                .any(|item| item.template_id == "starter_talisman");
+            .flat_map(|c| c.items.iter().map(|p| p.instance.template_id.as_str()))
+            .chain(
+                loadout
+                    .equipped
+                    .values()
+                    .map(|item| item.template_id.as_str()),
+            )
+            .chain(
+                loadout
+                    .hotbar
+                    .iter()
+                    .flatten()
+                    .map(|item| item.template_id.as_str()),
+            )
+            .collect();
 
-        assert!(contains_starter_talisman);
+        for required in ["spirit_grass", "ningmai_powder", "guyuan_pill"] {
+            assert!(
+                all_template_ids.contains(&required),
+                "default loadout missing required textured item `{required}`; have: {all_template_ids:?}"
+            );
+        }
     }
 
     #[test]
@@ -1192,6 +2299,9 @@ cols = 4
                 spirit_quality_initial: 1.0,
                 description: "test template".to_string(),
                 effect: None,
+                cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -1246,6 +2356,9 @@ cols = 4
                 spirit_quality_initial: 1.0,
                 description: "test template".to_string(),
                 effect: None,
+                cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -1318,5 +2431,566 @@ cols = 4
             .to_string();
 
         assert!(error.contains("unknown field `spirit_stones`"));
+    }
+
+    #[test]
+    fn runtime_grant_increments_revision_and_creates_instance() {
+        let registry = load_item_registry().expect("item registry should load");
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator)
+            .expect("inventory should instantiate from loadout");
+
+        let baseline_revision = inventory.revision;
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            2,
+        )
+        .expect("runtime inventory grant should succeed for canonical herb");
+
+        assert_eq!(receipt.template_id, "ci_she_hao");
+        assert_eq!(receipt.stack_count, 2);
+        assert!(receipt.instance_id >= 1);
+        assert_eq!(inventory.revision.0, baseline_revision.0.saturating_add(1));
+
+        let main_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main pack should exist");
+        assert!(
+            main_pack
+                .items
+                .iter()
+                .any(|entry| entry.instance.template_id == "ci_she_hao"),
+            "runtime grant should materialize in main pack"
+        );
+    }
+
+    // ─── apply_inventory_move ───────────────────────────────────────────────
+
+    fn make_test_inventory_with_one_item() -> PlayerInventory {
+        let item = ItemInstance {
+            instance_id: 42,
+            template_id: "starter_talisman".to_string(),
+            display_name: "启程护符".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.2,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        };
+        PlayerInventory {
+            revision: InventoryRevision(7),
+            containers: vec![
+                ContainerState {
+                    id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![PlacedItemState {
+                        row: 0,
+                        col: 0,
+                        instance: item,
+                    }],
+                },
+                ContainerState {
+                    id: SMALL_POUCH_CONTAINER_ID.to_string(),
+                    name: "小口袋".to_string(),
+                    rows: 3,
+                    cols: 3,
+                    items: Vec::new(),
+                },
+                ContainerState {
+                    id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
+                    name: "前挂包".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                },
+            ],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    #[test]
+    fn apply_move_grid_to_hotbar_succeeds_and_bumps_revision() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let mut inv = make_test_inventory_with_one_item();
+        let outcome = apply_inventory_move(
+            &mut inv,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 3 },
+        )
+        .expect("move should succeed");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert!(inv.containers[0].items.is_empty());
+        assert_eq!(inv.hotbar[3].as_ref().unwrap().instance_id, 42);
+    }
+
+    #[test]
+    fn apply_move_rejects_when_from_does_not_match() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let mut inv = make_test_inventory_with_one_item();
+        let result = apply_inventory_move(
+            &mut inv,
+            42,
+            // Wrong from cell.
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 1,
+                col: 1,
+            },
+            &InventoryLocationV1::Hotbar { index: 3 },
+        );
+
+        assert!(result.is_err());
+        // Inventory unchanged.
+        assert_eq!(inv.revision, InventoryRevision(7));
+        assert_eq!(inv.containers[0].items.len(), 1);
+        assert!(inv.hotbar[3].is_none());
+    }
+
+    #[test]
+    fn apply_move_swaps_when_target_occupied_with_same_footprint() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let mut inv = make_test_inventory_with_one_item();
+        // Pre-populate hotbar slot 3 with a 1×1 item.
+        inv.hotbar[3] = Some(ItemInstance {
+            instance_id: 99,
+            template_id: "blocker".to_string(),
+            display_name: "占位物".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        });
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 3 },
+        )
+        .expect("swap should succeed");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Swapped {
+                revision: InventoryRevision(8),
+                displaced_instance_id: 99,
+            }
+        );
+        // Dragged is now at hotbar(3); displaced is at container(0,0).
+        assert_eq!(inv.hotbar[3].as_ref().unwrap().instance_id, 42);
+        assert_eq!(inv.containers[0].items.len(), 1);
+        assert_eq!(inv.containers[0].items[0].instance.instance_id, 99);
+        assert_eq!(inv.containers[0].items[0].row, 0);
+        assert_eq!(inv.containers[0].items[0].col, 0);
+    }
+
+    #[test]
+    fn apply_move_rejects_swap_when_footprints_differ() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let mut inv = make_test_inventory_with_one_item();
+        // Add a 2×2 occupant at container (2,2).
+        inv.containers[0].items.push(PlacedItemState {
+            row: 2,
+            col: 2,
+            instance: ItemInstance {
+                instance_id: 200,
+                template_id: "big".to_string(),
+                display_name: "大物".to_string(),
+                grid_w: 2,
+                grid_h: 2,
+                weight: 0.5,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+            },
+        });
+
+        // Try to drop 1×1 (#42) onto the 2×2 anchor — overlap, mismatched footprint → reject.
+        let result = apply_inventory_move(
+            &mut inv,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 2,
+                col: 2,
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(inv.revision, InventoryRevision(7));
+        // Both items remain in their original positions.
+        assert_eq!(inv.containers[0].items.len(), 2);
+    }
+
+    #[test]
+    fn apply_move_within_grid_succeeds() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let mut inv = make_test_inventory_with_one_item();
+        let _ = apply_inventory_move(
+            &mut inv,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 2,
+                col: 3,
+            },
+        )
+        .expect("intra-grid move should succeed");
+
+        assert_eq!(inv.containers[0].items.len(), 1);
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(placed.instance.instance_id, 42);
+        assert_eq!(placed.row, 2);
+        assert_eq!(placed.col, 3);
+    }
+
+    #[test]
+    fn consume_item_instance_once_decrements_stack_and_bumps_revision() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.stack_count = 3;
+
+        let out = consume_item_instance_once(&mut inv, 42).expect("consume should succeed");
+
+        assert_eq!(out.remaining_stack, 2);
+        assert_eq!(out.revision, InventoryRevision(8));
+        assert_eq!(inv.containers[0].items[0].instance.stack_count, 2);
+    }
+
+    #[test]
+    fn consume_item_instance_once_removes_last_stack_and_bumps_revision() {
+        let mut inv = make_test_inventory_with_one_item();
+
+        let out = consume_item_instance_once(&mut inv, 42).expect("consume should succeed");
+
+        assert_eq!(out.remaining_stack, 0);
+        assert_eq!(out.revision, InventoryRevision(8));
+        assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn select_drop_instance_ids_is_seed_stable() {
+        let ids = vec![1, 2, 3, 4, 5, 6];
+        let left = select_drop_instance_ids(ids.clone(), 3, 12345);
+        let right = select_drop_instance_ids(ids, 3, 12345);
+        assert_eq!(left, right);
+        assert_eq!(left.len(), 3);
+    }
+
+    #[test]
+    fn apply_death_drop_to_inventory_removes_half_of_container_items_only() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: ItemInstance {
+                instance_id: 43,
+                template_id: "ningmai_powder".to_string(),
+                display_name: "凝脉散".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.2,
+                rarity: ItemRarity::Uncommon,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+            },
+        });
+        inv.hotbar[0] = Some(ItemInstance {
+            instance_id: 99,
+            template_id: "bone_spike".to_string(),
+            display_name: "骨刺".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 0.3,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        });
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 100,
+                template_id: "rusted_blade".to_string(),
+                display_name: "残破旧铁短刃".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 0.5,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 0.5,
+                freshness: None,
+            },
+        );
+
+        let out = apply_death_drop_to_inventory(&mut inv, 777);
+
+        assert_eq!(out.dropped.len(), 1);
+        assert_eq!(out.revision, InventoryRevision(8));
+        assert_eq!(inv.containers[0].items.len(), 1);
+        assert!(inv.hotbar[0].is_some());
+        assert!(inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+    }
+
+    #[test]
+    fn apply_death_drop_on_revive_emits_event_when_items_are_dropped() {
+        use valence::prelude::{App, Events, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<DroppedItemEvent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_death_drop_on_revive);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let events = app.world().resource::<Events<DroppedItemEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "single carried item should not drop when floor(n/2)=0"
+        );
+
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inv.containers[0].items.push(PlacedItemState {
+                row: 0,
+                col: 1,
+                instance: ItemInstance {
+                    instance_id: 43,
+                    template_id: "ningmai_powder".to_string(),
+                    display_name: "凝脉散".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.2,
+                    rarity: ItemRarity::Uncommon,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                },
+            });
+        }
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let inv = app.world().get::<PlayerInventory>(entity).unwrap();
+        let events = app.world().resource::<Events<DroppedItemEvent>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(inv.revision, InventoryRevision(8));
+        assert_eq!(inv.containers[0].items.len(), 1);
+    }
+
+    #[test]
+    fn pickup_dropped_loot_instance_reinserts_item_and_clears_registry_entry() {
+        let mut inventory = make_test_inventory_with_one_item();
+        inventory.containers[0].items.clear();
+
+        let owner = Entity::PLACEHOLDER;
+        let mut registry = DroppedLootRegistry::default();
+        registry.by_owner.insert(
+            owner,
+            vec![DroppedLootEntry {
+                instance_id: 42,
+                source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                source_row: 0,
+                source_col: 0,
+                world_pos: [0.5, 64.0, 0.5],
+                item: ItemInstance {
+                    instance_id: 42,
+                    template_id: "starter_talisman".to_string(),
+                    display_name: "启程护符".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.2,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                },
+            }],
+        );
+
+        let revision = pickup_dropped_loot_instance(
+            &mut inventory,
+            &mut registry,
+            owner,
+            [0.0, 64.0, 0.0],
+            42,
+        )
+        .expect("pickup should succeed");
+
+        assert_eq!(revision, InventoryRevision(8));
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert!(registry.by_owner.get(&owner).is_none());
+    }
+
+    #[test]
+    fn discard_inventory_item_to_dropped_loot_removes_item_and_registers_drop() {
+        let mut inventory = make_test_inventory_with_one_item();
+        let owner = Entity::PLACEHOLDER;
+        let mut registry = DroppedLootRegistry::default();
+
+        let outcome = discard_inventory_item_to_dropped_loot(
+            &mut inventory,
+            &mut registry,
+            owner,
+            [0.0, 64.0, 0.0],
+            42,
+            &crate::schema::inventory::InventoryLocationV1::Container {
+                container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+        )
+        .expect("discard should succeed");
+
+        assert_eq!(outcome.revision, InventoryRevision(8));
+        assert!(inventory.containers[0].items.is_empty());
+        let drops = registry
+            .by_owner
+            .get(&owner)
+            .expect("registry should contain dropped item");
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].instance_id, 42);
+        assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+    }
+
+    #[test]
+    fn calculate_current_weight_includes_container_equipped_and_hotbar() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.weight = 1.5;
+        inv.containers[0].items[0].instance.stack_count = 2;
+        inv.hotbar[0] = Some(ItemInstance {
+            instance_id: 99,
+            template_id: "bone_spike".to_string(),
+            display_name: "骨刺".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        });
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 100,
+                template_id: "rusted_blade".to_string(),
+                display_name: "残破旧铁短刃".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 2.0,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+            },
+        );
+
+        let current = calculate_current_weight(&inv);
+
+        assert!((current - 5.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sync_overloaded_marker_adds_and_removes_marker_based_on_weight() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.add_systems(Update, sync_overloaded_marker);
+
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.weight = 60.0;
+        inv.max_weight = 50.0;
+        let entity = app.world_mut().spawn(inv).id();
+
+        app.update();
+
+        let marker = app
+            .world()
+            .get::<OverloadedMarker>(entity)
+            .expect("marker should exist");
+        assert!(marker.current_weight > marker.max_weight);
+
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inv.containers[0].items[0].instance.weight = 10.0;
+        }
+
+        app.update();
+
+        assert!(app.world().get::<OverloadedMarker>(entity).is_none());
     }
 }

@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.BongClient;
+import com.bong.client.botany.BotanyHarvestMode;
 import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
@@ -28,13 +29,11 @@ public final class ClientRequestSender {
     );
 
     private static final Backend DEFAULT_BACKEND = (channel, payload) -> {
-        if (!ClientPlayNetworking.canSend(channel)) {
-            BongClient.LOGGER.warn(
-                "Cannot send {} payload: channel not registered on server",
-                channel
-            );
-            return;
-        }
+        // 注意：不能用 ClientPlayNetworking.canSend() —— 它只对 Fabric 注册过通道的
+        // server 返 true，而 Bong server 是定制 Valence，没走 Fabric `minecraft:register`
+        // 协商。但 Valence 实际接收任何 channel 的 CustomPayload，所以 force send。
+        // canSend 失败时 vanilla MC 会丢包（unregistered_channel），不会崩，最差是
+        // server 端的 client_request_handler 没看到 packet —— 与 canSend 拒发等价。
         PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer(payload.length));
         buf.writeBytes(payload);
         ClientPlayNetworking.send(channel, buf);
@@ -62,6 +61,123 @@ public final class ClientRequestSender {
         ClientRequestProtocol.ForgeAxis axis
     ) {
         dispatch(ClientRequestProtocol.encodeForgeRequest(meridian, axis));
+    }
+
+    public static void sendBotanyHarvestRequest(String sessionId, BotanyHarvestMode mode) {
+        dispatch(ClientRequestProtocol.encodeBotanyHarvestRequest(sessionId, mode));
+    }
+
+    /** Combat UI 系列 C2S 通用发送入口。 */
+    public static void send(String type, com.google.gson.JsonObject payload) {
+        dispatch(ClientRequestProtocol.encodeGeneric(type, payload));
+    }
+
+    // ─── Inventory move intent ──────────────────────────────────────────────
+
+    public static void sendInventoryMove(
+        long instanceId,
+        ClientRequestProtocol.InvLocation from,
+        ClientRequestProtocol.InvLocation to
+    ) {
+        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
+    }
+
+    public static void sendPickupDroppedItem(long instanceId) {
+        dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
+    }
+
+    public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
+        dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
+    }
+
+    // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
+
+    public static void sendUseQuickSlot(int slot) {
+        dispatch(ClientRequestProtocol.encodeUseQuickSlot(slot));
+    }
+
+    public static void sendQuickSlotBind(int slot, String itemId) {
+        dispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
+    }
+
+    public static void sendJiemai() {
+        dispatch(ClientRequestProtocol.encodeJiemai());
+    }
+
+    public static void sendSwitchDefenseStance(String stance) {
+        dispatch(ClientRequestProtocol.encodeSwitchDefenseStance(stance));
+    }
+
+    // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
+
+    public static void sendAlchemyTurnPage(int delta) {
+        dispatch(ClientRequestProtocol.encodeAlchemyTurnPage(delta));
+    }
+
+    public static void sendAlchemyLearnRecipe(String recipeId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipe(recipeId));
+    }
+
+    public static void sendAlchemyOpenFurnace(String furnaceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(furnaceId));
+    }
+
+    public static void sendAlchemyIgnite(String recipeId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyIgnite(recipeId));
+    }
+
+    public static void sendAlchemyFeedSlot(int slotIdx, String material, int count) {
+        dispatch(ClientRequestProtocol.encodeAlchemyFeedSlot(slotIdx, material, count));
+    }
+
+    public static void sendAlchemyTakeBack(int slotIdx) {
+        dispatch(ClientRequestProtocol.encodeAlchemyTakeBack(slotIdx));
+    }
+
+    public static void sendAlchemyInjectQi(double qi) {
+        dispatch(ClientRequestProtocol.encodeAlchemyInjectQi(qi));
+    }
+
+    public static void sendAlchemyAdjustTemp(double temp) {
+        dispatch(ClientRequestProtocol.encodeAlchemyAdjustTemp(temp));
+    }
+
+    public static void sendAlchemyTakePill(String pillItemId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyTakePill(pillItemId));
+    }
+
+    public static void sendApplyPill(long instanceId, ClientRequestProtocol.ApplyPillTarget target) {
+        dispatch(ClientRequestProtocol.encodeApplyPill(instanceId, target));
+    }
+
+    public static void sendApplyPillSelf(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
+    }
+
+    // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
+
+    public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartTill(x, y, z, hoeInstanceId, mode));
+    }
+
+    public static void sendLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartRenew(x, y, z, hoeInstanceId));
+    }
+
+    public static void sendLingtianStartPlanting(int x, int y, int z, String plantId) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartPlanting(x, y, z, plantId));
+    }
+
+    public static void sendLingtianStartHarvest(int x, int y, int z, String mode) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartHarvest(x, y, z, mode));
+    }
+
+    public static void sendLingtianStartReplenish(int x, int y, int z, String source) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartReplenish(x, y, z, source));
+    }
+
+    public static void sendLingtianStartDrainQi(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeLingtianStartDrainQi(x, y, z));
     }
 
     private static void dispatch(String json) {

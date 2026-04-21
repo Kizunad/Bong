@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "type": "alchemy_contamination",
+  "levels": [
+    {
+      "color": "Mellow",
+      "current": 0.18,
+      "max": 0.6,
+      "ok": true
+    },
+    {
+      "color": "Violent",
+      "current": 0.93,
+      "max": 1.0,
+      "ok": false
+    }
+  ],
+  "metabolism_note": "代谢速率 = 经脉 sum_rate × integrity（contamination_tick 10:15）"
+}

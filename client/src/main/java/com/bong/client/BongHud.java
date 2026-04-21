@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import com.bong.client.botany.HarvestSessionStore;
+import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DefenseStanceStore;
@@ -11,16 +13,22 @@ import com.bong.client.combat.UnlockedStylesStore;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.client.render.Camera;
+import net.minecraft.util.math.Vec3d;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
+import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.Identifier;
 
 import java.util.List;
 import java.util.Objects;
@@ -42,6 +50,8 @@ public class BongHud {
         // Tick cast-state + defense-window expiries so they self-clear each frame.
         CastStateStore.tick(nowMillis);
         DefenseWindowStore.tick(nowMillis);
+        // Open death/terminate screens when the server activates them.
+        com.bong.client.combat.screen.CombatScreenOpener.tick();
 
         Screen currentScreen = client.currentScreen;
         ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);
@@ -51,6 +61,8 @@ public class BongHud {
 
         CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
 
+        BotanyProjection.Anchor botanyAnchor = computeBotanyAnchor(client);
+
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateStore.snapshot(),
             combatSnapshot,
@@ -58,7 +70,8 @@ public class BongHud {
             client.textRenderer::getWidth,
             HUD_TEXT_MAX_WIDTH,
             client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight()
+            client.getWindow().getScaledHeight(),
+            botanyAnchor
         );
 
         if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
@@ -74,6 +87,23 @@ public class BongHud {
             }
             if (command.isRect()) {
                 context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+                continue;
+            }
+            if (command.isTexturedRect()) {
+                Identifier tex = parseIdentifier(command.texturePath());
+                if (tex != null) {
+                    context.drawTexture(
+                        tex,
+                        command.x(), command.y(),
+                        0.0f, 0.0f,
+                        command.width(), command.height(),
+                        command.width(), command.height()
+                    );
+                }
+                continue;
+            }
+            if (command.isItemTexture()) {
+                drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
                 continue;
             }
             if (command.isToast()) {
@@ -94,8 +124,43 @@ public class BongHud {
                 OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
             } else if (command.isEdgeVignette()) {
                 EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            } else if (command.isEdgeInkWash()) {
+                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+    }
+
+    private static Identifier parseIdentifier(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        try {
+            return new Identifier(path);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static BotanyProjection.Anchor computeBotanyAnchor(MinecraftClient client) {
+        HarvestSessionViewModel session = HarvestSessionStore.snapshot();
+        if (!session.hasTargetPos() || client.gameRenderer == null) {
+            return null;
+        }
+        Camera camera = client.gameRenderer.getCamera();
+        if (camera == null) {
+            return null;
+        }
+        Vec3d camPos = camera.getPos();
+        double[] pos = session.targetPos();
+        double fov = client.options.getFov().getValue().doubleValue();
+        return BotanyProjection.project(
+            pos[0], pos[1], pos[2],
+            camPos.x, camPos.y, camPos.z,
+            camera.getYaw(), camera.getPitch(),
+            fov,
+            client.getWindow().getScaledWidth(),
+            client.getWindow().getScaledHeight()
+        );
     }
 
     private static CombatHudSnapshot captureCombatSnapshot(MinecraftClient client) {
@@ -155,6 +220,35 @@ public class BongHud {
         BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
         BongEventAlertOverlay.render(surface, snapshot.eventAlert());
         renderToast(surface, snapshot.toast());
+        com.bong.client.lingtian.LingtianSessionHud.render(
+            surface,
+            com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
+        );
+    }
+
+    /**
+     * Draw a 128×128 source PNG (`bong-client:textures/gui/items/{itemId}.png`)
+     * scaled into a {@code size×size} box at {@code (dx, dy)}. Mirrors the
+     * approach used in {@code GridSlotComponent.drawItemTexture}.
+     */
+    private static void drawItemTexture(DrawContext context, String itemId, int dx, int dy, int size) {
+        if (itemId == null || itemId.isEmpty() || size <= 0) return;
+        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
+
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.enableDepthTest();
+
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(dx, dy, 100);
+        float scale = (float) size / 128.0f;
+        matrices.scale(scale, scale, 1.0f);
+
+        context.drawTexture(tex, 0, 0, 128, 128, 0, 0, 128, 128, 128, 128);
+
+        matrices.pop();
+        RenderSystem.disableBlend();
     }
 
     private static void renderToast(HudSurface surface, NarrationState.ToastState toast) {
@@ -175,7 +269,7 @@ public class BongHud {
         surface.drawText(toast.text(), x, y, toast.color(), true);
     }
 
-    interface HudSurface {
+    public interface HudSurface {
         int windowWidth();
 
         int windowHeight();

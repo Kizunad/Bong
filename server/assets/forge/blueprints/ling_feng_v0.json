@@ -1,0 +1,60 @@
+{
+  "id": "ling_feng_v0",
+  "name": "灵锋（测试）",
+  "station_tier_min": 2,
+  "tier_cap": 4,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "xuan_iron", "count": 3 }],
+        "optional_carriers": [
+          { "material": "ling_wood",     "unlocks_tier": 3 },
+          { "material": "yi_beast_bone", "unlocks_tier": 4 }
+        ],
+        "tolerance": { "count_miss": 0 }
+      }
+    },
+    {
+      "kind": "tempering",
+      "profile": {
+        "pattern": ["H", "L", "F", "H", "L", "F", "F", "H", "L", "F", "H", "H", "F", "L", "H"],
+        "window_ticks": 8,
+        "qi_per_hit": 0.8,
+        "tolerance": { "miss_allowed": 1 }
+      }
+    },
+    {
+      "kind": "inscription",
+      "profile": {
+        "slots": 2,
+        "required_scroll_count": 2,
+        "tolerance": { "fail_chance": 0.2 }
+      }
+    },
+    {
+      "kind": "consecration",
+      "profile": {
+        "qi_cost": 80.0,
+        "min_realm": "Spirit",
+        "tolerance": { "qi_miss_ratio": 0.05 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "ling_feng_sword",        "quality": 1.0 },
+    "good":    { "weapon": "ling_feng_sword",        "quality": 0.8 },
+    "flawed":  { "weapon": "ling_feng_sword_flawed", "quality": 0.4 },
+    "waste":   null,
+    "explode": { "damage": 40.0, "station_wear": 0.12 }
+  },
+  "flawed_fallback": {
+    "weapon": "ling_feng_sword_flawed",
+    "quality_scale": 0.4,
+    "side_effect_pool": [
+      { "tag": "random_color_tint",   "color": "Insidious", "weight": 1 },
+      { "tag": "qi_cap_perm_minus_1", "perm": true,         "weight": 1 },
+      { "tag": "rare_weapon_insight",                       "weight": 1 }
+    ]
+  }
+}

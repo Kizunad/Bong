@@ -6,6 +6,38 @@
 
 ## plan-alchemy-v1
 
+### ✅ 已落地（2026-04-15，server P0–P5）
+- `server/src/alchemy/`（recipe / session / outcome / resolver / pill / learned / furnace）全部建模
+- 3 份测试 recipe JSON 加载通过（kai_mai / hui_yuan / du_ming）
+- 精确匹配 + 残缺 fallback + side_effect_pool 决定性抽取 + LifeRecord `AlchemyAttempt`
+- 服药 → `ContamSource` 注入（`attacker_id=None`）复用 `contamination_tick`；同色阈值 1.0 禁服
+- 50 个单测全绿，集成测试验证 "起炉 → 结算 → 服药 → 污染" 全流程
+
+### ✅ 已落地（2026-04-21，§1.2 放置炉 server-only MVP）
+- `ClientRequestV1::AlchemyFurnacePlace` payload + TypeBox 对齐
+- `PlaceFurnaceRequest` 事件 → `handle_alchemy_furnace_place` 系统
+- `AlchemyFurnace::placed(pos, tier)` + `block_pos()` + `furnace_tier_from_item_id("furnace_fantie") → 1`
+- 拆掉玩家加入时挂的自带虚拟炉（改为只挂 `LearnedRecipes`）；没世界炉 = 炼不了丹
+- 放置成功刷 `BlockState::FURNACE`；同坐标拒绝叠放；非炉类物品拒绝；多炉并行 OK
+- `server/assets/items/core.toml` 加 `furnace_fantie`（凡铁炉 2×2 misc）
+- 5 个集成测试（place / duplicate / wrong-item / multi / unknown-instance）全绿
+
+### 仍延后（本次没做）
+- **Fabric 客户端**拦截 vanilla `UseItemOnC2s` → 查 Bong inventory 选中物品 → 发 `AlchemyFurnacePlace` payload（server 侧已就绪，等客户端接）
+- **纯内存炉**：服务器重启 = 所有放置炉丢失。`AlchemyFurnace::pos` 是 `Option<(i32,i32,i32)>` 可 serde，持久化等 plan-persistence-v1 对接
+- **多炉 session 路由**：现在 `AlchemyIntervention` 等沿用"每玩家一炉"假设（`AlchemyRequestParams.furnaces.get_mut(ev.client)`），改为"按 BlockPos 定位炉"后还需给 `AlchemyOpenFurnace` / `AlchemyIgnite` / `AlchemyIntervention` payload 加 `furnace_pos` 字段
+- **高阶炉 item**：`furnace_lingtie`（tier 2）/ `furnace_xiantie`（tier 3）等 forge-v1 品阶系统落地后批量补齐；`furnace_tier_from_item_id` 只需扩 match 分支
+- **视觉资产**（3 档全链路）：
+  - `furnace_fantie` **item 图标** 128×128 PNG 缺失（路径 `client/src/main/resources/assets/bong-client/textures/gui/items/furnace_fantie.png`）— Fabric 通路接通前玩家看不到背包图标，用 `/gen-image` 基于 MC 原版熔炉风格合成一张即可
+  - **世界方块模型** 目前服务端放 `BlockState::FURNACE`（vanilla），世界里就是原版熔炉外观。若要自定义"凡铁炉"形态需客户端 Fabric 注册自定义 block + 自带 blockstate/model/texture JSON，服务端用 valence 目前无法直接放自定义 BlockState。短期可接受共用 vanilla 外观；长期考虑走"资源包级 override"或等 Fabric mod 侧扩展 block registry
+  - 高阶炉（灵铁 / 仙铁）图标 + 可能的 3D 模型差异同上，一并等 forge-v1 品阶定下来
+- **客户端 Screen**（plan §3.3 三列 owo-lib UI）— 需要 DragState 扩展 `FURNACE_SLOT` + 新 store + 炉方块右键打开流程
+- **Redis channel** `bong:alchemy/*` + agent `@bong/schema/src/alchemy-recipe.ts` TypeBox 对齐
+- **BlockEntity 持久化**（plan §1.3 离线持续性）— 需 plan-persistence-v1 对接
+- **炉方块放置 + 右键 → `StartAlchemyRequest`**（需要 world/block 侧接入）— 放置已完成，右键"开炉"仍需客户端
+- **炸炉真正结算**（ResolvedOutcome::Explode 的 damage / meridian_crack 应用到 caster 实体）
+- **skill XP 事件**（plan-skill-v1 §7）
+
 ### 依赖外部 plan 尚未立项
 
 - [ ] **plan-botany-v1**（植物/采集）未立 — alchemy §3 的材料全是 placeholder ID (`kai_mai_cao` / `ling_shui` / `xue_cao` / `shou_gu` / `huo_jing` / `bai_cao`)。botany 落地后需替换为真实 item registry，并定义"灵气 > 0.3 才生长"接入。
@@ -101,13 +133,49 @@
 
 ---
 
+## plan-botany-v1 → 天道 agent 钩子（待 agent 侧接入）
+
+- [ ] **订阅 `bong:botany/ecology` channel**（plan §7 生态可视化 · server 每 600 tick / ~30s 发布 `BotanyEcologySnapshotV1`）。
+  - payload 结构：`{ v: 1, tick, zones: [{ zone, spirit_qi, plant_counts[{ kind, count }], variant_counts[{ variant: none|thunder|tainted, count }] }] }`
+  - agent 用途：
+    - 全局灵气重分配决策（plan-worldview §七 天道回收）—— 哪些 zone 植物密度过高/灵气透支
+    - 天道观测稀有变种分布（Thunder / Tainted）—— 用于 narrative 事件埋点
+    - 调试用：agent 掉线时靠 channel 追数据
+  - Rust side：`crate::schema::botany::BotanyEcologySnapshotV1`，`RedisOutbound::BotanyEcology`
+  - TS side：`@bong/schema` `BotanyEcologySnapshotV1` + `CHANNELS.BOTANY_ECOLOGY`
+
+---
+
+## plan-inventory-v1（并行开发中，botany 接入的已知缺口）
+
+- [ ] **塔科夫 grid placement 未实装**（`server/src/inventory/mod.rs:376 add_item_to_player_inventory`）：目前每次 harvest drop 直接 `main_pack.items.push({ row:0, col:0, instance })`，不做空 slot 搜索也不做冲突检测。单种植物多株 / 多植物同时入包 row-col 全部冲撞在 (0,0)，客户端塔科夫格位渲染会堆叠显示异常。
+- [ ] **stacking 未实装**：`add_item_to_player_inventory(..., stack_count)` 被 botany 调用时传 1，但如果后续传 >1，当前实现仅创建一个 `ItemInstance.stack_count = N` 而不与既有实例合并；也不校验 stack_count 与物品 `category` 的堆叠上限。
+- botany 这边的调用点（`server/src/botany/harvest.rs::complete_harvest_for_player`）已按"每次给 1 株 = 1 instance"写；等 inventory plan 把 placement + stacking 接上，botany 侧不需要改——`ItemRegistry` + `add_item_to_player_inventory` 的合约保持即可。
+
+---
+
+## plan-combat-no_ui
+
+### ✅ 已落地（2026-04-21，§13 C1 调试命令）
+- `!wound add <part> [severity]` / `!health set <n>` / `!stamina set <n>` 三条开发命令接入 `DebugCombatCommand` 事件通道，走 `server/src/combat/debug.rs::apply_debug_combat_commands` 消费（直接改写目标实体 `Wounds` / `Stamina`，不经 AttackIntent 管线）
+- **约定偏离**：plan §13 C1 checklist 2702 行原文写 `/wound add`（斜杠前缀），实装改为 `!wound`（叹号前缀），与现有 `!spawn` / `!gm` / `!tpzone` 等 dev 命令一致。原因：项目里 `/` 前缀走 `GameplayAction` 队列（需 tick 处理），`!` 前缀是直接快捷注入，更贴调试语义
+
+### C1 仍未做（低优先，非阻塞）
+- `AntiCheatCounter` component + CHANNEL_ANTICHEAT 推送（plan §1.5.6）：当前 reach/cooldown/qi_invest 三道 clamp 分散在 `resolve.rs`，无统一的违规计数 + 上报通道
+- 遗念 agent `deathInsight` tool：跨到修炼 plan + agent-v2 scope，等 death-lifecycle 立项时再对齐
+
+---
+
 ## 通用 / 跨 plan
 
 - [ ] 所有 plan 的"开放问题"节尚未做过一次 review pass — 可能有早期假设已被后续决策推翻
 - [ ] **灵眼结构未实装**：worldview §十 明确灵眼是凝脉→固元突破必需 + 血谷"灵眼(不固定)"，但 server/worldgen 都没有这个实体/方块/坐标登记。botany 稀有灵草曾打算锚在灵眼旁，改用其他锚点后可等灵眼系统立项再回补。
 - [ ] **采药工具系统未立**（botany §1.3）：目前右键即开小 session，后续加"采药刀 / 灵铲"影响品质/安全度，需要独立 item + 工具栏位接入
 - [ ] **alchemy 配方 placeholder 材料名未改正典**：`docs/plan-alchemy-v1.md §3.2` 的 JSON 仍用 `kai_mai_cao / ling_shui / xue_cao / shou_gu / huo_jing / bai_cao`，按 botany §6 hook 需替换为 `ci_she_hao / ning_mai_cao / chi_sui_cao / hui_yuan_zhi` 等正典名（来自 `docs/library/ecology/末法药材十七种.json` + `辛草试毒录.json`），同时对齐辛度 → 丹毒色（Mellow/Sharp/Violent）
-- [ ] **forge 配方材料未进 library**：`docs/plan-forge-v1.md §3.2` 用的 `xuan_iron / qing_steel / yi_beast_bone / ling_wood` 非正典；金属/骨需单独立 `plan-mineral-v1` / `plan-fauna-v1`，或补写入 `docs/library/ecology/` 或新开"矿物录"
+- [ ] **forge 配方材料未进 library**：`docs/plan-forge-v1.md §3.2` 用的 `xuan_iron / qing_steel / yi_beast_bone / ling_wood` 非正典：
+  - **矿物**：骨架已立（`docs/plans-skeleton/plan-mineral-v1.md`，2026-04-21）— 含原版方块改色映射 §4；对齐后批量替换 `xuan_iron → xuan_tie` / `qing_steel → qing_gang`
+  - **妖兽骨系**：待立 `plan-fauna-v1`
+  - **灵木系**：待立 `plan-spiritwood-v1`
 
 ---
 
