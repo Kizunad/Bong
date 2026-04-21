@@ -12,7 +12,7 @@ use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query,
 use super::compute::{compute_current_qi, compute_track_state};
 use super::container::container_storage_multiplier;
 use super::registry::DecayProfileRegistry;
-use super::types::{ContainerFreshnessBehavior, TrackState};
+use super::types::{ContainerFreshnessBehavior, DecayTrack, TrackState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::inventory::{inventory_item_by_instance, PlayerInventory};
 
@@ -42,6 +42,10 @@ pub enum ProbeResult {
     Denied { reason: ProbeDenialReason },
     /// 修为 ≥ 凝脉 通过查询，返回精确当下数值 + 路径机态。
     Precise {
+        /// Codex review r#36 P2 — track 与 track_state 必须同时返回：Fresh/Declining 是
+        /// path-agnostic 状态，UI 需要 track 才能选正确分档词（Decay "鲜品" vs Spoil
+        /// "新鲜" vs Age "青涩"）；避免消费方二次 inventory lookup 的 race 窗口。
+        track: DecayTrack,
         current_qi: f32,
         initial_qi: f32,
         track_state: TrackState,
@@ -133,6 +137,7 @@ fn resolve_one_probe(
         player: intent.player,
         instance_id: intent.instance_id,
         result: ProbeResult::Precise {
+            track: freshness.track,
             current_qi,
             initial_qi: freshness.initial_qi,
             track_state,
@@ -407,11 +412,13 @@ mod tests {
         let res = drain_responses(&mut app);
         match res[0].result {
             ProbeResult::Precise {
+                track,
                 current_qi,
                 initial_qi,
                 track_state,
                 predicted_event_ticks,
             } => {
+                assert_eq!(track, DecayTrack::Decay);
                 assert!((current_qi - 50.0).abs() < 1e-3);
                 assert!((initial_qi - 100.0).abs() < 1e-3);
                 assert_eq!(track_state, TrackState::Declining);
@@ -457,6 +464,92 @@ mod tests {
         assert_eq!(realm_rank(Realm::Solidify), 3);
         assert_eq!(realm_rank(Realm::Spirit), 4);
         assert_eq!(realm_rank(Realm::Void), 5);
+    }
+
+    // Codex review r#36 P2 — Precise payload 必须携带 DecayTrack，避免消费方二次查询。
+    #[test]
+    fn precise_returns_decay_track_for_spoil_profile() {
+        let mut app = setup_app();
+        let spoil_profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("probe_test_spoil"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            spoil_threshold: 10.0,
+        };
+        app.world_mut()
+            .resource_mut::<DecayProfileRegistry>()
+            .insert(spoil_profile.clone())
+            .unwrap();
+
+        let freshness = Freshness::new(0, 100.0, &spoil_profile);
+        let inv = make_inventory_with_item(make_item(1, Some(freshness)));
+        let player = app
+            .world_mut()
+            .spawn((inv, make_cultivation(Realm::Condense)))
+            .id();
+
+        app.world_mut().send_event(FreshnessProbeIntent {
+            player,
+            instance_id: 1,
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        let res = drain_responses(&mut app);
+        match res[0].result {
+            ProbeResult::Precise {
+                track, track_state, ..
+            } => {
+                assert_eq!(
+                    track,
+                    DecayTrack::Spoil,
+                    "Spoil profile must yield Spoil track"
+                );
+                assert_eq!(track_state, TrackState::Fresh);
+            }
+            ref other => panic!("expected Precise, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn precise_returns_decay_track_for_age_profile() {
+        let mut app = setup_app();
+        let age_profile = DecayProfile::Age {
+            id: DecayProfileId::new("probe_test_age"),
+            peak_at_ticks: 1000,
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 500,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: DecayProfileId::new("probe_test_age_spoil"),
+        };
+        app.world_mut()
+            .resource_mut::<DecayProfileRegistry>()
+            .insert(age_profile.clone())
+            .unwrap();
+
+        let freshness = Freshness::new(0, 100.0, &age_profile);
+        let inv = make_inventory_with_item(make_item(1, Some(freshness)));
+        let player = app
+            .world_mut()
+            .spawn((inv, make_cultivation(Realm::Condense)))
+            .id();
+
+        app.world_mut().send_event(FreshnessProbeIntent {
+            player,
+            instance_id: 1,
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        let res = drain_responses(&mut app);
+        match res[0].result {
+            ProbeResult::Precise { track, .. } => {
+                assert_eq!(track, DecayTrack::Age, "Age profile must yield Age track");
+            }
+            ref other => panic!("expected Precise, got {other:?}"),
+        }
     }
 
     #[test]
