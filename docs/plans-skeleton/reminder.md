@@ -172,7 +172,10 @@
 - [ ] **灵眼结构未实装**：worldview §十 明确灵眼是凝脉→固元突破必需 + 血谷"灵眼(不固定)"，但 server/worldgen 都没有这个实体/方块/坐标登记。botany 稀有灵草曾打算锚在灵眼旁，改用其他锚点后可等灵眼系统立项再回补。
 - [ ] **采药工具系统未立**（botany §1.3）：目前右键即开小 session，后续加"采药刀 / 灵铲"影响品质/安全度，需要独立 item + 工具栏位接入
 - [ ] **alchemy 配方 placeholder 材料名未改正典**：`docs/plan-alchemy-v1.md §3.2` 的 JSON 仍用 `kai_mai_cao / ling_shui / xue_cao / shou_gu / huo_jing / bai_cao`，按 botany §6 hook 需替换为 `ci_she_hao / ning_mai_cao / chi_sui_cao / hui_yuan_zhi` 等正典名（来自 `docs/library/ecology/末法药材十七种.json` + `辛草试毒录.json`），同时对齐辛度 → 丹毒色（Mellow/Sharp/Violent）
-- [ ] **forge 配方材料未进 library**：`docs/plan-forge-v1.md §3.2` 用的 `xuan_iron / qing_steel / yi_beast_bone / ling_wood` 非正典；金属/骨需单独立 `plan-mineral-v1` / `plan-fauna-v1`，或补写入 `docs/library/ecology/` 或新开"矿物录"
+- [ ] **forge 配方材料未进 library**：`docs/plan-forge-v1.md §3.2` 用的 `xuan_iron / qing_steel / yi_beast_bone / ling_wood` 非正典：
+  - **矿物**：骨架已立（`docs/plans-skeleton/plan-mineral-v1.md`，2026-04-21）— 含原版方块改色映射 §4；对齐后批量替换 `xuan_iron → xuan_tie` / `qing_steel → qing_gang`
+  - **妖兽骨系**：待立 `plan-fauna-v1`
+  - **灵木系**：待立 `plan-spiritwood-v1`
 
 ---
 
