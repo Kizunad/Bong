@@ -1,0 +1,243 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "currentEra",
+    "zoneHistory",
+    "lastDecisions",
+    "playerFirstSeenTick",
+    "lastTick",
+    "lastStateTs"
+  ],
+  "properties": {
+    "currentEra": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name",
+            "sinceTick",
+            "globalEffect"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "sinceTick": {
+              "type": "integer"
+            },
+            "globalEffect": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "zoneHistory": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "spirit_qi",
+              "danger_level",
+              "active_events",
+              "player_count"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "spirit_qi": {
+                "minimum": -1,
+                "maximum": 1,
+                "type": "number"
+              },
+              "danger_level": {
+                "minimum": 0,
+                "maximum": 5,
+                "type": "integer"
+              },
+              "active_events": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "player_count": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "lastDecisions": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "commands",
+            "narrations",
+            "reasoning"
+          ],
+          "properties": {
+            "commands": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "type",
+                  "target",
+                  "params"
+                ],
+                "properties": {
+                  "type": {
+                    "anyOf": [
+                      {
+                        "const": "spawn_event",
+                        "type": "string"
+                      },
+                      {
+                        "const": "spawn_npc",
+                        "type": "string"
+                      },
+                      {
+                        "const": "despawn_npc",
+                        "type": "string"
+                      },
+                      {
+                        "const": "faction_event",
+                        "type": "string"
+                      },
+                      {
+                        "const": "modify_zone",
+                        "type": "string"
+                      },
+                      {
+                        "const": "npc_behavior",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "target": {
+                    "description": "区域名 or NPC ID",
+                    "type": "string"
+                  },
+                  "params": {
+                    "description": "指令参数。spawn_event: {event, intensity, duration_ticks, target_player?}; spawn_npc: {archetype}; despawn_npc: {}; faction_event: {kind, faction_id, subject_id?, mission_id?, loyalty_delta?}; modify_zone: {spirit_qi_delta, danger_level_delta?}; npc_behavior: {aggression?, flee_threshold?, patrol_radius?}",
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  }
+                }
+              }
+            },
+            "narrations": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "scope",
+                  "text",
+                  "style"
+                ],
+                "properties": {
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "const": "broadcast",
+                        "type": "string"
+                      },
+                      {
+                        "const": "zone",
+                        "type": "string"
+                      },
+                      {
+                        "const": "player",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "target": {
+                    "description": "zone name or player uuid, required when scope != broadcast",
+                    "type": "string"
+                  },
+                  "text": {
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "style": {
+                    "anyOf": [
+                      {
+                        "const": "system_warning",
+                        "type": "string"
+                      },
+                      {
+                        "const": "perception",
+                        "type": "string"
+                      },
+                      {
+                        "const": "narration",
+                        "type": "string"
+                      },
+                      {
+                        "const": "era_decree",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "playerFirstSeenTick": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "type": "integer"
+        }
+      }
+    },
+    "lastTick": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lastStateTs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

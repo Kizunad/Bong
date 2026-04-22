@@ -22,6 +22,8 @@ pub mod weapon_equipped_emit;
 pub mod wounds_snapshot_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_bridge::{
@@ -35,7 +37,7 @@ use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
     ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, Resource, Update, Username, With,
+    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
@@ -44,9 +46,18 @@ use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, M
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
+use crate::persistence::{
+    bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
+    world_model_snapshot_to_mirror_fields, AgentWorldModelCommandRecord,
+    AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord, AgentWorldModelSnapshotRecord,
+    PersistenceSettings, WORLD_MODEL_STATE_KEY,
+};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
-use crate::schema::common::{EventKind, NpcStateKind, PlayerTrend};
+use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
+use crate::schema::common::{
+    CommandType, EventKind, NarrationScope, NarrationStyle, NpcStateKind, PlayerTrend,
+};
 use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{
@@ -55,6 +66,9 @@ use crate::schema::world_state::{
 };
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+#[cfg(test)]
+use crate::persistence::{load_agent_decisions, load_agent_eras};
 
 const REDIS_URL_ENV_KEY: &str = "REDIS_URL";
 const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
@@ -65,6 +79,7 @@ const DEFAULT_PLAYER_RECENT_KILLS: u32 = 0;
 const DEFAULT_PLAYER_RECENT_DEATHS: u32 = 0;
 const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
 const NARRATION_DEDUPE_CAPACITY: usize = 512;
+const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -73,6 +88,24 @@ pub struct RedisBridgeResource {
 }
 
 impl Resource for RedisBridgeResource {}
+
+#[derive(Clone)]
+pub struct RuntimeMirrorRedisConfig {
+    client: redis::Client,
+    connection: Arc<Mutex<Option<redis::Connection>>>,
+}
+
+impl Resource for RuntimeMirrorRedisConfig {}
+
+impl RuntimeMirrorRedisConfig {
+    fn new(url: String) -> io::Result<Self> {
+        let client = redis::Client::open(url.as_str()).map_err(io::Error::other)?;
+        Ok(Self {
+            client,
+            connection: Arc::new(Mutex::new(None)),
+        })
+    }
+}
 
 /// Tick counter for world state publishing
 #[derive(Default)]
@@ -95,6 +128,13 @@ struct NarrationDedupeResource {
 }
 
 impl Resource for NarrationDedupeResource {}
+
+#[derive(Default)]
+struct WorldModelMirrorReconcileState {
+    ticks_since_last_reconcile: u64,
+}
+
+impl Resource for WorldModelMirrorReconcileState {}
 
 impl NarrationDedupeResource {
     fn should_drop(&mut self, payload_key: &str, now_secs: u64) -> bool {
@@ -153,12 +193,23 @@ pub fn register(app: &mut App) {
         tx_outbound,
         rx_inbound,
     });
+    let runtime_mirror_redis =
+        RuntimeMirrorRedisConfig::new(redis_url.clone()).unwrap_or_else(|error| {
+            panic!(
+                "failed to initialize runtime mirror redis client for {}: {error}",
+                redact_redis_url_for_log(redis_url.as_str())
+            )
+        });
+    app.insert_resource(runtime_mirror_redis);
     app.insert_resource(WorldStateTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
     app.insert_resource(NarrationDedupeResource::default());
+    app.insert_resource(WorldModelMirrorReconcileState::default());
     app.insert_resource(combat_bridge::CombatSummaryAccumulator::default());
+
+    app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
 
     app.add_systems(
         Update,
@@ -166,6 +217,7 @@ pub fn register(app: &mut App) {
             publish_world_state_to_redis,
             collect_player_chat,
             process_redis_inbound,
+            reconcile_world_model_runtime_mirror_system.after(process_redis_inbound),
             execute_agent_commands.after(process_redis_inbound),
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
@@ -930,6 +982,8 @@ fn process_redis_inbound(
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
+    persistence_settings: Option<Res<PersistenceSettings>>,
+    runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
     let mut drained_messages = 0;
 
@@ -970,6 +1024,13 @@ fn process_redis_inbound(
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
                     narr.narrations.as_slice(),
+                );
+            }
+            RedisInbound::AgentWorldModel(envelope) => {
+                process_agent_world_model_envelope(
+                    persistence_settings.as_deref(),
+                    runtime_mirror_redis.as_deref(),
+                    &envelope,
                 );
             }
             RedisInbound::InsightOffer(offer) => {
@@ -1015,6 +1076,271 @@ fn process_redis_inbound(
             "[bong][network] redis inbound drain hit budget {REDIS_INBOUND_DRAIN_BUDGET}; remaining messages will be handled next tick"
         );
     }
+}
+
+fn process_agent_world_model_envelope(
+    persistence_settings: Option<&PersistenceSettings>,
+    runtime_mirror_redis: Option<&RuntimeMirrorRedisConfig>,
+    envelope: &AgentWorldModelEnvelopeV1,
+) {
+    let Some(settings) = persistence_settings else {
+        tracing::warn!(
+            "[bong][network] dropped agent world-model envelope id={} because PersistenceSettings is unavailable",
+            envelope.id
+        );
+        return;
+    };
+
+    let snapshot = agent_world_model_snapshot_from_wire(&envelope.snapshot);
+    let source = envelope.source.as_deref().unwrap_or("unknown");
+
+    if let Err(error) =
+        persist_agent_world_model_authority_state(settings, envelope.id.as_str(), source, &snapshot)
+    {
+        tracing::warn!(
+            "[bong][network] failed sqlite authority persist for agent world-model id={}: {error}",
+            envelope.id
+        );
+        return;
+    }
+
+    let Some(redis_config) = runtime_mirror_redis else {
+        tracing::warn!(
+            "[bong][network] sqlite authority persist succeeded for id={}, but RuntimeMirrorRedisConfig is unavailable; skipped mirror update",
+            envelope.id
+        );
+        return;
+    };
+
+    if let Err(error) = write_world_model_runtime_mirror(redis_config, Some(&snapshot)) {
+        tracing::warn!(
+            "[bong][network] sqlite authority persist succeeded for id={}, but redis mirror update failed: {error}",
+            envelope.id
+        );
+    }
+}
+
+fn bootstrap_world_model_runtime_mirror_system(
+    persistence_settings: Option<Res<PersistenceSettings>>,
+    runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
+) {
+    let Some(settings) = persistence_settings.as_deref() else {
+        tracing::warn!(
+            "[bong][network] skipped world-model runtime mirror bootstrap: PersistenceSettings unavailable"
+        );
+        return;
+    };
+    let Some(redis_config) = runtime_mirror_redis.as_deref() else {
+        tracing::warn!(
+            "[bong][network] skipped world-model runtime mirror bootstrap: RuntimeMirrorRedisConfig unavailable"
+        );
+        return;
+    };
+
+    let snapshot = match bootstrap_agent_world_model_mirror(settings) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][network] failed to load sqlite authority world-model snapshot during startup: {error}"
+            );
+            return;
+        }
+    };
+
+    if let Err(error) = write_world_model_runtime_mirror(redis_config, snapshot.as_ref()) {
+        tracing::warn!(
+            "[bong][network] failed to rebuild runtime world-model mirror from sqlite authority: {error}"
+        );
+    }
+}
+
+fn should_run_world_model_runtime_mirror_reconcile(
+    state: &mut WorldModelMirrorReconcileState,
+) -> bool {
+    state.ticks_since_last_reconcile = state.ticks_since_last_reconcile.saturating_add(1);
+    if state.ticks_since_last_reconcile < WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS {
+        return false;
+    }
+
+    state.ticks_since_last_reconcile = 0;
+    true
+}
+
+fn reconcile_world_model_runtime_mirror_with_writer<F>(
+    settings: &PersistenceSettings,
+    mut write_mirror: F,
+) -> io::Result<()>
+where
+    F: FnMut(Option<&AgentWorldModelSnapshotRecord>) -> io::Result<()>,
+{
+    let snapshot = bootstrap_agent_world_model_mirror(settings)?;
+    write_mirror(snapshot.as_ref())
+}
+
+fn reconcile_world_model_runtime_mirror(
+    settings: &PersistenceSettings,
+    redis_config: &RuntimeMirrorRedisConfig,
+) -> io::Result<()> {
+    reconcile_world_model_runtime_mirror_with_writer(settings, |snapshot| {
+        write_world_model_runtime_mirror(redis_config, snapshot)
+    })
+}
+
+fn reconcile_world_model_runtime_mirror_system(
+    persistence_settings: Option<Res<PersistenceSettings>>,
+    runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
+    mut reconcile_state: ResMut<WorldModelMirrorReconcileState>,
+) {
+    let Some(settings) = persistence_settings.as_deref() else {
+        return;
+    };
+    let Some(redis_config) = runtime_mirror_redis.as_deref() else {
+        return;
+    };
+    if !should_run_world_model_runtime_mirror_reconcile(&mut reconcile_state) {
+        return;
+    }
+
+    if let Err(error) = reconcile_world_model_runtime_mirror(settings, redis_config) {
+        tracing::warn!(
+            "[bong][network] failed periodic runtime world-model mirror reconcile from sqlite authority: {error}"
+        );
+    }
+}
+
+fn agent_world_model_snapshot_from_wire(
+    snapshot: &AgentWorldModelSnapshotV1,
+) -> AgentWorldModelSnapshotRecord {
+    let mut last_decisions = std::collections::BTreeMap::new();
+    for (agent_name, decision) in &snapshot.last_decisions {
+        let commands = decision
+            .commands
+            .iter()
+            .map(|command| AgentWorldModelCommandRecord {
+                command_type: command_type_to_wire_value(&command.command_type).to_string(),
+                target: command.target.clone(),
+                params: command.params.clone().into_iter().collect(),
+            })
+            .collect::<Vec<_>>();
+
+        let narrations = decision
+            .narrations
+            .iter()
+            .map(|narration| AgentWorldModelNarrationRecord {
+                scope: narration_scope_to_wire_value(&narration.scope).to_string(),
+                target: narration.target.clone(),
+                text: narration.text.clone(),
+                style: narration_style_to_wire_value(&narration.style).to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        last_decisions.insert(
+            agent_name.clone(),
+            AgentWorldModelDecisionRecord {
+                commands,
+                narrations,
+                reasoning: decision.reasoning.clone(),
+            },
+        );
+    }
+
+    let zone_history = snapshot
+        .zone_history
+        .iter()
+        .map(|(zone_name, history)| {
+            let serialized = history
+                .iter()
+                .map(|entry| serde_json::to_value(entry).unwrap_or(serde_json::Value::Null))
+                .collect::<Vec<_>>();
+            (zone_name.clone(), serialized)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let current_era = snapshot
+        .current_era
+        .as_ref()
+        .and_then(|era| serde_json::to_value(era).ok());
+
+    AgentWorldModelSnapshotRecord {
+        current_era,
+        zone_history,
+        last_decisions,
+        player_first_seen_tick: snapshot.player_first_seen_tick.clone(),
+        last_tick: snapshot.last_tick,
+        last_state_ts: snapshot.last_state_ts,
+    }
+}
+
+fn command_type_to_wire_value(command_type: &CommandType) -> &'static str {
+    match command_type {
+        CommandType::SpawnEvent => "spawn_event",
+        CommandType::SpawnNpc => "spawn_npc",
+        CommandType::DespawnNpc => "despawn_npc",
+        CommandType::FactionEvent => "faction_event",
+        CommandType::ModifyZone => "modify_zone",
+        CommandType::NpcBehavior => "npc_behavior",
+    }
+}
+
+fn narration_scope_to_wire_value(scope: &NarrationScope) -> &'static str {
+    match scope {
+        NarrationScope::Broadcast => "broadcast",
+        NarrationScope::Zone => "zone",
+        NarrationScope::Player => "player",
+    }
+}
+
+fn narration_style_to_wire_value(style: &NarrationStyle) -> &'static str {
+    match style {
+        NarrationStyle::SystemWarning => "system_warning",
+        NarrationStyle::Perception => "perception",
+        NarrationStyle::Narration => "narration",
+        NarrationStyle::EraDecree => "era_decree",
+    }
+}
+
+fn write_world_model_runtime_mirror(
+    redis_config: &RuntimeMirrorRedisConfig,
+    snapshot: Option<&AgentWorldModelSnapshotRecord>,
+) -> io::Result<()> {
+    let mut connection_guard = redis_config.connection.lock().map_err(|error| {
+        io::Error::other(format!(
+            "runtime mirror redis connection lock poisoned: {error}"
+        ))
+    })?;
+    if connection_guard.is_none() {
+        *connection_guard = Some(
+            redis_config
+                .client
+                .get_connection()
+                .map_err(io::Error::other)?,
+        );
+    }
+    let connection = connection_guard.as_mut().ok_or_else(|| {
+        io::Error::other("runtime mirror redis connection missing after initialization")
+    })?;
+
+    if let Some(snapshot) = snapshot {
+        let fields = world_model_snapshot_to_mirror_fields(snapshot)?;
+
+        let field_pairs = fields
+            .iter()
+            .map(|(field, value)| (field.as_str(), value.as_str()))
+            .collect::<Vec<_>>();
+
+        let _: usize = redis::cmd("HSET")
+            .arg(WORLD_MODEL_STATE_KEY)
+            .arg(field_pairs)
+            .query(connection)
+            .map_err(io::Error::other)?;
+    } else {
+        let _: usize = redis::cmd("DEL")
+            .arg(WORLD_MODEL_STATE_KEY)
+            .query(connection)
+            .map_err(io::Error::other)?;
+    }
+
+    Ok(())
 }
 
 fn process_agent_narrations(
@@ -2496,15 +2822,40 @@ mod tests {
             Contamination, Cultivation, MeridianId, MeridianSystem,
         };
         use crate::cultivation::life_record::LifeRecord;
+        use crate::persistence::{
+            load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
+            PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
+            WORLD_MODEL_STATE_FIELD_LAST_DECISIONS, WORLD_MODEL_STATE_FIELD_LAST_STATE_TS,
+            WORLD_MODEL_STATE_FIELD_LAST_TICK, WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK,
+            WORLD_MODEL_STATE_FIELD_ZONE_HISTORY, WORLD_MODEL_STATE_KEY,
+        };
         use crate::player::gameplay::{
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
         };
+        use crate::schema::agent_world_model::{
+            AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
+        };
         use crate::world::events::ActiveEventsResource;
         use crossbeam_channel::{unbounded, Receiver};
+        use std::collections::BTreeMap;
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
         use valence::prelude::Events;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
+
+        fn unique_temp_dir(test_name: &str) -> std::path::PathBuf {
+            let unique_suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+
+            std::env::temp_dir().join(format!(
+                "bong-network-world-model-{test_name}-{}-{unique_suffix}",
+                std::process::id()
+            ))
+        }
 
         fn setup_gameplay_app() -> (App, Receiver<RedisOutbound>) {
             let (tx_outbound, rx_outbound) = unbounded();
@@ -2642,6 +2993,431 @@ mod tests {
                 RedisOutbound::WorldState(state) => state,
                 other => panic!("expected world-state publish, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn agent_state_sqlite_authority_survives_redis_restart() {
+            let root = unique_temp_dir("sqlite-authority-survives-redis-restart");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_state_sqlite_authority_survives_redis_restart",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "末法纪",
+                    "sinceTick": 188,
+                    "globalEffect": "灵机渐枯"
+                })),
+                zone_history: BTreeMap::from([(
+                    "blood_valley".to_string(),
+                    vec![serde_json::json!({
+                        "name": "blood_valley",
+                        "spirit_qi": 0.45,
+                        "danger_level": 2,
+                        "active_events": ["tribulation"],
+                        "player_count": 3
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:test-player".to_string(), 188)]),
+                last_tick: Some(188),
+                last_state_ts: Some(1_711_111_188),
+            };
+
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed");
+
+            let loaded = load_agent_world_model_snapshot(&settings)
+                .expect("sqlite authority load should succeed")
+                .expect("world model snapshot should exist");
+            assert_eq!(loaded, snapshot);
+
+            let mirror_fields = crate::persistence::world_model_snapshot_to_mirror_fields(&loaded)
+                .expect("mirror field projection should succeed");
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_TICK),
+                Some(&"188".to_string())
+            );
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_STATE_TS),
+                Some(&"1711111188".to_string())
+            );
+
+            let required_fields = [
+                WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
+                WORLD_MODEL_STATE_FIELD_ZONE_HISTORY,
+                WORLD_MODEL_STATE_FIELD_LAST_DECISIONS,
+                WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK,
+                WORLD_MODEL_STATE_FIELD_LAST_TICK,
+                WORLD_MODEL_STATE_FIELD_LAST_STATE_TS,
+            ];
+            for field in required_fields {
+                assert!(
+                    mirror_fields.contains_key(field),
+                    "runtime mirror should include required field {field}"
+                );
+            }
+            assert_eq!(WORLD_MODEL_STATE_KEY, "bong:tiandao:state");
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn bootstrap_world_model_runtime_mirror_loads_sqlite_snapshot_before_mirror_write() {
+            let root = unique_temp_dir("runtime-mirror-bootstrap-loads-sqlite-snapshot");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_bootstrap_loads_sqlite_snapshot",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "赤月纪",
+                    "sinceTick": 256,
+                    "globalEffect": "灵潮倒卷"
+                })),
+                zone_history: BTreeMap::from([(
+                    "red_marsh".to_string(),
+                    vec![serde_json::json!({
+                        "name": "red_marsh",
+                        "spirit_qi": 0.62,
+                        "danger_level": 3,
+                        "active_events": ["blood_moon"],
+                        "player_count": 2
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 256)]),
+                last_tick: Some(256),
+                last_state_ts: Some(1_711_333_256),
+            };
+
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed before bootstrap");
+
+            let bootstrapped = bootstrap_agent_world_model_mirror(&settings)
+                .expect("runtime mirror bootstrap load should succeed")
+                .expect("runtime mirror bootstrap should return sqlite snapshot");
+            assert_eq!(bootstrapped, snapshot);
+
+            let mirror_fields =
+                crate::persistence::world_model_snapshot_to_mirror_fields(&bootstrapped)
+                    .expect("bootstrapped snapshot should project to mirror fields");
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_TICK),
+                Some(&"256".to_string())
+            );
+            assert_eq!(
+                mirror_fields.get(WORLD_MODEL_STATE_FIELD_LAST_STATE_TS),
+                Some(&"1711333256".to_string())
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn agent_world_model_ingress_persists_sqlite_without_runtime_mirror_config() {
+            let root = unique_temp_dir("agent-world-model-ingress-without-runtime-mirror");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_world_model_ingress_without_runtime_mirror",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let envelope = AgentWorldModelEnvelopeV1 {
+                v: 1,
+                id: "wm-ingress-1".to_string(),
+                source: Some("arbiter".to_string()),
+                snapshot: AgentWorldModelSnapshotV1 {
+                    current_era: Some(CurrentEraV1 {
+                        name: "赤月纪".to_string(),
+                        since_tick: 512,
+                        global_effect: "灵潮倒卷".to_string(),
+                    }),
+                    zone_history: HashMap::from([(
+                        "red_marsh".to_string(),
+                        vec![ZoneHistoryEntryV1 {
+                            name: "red_marsh".to_string(),
+                            spirit_qi: 0.62,
+                            danger_level: 3,
+                            active_events: vec!["blood_moon".to_string()],
+                            player_count: 2,
+                        }],
+                    )]),
+                    last_decisions: BTreeMap::new(),
+                    player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 512)]),
+                    last_tick: Some(512),
+                    last_state_ts: Some(1_711_444_512),
+                },
+            };
+
+            process_agent_world_model_envelope(Some(&settings), None, &envelope);
+
+            let loaded = load_agent_world_model_snapshot(&settings)
+                .expect("sqlite authority load should succeed")
+                .expect("ingress should persist snapshot even without runtime mirror config");
+            let expected = agent_world_model_snapshot_from_wire(&envelope.snapshot);
+
+            assert_eq!(loaded, expected);
+            assert_eq!(loaded.last_tick, Some(512));
+            assert_eq!(loaded.last_state_ts, Some(1_711_444_512));
+            assert_eq!(
+                loaded.current_era,
+                Some(serde_json::json!({
+                    "name": "赤月纪",
+                    "since_tick": 512,
+                    "global_effect": "灵潮倒卷"
+                }))
+            );
+            assert_eq!(
+                loaded.zone_history.get("red_marsh").map(Vec::len),
+                Some(1),
+                "zone history should persist through ingress without runtime mirror config"
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn agent_world_model_ingress_persists_append_only_rows_without_runtime_mirror_config() {
+            let root = unique_temp_dir("agent-world-model-ingress-append-only-no-mirror");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_world_model_ingress_append_only_without_runtime_mirror",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let envelope = AgentWorldModelEnvelopeV1 {
+                v: 1,
+                id: "wm-ingress-append-only-1".to_string(),
+                source: Some("arbiter".to_string()),
+                snapshot: AgentWorldModelSnapshotV1 {
+                    current_era: Some(CurrentEraV1 {
+                        name: "霜烬纪".to_string(),
+                        since_tick: 640,
+                        global_effect: "镜海回响".to_string(),
+                    }),
+                    zone_history: HashMap::from([(
+                        "frost_marsh".to_string(),
+                        vec![ZoneHistoryEntryV1 {
+                            name: "frost_marsh".to_string(),
+                            spirit_qi: 0.71,
+                            danger_level: 4,
+                            active_events: vec!["frost_tide".to_string()],
+                            player_count: 1,
+                        }],
+                    )]),
+                    last_decisions: BTreeMap::from([(
+                        "era".to_string(),
+                        crate::schema::agent_world_model::AgentWorldModelDecisionV1 {
+                            commands: Vec::new(),
+                            narrations: Vec::new(),
+                            reasoning: "append-only authority ingress should persist era rows"
+                                .to_string(),
+                        },
+                    )]),
+                    player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
+                    last_tick: Some(640),
+                    last_state_ts: Some(1_711_555_640),
+                },
+            };
+
+            process_agent_world_model_envelope(Some(&settings), None, &envelope);
+
+            let eras = load_agent_eras(&settings).expect("agent eras should load after ingress");
+            assert_eq!(eras.len(), 1);
+            assert_eq!(eras[0].envelope_id, envelope.id);
+            assert_eq!(eras[0].source, "arbiter");
+            assert_eq!(eras[0].era_name, "霜烬纪");
+
+            let decisions =
+                load_agent_decisions(&settings).expect("agent decisions should load after ingress");
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(decisions[0].envelope_id, envelope.id);
+            assert_eq!(decisions[0].agent_name, "era");
+            assert_eq!(decisions[0].command_count, 0);
+            assert_eq!(decisions[0].narration_count, 0);
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn agent_publish_failure_does_not_roll_back_sqlite() {
+            let root = unique_temp_dir("publish-failure-does-not-rollback-sqlite");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "agent_publish_failure_does_not_roll_back_sqlite",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "末法纪",
+                    "sinceTick": 200,
+                    "globalEffect": "灵机渐枯"
+                })),
+                zone_history: BTreeMap::from([(
+                    "starter_zone".to_string(),
+                    vec![serde_json::json!({
+                        "name": "starter_zone",
+                        "spirit_qi": 0.52,
+                        "danger_level": 1,
+                        "active_events": [],
+                        "player_count": 1
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:alpha".to_string(), 200)]),
+                last_tick: Some(200),
+                last_state_ts: Some(1_711_222_200),
+            };
+
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed before redis mirror attempt");
+
+            let redis_config = RuntimeMirrorRedisConfig::new("redis://127.0.0.1:1".to_string())
+                .expect("test redis config should construct");
+            let mirror_result = write_world_model_runtime_mirror(&redis_config, Some(&snapshot));
+            assert!(
+                mirror_result.is_err(),
+                "redis mirror write should fail on unreachable endpoint"
+            );
+
+            let loaded = load_agent_world_model_snapshot(&settings)
+                .expect("sqlite authority load should succeed even after mirror failure")
+                .expect("world model snapshot should still exist");
+            assert_eq!(loaded, snapshot);
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn world_model_runtime_mirror_reconcile_waits_for_five_minute_interval() {
+            let mut state = WorldModelMirrorReconcileState::default();
+
+            for _ in 0..(WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS - 1) {
+                assert!(
+                    !should_run_world_model_runtime_mirror_reconcile(&mut state),
+                    "reconcile should not run before the five-minute cadence elapses"
+                );
+            }
+
+            assert!(
+                should_run_world_model_runtime_mirror_reconcile(&mut state),
+                "reconcile should run exactly when the five-minute cadence elapses"
+            );
+            assert_eq!(state.ticks_since_last_reconcile, 0);
+            assert!(
+                !should_run_world_model_runtime_mirror_reconcile(&mut state),
+                "reconcile cadence should reset after a successful run"
+            );
+        }
+
+        #[test]
+        fn reconcile_world_model_runtime_mirror_loads_sqlite_snapshot_before_writer() {
+            let root = unique_temp_dir("runtime-mirror-reconcile-loads-sqlite-snapshot");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_reconcile_loads_sqlite_snapshot",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let snapshot = crate::persistence::AgentWorldModelSnapshotRecord {
+                current_era: Some(serde_json::json!({
+                    "name": "霜烬纪",
+                    "sinceTick": 640,
+                    "globalEffect": "镜海回响"
+                })),
+                zone_history: BTreeMap::from([(
+                    "frost_marsh".to_string(),
+                    vec![serde_json::json!({
+                        "name": "frost_marsh",
+                        "spirit_qi": 0.71,
+                        "danger_level": 4,
+                        "active_events": ["frost_tide"],
+                        "player_count": 1
+                    })],
+                )]),
+                last_decisions: BTreeMap::new(),
+                player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
+                last_tick: Some(640),
+                last_state_ts: Some(1_711_555_640),
+            };
+            persist_agent_world_model_snapshot(&settings, &snapshot)
+                .expect("sqlite authority persist should succeed before reconcile");
+
+            let mut captured = None;
+            reconcile_world_model_runtime_mirror_with_writer(&settings, |loaded| {
+                captured = loaded.cloned();
+                Ok(())
+            })
+            .expect("reconcile helper should load sqlite authority before writer invocation");
+
+            assert_eq!(captured, Some(snapshot));
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn reconcile_world_model_runtime_mirror_passes_none_when_sqlite_is_empty() {
+            let root = unique_temp_dir("runtime-mirror-reconcile-empty-sqlite");
+            let db_path = root.join("data").join("bong.db");
+            let deceased_dir = root.join("library-web").join("public").join("deceased");
+            let settings = PersistenceSettings::with_paths(
+                &db_path,
+                &deceased_dir,
+                "runtime_mirror_reconcile_empty_sqlite",
+            );
+
+            crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                .expect("bootstrap should succeed");
+
+            let mut saw_none = false;
+            reconcile_world_model_runtime_mirror_with_writer(&settings, |loaded| {
+                saw_none = loaded.is_none();
+                Ok(())
+            })
+            .expect("reconcile helper should succeed when sqlite authority is empty");
+
+            assert!(
+                saw_none,
+                "reconcile should ask the mirror writer to clear stale state when sqlite has no snapshot"
+            );
+
+            let _ = fs::remove_dir_all(root);
         }
 
         #[test]

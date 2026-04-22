@@ -3,6 +3,7 @@ pub const CH_WORLD_STATE: &str = "bong:world_state";
 pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
+pub const CH_AGENT_WORLD_MODEL: &str = "bong:agent_world_model";
 
 // 修炼 (plan-cultivation-v1 §6.1)
 pub const CH_INSIGHT_REQUEST: &str = "bong:insight_request";
@@ -38,6 +39,7 @@ mod tests {
         assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
+        assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");

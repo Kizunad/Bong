@@ -19,3 +19,6 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 futures-util = "0.3"
 memmap2 = "0.9"
 toml = "0.8"
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+zstd = "0.13"

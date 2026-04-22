@@ -6,6 +6,7 @@ use serde::Deserialize;
 use valence::prelude::{App, Commands, DVec3, Resource, Startup};
 
 use super::TEST_AREA_BLOCK_EXTENT;
+use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord};
 
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
@@ -189,6 +190,96 @@ impl ZoneRegistry {
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
         self.zones.iter_mut().find(|zone| zone.name == name)
+    }
+
+    pub fn apply_runtime_records(&mut self, runtime_records: &[ZoneRuntimeRecord]) {
+        for runtime_record in runtime_records {
+            if let Some(zone) = self.find_zone_mut(runtime_record.zone_id.as_str()) {
+                zone.spirit_qi = runtime_record.spirit_qi;
+                zone.danger_level = runtime_record.danger_level;
+            }
+        }
+    }
+
+    pub fn apply_overlay_records(
+        &mut self,
+        overlay_records: &[ZoneOverlayRecord],
+    ) -> Result<(), String> {
+        for overlay_record in overlay_records {
+            let Some(zone) = self.find_zone_mut(overlay_record.zone_id.as_str()) else {
+                continue;
+            };
+
+            match overlay_record.overlay_kind.as_str() {
+                "collapsed" => {
+                    let payload: CollapsedOverlayPayload =
+                        serde_json::from_str(&overlay_record.payload_json).map_err(|error| {
+                            format!("invalid collapsed overlay payload: {error}")
+                        })?;
+                    zone.danger_level = payload.danger_level;
+                    merge_overlay_events(&mut zone.active_events, payload.active_events);
+                    merge_overlay_blocked_tiles(&mut zone.blocked_tiles, payload.blocked_tiles);
+                }
+                "qi_eye_formed" => {
+                    let payload: QiEyeOverlayPayload =
+                        serde_json::from_str(&overlay_record.payload_json).map_err(|error| {
+                            format!("invalid qi_eye_formed overlay payload: {error}")
+                        })?;
+                    merge_overlay_events(&mut zone.active_events, payload.active_events);
+                }
+                "ruins_discovered" => {
+                    let payload: RuinsDiscoveredOverlayPayload =
+                        serde_json::from_str(&overlay_record.payload_json).map_err(|error| {
+                            format!("invalid ruins_discovered overlay payload: {error}")
+                        })?;
+                    merge_overlay_events(&mut zone.active_events, payload.active_events);
+                    merge_overlay_blocked_tiles(&mut zone.blocked_tiles, payload.blocked_tiles);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CollapsedOverlayPayload {
+    danger_level: u8,
+    #[serde(default)]
+    active_events: Vec<String>,
+    #[serde(default)]
+    blocked_tiles: Vec<[i32; 2]>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QiEyeOverlayPayload {
+    #[serde(default)]
+    active_events: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuinsDiscoveredOverlayPayload {
+    #[serde(default)]
+    active_events: Vec<String>,
+    #[serde(default)]
+    blocked_tiles: Vec<[i32; 2]>,
+}
+
+fn merge_overlay_events(target: &mut Vec<String>, additions: Vec<String>) {
+    for event_name in additions {
+        if !target.iter().any(|existing| existing == &event_name) {
+            target.push(event_name);
+        }
+    }
+}
+
+fn merge_overlay_blocked_tiles(target: &mut Vec<(i32, i32)>, additions: Vec<[i32; 2]>) {
+    for [x, z] in additions {
+        let tile = (x, z);
+        if !target.iter().any(|existing| existing == &tile) {
+            target.push(tile);
+        }
     }
 }
 
@@ -439,6 +530,7 @@ mod zone_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord};
     use valence::prelude::DVec3;
 
     #[test]
@@ -602,6 +694,84 @@ mod zone_tests {
         let registry = ZoneRegistry::load_from_path(&valid_path);
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(registry.zones[0].spirit_qi, 1.0);
+    }
+
+    #[test]
+    fn apply_runtime_records_overrides_only_known_zones() {
+        let mut registry = ZoneRegistry::fallback();
+        registry.apply_runtime_records(&[
+            ZoneRuntimeRecord {
+                zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                spirit_qi: -0.2,
+                danger_level: 3,
+            },
+            ZoneRuntimeRecord {
+                zone_id: "missing".to_string(),
+                spirit_qi: 0.8,
+                danger_level: 5,
+            },
+        ]);
+
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(registry.zones[0].spirit_qi, -0.2);
+        assert_eq!(registry.zones[0].danger_level, 3);
+    }
+
+    #[test]
+    fn apply_overlay_records_merges_supported_overlay_payloads() {
+        let mut registry = ZoneRegistry::fallback();
+        registry
+            .apply_overlay_records(&[
+                ZoneOverlayRecord {
+                    zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    overlay_kind: "collapsed".to_string(),
+                    payload_json: serde_json::json!({
+                        "danger_level": 4,
+                        "active_events": ["realm_collapse"],
+                        "blocked_tiles": [[1, 2], [3, 4]],
+                    })
+                    .to_string(),
+                    payload_version: 1,
+                    since_wall: 100,
+                },
+                ZoneOverlayRecord {
+                    zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    overlay_kind: "qi_eye_formed".to_string(),
+                    payload_json: serde_json::json!({
+                        "active_events": ["qi_eye_formed"],
+                    })
+                    .to_string(),
+                    payload_version: 1,
+                    since_wall: 101,
+                },
+                ZoneOverlayRecord {
+                    zone_id: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    overlay_kind: "ruins_discovered".to_string(),
+                    payload_json: serde_json::json!({
+                        "active_events": ["ruins_discovered"],
+                        "blocked_tiles": [[5, 6]],
+                    })
+                    .to_string(),
+                    payload_version: 1,
+                    since_wall: 102,
+                },
+            ])
+            .expect("overlay application should succeed");
+
+        assert_eq!(registry.zones[0].danger_level, 4);
+        assert_eq!(
+            registry.zones[0].active_events,
+            vec![
+                "realm_collapse".to_string(),
+                "qi_eye_formed".to_string(),
+                "ruins_discovered".to_string(),
+            ]
+        );
+        assert_eq!(
+            registry.zones[0].blocked_tiles,
+            vec![(1, 2), (3, 4), (5, 6)]
+        );
     }
 
     #[test]

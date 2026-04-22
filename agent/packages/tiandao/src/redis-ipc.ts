@@ -2,16 +2,17 @@ import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 import { CHANNELS } from "@bong/schema";
 import type {
-  WorldStateV1,
+  AgentWorldModelEnvelopeV1,
+  AgentWorldModelSnapshotV1,
   AgentCommandV1,
   NarrationV1,
   ChatMessageV1,
+  WorldStateV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
-import type { WorldModelSnapshot } from "./world-model.js";
 
-const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, PLAYER_CHAT } = CHANNELS;
+const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT } = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
@@ -24,6 +25,15 @@ export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   lastTick: "last_tick",
   lastStateTs: "last_state_ts",
 });
+
+export interface PublishAgentWorldModelRequest {
+  source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
+  snapshot: AgentWorldModelEnvelopeV1["snapshot"];
+  metadata: {
+    sourceTick: number;
+    correlationId: string;
+  };
+}
 
 const DRAIN_SCRIPT = `
 local items = redis.call('lrange', ARGV[1], 0, -1)
@@ -163,79 +173,35 @@ export class RedisIpc {
     console.log("[redis-ipc] disconnected");
   }
 
-  async loadWorldModelState(logger: Pick<typeof console, "warn"> = console): Promise<
-    Partial<WorldModelSnapshot> | null
-  > {
+  async publishAgentWorldModel(request: PublishAgentWorldModelRequest): Promise<void> {
+    const { source, snapshot, metadata } = request;
+
+    const message: AgentWorldModelEnvelopeV1 = {
+      v: 1,
+      id: `world_model_t${metadata.sourceTick}_${source}_${Date.now()}`,
+      source,
+      snapshot,
+    };
+
+    const json = JSON.stringify(message);
+    const subscribers = await this.pub.publish(AGENT_WORLD_MODEL, json);
+    console.log(
+      `[redis-ipc] published world model to ${AGENT_WORLD_MODEL} (${subscribers} subscribers, source_tick=${metadata.sourceTick}, correlation_id=${metadata.correlationId})`,
+    );
+  }
+
+  async loadWorldModelState(options: { logger?: Pick<typeof console, "warn"> } = {}): Promise<AgentWorldModelEnvelopeV1["snapshot"] | null> {
     if (!this.pub.hgetall) {
       return null;
     }
 
-    const hash = await this.pub.hgetall(WORLD_MODEL_STATE_KEY);
-    if (!hash || Object.keys(hash).length === 0) {
+    const logger = options.logger ?? console;
+    const mirror = await this.pub.hgetall(WORLD_MODEL_STATE_KEY);
+    if (Object.keys(mirror).length === 0) {
       return null;
     }
 
-    const snapshot: Partial<WorldModelSnapshot> = {};
-    const currentEra = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.currentEra], "current_era", logger);
-    if (currentEra !== null) {
-      snapshot.currentEra = currentEra as WorldModelSnapshot["currentEra"];
-    }
-
-    const zoneHistory = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.zoneHistory], "zone_history", logger);
-    if (zoneHistory !== null) {
-      snapshot.zoneHistory = zoneHistory as WorldModelSnapshot["zoneHistory"];
-    }
-
-    const lastDecisions = parseJsonField(hash[WORLD_MODEL_STATE_FIELDS.lastDecisions], "last_decisions", logger);
-    if (lastDecisions !== null) {
-      snapshot.lastDecisions = lastDecisions as WorldModelSnapshot["lastDecisions"];
-    }
-
-    const playerFirstSeenTick = parseJsonField(
-      hash[WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick],
-      "player_first_seen_tick",
-      logger,
-    );
-    if (playerFirstSeenTick !== null) {
-      snapshot.playerFirstSeenTick = playerFirstSeenTick as WorldModelSnapshot["playerFirstSeenTick"];
-    }
-
-    const lastTick = parseTickField(
-      hash[WORLD_MODEL_STATE_FIELDS.lastTick],
-      WORLD_MODEL_STATE_FIELDS.lastTick,
-      logger,
-    );
-    if (lastTick !== null) {
-      snapshot.lastTick = lastTick;
-    }
-
-    const lastStateTs = parseTickField(
-      hash[WORLD_MODEL_STATE_FIELDS.lastStateTs],
-      WORLD_MODEL_STATE_FIELDS.lastStateTs,
-      logger,
-    );
-    if (lastStateTs !== null) {
-      snapshot.lastStateTs = lastStateTs;
-    }
-
-    return snapshot;
-  }
-
-  async saveWorldModelState(snapshot: WorldModelSnapshot): Promise<void> {
-    if (!this.pub.hset) {
-      return;
-    }
-
-    const values: Record<string, string> = {
-      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify(snapshot.currentEra),
-      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify(snapshot.zoneHistory),
-      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify(snapshot.lastDecisions),
-      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify(snapshot.playerFirstSeenTick),
-      [WORLD_MODEL_STATE_FIELDS.lastTick]: String(snapshot.lastTick ?? ""),
-      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: String(snapshot.lastStateTs ?? ""),
-    };
-
-    await this.pub.hset(WORLD_MODEL_STATE_KEY, values);
+    return parseWorldModelStateMirror(mirror, logger);
   }
 
   async drainPlayerChat(options: { maxItems?: number; logger?: Pick<typeof console, "warn"> } = {}): Promise<ChatMessageV1[]> {
@@ -287,43 +253,212 @@ export class RedisIpc {
   }
 }
 
-function parseJsonField(
-  value: string | undefined,
+function parseWorldModelStateMirror(
+  mirror: Record<string, string>,
+  logger: Pick<typeof console, "warn">,
+): AgentWorldModelEnvelopeV1["snapshot"] | null {
+  const missingFields = Object.values(WORLD_MODEL_STATE_FIELDS).filter((field) => !(field in mirror));
+  if (missingFields.length > 0) {
+    logger.warn(`[redis-ipc] missing world model mirror fields: ${missingFields.join(", ")}`);
+    return null;
+  }
+
+  const currentEra = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.currentEra],
+    WORLD_MODEL_STATE_FIELDS.currentEra,
+    logger,
+    isCurrentEra,
+  );
+  const zoneHistory = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.zoneHistory],
+    WORLD_MODEL_STATE_FIELDS.zoneHistory,
+    logger,
+    isZoneHistory,
+  );
+  const lastDecisions = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.lastDecisions],
+    WORLD_MODEL_STATE_FIELDS.lastDecisions,
+    logger,
+    isLastDecisions,
+  );
+  const playerFirstSeenTick = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick],
+    WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick,
+    logger,
+    isPlayerFirstSeenTick,
+  );
+  const lastTick = parseOptionalIntegerField(
+    mirror[WORLD_MODEL_STATE_FIELDS.lastTick],
+    WORLD_MODEL_STATE_FIELDS.lastTick,
+    logger,
+  );
+  const lastStateTs = parseOptionalIntegerField(
+    mirror[WORLD_MODEL_STATE_FIELDS.lastStateTs],
+    WORLD_MODEL_STATE_FIELDS.lastStateTs,
+    logger,
+  );
+
+  if (
+    currentEra === INVALID_MIRROR_FIELD ||
+    zoneHistory === INVALID_MIRROR_FIELD ||
+    lastDecisions === INVALID_MIRROR_FIELD ||
+    playerFirstSeenTick === INVALID_MIRROR_FIELD ||
+    lastTick === INVALID_MIRROR_FIELD ||
+    lastStateTs === INVALID_MIRROR_FIELD
+  ) {
+    return null;
+  }
+
+  return {
+    currentEra,
+    zoneHistory,
+    lastDecisions,
+    playerFirstSeenTick,
+    lastTick,
+    lastStateTs,
+  };
+}
+
+const INVALID_MIRROR_FIELD = Symbol("invalid-world-model-mirror-field");
+
+function parseJsonField<T>(
+  rawValue: string | undefined,
   fieldName: string,
   logger: Pick<typeof console, "warn">,
-): unknown | null {
-  if (value === undefined) {
-    logger.warn(`[redis-ipc] missing ${fieldName} in ${WORLD_MODEL_STATE_KEY}`);
-    return null;
+  validator: (value: unknown) => value is T,
+): T | typeof INVALID_MIRROR_FIELD {
+  if (rawValue === undefined) {
+    logger.warn(`[redis-ipc] missing world model mirror field ${fieldName}`);
+    return INVALID_MIRROR_FIELD;
   }
 
   try {
-    return JSON.parse(value);
+    const parsed = JSON.parse(rawValue);
+    if (!validator(parsed)) {
+      logger.warn(`[redis-ipc] invalid world model mirror field ${fieldName}`);
+      return INVALID_MIRROR_FIELD;
+    }
+    return parsed;
   } catch (error) {
-    logger.warn(`[redis-ipc] failed to parse ${fieldName} from ${WORLD_MODEL_STATE_KEY}:`, error);
-    return null;
+    logger.warn(`[redis-ipc] failed to parse world model mirror field ${fieldName}:`, error);
+    return INVALID_MIRROR_FIELD;
   }
 }
 
-function parseTickField(
-  value: string | undefined,
+function parseOptionalIntegerField(
+  rawValue: string | undefined,
   fieldName: string,
   logger: Pick<typeof console, "warn">,
-): number | null {
-  if (value === undefined) {
-    logger.warn(`[redis-ipc] missing ${fieldName} in ${WORLD_MODEL_STATE_KEY}`);
+): number | null | typeof INVALID_MIRROR_FIELD {
+  if (rawValue === undefined) {
+    logger.warn(`[redis-ipc] missing world model mirror field ${fieldName}`);
+    return INVALID_MIRROR_FIELD;
+  }
+
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) {
     return null;
   }
 
-  if (value.trim() === "") {
-    return null;
+  if (!/^-?\d+$/.test(trimmed)) {
+    logger.warn(`[redis-ipc] invalid world model mirror integer field ${fieldName}: ${rawValue}`);
+    return INVALID_MIRROR_FIELD;
   }
 
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    logger.warn(`[redis-ipc] failed to parse ${fieldName} from ${WORLD_MODEL_STATE_KEY}:`, value);
-    return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed)) {
+    logger.warn(`[redis-ipc] out-of-range world model mirror integer field ${fieldName}: ${rawValue}`);
+    return INVALID_MIRROR_FIELD;
   }
 
   return parsed;
+}
+
+function isCurrentEra(value: unknown): value is AgentWorldModelSnapshotV1["currentEra"] {
+  if (value === null) {
+    return true;
+  }
+
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.name === "string" &&
+    typeof value.sinceTick === "number" &&
+    Number.isFinite(value.sinceTick) &&
+    typeof value.globalEffect === "string"
+  );
+}
+
+function isZoneHistory(value: unknown): value is AgentWorldModelSnapshotV1["zoneHistory"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((history) => {
+    return (
+      Array.isArray(history) &&
+      history.every((entry) => {
+        return (
+          isObjectRecord(entry) &&
+          typeof entry.name === "string" &&
+          typeof entry.spirit_qi === "number" &&
+          Number.isFinite(entry.spirit_qi) &&
+          typeof entry.danger_level === "number" &&
+          Number.isFinite(entry.danger_level) &&
+          Array.isArray(entry.active_events) &&
+          entry.active_events.every((activeEvent) => typeof activeEvent === "string") &&
+          typeof entry.player_count === "number" &&
+          Number.isFinite(entry.player_count)
+        );
+      })
+    );
+  });
+}
+
+function isLastDecisions(value: unknown): value is AgentWorldModelSnapshotV1["lastDecisions"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((decision) => {
+    return (
+      isObjectRecord(decision) &&
+      Array.isArray(decision.commands) &&
+      decision.commands.every((command) => {
+        return (
+          isObjectRecord(command) &&
+          typeof command.type === "string" &&
+          typeof command.target === "string" &&
+          isObjectRecord(command.params)
+        );
+      }) &&
+      Array.isArray(decision.narrations) &&
+      decision.narrations.every((narration) => {
+        return (
+          isObjectRecord(narration) &&
+          typeof narration.scope === "string" &&
+          (narration.target === undefined || typeof narration.target === "string") &&
+          typeof narration.text === "string" &&
+          typeof narration.style === "string"
+        );
+      }) &&
+      typeof decision.reasoning === "string"
+    );
+  });
+}
+
+function isPlayerFirstSeenTick(value: unknown): value is AgentWorldModelSnapshotV1["playerFirstSeenTick"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((firstSeenTick) => {
+    return typeof firstSeenTick === "number" && Number.isFinite(firstSeenTick);
+  });
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

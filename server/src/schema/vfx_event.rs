@@ -288,6 +288,8 @@ impl VfxEventV1 {
 mod tests {
     use super::*;
 
+    const SAMPLE_DIAGONAL_COMPONENT: f64 = 7071.0 / 10_000.0;
+
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
     #[test]
@@ -460,7 +462,7 @@ mod tests {
         let event = VfxEventV1::spawn_particle(
             "bong:sword_qi_slash",
             [10.0, 64.0, -5.0],
-            Some([0.7071, 0.0, 0.7071]),
+            Some([SAMPLE_DIAGONAL_COMPONENT, 0.0, SAMPLE_DIAGONAL_COMPONENT]),
             Some("#88ccff".to_string()),
             Some(0.75),
             Some(4),
@@ -614,7 +616,10 @@ mod tests {
             } => {
                 assert_eq!(event_id, "bong:sword_qi_slash");
                 assert_eq!(origin, [128.5, 64.0, -32.25]);
-                assert_eq!(direction, Some([0.7071, 0.0, 0.7071]));
+                assert_eq!(
+                    direction,
+                    Some([SAMPLE_DIAGONAL_COMPONENT, 0.0, SAMPLE_DIAGONAL_COMPONENT])
+                );
                 assert_eq!(color.as_deref(), Some("#88ccff"));
                 assert_eq!(strength, Some(0.8));
                 assert_eq!(count, Some(1));

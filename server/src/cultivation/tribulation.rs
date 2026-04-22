@@ -21,6 +21,10 @@ use crate::skill::events::SkillCapChanged;
 use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use crate::persistence::{
+    complete_tribulation_ascension, delete_active_tribulation, persist_active_tribulation,
+    ActiveTribulationRecord, PersistenceSettings,
+};
 
 #[derive(Debug, Clone, Component)]
 pub struct TribulationState {
@@ -56,15 +60,16 @@ pub struct TribulationFailed {
 }
 
 pub fn start_tribulation_system(
+    settings: valence::prelude::Res<PersistenceSettings>,
     mut events: EventReader<InitiateXuhuaTribulation>,
     mut announce: EventWriter<TribulationAnnounce>,
-    mut players: Query<&Cultivation>,
+    mut players: Query<(&Cultivation, &crate::combat::components::Lifecycle)>,
     mut commands: valence::prelude::Commands,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for ev in events.read() {
-        if let Ok(c) = players.get_mut(ev.entity) {
+        if let Ok((c, lifecycle)) = players.get_mut(ev.entity) {
             if c.realm != Realm::Spirit {
                 tracing::warn!(
                     "[bong][cultivation] {:?} tried to tribulate from {:?}, rejected",
@@ -73,11 +78,26 @@ pub fn start_tribulation_system(
                 );
                 continue;
             }
-            commands.entity(ev.entity).insert(TribulationState {
+            let state = TribulationState {
                 wave_current: 0,
                 waves_total: ev.waves_total,
                 started_tick: ev.started_tick,
-            });
+            };
+            if let Err(error) = persist_active_tribulation(
+                &settings,
+                &ActiveTribulationRecord {
+                    char_id: lifecycle.character_id.clone(),
+                    wave_current: state.wave_current,
+                    waves_total: state.waves_total,
+                    started_tick: state.started_tick,
+                },
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist active tribulation for {:?}: {error}",
+                    ev.entity,
+                );
+            }
+            commands.entity(ev.entity).insert(state);
             announce.send(TribulationAnnounce { entity: ev.entity });
             tracing::info!(
                 "[bong][cultivation] {:?} initiated tribulation ({} waves)",
@@ -105,18 +125,32 @@ pub fn start_tribulation_system(
 }
 
 pub fn tribulation_wave_system(
+    settings: valence::prelude::Res<PersistenceSettings>,
     mut cleared: EventReader<TribulationWaveCleared>,
-    mut players: Query<(&mut Cultivation, &mut TribulationState, &MeridianSystem)>,
+    mut players: Query<(
+        &mut Cultivation,
+        &mut TribulationState,
+        &MeridianSystem,
+        &crate::combat::components::Lifecycle,
+    )>,
     mut commands: valence::prelude::Commands,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for ev in cleared.read() {
-        if let Ok((mut c, mut state, _)) = players.get_mut(ev.entity) {
+        if let Ok((mut c, mut state, _, lifecycle)) = players.get_mut(ev.entity) {
             state.wave_current = state.wave_current.max(ev.wave);
             if state.wave_current >= state.waves_total {
                 // 渡劫成功
                 c.realm = Realm::Void;
                 c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                if let Err(error) =
+                    complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
+                {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
+                        ev.entity,
+                    );
+                }
                 // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
                 let new_cap = skill_cap_for_realm(Realm::Void);
                 for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
@@ -132,14 +166,29 @@ pub fn tribulation_wave_system(
                     ev.entity,
                     state.waves_total
                 );
+            } else if let Err(error) = persist_active_tribulation(
+                &settings,
+                &ActiveTribulationRecord {
+                    char_id: lifecycle.character_id.clone(),
+                    wave_current: state.wave_current,
+                    waves_total: state.waves_total,
+                    started_tick: state.started_tick,
+                },
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to update active tribulation for {:?}: {error}",
+                    ev.entity,
+                );
             }
         }
     }
 }
 
 pub fn tribulation_failure_system(
+    settings: valence::prelude::Res<PersistenceSettings>,
     mut failed: EventReader<TribulationFailed>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    lifecycles: Query<&crate::combat::components::Lifecycle>,
     mut commands: valence::prelude::Commands,
 ) {
     for ev in failed.read() {
@@ -151,6 +200,16 @@ pub fn tribulation_failure_system(
                 "no_fortune": true,
             }),
         });
+        if let Ok(lifecycle) = lifecycles.get(ev.entity) {
+            if let Err(error) =
+                delete_active_tribulation(&settings, lifecycle.character_id.as_str())
+            {
+                tracing::warn!(
+                    "[bong][cultivation] failed to delete failed active tribulation for {:?}: {error}",
+                    ev.entity,
+                );
+            }
+        }
         commands.entity(ev.entity).remove::<TribulationState>();
     }
 }

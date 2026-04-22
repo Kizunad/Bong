@@ -1,6 +1,7 @@
 import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
+import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
 import {
   AlchemyContaminationLevelV1,
   AlchemyInterventionV1,
@@ -61,6 +62,8 @@ import { WorldStateV1 } from "./world-state.js";
 export const SCHEMA_REGISTRY = {
   worldStateV1: WorldStateV1,
   agentCommandV1: AgentCommandV1,
+  agentWorldModelEnvelopeV1: AgentWorldModelEnvelopeV1,
+  agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
   narrationV1: NarrationV1,
   chatMessageV1: ChatMessageV1,
   chatSignal: ChatSignal,
@@ -117,6 +120,8 @@ export const SCHEMA_REGISTRY = {
 export const GENERATED_SCHEMA_FILES = {
   "world-state-v1.json": SCHEMA_REGISTRY.worldStateV1,
   "agent-command-v1.json": SCHEMA_REGISTRY.agentCommandV1,
+  "agent-world-model-envelope-v1.json": SCHEMA_REGISTRY.agentWorldModelEnvelopeV1,
+  "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "chat-message-v1.json": SCHEMA_REGISTRY.chatMessageV1,
   "chat-signal.json": SCHEMA_REGISTRY.chatSignal,

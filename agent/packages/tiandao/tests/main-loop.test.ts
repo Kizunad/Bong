@@ -308,20 +308,6 @@ describe("main-loop runtime resilience", () => {
       drainPlayerChat: async () => [],
       publishCommands: vi.fn(async (_request: CommandPublishRequest) => {}),
       publishNarrations: vi.fn(async (_request: NarrationPublishRequest) => {}),
-      loadWorldModelState: async () => ({
-        currentEra: {
-          name: "末法纪",
-          sinceTick: 188,
-          globalEffect: "灵机渐枯",
-        },
-        zoneHistory: {},
-        lastDecisions: {},
-        playerFirstSeenTick: {
-          "offline:test-player": 188,
-        },
-        lastTick: 188,
-        lastStateTs: rebootedState.ts - 10,
-      }),
       disconnect: async () => {},
     };
 

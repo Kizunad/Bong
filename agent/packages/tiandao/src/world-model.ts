@@ -1,4 +1,4 @@
-import type { PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
+import type { NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
 import { NEWBIE_POWER_THRESHOLD } from "@bong/schema";
 import type { AgentDecision } from "./parse.js";
 import { summarizeBalance, type BalanceSummary } from "./balance.js";
@@ -526,10 +526,32 @@ function formatSigned(value: number): string {
 }
 
 function cloneWorldState(state: WorldStateV1): WorldStateV1 {
-  return {
-    v: state.v,
-    ts: state.ts,
-    tick: state.tick,
+  const clonedNpcs: NpcSnapshot[] = state.npcs.map((npc): NpcSnapshot => ({
+    id: npc.id,
+    kind: npc.kind,
+    pos: [...npc.pos],
+    state: npc.state,
+    blackboard: { ...npc.blackboard },
+    digest: npc.digest
+      ? {
+          ...npc.digest,
+          disciple: npc.digest.disciple
+            ? {
+                ...npc.digest.disciple,
+                lineage: npc.digest.disciple.lineage ? { ...npc.digest.disciple.lineage } : undefined,
+                mission_queue: npc.digest.disciple.mission_queue
+                  ? { ...npc.digest.disciple.mission_queue }
+                  : undefined,
+              }
+            : undefined,
+        }
+      : undefined,
+  }));
+
+    return {
+      v: state.v,
+      ts: state.ts,
+      tick: state.tick,
     players: state.players.map((player) => ({
       uuid: player.uuid,
       name: player.name,
@@ -545,30 +567,8 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       cultivation: player.cultivation ? { ...player.cultivation } : undefined,
       life_record: player.life_record ? { ...player.life_record } : undefined,
     })),
-    npcs: state.npcs.map((npc) => ({
-      id: npc.id,
-      kind: npc.kind,
-      pos: [...npc.pos],
-      state: npc.state,
-      blackboard: { ...npc.blackboard },
-      digest: npc.digest
-        ? {
-            ...npc.digest,
-            disciple: npc.digest.disciple
-              ? {
-                  ...npc.digest.disciple,
-                  lineage: npc.digest.disciple.lineage
-                    ? { ...npc.digest.disciple.lineage }
-                    : undefined,
-                  mission_queue: npc.digest.disciple.mission_queue
-                    ? { ...npc.digest.disciple.mission_queue }
-                    : undefined,
-                }
-              : undefined,
-          }
-        : undefined,
-    })),
-    factions: state.factions?.map((faction) => ({
+    npcs: clonedNpcs,
+    factions: state.factions?.map((faction): NonNullable<WorldStateV1["factions"]>[number] => ({
       ...faction,
       leader_lineage: faction.leader_lineage ? { ...faction.leader_lineage } : undefined,
       mission_queue: faction.mission_queue ? { ...faction.mission_queue } : undefined,

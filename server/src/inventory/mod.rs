@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Entity, Position, Query, Resource, Update,
     Without,
@@ -29,7 +29,7 @@ pub const EQUIP_SLOT_TWO_HAND: &str = "two_hand";
 
 type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInventory>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRevision(pub u64);
 
 /// plan-HUD-v1 §10.4 cast 默认时长（无 template 字段时使用）。
@@ -69,7 +69,7 @@ pub struct WeaponSpec {
     pub qi_cost_mul: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemCategory {
     Pill,
     Herb,
@@ -78,7 +78,7 @@ pub enum ItemCategory {
     Misc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemRarity {
     Common,
     Uncommon,
@@ -87,7 +87,7 @@ pub enum ItemRarity {
     Legendary,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemEffect {
     BreakthroughBonus { magnitude: f64 },
     MeridianHeal { magnitude: f64, target: String },
@@ -101,7 +101,7 @@ pub struct ItemRegistry {
 
 impl Resource for ItemRegistry {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoadoutSpec {
     pub containers: Vec<ContainerState>,
     pub equipped: HashMap<String, ItemInstance>,
@@ -110,7 +110,7 @@ pub struct LoadoutSpec {
     pub max_weight: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContainerState {
     pub id: String,
     pub name: String,
@@ -119,14 +119,14 @@ pub struct ContainerState {
     pub items: Vec<PlacedItemState>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlacedItemState {
     pub row: u8,
     pub col: u8,
     pub instance: ItemInstance,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemInstance {
     pub instance_id: u64,
     pub template_id: String,
@@ -184,7 +184,7 @@ impl InventoryInstanceIdAllocator {
     }
 }
 
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PlayerInventory {
     pub revision: InventoryRevision,
     pub containers: Vec<ContainerState>,
