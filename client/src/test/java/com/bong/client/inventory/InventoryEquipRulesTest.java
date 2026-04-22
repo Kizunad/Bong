@@ -71,6 +71,14 @@ class InventoryEquipRulesTest {
         assertTrue(InventoryEquipRules.canPlaceIntoHotbar(item(3003L, "guyuan_pill", 1, 1)));
     }
 
+    @Test
+    void treasureCanEquipOffHandButNotHotbar() {
+        InventoryItem treasure = item(4004L, "starter_talisman", 1, 1);
+
+        assertTrue(InventoryEquipRules.canEquip(treasure, EquipSlotType.OFF_HAND, null, equipped()));
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(treasure));
+    }
+
     private static EnumMap<EquipSlotType, InventoryItem> equipped() {
         return new EnumMap<>(EquipSlotType.class);
     }

@@ -61,7 +61,8 @@ final class InventoryEquipRules {
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe)
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
-            case OFF_HAND -> (weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
+            case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
+                || isTreasure(item))
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
             case TWO_HAND -> (weaponKind == WeaponKind.SPEAR || weaponKind == WeaponKind.STAFF)
                 && (fromTwoHand
@@ -91,7 +92,7 @@ final class InventoryEquipRules {
     }
 
     static boolean canPlaceIntoHotbar(InventoryItem item) {
-        return isSingleCell(item) && !isWeapon(item);
+        return isSingleCell(item) && !isWeapon(item) && !isTreasure(item);
     }
 
     static boolean canPlaceIntoQuickUse(InventoryItem item) {

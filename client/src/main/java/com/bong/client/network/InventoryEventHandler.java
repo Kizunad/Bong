@@ -96,6 +96,28 @@ public final class InventoryEventHandler implements ServerDataHandler {
                         worldPos.z(),
                         droppedItem
                     ));
+                } else if (from instanceof EquipLoc loc) {
+                    DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+                        instanceId,
+                        loc.slot().name().toLowerCase(java.util.Locale.ROOT),
+                        0,
+                        0,
+                        worldPos.x(),
+                        worldPos.y(),
+                        worldPos.z(),
+                        droppedItem
+                    ));
+                } else if (from instanceof HotbarLoc loc) {
+                    DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+                        instanceId,
+                        "hotbar",
+                        0,
+                        loc.index(),
+                        worldPos.x(),
+                        worldPos.y(),
+                        worldPos.z(),
+                        droppedItem
+                    ));
                 }
                 next = applyDropped(current, instanceId);
             }
