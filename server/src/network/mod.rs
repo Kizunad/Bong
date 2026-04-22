@@ -23,6 +23,7 @@ pub mod wounds_snapshot_emit;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_bridge::{
@@ -88,12 +89,23 @@ pub struct RedisBridgeResource {
 
 impl Resource for RedisBridgeResource {}
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RuntimeMirrorRedisConfig {
-    pub url: String,
+    client: redis::Client,
+    connection: Arc<Mutex<Option<redis::Connection>>>,
 }
 
 impl Resource for RuntimeMirrorRedisConfig {}
+
+impl RuntimeMirrorRedisConfig {
+    fn new(url: String) -> io::Result<Self> {
+        let client = redis::Client::open(url.as_str()).map_err(io::Error::other)?;
+        Ok(Self {
+            client,
+            connection: Arc::new(Mutex::new(None)),
+        })
+    }
+}
 
 /// Tick counter for world state publishing
 #[derive(Default)]
@@ -181,9 +193,14 @@ pub fn register(app: &mut App) {
         tx_outbound,
         rx_inbound,
     });
-    app.insert_resource(RuntimeMirrorRedisConfig {
-        url: redis_url.clone(),
-    });
+    let runtime_mirror_redis =
+        RuntimeMirrorRedisConfig::new(redis_url.clone()).unwrap_or_else(|error| {
+            panic!(
+                "failed to initialize runtime mirror redis client for {}: {error}",
+                redact_redis_url_for_log(redis_url.as_str())
+            )
+        });
+    app.insert_resource(runtime_mirror_redis);
     app.insert_resource(WorldStateTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
@@ -1095,8 +1112,7 @@ fn process_agent_world_model_envelope(
         return;
     };
 
-    if let Err(error) = write_world_model_runtime_mirror(redis_config.url.as_str(), Some(&snapshot))
-    {
+    if let Err(error) = write_world_model_runtime_mirror(redis_config, Some(&snapshot)) {
         tracing::warn!(
             "[bong][network] sqlite authority persist succeeded for id={}, but redis mirror update failed: {error}",
             envelope.id
@@ -1131,9 +1147,7 @@ fn bootstrap_world_model_runtime_mirror_system(
         }
     };
 
-    if let Err(error) =
-        write_world_model_runtime_mirror(redis_config.url.as_str(), snapshot.as_ref())
-    {
+    if let Err(error) = write_world_model_runtime_mirror(redis_config, snapshot.as_ref()) {
         tracing::warn!(
             "[bong][network] failed to rebuild runtime world-model mirror from sqlite authority: {error}"
         );
@@ -1165,10 +1179,10 @@ where
 
 fn reconcile_world_model_runtime_mirror(
     settings: &PersistenceSettings,
-    redis_url: &str,
+    redis_config: &RuntimeMirrorRedisConfig,
 ) -> io::Result<()> {
     reconcile_world_model_runtime_mirror_with_writer(settings, |snapshot| {
-        write_world_model_runtime_mirror(redis_url, snapshot)
+        write_world_model_runtime_mirror(redis_config, snapshot)
     })
 }
 
@@ -1187,7 +1201,7 @@ fn reconcile_world_model_runtime_mirror_system(
         return;
     }
 
-    if let Err(error) = reconcile_world_model_runtime_mirror(settings, redis_config.url.as_str()) {
+    if let Err(error) = reconcile_world_model_runtime_mirror(settings, redis_config) {
         tracing::warn!(
             "[bong][network] failed periodic runtime world-model mirror reconcile from sqlite authority: {error}"
         );
@@ -1286,11 +1300,25 @@ fn narration_style_to_wire_value(style: &NarrationStyle) -> &'static str {
 }
 
 fn write_world_model_runtime_mirror(
-    redis_url: &str,
+    redis_config: &RuntimeMirrorRedisConfig,
     snapshot: Option<&AgentWorldModelSnapshotRecord>,
 ) -> io::Result<()> {
-    let client = redis::Client::open(redis_url).map_err(io::Error::other)?;
-    let mut connection = client.get_connection().map_err(io::Error::other)?;
+    let mut connection_guard = redis_config.connection.lock().map_err(|error| {
+        io::Error::other(format!(
+            "runtime mirror redis connection lock poisoned: {error}"
+        ))
+    })?;
+    if connection_guard.is_none() {
+        *connection_guard = Some(
+            redis_config
+                .client
+                .get_connection()
+                .map_err(io::Error::other)?,
+        );
+    }
+    let connection = connection_guard.as_mut().ok_or_else(|| {
+        io::Error::other("runtime mirror redis connection missing after initialization")
+    })?;
 
     if let Some(snapshot) = snapshot {
         let fields = world_model_snapshot_to_mirror_fields(snapshot)?;
@@ -1303,12 +1331,12 @@ fn write_world_model_runtime_mirror(
         let _: usize = redis::cmd("HSET")
             .arg(WORLD_MODEL_STATE_KEY)
             .arg(field_pairs)
-            .query(&mut connection)
+            .query(connection)
             .map_err(io::Error::other)?;
     } else {
         let _: usize = redis::cmd("DEL")
             .arg(WORLD_MODEL_STATE_KEY)
-            .query(&mut connection)
+            .query(connection)
             .map_err(io::Error::other)?;
     }
 
@@ -3275,8 +3303,9 @@ mod tests {
             persist_agent_world_model_snapshot(&settings, &snapshot)
                 .expect("sqlite authority persist should succeed before redis mirror attempt");
 
-            let mirror_result =
-                write_world_model_runtime_mirror("redis://127.0.0.1:1", Some(&snapshot));
+            let redis_config = RuntimeMirrorRedisConfig::new("redis://127.0.0.1:1".to_string())
+                .expect("test redis config should construct");
+            let mirror_result = write_world_model_runtime_mirror(&redis_config, Some(&snapshot));
             assert!(
                 mirror_result.is_err(),
                 "redis mirror write should fail on unreachable endpoint"

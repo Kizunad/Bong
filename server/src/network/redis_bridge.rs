@@ -653,6 +653,7 @@ fn parse_inbound_message(
             Ok(Some(RedisInbound::AgentNarration(narration)))
         }
         CH_AGENT_WORLD_MODEL => {
+            validate_agent_world_model_value(&value)?;
             let envelope =
                 serde_json::from_value::<AgentWorldModelEnvelopeV1>(value).map_err(|error| {
                     ValidationError::new(format!(
@@ -677,6 +678,38 @@ fn validate_world_state(state: &WorldStateV1) -> Result<(), ValidationError> {
             "WorldStateV1 must use version 1, got {}",
             state.v
         )));
+    }
+
+    Ok(())
+}
+
+fn validate_agent_world_model_value(value: &Value) -> Result<(), ValidationError> {
+    let object = expect_object(value, "AgentWorldModelEnvelopeV1")?;
+    validate_known_keys(
+        object,
+        &["v", "id", "source", "snapshot"],
+        "AgentWorldModelEnvelopeV1",
+    )?;
+    validate_schema_version(object, "AgentWorldModelEnvelopeV1")?;
+    expect_string_field(object, "id", "AgentWorldModelEnvelopeV1")?;
+
+    if let Some(source) = object.get("source") {
+        let source = source.as_str().ok_or_else(|| {
+            ValidationError::new("AgentWorldModelEnvelopeV1.source must be a string when present")
+        })?;
+
+        if !matches!(source, "calamity" | "mutation" | "era" | "arbiter") {
+            return Err(ValidationError::new(format!(
+                "AgentWorldModelEnvelopeV1.source has unsupported value `{source}`"
+            )));
+        }
+    }
+
+    let snapshot = expect_field(object, "snapshot", "AgentWorldModelEnvelopeV1")?;
+    if !snapshot.is_object() {
+        return Err(ValidationError::new(
+            "AgentWorldModelEnvelopeV1.snapshot must be an object",
+        ));
     }
 
     Ok(())
