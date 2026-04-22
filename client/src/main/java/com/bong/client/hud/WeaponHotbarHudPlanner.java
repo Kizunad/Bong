@@ -1,6 +1,8 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.EquippedWeapon;
+import com.bong.client.combat.EquippedTreasure;
+import com.bong.client.combat.TreasureEquippedStore;
 import com.bong.client.combat.WeaponEquippedStore;
 
 import java.util.ArrayList;
@@ -55,6 +57,12 @@ public final class WeaponHotbarHudPlanner {
         if (offHand != null) {
             int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
             drawWeaponSlot(out, x, upperY, totalHeight, offHand);
+        } else {
+            EquippedTreasure offHandTreasure = TreasureEquippedStore.get("off_hand");
+            if (offHandTreasure != null) {
+                int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
+                drawTreasureSlot(out, x, upperY, totalHeight, offHandTreasure);
+            }
         }
         // two_hand 暂合并到 main_hand 渲染槽,语义待后续(plan §2.2 two_hand 占 main+off)
         EquippedWeapon twoHand = WeaponEquippedStore.get("two_hand");
@@ -92,6 +100,27 @@ public final class WeaponHotbarHudPlanner {
                 HudRenderLayer.QUICK_BAR, x + 2, durY, durFilledW, DURABILITY_H, durColor
             ));
         }
+    }
+
+    private static void drawTreasureSlot(
+        List<HudRenderCommand> out, int x, int y, int totalH, EquippedTreasure treasure
+    ) {
+        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_W, totalH, BG_COLOR));
+        appendBorder(out, x, y, SLOT_W, totalH, BORDER_COLOR);
+        out.add(HudRenderCommand.itemTexture(
+            HudRenderLayer.QUICK_BAR,
+            treasure.templateId(),
+            x + 2,
+            y + totalH / 2 - 10,
+            SLOT_W - 4
+        ));
+        out.add(HudRenderCommand.text(
+            HudRenderLayer.QUICK_BAR,
+            "宝",
+            x + SLOT_W / 2 - 3,
+            y + 4,
+            GLYPH_COLOR
+        ));
     }
 
     static int durabilityColor(float ratio) {

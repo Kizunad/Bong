@@ -159,7 +159,11 @@ public class InventorySnapshotHandlerTest {
                 "feet": null,
                 "main_hand": null,
                 "off_hand": null,
-                "two_hand": null
+                "two_hand": null,
+                "treasure_belt_0": null,
+                "treasure_belt_1": null,
+                "treasure_belt_2": null,
+                "treasure_belt_3": null
               },
               "hotbar": [null, null, null, null, null, null, null, null, null],
               "bone_coins": 57,

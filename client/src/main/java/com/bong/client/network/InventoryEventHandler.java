@@ -16,14 +16,18 @@ public final class InventoryEventHandler implements ServerDataHandler {
     private static final long JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L;
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
 
-    private static final Map<String, EquipSlotType> EQUIP_SLOT_BY_WIRE_NAME = Map.of(
-        "head", EquipSlotType.HEAD,
-        "chest", EquipSlotType.CHEST,
-        "legs", EquipSlotType.LEGS,
-        "feet", EquipSlotType.FEET,
-        "main_hand", EquipSlotType.MAIN_HAND,
-        "off_hand", EquipSlotType.OFF_HAND,
-        "two_hand", EquipSlotType.TWO_HAND
+    private static final Map<String, EquipSlotType> EQUIP_SLOT_BY_WIRE_NAME = Map.ofEntries(
+        Map.entry("head", EquipSlotType.HEAD),
+        Map.entry("chest", EquipSlotType.CHEST),
+        Map.entry("legs", EquipSlotType.LEGS),
+        Map.entry("feet", EquipSlotType.FEET),
+        Map.entry("main_hand", EquipSlotType.MAIN_HAND),
+        Map.entry("off_hand", EquipSlotType.OFF_HAND),
+        Map.entry("two_hand", EquipSlotType.TWO_HAND),
+        Map.entry("treasure_belt_0", EquipSlotType.TREASURE_BELT_0),
+        Map.entry("treasure_belt_1", EquipSlotType.TREASURE_BELT_1),
+        Map.entry("treasure_belt_2", EquipSlotType.TREASURE_BELT_2),
+        Map.entry("treasure_belt_3", EquipSlotType.TREASURE_BELT_3)
     );
 
     private sealed interface Location {}

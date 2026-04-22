@@ -18,11 +18,19 @@ public final class RepairScreen extends Screen {
 
     private final float durabilityNorm;
     private final String weaponLabel;
+    private final long weaponInstanceId;
+    private final int stationX;
+    private final int stationY;
+    private final int stationZ;
 
-    public RepairScreen(String weaponLabel, float durabilityNorm) {
+    public RepairScreen(String weaponLabel, float durabilityNorm, long weaponInstanceId, int stationX, int stationY, int stationZ) {
         super(Text.literal("\u517b\u62a4"));
         this.weaponLabel = weaponLabel == null ? "-" : weaponLabel;
         this.durabilityNorm = Math.max(0f, Math.min(1f, durabilityNorm));
+        this.weaponInstanceId = Math.max(0L, weaponInstanceId);
+        this.stationX = stationX;
+        this.stationY = stationY;
+        this.stationZ = stationZ;
     }
 
     @Override public boolean shouldPause() { return true; }
@@ -44,9 +52,13 @@ public final class RepairScreen extends Screen {
     }
 
     private void commit(String material) {
-        JsonObject p = new JsonObject();
-        p.addProperty("material", material);
-        ClientRequestSender.send("combat.repair_weapon", p);
+        if (weaponInstanceId > 0L) {
+            ClientRequestSender.sendRepairWeapon(weaponInstanceId, stationX, stationY, stationZ);
+        } else {
+            JsonObject p = new JsonObject();
+            p.addProperty("material", material);
+            ClientRequestSender.send("combat.repair_weapon", p);
+        }
         this.close();
     }
 
@@ -72,4 +84,8 @@ public final class RepairScreen extends Screen {
 
     public float durabilityNormForTests() { return durabilityNorm; }
     public String weaponLabelForTests() { return weaponLabel; }
+    public long weaponInstanceIdForTests() { return weaponInstanceId; }
+    public int stationXForTests() { return stationX; }
+    public int stationYForTests() { return stationY; }
+    public int stationZForTests() { return stationZ; }
 }

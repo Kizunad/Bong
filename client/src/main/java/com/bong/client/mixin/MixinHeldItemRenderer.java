@@ -8,6 +8,7 @@ import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.lingtian.HoeVanillaIconMap;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.item.HeldItemRenderer;
 import net.minecraft.item.ItemStack;
 import org.slf4j.Logger;
@@ -47,13 +48,15 @@ public abstract class MixinHeldItemRenderer {
 
     @Inject(method = "updateHeldItems", at = @At("TAIL"))
     private void bong$overrideHeldItemsForBongWeapons(CallbackInfo ci) {
-        EquippedWeapon bongMain = WeaponEquippedStore.get("main_hand");
+        if (MinecraftClient.getInstance().player == null) return;
+
+        EquippedWeapon bongMain = WeaponEquippedStore.mainHandRenderWeapon();
         if (bongMain != null && this.mainHand.isEmpty()) {
             ItemStack fake = WeaponVanillaIconMap.createStackFor(bongMain.templateId());
             if (fake != null) {
                 this.mainHand = fake;
                 if (!loggedFirstInject) {
-                    LOGGER.info("注入 fake stack for main_hand template={} → {}",
+                    LOGGER.info("注入 fake stack for main_hand/two_hand template={} → {}",
                             bongMain.templateId(), fake.getItem());
                     loggedFirstInject = true;
                 }

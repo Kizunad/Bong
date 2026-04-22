@@ -78,6 +78,21 @@ public class WeaponEquippedHandlerTest {
     }
 
     @Test
+    void supportsTwoHandSlot() {
+        new WeaponEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"two_hand",
+             "weapon":{"instance_id":3,"template_id":"wooden_staff",
+                       "weapon_kind":"staff","durability_current":149.5,
+                       "durability_max":150.0,"quality_tier":0}}
+            """));
+
+        EquippedWeapon weapon = WeaponEquippedStore.get("two_hand");
+        assertNotNull(weapon);
+        assertEquals("wooden_staff", weapon.templateId());
+        assertEquals("staff", weapon.weaponKind());
+    }
+
+    @Test
     void durabilityRatioClampsToRange() {
         new WeaponEquippedHandler().handle(parseEnvelope("""
             {"v":1,"type":"weapon_equipped","slot":"main_hand",

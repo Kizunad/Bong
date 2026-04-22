@@ -1,8 +1,9 @@
 package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
+import com.bong.client.combat.TreasureEquippedStore;
+import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.inventory.model.MockInventoryData;
 import com.bong.client.inventory.state.InventoryStateStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -80,13 +81,11 @@ public final class InspectScreenBootstrap {
 
     static void clearInventorySnapshot() {
         InventoryStateStore.clearOnDisconnect();
+        WeaponEquippedStore.clearOnDisconnect();
+        TreasureEquippedStore.clearOnDisconnect();
     }
 
     static InspectScreen createScreenForCurrentState() {
-        if (InventoryStateStore.revision() < 0L) {
-            return createMockScreenForDev();
-        }
-
         if (!InventoryStateStore.isAuthoritativeLoaded()) {
             return null;
         }
@@ -96,9 +95,5 @@ public final class InspectScreenBootstrap {
 
     static InspectScreen createScreen(InventoryModel snapshot) {
         return new InspectScreen(snapshot);
-    }
-
-    static InspectScreen createMockScreenForDev() {
-        return createScreen(MockInventoryData.create());
     }
 }
