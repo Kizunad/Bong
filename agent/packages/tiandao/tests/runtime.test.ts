@@ -6,6 +6,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_REDIS_URL,
   NoopTelemetrySink,
+  computeLoopBackoffMs,
   createRuntimeClients,
   createRuntimeClient,
   resolveRuntimeConfig,
@@ -114,7 +115,7 @@ class FailingPublishRuntimeRedis extends SequenceRuntimeRedis {
   });
 }
 
-describe("resolveRuntimeConfig", () => {
+  describe("resolveRuntimeConfig", () => {
   it("uses mock mode and defaults when env is missing", () => {
     const config = resolveRuntimeConfig(["node", "src/main.ts", "--mock"], {});
 
@@ -124,6 +125,13 @@ describe("resolveRuntimeConfig", () => {
     expect(config.baseUrl).toBeNull();
     expect(config.apiKey).toBeNull();
   });
+
+describe("computeLoopBackoffMs", () => {
+  it("returns base delay for non-positive failure streaks", () => {
+    expect(computeLoopBackoffMs(0)).toBe(1_000);
+    expect(computeLoopBackoffMs(-1)).toBe(1_000);
+  });
+});
 
   it("reads runtime env in non-mock mode", () => {
     const config = resolveRuntimeConfig(["node", "src/main.ts"], {
@@ -1528,6 +1536,103 @@ describe("runRuntime", () => {
       expect(starterHistory.map((entry) => entry.spirit_qi)).toEqual([0.41, 0.77, 0.55]);
       expect(worldModel.lastTick).toBe(125);
     });
+  });
+
+  it("does not roll back published world model after post-publish failure", async () => {
+    const state = createTestWorldState();
+    state.tick = 420;
+    state.ts = 1_711_777_420;
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const redis = new SequenceRuntimeRedis([state]);
+    const worldModel = new WorldModel();
+    const sleep = vi.fn(async () => {});
+
+    redis.publishAgentWorldModel.mockImplementationOnce(async () => {
+      throw new Error("publish world model failed");
+    });
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "post-publish" })],
+        sleep,
+        logger,
+        worldModel,
+        maxLoopIterations: 2,
+      },
+    );
+
+    expect(worldModel.lastTick).toBe(420);
+    expect(worldModel.lastStateTs).toBe(1_711_777_420);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[tiandao] failed to publish world model snapshot:",
+      expect.any(Error),
+    );
+  });
+
+  it("prefers snapshot with concrete lastStateTs when ticks tie", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const worldModel = new WorldModel();
+    worldModel.restoreFromJSON(
+      createMirrorSnapshot({
+        currentEra: {
+          name: "无时标旧态",
+          sinceTick: 500,
+          globalEffect: "仅内存残留",
+        },
+        lastTick: 500,
+        lastStateTs: null,
+      }),
+    );
+    const redis = new SequenceRuntimeRedis([null], [
+      createMirrorSnapshot({
+        currentEra: {
+          name: "镜像权威态",
+          sinceTick: 500,
+          globalEffect: "带持久化游标",
+        },
+        lastTick: 500,
+        lastStateTs: 1_711_555_500,
+      }),
+    ]);
+
+    await runRuntime(
+      {
+        mockMode: false,
+        model: DEFAULT_MODEL,
+        redisUrl: DEFAULT_REDIS_URL,
+        baseUrl: "https://llm.example.test/v1",
+        apiKey: "k_test",
+      },
+      {
+        createRedis: () => redis,
+        createClient: () => ({
+          chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+        }),
+        agents: [new FakeAgent("mutation", { commands: [], narrations: [], reasoning: "idle" })],
+        sleep: vi.fn(async () => {}),
+        logger,
+        worldModel,
+        maxLoopIterations: 1,
+      },
+    );
+
+    expect(worldModel.currentEra?.name).toBe("镜像权威态");
+    expect(worldModel.lastTick).toBe(500);
+    expect(worldModel.lastStateTs).toBe(1_711_555_500);
+    expect(logger.log).toHaveBeenCalledWith(
+      "[tiandao] restored world model from redis mirror tick=500, era: 镜像权威态 (startup)",
+    );
   });
 
   it("does not re-persist world model state on stale tick skip", async () => {

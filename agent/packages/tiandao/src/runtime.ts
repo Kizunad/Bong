@@ -614,6 +614,16 @@ async function runFreshTickWithRollback(args: {
   }
 }
 
+async function runFreshTickWithPublish(args: {
+  worldModel: WorldModel;
+  run: () => Promise<void>;
+  publish: () => Promise<void>;
+}): Promise<void> {
+  const { publish, ...rollbackArgs } = args;
+  await runFreshTickWithRollback(rollbackArgs);
+  await publish();
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -799,7 +809,7 @@ export async function runRuntime(
             );
             pendingStaleSkip = true;
           } else {
-            await runFreshTickWithRollback({
+            await runFreshTickWithPublish({
               worldModel,
               run: async () => {
                 await runTick(state, {
@@ -821,6 +831,8 @@ export async function runRuntime(
                   telemetrySink,
                   telemetryWarnLogger: logger,
                 });
+              },
+              publish: async () => {
                 await persistWorldModelAfterFreshTick({
                   worldModel,
                   redis,
@@ -961,6 +973,9 @@ function compareWorldModelPersistenceCursor(
     return leftTick - rightTick;
   }
 
+  // When ticks tie, prefer the snapshot that has a concrete persisted state timestamp.
+  // This lets a mirror snapshot with write ordering metadata win over an older in-memory
+  // snapshot that only knows the tick number.
   if (left.lastStateTs !== null && right.lastStateTs === null) {
     return 1;
   }
