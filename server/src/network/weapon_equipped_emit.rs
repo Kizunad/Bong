@@ -1,16 +1,16 @@
 //! plan-weapon-v1 §8：装备槽变更 / 武器损坏 推送。
 //!
 //! 两条管线：
-//! 1. [`emit_weapon_equipped_payloads`]：对 `Changed<Weapon>` 的玩家推送
-//!    `WeaponEquippedV1 { slot, weapon: Some(view) }`；对 `RemovedComponents<Weapon>`
-//!    推 `weapon: None`。触发时机覆盖 `sync_weapon_component_from_equipped` 插入 /
-//!    移除 / 属性变更（耐久扣减）三种情况。
+//! 1. [`emit_weapon_equipped_payloads`]：对 `Changed<PlayerInventory>` 的玩家推送
+//!    `main_hand / off_hand / two_hand` 三槽 snapshot。这样即使 v1 的 runtime
+//!    `Weapon` component 只保留一个当前战斗武器，HUD 仍能拿到三槽装备态。
 //! 2. [`emit_weapon_broken_payloads`]：消费 [`WeaponBroken`] 事件推送
 //!    `WeaponBrokenV1 { instance_id, template_id }`。
 
-use valence::prelude::{Changed, Client, Entity, EventReader, Query, RemovedComponents, With};
+use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
 
-use crate::combat::weapon::{Weapon, WeaponBroken, WeaponKind};
+use crate::combat::weapon::{WeaponBroken, WeaponKind};
+use crate::inventory::{ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -18,17 +18,28 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::combat_hud::{WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
-const MAIN_HAND_SLOT: &str = "main_hand";
+type WeaponSlotUpdate = (String, Option<WeaponViewV1>);
+type WeaponClientUpdate = (Entity, Vec<WeaponSlotUpdate>);
 
-/// 把 runtime `Weapon` → wire `WeaponViewV1`。
-fn weapon_to_view(w: &Weapon) -> WeaponViewV1 {
+fn slot_wire_name(slot: crate::combat::weapon::EquipSlot) -> &'static str {
+    match slot {
+        crate::combat::weapon::EquipSlot::MainHand => "main_hand",
+        crate::combat::weapon::EquipSlot::OffHand => "off_hand",
+        crate::combat::weapon::EquipSlot::TwoHand => "two_hand",
+    }
+}
+
+fn item_to_view(
+    item: &crate::inventory::ItemInstance,
+    spec: &crate::inventory::WeaponSpec,
+) -> WeaponViewV1 {
     WeaponViewV1 {
-        instance_id: w.instance_id,
-        template_id: w.template_id.clone(),
-        weapon_kind: weapon_kind_str(w.weapon_kind).to_string(),
-        durability_current: w.durability,
-        durability_max: w.durability_max,
-        quality_tier: w.quality_tier,
+        instance_id: item.instance_id,
+        template_id: item.template_id.clone(),
+        weapon_kind: weapon_kind_str(spec.weapon_kind).to_string(),
+        durability_current: (item.durability as f32) * spec.durability_max,
+        durability_max: spec.durability_max,
+        quality_tier: spec.quality_tier,
     }
 }
 
@@ -88,30 +99,40 @@ fn send_weapon_broken(client: &mut Client, instance_id: u64, template_id: &str) 
 
 /// plan-weapon-v1 §8.1：推送 `weapon_equipped` payload。
 ///
-/// 三类触发：
-/// - `Changed<Weapon>` 包含 `Added<Weapon>` 和后续字段变动 → push with Some
-/// - `RemovedComponents<Weapon>` → push with None（卸下 / broken）
-///
-/// 先收集 snapshots 释放 query 借用，再分别 write 到同一 `clients` query。
+/// 对 inventory 的每次 revision 变化，推三槽 snapshot。
 pub fn emit_weapon_equipped_payloads(
-    changed_weapons: Query<(Entity, &Weapon), Changed<Weapon>>,
+    registry: Res<ItemRegistry>,
+    changed_inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
     mut clients: Query<&mut Client, With<Client>>,
-    mut removed: RemovedComponents<Weapon>,
 ) {
-    let updates: Vec<(Entity, WeaponViewV1)> = changed_weapons
+    let updates: Vec<WeaponClientUpdate> = changed_inventories
         .iter()
-        .map(|(e, w)| (e, weapon_to_view(w)))
+        .map(|(entity, inventory)| {
+            let slots = [
+                (crate::combat::weapon::EquipSlot::MainHand, "main_hand"),
+                (crate::combat::weapon::EquipSlot::OffHand, "off_hand"),
+                (crate::combat::weapon::EquipSlot::TwoHand, "two_hand"),
+            ]
+            .into_iter()
+            .map(|(slot, key)| {
+                let view = inventory.equipped.get(key).and_then(|item| {
+                    registry
+                        .get(&item.template_id)
+                        .and_then(|tpl| tpl.weapon_spec.as_ref())
+                        .map(|spec| item_to_view(item, spec))
+                });
+                (slot_wire_name(slot).to_string(), view)
+            })
+            .collect();
+            (entity, slots)
+        })
         .collect();
-    let removed_entities: Vec<Entity> = removed.read().collect();
 
-    for (entity, view) in updates {
+    for (entity, slots) in updates {
         if let Ok(mut client) = clients.get_mut(entity) {
-            send_weapon_equipped(&mut client, MAIN_HAND_SLOT, Some(view));
-        }
-    }
-    for entity in removed_entities {
-        if let Ok(mut client) = clients.get_mut(entity) {
-            send_weapon_equipped(&mut client, MAIN_HAND_SLOT, None);
+            for (slot, view) in slots {
+                send_weapon_equipped(&mut client, &slot, view);
+            }
         }
     }
 }
