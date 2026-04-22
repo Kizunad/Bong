@@ -42,6 +42,7 @@ const EVENT_PAYLOAD_VERSION: i32 = 1;
 const NPC_ROW_SCHEMA_VERSION: i32 = 1;
 const NPC_DIGEST_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_DIGEST_SWEEP_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
+const AGENT_WORLD_MODEL_APPEND_ONLY_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_SNAPSHOT_INTERVAL_TICKS: u32 = 20 * 60;
 const ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS: i64 = 5 * 60;
 const STARTUP_BACKUP_DIR: &str = "data/backups";
@@ -604,7 +605,11 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
     let journal_mode: String =
         connection.query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
-        return Err(rusqlite::Error::ExecuteReturnedResults);
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "sqlite journal_mode must be WAL, got `{journal_mode}`"
+            )),
+        )));
     }
 
     connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
@@ -615,7 +620,9 @@ fn run_integrity_check(connection: &Connection) -> rusqlite::Result<()> {
     let integrity: String =
         connection.query_row("PRAGMA integrity_check;", [], |row| row.get(0))?;
     if integrity != "ok" {
-        return Err(rusqlite::Error::ExecuteReturnedResults);
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!("sqlite integrity_check returned `{integrity}`")),
+        )));
     }
     Ok(())
 }
@@ -1000,7 +1007,12 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
 
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
-        return Err(rusqlite::Error::ExecuteReturnedResults);
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "sqlite user_version mismatch after migrations: expected {}, got {}",
+                CURRENT_USER_VERSION, final_version
+            )),
+        )));
     }
 
     Ok(())
@@ -1090,6 +1102,7 @@ pub fn persist_agent_world_model_authority_state(
             wall_clock,
         )?;
     }
+    prune_agent_world_model_append_only(&transaction, wall_clock)?;
     transaction.commit().map_err(io::Error::other)
 }
 
@@ -1813,6 +1826,26 @@ pub fn sweep_stale_npc_digests(
     transaction.commit().map_err(io::Error::other)?;
 
     Ok(stale_digests)
+}
+
+fn prune_agent_world_model_append_only(
+    transaction: &rusqlite::Transaction<'_>,
+    now_wall: i64,
+) -> io::Result<()> {
+    let threshold = now_wall.saturating_sub(AGENT_WORLD_MODEL_APPEND_ONLY_RETENTION_SECS);
+    transaction
+        .execute(
+            "DELETE FROM agent_eras WHERE observed_at_wall < ?1",
+            params![threshold],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "DELETE FROM agent_decisions WHERE observed_at_wall < ?1",
+            params![threshold],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -4659,6 +4692,63 @@ mod persistence_tests {
     }
 
     #[test]
+    fn agent_authority_write_prunes_append_only_rows_older_than_180_days() {
+        let (settings, root) = persistence_settings("agent-authority-retention");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let stale_wall = 1_700_000_000;
+        let prune_now = stale_wall + AGENT_WORLD_MODEL_APPEND_ONLY_RETENTION_SECS + 60;
+        let snapshot = AgentWorldModelSnapshotRecord {
+            current_era: Some(serde_json::json!({
+                "name": "blood_moon",
+                "since_tick": 4096,
+                "global_effect": "qi tides run violent"
+            })),
+            zone_history: BTreeMap::new(),
+            last_decisions: BTreeMap::from([(
+                "era".to_string(),
+                AgentWorldModelDecisionRecord {
+                    commands: Vec::new(),
+                    narrations: Vec::new(),
+                    reasoning: "retention drill".to_string(),
+                },
+            )]),
+            player_first_seen_tick: BTreeMap::new(),
+            last_tick: Some(4_200),
+            last_state_ts: Some(1_704_067_200),
+        };
+
+        persist_agent_world_model_authority_state(&settings, "wm-old", "arbiter", &snapshot)
+            .expect("first authority write should succeed");
+
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should open");
+        transaction
+            .execute(
+                "UPDATE agent_eras SET observed_at_wall = ?1 WHERE envelope_id = ?2",
+                params![stale_wall, "wm-old"],
+            )
+            .expect("test should age era row");
+        transaction
+            .execute(
+                "UPDATE agent_decisions SET observed_at_wall = ?1 WHERE envelope_id = ?2",
+                params![stale_wall, "wm-old"],
+            )
+            .expect("test should age decision row");
+        prune_agent_world_model_append_only(&transaction, prune_now)
+            .expect("retention prune should succeed");
+        transaction.commit().expect("retention transaction should commit");
+
+        let eras = load_agent_eras(&settings).expect("agent eras should load");
+        let decisions = load_agent_decisions(&settings).expect("agent decisions should load");
+        assert!(eras.is_empty(), "stale agent eras should be pruned");
+        assert!(decisions.is_empty(), "stale agent decisions should be pruned");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn active_tribulation_roundtrip_and_delete() {
         let (settings, root) = persistence_settings("tribulation-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -5069,8 +5159,14 @@ mod persistence_tests {
         let error = bootstrap_sqlite(&db_path, "future-user-version-rejected")
             .expect_err("future user_version should be rejected");
         assert!(
-            matches!(error, rusqlite::Error::ExecuteReturnedResults),
+            matches!(error, rusqlite::Error::ToSqlConversionFailure(_)),
             "unexpected error when rejecting future user_version: {error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("sqlite user_version mismatch after migrations"),
+            "future user_version rejection should include a specific mismatch message: {error:?}"
         );
     }
 
