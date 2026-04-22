@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  *
  * 激活方式（典型通过 client/tools/screenshot_weapon.sh wrapper）:
  *   BONG_WEAPON_TEST_ITEM=minecraft:iron_sword     必填，/give 给玩家哪个 item
- *   BONG_WEAPON_TEST_ASSET=placeholder_sword       必填，输出子目录名
+ *   BONG_WEAPON_TEST_ASSET=iron_sword              必填，输出子目录名
  *   BONG_WEAPON_TEST_OUT=client/tools/renders      可选，输出根目录，默认即此
  *   BONG_WEAPON_TEST_BONG_EQUIP=iron_sword         可选，设了则不 /give vanilla item,
  *                                                  直接塞 WeaponEquippedStore 模拟

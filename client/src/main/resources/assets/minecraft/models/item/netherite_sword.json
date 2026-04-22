@@ -1,0 +1,41 @@
+{
+  "parent": "sml:builtin/obj",
+  "model": "bong:models/item/rusted_blade/rusted_blade.obj",
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [0, -90, 0],
+      "translation": [-5, 3, 8],
+      "scale": [0.667, 0.667, 0.667]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [0, 90, 0],
+      "translation": [-5, 3, 8],
+      "scale": [0.667, 0.667, 0.667]
+    },
+    "firstperson_righthand": {
+      "rotation": [0, -90, 25],
+      "translation": [0, 0, 0],
+      "scale": [0.667, 0.667, 0.667]
+    },
+    "firstperson_lefthand": {
+      "rotation": [0, 90, -25],
+      "translation": [0, 0, 0],
+      "scale": [0.667, 0.667, 0.667]
+    },
+    "ground": {
+      "rotation": [0, 0, 0],
+      "translation": [0, 2, 0],
+      "scale": [0.5, 0.5, 0.5]
+    },
+    "gui": {
+      "rotation": [0, 0, 0],
+      "translation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    "fixed": {
+      "rotation": [0, 0, 0],
+      "translation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    }
+  }
+}
