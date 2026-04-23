@@ -113,7 +113,7 @@ pub fn resolve_attack_intents(
         EventWriter<WeaponBroken>,
         Commands,
         Query<&mut PlayerInventory>,
-        ResMut<DroppedLootRegistry>,
+        Option<ResMut<DroppedLootRegistry>>,
     ),
 ) {
     let (
@@ -285,29 +285,36 @@ pub fn resolve_attack_intents(
                             error
                         );
                         if let Some(slot) = broken_slot {
-                            let dropped = discard_inventory_item_to_dropped_loot(
-                                &mut inventory,
-                                &mut dropped_loot_registry,
-                                intent.attacker,
-                                [
-                                    attacker_position.x,
-                                    attacker_position.y,
-                                    attacker_position.z,
-                                ],
-                                instance_id,
-                                &InventoryLocationV1::Equip { slot },
-                            );
-                            match dropped {
-                                Ok(_) => {
-                                    broken_dislodged = true;
+                            if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                                let dropped = discard_inventory_item_to_dropped_loot(
+                                    &mut inventory,
+                                    dropped_loot_registry,
+                                    intent.attacker,
+                                    [
+                                        attacker_position.x,
+                                        attacker_position.y,
+                                        attacker_position.z,
+                                    ],
+                                    instance_id,
+                                    &InventoryLocationV1::Equip { slot },
+                                );
+                                match dropped {
+                                    Ok(_) => {
+                                        broken_dislodged = true;
+                                    }
+                                    Err(drop_error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][weapon] failed to drop broken weapon instance {} after container fallback failed: {}",
+                                            instance_id,
+                                            drop_error
+                                        );
+                                    }
                                 }
-                                Err(drop_error) => {
-                                    tracing::warn!(
-                                        "[bong][combat][weapon] failed to drop broken weapon instance {} after container fallback failed: {}",
-                                        instance_id,
-                                        drop_error
-                                    );
-                                }
+                            } else {
+                                tracing::warn!(
+                                    "[bong][combat][weapon] broken weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                    instance_id
+                                );
                             }
                         } else {
                             tracing::warn!(
