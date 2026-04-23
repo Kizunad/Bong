@@ -8,6 +8,9 @@ use crate::network::inventory_snapshot_emit::item_view_from_instance;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{DroppedLootEntryV1, ServerDataPayloadV1, ServerDataV1};
 
+type JoinedDropSyncClient<'a> = (Entity, &'a Username, &'a mut Client);
+type JoinedDropSyncClientFilter = (With<Client>, Added<Client>);
+
 pub fn send_dropped_loot_sync_to_client(
     entity: Entity,
     client: &mut Client,
@@ -38,7 +41,7 @@ pub fn send_dropped_loot_sync_to_client(
 
 pub fn emit_join_dropped_loot_syncs(
     registry: valence::prelude::Res<DroppedLootRegistry>,
-    mut clients: Query<(Entity, &Username, &mut Client), (With<Client>, Added<Client>)>,
+    mut clients: Query<JoinedDropSyncClient<'_>, JoinedDropSyncClientFilter>,
 ) {
     for (entity, _username, mut client) in &mut clients {
         send_dropped_loot_sync_to_client(entity, &mut client, &registry);

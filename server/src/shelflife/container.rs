@@ -17,7 +17,7 @@ use super::types::{ContainerFreshnessBehavior, DecayFormula, DecayProfile, Decay
 /// 这让"冻结"对两种公式有不同实现：
 /// - time-based + Freeze → multiplier=0.0 → effective_dt=0 → current 停在 initial ✓
 /// - Stepwise + Freeze → multiplier=1.0（**不是 0.0**）→ current=initial*1.0=initial ✓
-/// 若 Stepwise+Freeze 误用 0.0 会把物品瞬间归零（Codex review r#34 P1）。
+///   若 Stepwise+Freeze 误用 0.0 会把物品瞬间归零（Codex review r#34 P1）。
 ///
 /// 分流细则：
 /// - `Normal` → 1.0（基准）
@@ -108,7 +108,7 @@ fn is_stepwise_profile(profile: &DecayProfile) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::{DecayProfileId, DecayTrack};
+    use super::super::types::DecayProfileId;
     use super::*;
 
     fn decay_exp() -> DecayProfile {

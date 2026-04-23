@@ -27,12 +27,15 @@ pub use consume::{
     age_peak_check, decay_current_qi_factor, spoil_check, AgeBonusRoll, AgePeakCheck,
     SpoilCheckOutcome, SpoilConsumeWarning, SpoilSeverity, CRITICAL_BLOCK_RATIO,
 };
+#[allow(unused_imports)]
 pub use container::{container_storage_multiplier, enter_container, exit_container};
+#[allow(unused_imports)]
 pub use probe::{
     resolve_freshness_probe_intents, FreshnessProbeIntent, FreshnessProbeResponse,
     ProbeDenialReason, ProbeResult,
 };
 pub use registry::DecayProfileRegistry;
+#[allow(unused_imports)]
 pub use types::{
     ContainerFreshnessBehavior, DecayFormula, DecayProfile, DecayProfileId, DecayTrack, Freshness,
     TrackState,

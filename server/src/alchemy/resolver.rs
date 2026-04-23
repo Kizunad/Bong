@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn quality_factor_default_is_one_for_legacy_sessions() {
         // 无 Freshness 传 factor=1.0 的 test 路径：running avg 应保持 1.0。
-        let mut s = AlchemySession::new("r".into(), "alice".into());
+        let s = AlchemySession::new("r".into(), "alice".into());
         assert_eq!(s.staged.quality_factor, 1.0);
         assert_eq!(s.staged.quality_total_count, 0);
     }

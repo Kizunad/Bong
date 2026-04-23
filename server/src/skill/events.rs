@@ -35,6 +35,7 @@ pub enum XpGainSource {
 }
 
 /// plan §8 做中学 / 顿悟 入 XP 事件。`char_entity` 为玩家 Bevy entity；`amount` 可为 0。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Event)]
 pub struct SkillXpGain {
     pub char_entity: Entity,
@@ -44,6 +45,7 @@ pub struct SkillXpGain {
 }
 
 /// plan §8 升级事件。narration 由 agent 在 P5 生成，不在此携带。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Event)]
 pub struct SkillLvUp {
     pub char_entity: Entity,
@@ -52,6 +54,7 @@ pub struct SkillLvUp {
 }
 
 /// plan §4 境界软挂钩变更事件：境界突破 → cap 上调；境界跌落 → cap 下修。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Event)]
 pub struct SkillCapChanged {
     pub char_entity: Entity,
@@ -60,6 +63,7 @@ pub struct SkillCapChanged {
 }
 
 /// plan §3.2 残卷使用结算。`was_duplicate=true` 时 `xp_granted=0`，scroll **不消耗**（client 侧 retreat）。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Event)]
 pub struct SkillScrollUsed {
     pub char_entity: Entity,

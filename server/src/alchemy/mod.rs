@@ -43,6 +43,9 @@ use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, P
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
 
+type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
+
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 #[allow(unused_imports)]
@@ -218,7 +221,7 @@ pub fn handle_alchemy_furnace_place(
 /// 没有世界炉 = 炼不了丹 — 不再给玩家挂自带虚拟炉作保底。
 pub(crate) fn attach_alchemy_to_joined_clients(
     mut commands: Commands,
-    joined: Query<(Entity, &Username), (Added<Username>, With<Client>, Without<LearnedRecipes>)>,
+    joined: Query<JoinedClientsWithoutRecipes<'_>, JoinedClientsWithoutRecipesFilter>,
 ) {
     for (entity, username) in &joined {
         let mut learned = LearnedRecipes::default();

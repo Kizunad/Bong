@@ -4738,12 +4738,17 @@ mod persistence_tests {
             .expect("test should age decision row");
         prune_agent_world_model_append_only(&transaction, prune_now)
             .expect("retention prune should succeed");
-        transaction.commit().expect("retention transaction should commit");
+        transaction
+            .commit()
+            .expect("retention transaction should commit");
 
         let eras = load_agent_eras(&settings).expect("agent eras should load");
         let decisions = load_agent_decisions(&settings).expect("agent decisions should load");
         assert!(eras.is_empty(), "stale agent eras should be pruned");
-        assert!(decisions.is_empty(), "stale agent decisions should be pruned");
+        assert!(
+            decisions.is_empty(),
+            "stale agent decisions should be pruned"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
