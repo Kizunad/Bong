@@ -16,6 +16,7 @@
 //!   * heal             — 裂痕愈合
 //!   * negative_zone    — 负灵域反吸
 //!   * death_hooks      — 死亡触发 & 重生惩罚 & 终结清理
+//!   * lifespan         — 寿元 / 死亡登记 / 重生概率纯模型
 //!   * life_record      — 修炼生平卷
 //!   * karma            — 业力极慢衰减
 //!   * insight / insight_fallback / insight_apply — 顿悟系统
@@ -39,6 +40,7 @@ pub mod insight_fallback;
 pub mod insight_flow;
 pub mod karma;
 pub mod life_record;
+pub mod lifespan;
 pub mod meridian_open;
 pub mod negative_zone;
 pub mod overload;
@@ -72,6 +74,7 @@ use self::insight_flow::{
 };
 use self::karma::karma_decay_tick;
 use self::life_record::LifeRecord;
+use self::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::overload_detection_tick;
@@ -197,6 +200,10 @@ fn attach_cultivation_to_joined_clients(
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
         }
+        let lifespan = LifespanComponent::new(LifespanCapTable::for_player_state_realm(
+            player_state.map(|state| state.realm.as_str()),
+            cultivation.realm,
+        ));
 
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
@@ -207,6 +214,8 @@ fn attach_cultivation_to_joined_clients(
             PracticeLog::default(),
             Contamination::default(),
             LifeRecord::new(canonical_id.clone()),
+            DeathRegistry::new(canonical_id.clone()),
+            lifespan,
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),
@@ -233,6 +242,7 @@ mod tests {
     use super::*;
 
     use crate::combat::components::Lifecycle;
+    use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
         ActiveTribulationRecord, PersistenceSettings,
@@ -257,8 +267,50 @@ mod tests {
             .world()
             .get::<LifeRecord>(entity)
             .expect("joined client should receive a LifeRecord");
+        let death_registry = app
+            .world()
+            .get::<DeathRegistry>(entity)
+            .expect("joined client should receive a DeathRegistry");
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(life_record.character_id, canonical_player_id("Alice"));
+        assert_eq!(death_registry.char_id, canonical_player_id("Alice"));
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+    }
+
+    #[test]
+    fn mortal_player_state_starts_with_mortal_lifespan_cap() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Novice");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    realm: "mortal".to_string(),
+                    spirit_qi: 0.0,
+                    spirit_qi_max: 10.0,
+                    karma: 0.0,
+                    experience: 0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should receive a LifespanComponent");
+
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::MORTAL);
     }
 
     #[test]
