@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "char_id",
+    "skills"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "skill_snapshot",
+      "type": "string"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skills": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "lv",
+            "xp",
+            "xp_to_next",
+            "total_xp",
+            "cap",
+            "recent_gain_xp"
+          ],
+          "properties": {
+            "lv": {
+              "minimum": 0,
+              "maximum": 10,
+              "type": "integer"
+            },
+            "xp": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "xp_to_next": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "total_xp": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cap": {
+              "minimum": 0,
+              "maximum": 10,
+              "type": "integer"
+            },
+            "recent_gain_xp": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

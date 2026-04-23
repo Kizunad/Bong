@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "skill_lv_up",
+  "char_id": 1001,
+  "skill": "alchemy",
+  "new_lv": 3
+}

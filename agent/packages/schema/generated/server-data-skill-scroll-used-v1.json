@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "v",
+    "char_id",
+    "scroll_id",
+    "skill",
+    "xp_granted",
+    "was_duplicate"
+  ],
+  "properties": {
+    "type": {
+      "const": "skill_scroll_used",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "scroll_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "herbalism",
+          "type": "string"
+        },
+        {
+          "const": "alchemy",
+          "type": "string"
+        },
+        {
+          "const": "forging",
+          "type": "string"
+        }
+      ]
+    },
+    "xp_granted": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "was_duplicate": {
+      "type": "boolean"
+    },
+    "hydration": {
+      "type": "boolean"
+    }
+  }
+}

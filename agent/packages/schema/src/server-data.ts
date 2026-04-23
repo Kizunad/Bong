@@ -8,7 +8,7 @@ import {
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
-import { ColorKind } from "./cultivation.js";
+import { ColorKind, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
   InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
@@ -18,6 +18,14 @@ import {
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
+import {
+  SkillCapChangedPayloadV1,
+  SkillEntrySnapshotV1,
+  SkillLvUpPayloadV1,
+  SkillScrollUsedPayloadV1,
+  SkillSnapshotPayloadV1,
+  SkillXpGainPayloadV1,
+} from "./skill.js";
 import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
@@ -76,6 +84,11 @@ export const ServerDataType = Type.Union([
   Type.Literal("alchemy_outcome_resolved"),
   Type.Literal("alchemy_recipe_book"),
   Type.Literal("alchemy_contamination"),
+  Type.Literal("skill_xp_gain"),
+  Type.Literal("skill_lv_up"),
+  Type.Literal("skill_cap_changed"),
+  Type.Literal("skill_scroll_used"),
+  Type.Literal("skill_snapshot"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -174,6 +187,8 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     open_progress: Type.Optional(CultivationProgressArrayV1),
     cracks_count: Type.Optional(CultivationCracksArrayV1),
     contamination_total: Type.Number({ minimum: 0 }),
+    recent_skill_milestones_summary: Type.Optional(Type.String({ maxLength: 4096 })),
+    skill_milestones: Type.Optional(Type.Array(SkillMilestoneSnapshotV1)),
   },
   { additionalProperties: false },
 );
@@ -406,6 +421,57 @@ export type ServerDataAlchemyContaminationV1 = Static<
   typeof ServerDataAlchemyContaminationV1
 >;
 
+export const ServerDataSkillXpGainV1 = Type.Object(
+  {
+    type: Type.Literal("skill_xp_gain"),
+    ...SkillXpGainPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillXpGainV1 = Static<typeof ServerDataSkillXpGainV1>;
+
+export const ServerDataSkillLvUpV1 = Type.Object(
+  {
+    type: Type.Literal("skill_lv_up"),
+    ...SkillLvUpPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillLvUpV1 = Static<typeof ServerDataSkillLvUpV1>;
+
+export const ServerDataSkillCapChangedV1 = Type.Object(
+  {
+    type: Type.Literal("skill_cap_changed"),
+    ...SkillCapChangedPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillCapChangedV1 = Static<
+  typeof ServerDataSkillCapChangedV1
+>;
+
+export const ServerDataSkillScrollUsedV1 = Type.Object(
+  {
+    type: Type.Literal("skill_scroll_used"),
+    ...SkillScrollUsedPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillScrollUsedV1 = Static<
+  typeof ServerDataSkillScrollUsedV1
+>;
+
+export const ServerDataSkillSnapshotV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_snapshot"),
+    char_id: Type.Integer({ minimum: 0 }),
+    skills: Type.Record(Type.String({ minLength: 1 }), SkillEntrySnapshotV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -426,5 +492,10 @@ export const ServerDataV1 = Type.Union([
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemyContaminationV1,
+  ServerDataSkillXpGainV1,
+  ServerDataSkillLvUpV1,
+  ServerDataSkillCapChangedV1,
+  ServerDataSkillScrollUsedV1,
+  ServerDataSkillSnapshotV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

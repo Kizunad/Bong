@@ -1,0 +1,31 @@
+{
+  "v": 1,
+  "type": "skill_snapshot",
+  "char_id": 1001,
+  "skills": {
+    "herbalism": {
+      "lv": 3,
+      "xp": 120,
+      "xp_to_next": 1600,
+      "total_xp": 1520,
+      "cap": 5,
+      "recent_gain_xp": 5
+    },
+    "alchemy": {
+      "lv": 1,
+      "xp": 80,
+      "xp_to_next": 400,
+      "total_xp": 180,
+      "cap": 5,
+      "recent_gain_xp": 0
+    },
+    "forging": {
+      "lv": 0,
+      "xp": 0,
+      "xp_to_next": 100,
+      "total_xp": 0,
+      "cap": 5,
+      "recent_gain_xp": 0
+    }
+  }
+}
