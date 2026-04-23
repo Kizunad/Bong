@@ -1,0 +1,79 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "registry",
+    "at_tick",
+    "death_zone",
+    "karma",
+    "has_shrine"
+  ],
+  "properties": {
+    "registry": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "char_id",
+        "death_count"
+      ],
+      "properties": {
+        "char_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "death_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_death_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_death_zone": {
+          "description": "死亡地点域标签",
+          "anyOf": [
+            {
+              "const": "ordinary",
+              "type": "string"
+            },
+            {
+              "const": "death",
+              "type": "string"
+            },
+            {
+              "const": "negative",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "death_zone": {
+      "description": "死亡地点域标签",
+      "anyOf": [
+        {
+          "const": "ordinary",
+          "type": "string"
+        },
+        {
+          "const": "death",
+          "type": "string"
+        },
+        {
+          "const": "negative",
+          "type": "string"
+        }
+      ]
+    },
+    "karma": {
+      "type": "number"
+    },
+    "has_shrine": {
+      "type": "boolean"
+    }
+  }
+}

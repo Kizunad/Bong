@@ -40,6 +40,14 @@ import {
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import {
+  DeathRegistryV1,
+  LifespanCapByRealmV1,
+  LifespanComponentV1,
+  LifespanPreviewV1,
+  RebirthChanceInputV1,
+  RebirthChanceResultV1,
+} from "./death-lifecycle.js";
 import { ForgeEventV1 } from "./forge-event.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
@@ -83,6 +91,12 @@ export const SCHEMA_REGISTRY = {
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
+  deathRegistryV1: DeathRegistryV1,
+  lifespanCapByRealmV1: LifespanCapByRealmV1,
+  lifespanComponentV1: LifespanComponentV1,
+  lifespanPreviewV1: LifespanPreviewV1,
+  rebirthChanceInputV1: RebirthChanceInputV1,
+  rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
   clientRequestV1: ClientRequestV1,
@@ -141,6 +155,12 @@ export const GENERATED_SCHEMA_FILES = {
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
+  "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
+  "lifespan-cap-by-realm-v1.json": SCHEMA_REGISTRY.lifespanCapByRealmV1,
+  "lifespan-component-v1.json": SCHEMA_REGISTRY.lifespanComponentV1,
+  "lifespan-preview-v1.json": SCHEMA_REGISTRY.lifespanPreviewV1,
+  "rebirth-chance-input-v1.json": SCHEMA_REGISTRY.rebirthChanceInputV1,
+  "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,

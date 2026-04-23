@@ -33,6 +33,21 @@ export const CHANNELS = {
   /** Server → Agent: 修炼侧致死触发（plan-cultivation §4） (Pub/Sub) */
   CULTIVATION_DEATH: "bong:cultivation_death",
 
+  /** Server → Agent: 死亡触发（plan-death-lifecycle-v1 §7） */
+  DEATH: "bong:death",
+
+  /** Server → Agent: 重生结算（plan-death-lifecycle-v1 §7） */
+  REBIRTH: "bong:rebirth",
+
+  /** Server → Agent: 遗念生成请求（plan-death-lifecycle-v1 §7） */
+  DEATH_INSIGHT: "bong:death_insight",
+
+  /** Server → Agent: 老化 / 风烛 / tick rate 变化（plan-death-lifecycle-v1 §7） */
+  AGING: "bong:aging",
+
+  /** Server → Agent: 寿元事件公开流水（plan-death-lifecycle-v1 §7） */
+  LIFESPAN_EVENT: "bong:lifespan_event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -69,6 +84,11 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BREAKTHROUGH_EVENT,
   CHANNELS.FORGE_EVENT,
   CHANNELS.CULTIVATION_DEATH,
+  CHANNELS.DEATH,
+  CHANNELS.REBIRTH,
+  CHANNELS.DEATH_INSIGHT,
+  CHANNELS.AGING,
+  CHANNELS.LIFESPAN_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
