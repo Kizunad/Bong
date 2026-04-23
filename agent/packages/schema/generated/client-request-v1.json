@@ -380,6 +380,22 @@
                     {
                       "const": "two_hand",
                       "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
+                      "type": "string"
                     }
                   ]
                 }
@@ -488,6 +504,22 @@
                     },
                     {
                       "const": "two_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
                       "type": "string"
                     }
                   ]
@@ -788,6 +820,22 @@
                     {
                       "const": "two_hand",
                       "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
+                      "type": "string"
                     }
                   ]
                 }
@@ -813,6 +861,198 @@
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id",
+        "from"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "drop_weapon_intent",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "anyOf": [
+                    {
+                      "const": "main_pack",
+                      "type": "string"
+                    },
+                    {
+                      "const": "small_pouch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "front_satchel",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "two_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id",
+        "station_pos"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "repair_weapon_intent",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "station_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         }
       }
     },

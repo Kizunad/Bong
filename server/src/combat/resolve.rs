@@ -25,10 +25,15 @@ use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::inventory::{
+    discard_inventory_item_to_dropped_loot, move_equipped_item_to_first_container_slot,
+    set_item_instance_durability, DroppedLootRegistry, PlayerInventory,
+};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::common::GameEventType;
+use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
 
@@ -103,10 +108,22 @@ pub fn resolve_attack_intents(
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
-    mut weapons: Query<&mut Weapon>,
-    mut weapon_broken_events: EventWriter<WeaponBroken>,
-    mut commands: Commands,
+    mut weapon_break: (
+        Query<&mut Weapon>,
+        EventWriter<WeaponBroken>,
+        Commands,
+        Query<&mut PlayerInventory>,
+        Option<ResMut<DroppedLootRegistry>>,
+    ),
 ) {
+    let (
+        mut weapons,
+        mut weapon_broken_events,
+        mut commands,
+        mut inventories,
+        mut dropped_loot_registry,
+    ) = weapon_break;
+
     for intent in intents.read() {
         if statuses
             .get(intent.attacker)
@@ -210,23 +227,112 @@ pub fn resolve_attack_intents(
 
         // plan-weapon-v1 §6.3：命中一次 → 耐久扣减。
         // 若耐久归零收集 broken info,下面统一 commands 操作(避免与 mut borrow 冲突)。
-        let broken_weapon: Option<(u64, String)> =
-            if let Ok(mut weapon) = weapons.get_mut(intent.attacker) {
-                if weapon.tick_durability() {
-                    Some((weapon.instance_id, weapon.template_id.clone()))
-                } else {
-                    None
-                }
+        let broken_weapon: Option<(u64, String)> = if let Ok(mut weapon) =
+            weapons.get_mut(intent.attacker)
+        {
+            if weapon.tick_durability() {
+                Some((weapon.instance_id, weapon.template_id.clone()))
             } else {
+                if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
+                    let durability_ratio = if weapon.durability_max > 0.0 {
+                        f64::from((weapon.durability / weapon.durability_max).clamp(0.0, 1.0))
+                    } else {
+                        0.0
+                    };
+                    if let Err(error) = set_item_instance_durability(
+                        &mut inventory,
+                        weapon.instance_id,
+                        durability_ratio,
+                    ) {
+                        tracing::warn!(
+                                "[bong][combat][weapon] failed to persist durability for instance {}: {}",
+                                weapon.instance_id,
+                                error
+                            );
+                    }
+                }
                 None
-            };
+            }
+        } else {
+            None
+        };
         if let Some((instance_id, template_id)) = broken_weapon {
-            commands.entity(intent.attacker).remove::<Weapon>();
-            weapon_broken_events.send(WeaponBroken {
-                entity: intent.attacker,
-                instance_id,
-                template_id,
-            });
+            let mut broken_dislodged = false;
+            if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
+                let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
+                    (item.instance_id == instance_id).then(|| match slot.as_str() {
+                        crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
+                        crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
+                        crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
+                        _ => EquipSlotV1::MainHand,
+                    })
+                });
+                if let Err(error) = set_item_instance_durability(&mut inventory, instance_id, 0.0) {
+                    tracing::warn!(
+                        "[bong][combat][weapon] failed to persist broken durability for instance {}: {}",
+                        instance_id,
+                        error
+                    );
+                }
+                match move_equipped_item_to_first_container_slot(&mut inventory, instance_id) {
+                    Ok(_) => {
+                        broken_dislodged = true;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][combat][weapon] failed to move broken weapon instance {} into container: {}",
+                            instance_id,
+                            error
+                        );
+                        if let Some(slot) = broken_slot {
+                            if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                                let dropped = discard_inventory_item_to_dropped_loot(
+                                    &mut inventory,
+                                    dropped_loot_registry,
+                                    intent.attacker,
+                                    [
+                                        attacker_position.x,
+                                        attacker_position.y,
+                                        attacker_position.z,
+                                    ],
+                                    instance_id,
+                                    &InventoryLocationV1::Equip { slot },
+                                );
+                                match dropped {
+                                    Ok(_) => {
+                                        broken_dislodged = true;
+                                    }
+                                    Err(drop_error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][weapon] failed to drop broken weapon instance {} after container fallback failed: {}",
+                                            instance_id,
+                                            drop_error
+                                        );
+                                    }
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "[bong][combat][weapon] broken weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                    instance_id
+                                );
+                            }
+                        } else {
+                            tracing::warn!(
+                                "[bong][combat][weapon] broken weapon instance {} no longer has an equipped slot",
+                                instance_id
+                            );
+                        }
+                    }
+                }
+            }
+            if broken_dislodged {
+                commands.entity(intent.attacker).remove::<Weapon>();
+                weapon_broken_events.send(WeaponBroken {
+                    entity: intent.attacker,
+                    instance_id,
+                    template_id,
+                });
+            }
         }
 
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
@@ -624,6 +730,10 @@ mod tests {
         Contamination, CrackCause, Cultivation, MeridianId, MeridianSystem,
     };
     use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
+        ItemTemplate, PlayerInventory, WeaponSpec,
+    };
     use crate::npc::brain::canonical_npc_id;
     use crate::npc::spawn::NpcMeleeProfile;
     use crate::npc::spawn::{spawn_test_npc_runtime_shape, NpcMarker};
@@ -687,6 +797,59 @@ mod tests {
                 },
             ))
             .id()
+    }
+
+    fn weapon_test_registry() -> ItemRegistry {
+        ItemRegistry::from_map(std::collections::HashMap::from([
+            (
+                "strong_sword".to_string(),
+                ItemTemplate {
+                    id: "strong_sword".to_string(),
+                    display_name: "强剑".to_string(),
+                    category: ItemCategory::Weapon,
+                    grid_w: 1,
+                    grid_h: 2,
+                    base_weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    spirit_quality_initial: 1.0,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: 0,
+                    cooldown_ms: 0,
+                    weapon_spec: Some(WeaponSpec {
+                        weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                        base_attack: 20.0,
+                        quality_tier: 0,
+                        durability_max: 200.0,
+                        qi_cost_mul: 1.0,
+                    }),
+                },
+            ),
+            (
+                "glass_sword".to_string(),
+                ItemTemplate {
+                    id: "glass_sword".to_string(),
+                    display_name: "玻璃剑".to_string(),
+                    category: ItemCategory::Weapon,
+                    grid_w: 1,
+                    grid_h: 2,
+                    base_weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    spirit_quality_initial: 1.0,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: 0,
+                    cooldown_ms: 0,
+                    weapon_spec: Some(WeaponSpec {
+                        weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                        base_attack: 10.0,
+                        quality_tier: 0,
+                        durability_max: 10.0,
+                        qi_cost_mul: 1.0,
+                    }),
+                },
+            ),
+        ]))
     }
 
     fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {
@@ -2091,6 +2254,7 @@ mod tests {
         use crate::combat::weapon::{Weapon, WeaponKind};
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 1400 });
+        app.insert_resource(weapon_test_registry());
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -2118,6 +2282,36 @@ mod tests {
             Wounds::default(),
             Stamina::default(),
         );
+        app.world_mut().entity_mut(armed).insert(PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: std::collections::HashMap::from([(
+                crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                ItemInstance {
+                    instance_id: 1,
+                    template_id: "strong_sword".to_string(),
+                    display_name: "强剑".to_string(),
+                    grid_w: 1,
+                    grid_h: 2,
+                    weight: 1.0,
+                    rarity: crate::inventory::ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        });
         let t1 = spawn_player(
             &mut app,
             "T1",
@@ -2135,6 +2329,7 @@ mod tests {
 
         // armed 手持强攻武器:attack_mul 2.0 × quality 1.0 × durability 1.0 = 2.0
         app.world_mut().entity_mut(armed).insert(Weapon {
+            slot: crate::combat::weapon::EquipSlot::MainHand,
             instance_id: 1,
             template_id: "strong_sword".to_string(),
             weapon_kind: WeaponKind::Sword,
@@ -2180,6 +2375,11 @@ mod tests {
         // 命中后 armed attacker 的武器应有:durability ↓。
         let weapon = app.world().entity(armed).get::<Weapon>().unwrap();
         assert!(weapon.durability < 200.0, "durability ticked down");
+        let inventory = app.world().entity(armed).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory.equipped[crate::inventory::EQUIP_SLOT_MAIN_HAND].durability < 1.0,
+            "inventory durability should persist the runtime wear"
+        );
     }
 
     // 耐久归零后 Weapon component 被移除 + WeaponBroken 事件发出。
@@ -2188,6 +2388,8 @@ mod tests {
         use crate::combat::weapon::{Weapon, WeaponKind};
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 1500 });
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -2208,6 +2410,38 @@ mod tests {
             Wounds::default(),
             Stamina::default(),
         );
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: vec![ContainerState {
+                    id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![],
+                }],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    ItemInstance {
+                        instance_id: 42,
+                        template_id: "glass_sword".to_string(),
+                        display_name: "玻璃剑".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 1.0,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 0.04,
+                        freshness: None,
+                    },
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            });
         let target = spawn_player(
             &mut app,
             "Dummy",
@@ -2221,6 +2455,7 @@ mod tests {
         );
         // 脆武器:只剩 0.4 耐久,一击即破(HIT_DURABILITY_COST = 0.5)
         app.world_mut().entity_mut(attacker).insert(Weapon {
+            slot: crate::combat::weapon::EquipSlot::MainHand,
             instance_id: 42,
             template_id: "glass_sword".to_string(),
             weapon_kind: WeaponKind::Sword,
@@ -2255,6 +2490,160 @@ mod tests {
         assert_eq!(events.len(), 1, "one WeaponBroken emitted");
         assert_eq!(events[0].instance_id, 42);
         assert_eq!(events[0].template_id, "glass_sword");
+
+        let inventory = app
+            .world()
+            .entity(attacker)
+            .get::<PlayerInventory>()
+            .unwrap();
+        assert!(
+            !inventory
+                .equipped
+                .contains_key(crate::inventory::EQUIP_SLOT_MAIN_HAND),
+            "broken weapon should leave the equip slot"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.instance_id, 42);
+        assert_eq!(inventory.containers[0].items[0].instance.durability, 0.0);
+    }
+
+    #[test]
+    fn broken_weapon_drops_when_no_container_slot_is_available() {
+        use crate::combat::weapon::{Weapon, WeaponKind};
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1600 });
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let attacker = spawn_player(
+            &mut app,
+            "PackedSwordsman",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: vec![ContainerState {
+                    id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 1,
+                    cols: 1,
+                    items: vec![crate::inventory::PlacedItemState {
+                        row: 0,
+                        col: 0,
+                        instance: ItemInstance {
+                            instance_id: 7,
+                            template_id: "junk_stone".to_string(),
+                            display_name: "碎石".to_string(),
+                            grid_w: 1,
+                            grid_h: 1,
+                            weight: 1.0,
+                            rarity: crate::inventory::ItemRarity::Common,
+                            description: String::new(),
+                            stack_count: 1,
+                            spirit_quality: 1.0,
+                            durability: 1.0,
+                            freshness: None,
+                        },
+                    }],
+                }],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    ItemInstance {
+                        instance_id: 42,
+                        template_id: "glass_sword".to_string(),
+                        display_name: "玻璃剑".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 1.0,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 0.04,
+                        freshness: None,
+                    },
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            });
+        let target = spawn_player(
+            &mut app,
+            "PackedDummy",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(Weapon {
+            slot: crate::combat::weapon::EquipSlot::MainHand,
+            instance_id: 42,
+            template_id: "glass_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 0.4,
+            durability_max: 10.0,
+        });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1599,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().entity(attacker).get::<Weapon>().is_none(),
+            "Weapon removed after broken weapon falls back to dropped loot"
+        );
+        let inventory = app
+            .world()
+            .entity(attacker)
+            .get::<PlayerInventory>()
+            .unwrap();
+        assert!(
+            !inventory
+                .equipped
+                .contains_key(crate::inventory::EQUIP_SLOT_MAIN_HAND),
+            "broken weapon should leave the equip slot even when bag is full"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let dropped = dropped_registry
+            .by_owner
+            .get(&attacker)
+            .expect("broken weapon should be registered as dropped loot");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].instance_id, 42);
+        assert_eq!(dropped[0].item.durability, 0.0);
     }
 
     #[test]

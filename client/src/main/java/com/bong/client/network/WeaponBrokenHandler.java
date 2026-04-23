@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.BongClient;
+import com.bong.client.state.VisualEffectState;
 import com.google.gson.JsonObject;
 
 /**
@@ -11,6 +12,11 @@ import com.google.gson.JsonObject;
  * { weapon: null }} 完成,不在本 handler 里改 store。
  */
 public final class WeaponBrokenHandler implements ServerDataHandler {
+    static final int BROKEN_TOAST_COLOR = 0xFFC04040;
+    static final long BROKEN_TOAST_DURATION_MS = 2800L;
+    static final long BROKEN_FLASH_DURATION_MS = 260L;
+    static final double BROKEN_FLASH_INTENSITY = 1.0;
+
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
@@ -22,8 +28,19 @@ public final class WeaponBrokenHandler implements ServerDataHandler {
             "[bong][weapon] weapon broken: instance={} template={}",
             instanceId, templateId
         );
-        return ServerDataDispatch.handled(
+        return ServerDataDispatch.handledWithEventAlert(
             envelope.type(),
+            new ServerDataDispatch.ToastSpec(
+                "武器损坏：" + templateId,
+                BROKEN_TOAST_COLOR,
+                BROKEN_TOAST_DURATION_MS
+            ),
+            VisualEffectState.create(
+                "weapon_break_flash",
+                BROKEN_FLASH_INTENSITY,
+                BROKEN_FLASH_DURATION_MS,
+                System.currentTimeMillis()
+            ),
             "Weapon broken: " + templateId + " (instance " + instanceId + ")"
         );
     }

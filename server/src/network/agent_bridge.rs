@@ -60,6 +60,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::DefenseSync => "defense_sync",
         ServerDataType::WeaponEquipped => "weapon_equipped",
         ServerDataType::WeaponBroken => "weapon_broken",
+        ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::LingtianSession => "lingtian_session",
     }
 }
@@ -294,6 +295,15 @@ mod server_data_tests {
                 )),
                 off_hand: None,
                 two_hand: None,
+                treasure_belt_0: Some(sample_inventory_item(
+                    1005,
+                    "starter_talisman",
+                    "启程护符",
+                    ItemRarityV1::Uncommon,
+                )),
+                treasure_belt_1: None,
+                treasure_belt_2: None,
+                treasure_belt_3: None,
             },
             hotbar: vec![
                 Some(sample_inventory_item(

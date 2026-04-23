@@ -6,7 +6,8 @@ use super::alchemy::{
 };
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
-    QuickSlotConfigV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
+    QuickSlotConfigV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1,
+    WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
@@ -55,6 +56,7 @@ pub enum ServerDataType {
     DefenseSync,
     WeaponEquipped,
     WeaponBroken,
+    TreasureEquipped,
     LingtianSession,
 }
 
@@ -149,6 +151,7 @@ pub enum ServerDataPayloadV1 {
     DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
+    TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
 }
 
@@ -302,6 +305,10 @@ enum ServerDataPayloadWireV1 {
     WeaponBroken {
         #[serde(flatten)]
         weapon_broken: WeaponBrokenV1,
+    },
+    TreasureEquipped {
+        #[serde(flatten)]
+        treasure_equipped: TreasureEquippedV1,
     },
     LingtianSession {
         #[serde(flatten)]
@@ -572,6 +579,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::WeaponBroken { weapon_broken } => {
                 Ok(Self::WeaponBroken(weapon_broken))
             }
+            ServerDataPayloadWireV1::TreasureEquipped { treasure_equipped } => {
+                Ok(Self::TreasureEquipped(treasure_equipped))
+            }
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
@@ -738,6 +748,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::WeaponBroken(b) => Self::WeaponBroken {
                 weapon_broken: b.clone(),
             },
+            ServerDataPayloadV1::TreasureEquipped(t) => Self::TreasureEquipped {
+                treasure_equipped: t.clone(),
+            },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
             },
@@ -855,6 +868,7 @@ impl ServerDataPayloadV1 {
             Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
+            Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
         }
     }

@@ -107,6 +107,22 @@
                     {
                       "const": "two_hand",
                       "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
+                      "type": "string"
                     }
                   ]
                 }
@@ -215,6 +231,22 @@
                     },
                     {
                       "const": "two_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
                       "type": "string"
                     }
                   ]
@@ -351,6 +383,22 @@
                     },
                     {
                       "const": "two_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_1",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_2",
+                      "type": "string"
+                    },
+                    {
+                      "const": "treasure_belt_3",
                       "type": "string"
                     }
                   ]

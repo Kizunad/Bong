@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/cracked_heart/cracked_heart.obj",
+  "model": "bong:models/item/spirit_sword/spirit_sword.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [

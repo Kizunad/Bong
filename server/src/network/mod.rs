@@ -16,6 +16,7 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod treasure_equipped_emit;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
@@ -263,6 +264,7 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
+            inventory_snapshot_emit::emit_changed_inventory_snapshots,
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
@@ -275,6 +277,7 @@ pub fn register(app: &mut App) {
             // 以便 Added/Changed/Removed 能观察到本 tick sync 产生的结果。
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
+            treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
     );
     app.add_systems(

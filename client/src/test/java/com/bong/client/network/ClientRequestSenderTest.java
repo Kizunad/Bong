@@ -118,6 +118,33 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendDropWeaponUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendDropWeapon(
+            2002L,
+            new ClientRequestProtocol.EquipLoc("main_hand")
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendRepairWeaponUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendRepairWeapon(4242L, 1, 64, 2);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"repair_weapon_intent\",\"v\":1,\"instance_id\":4242,\"station_pos\":[1,64,2]}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

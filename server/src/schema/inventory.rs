@@ -22,6 +22,14 @@ pub enum EquipSlotV1 {
     MainHand,
     OffHand,
     TwoHand,
+    #[serde(rename = "treasure_belt_0")]
+    TreasureBelt0,
+    #[serde(rename = "treasure_belt_1")]
+    TreasureBelt1,
+    #[serde(rename = "treasure_belt_2")]
+    TreasureBelt2,
+    #[serde(rename = "treasure_belt_3")]
+    TreasureBelt3,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -101,6 +109,10 @@ pub struct EquippedInventorySnapshotV1 {
     pub main_hand: Option<InventoryItemViewV1>,
     pub off_hand: Option<InventoryItemViewV1>,
     pub two_hand: Option<InventoryItemViewV1>,
+    pub treasure_belt_0: Option<InventoryItemViewV1>,
+    pub treasure_belt_1: Option<InventoryItemViewV1>,
+    pub treasure_belt_2: Option<InventoryItemViewV1>,
+    pub treasure_belt_3: Option<InventoryItemViewV1>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

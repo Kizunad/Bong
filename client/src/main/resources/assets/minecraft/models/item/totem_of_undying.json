@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/wooden_totem/wooden_totem.obj",
+  "model": "bong:models/item/wooden_staff/wooden_staff.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [

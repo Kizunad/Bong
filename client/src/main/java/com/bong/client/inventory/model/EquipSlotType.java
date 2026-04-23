@@ -7,7 +7,11 @@ public enum EquipSlotType {
     FEET("鞋"),
     MAIN_HAND("右手"),
     OFF_HAND("左手"),
-    TWO_HAND("双手");
+    TWO_HAND("双手"),
+    TREASURE_BELT_0("宝1"),
+    TREASURE_BELT_1("宝2"),
+    TREASURE_BELT_2("宝3"),
+    TREASURE_BELT_3("宝4");
 
     private final String displayName;
 

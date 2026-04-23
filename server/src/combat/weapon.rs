@@ -32,10 +32,12 @@ pub enum WeaponKind {
 /// 装备/卸下业务在 W2(inventory-v1 `InventoryMoveRequest`)里接入,本 phase 仅数据。
 #[derive(Debug, Clone, Component)]
 pub struct Weapon {
+    pub slot: EquipSlot,
     /// 对应 [`ItemInstance`](crate::inventory::ItemInstance) 的 instance_id。
     pub instance_id: u64,
     /// 缓存 template_id,避免每次攻击都查 inventory。
     pub template_id: String,
+    #[allow(dead_code)] // v1 先保留到 runtime component，后续渲染/技能钩子会消费。
     pub weapon_kind: WeaponKind,
     pub base_attack: f32,
     /// 0=凡铁 · 1=灵器 · 2=法宝 · 3=仙器(plan §0 / §10)。
@@ -90,9 +92,10 @@ impl Weapon {
     ///
     /// `ItemInstance.durability` 是 `[0, 1]` 比例；此处乘 `spec.durability_max`
     /// 转为绝对值挂到 component(tick_durability 扣减用绝对值)。
-    pub fn from_item_and_spec(item: &ItemInstance, spec: &WeaponSpec) -> Self {
+    pub fn from_item_and_spec(item: &ItemInstance, spec: &WeaponSpec, slot: EquipSlot) -> Self {
         let durability = (item.durability as f32) * spec.durability_max;
         Self {
+            slot,
             instance_id: item.instance_id,
             template_id: item.template_id.clone(),
             weapon_kind: spec.weapon_kind,
@@ -104,13 +107,11 @@ impl Weapon {
     }
 }
 
-/// plan-weapon-v1 §2.3: 每 tick 同步 `PlayerInventory.equipped.main_hand` ↔ `Weapon` component。
+/// plan-weapon-v1 §2.3: 每 tick 同步 `PlayerInventory.equipped.{main/off/two}` ↔ `Weapon` component。
 ///
 /// 使用 `Changed<PlayerInventory>` 过滤：只处理本 tick 有变动的玩家 Entity（含 revision 变化）。
-/// 三种状态转移：
-/// 1. 新装备（equipped 有，component 无）→ 插入
-/// 2. 卸下（equipped 无，component 有）→ 移除
-/// 3. 切换武器（equipped 与 component 指向不同 instance_id）→ 换成新的
+/// 选择顺序：main_hand > two_hand > off_hand。v1 的实际战斗结算只吃当前一个 `Weapon`
+/// component，但网络与 HUD 仍可单独收到各槽位 snapshot。
 pub fn sync_weapon_component_from_equipped(
     mut commands: Commands,
     registry: Res<ItemRegistry>,
@@ -118,17 +119,17 @@ pub fn sync_weapon_component_from_equipped(
     existing_weapons: Query<&Weapon>,
 ) {
     for (entity, inv) in &inventories {
-        let current_item = inv.equipped.get("main_hand");
+        let current_item = current_weapon_from_inventory(inv);
         let existing = existing_weapons.get(entity).ok();
 
         match (current_item, existing) {
-            (Some(item), None) => {
+            (Some((item, slot)), None) => {
                 // 新装备
                 if let Some(tpl) = registry.get(&item.template_id) {
                     if let Some(spec) = &tpl.weapon_spec {
                         commands
                             .entity(entity)
-                            .insert(Weapon::from_item_and_spec(item, spec));
+                            .insert(Weapon::from_item_and_spec(item, spec, slot));
                     }
                 }
             }
@@ -136,14 +137,16 @@ pub fn sync_weapon_component_from_equipped(
                 // 卸下
                 commands.entity(entity).remove::<Weapon>();
             }
-            (Some(item), Some(w)) if item.instance_id != w.instance_id => {
+            (Some((item, slot)), Some(w))
+                if item.instance_id != w.instance_id || slot != w.slot =>
+            {
                 // 切换不同武器
                 if let Some(tpl) = registry.get(&item.template_id) {
                     match &tpl.weapon_spec {
                         Some(spec) => {
                             commands
                                 .entity(entity)
-                                .insert(Weapon::from_item_and_spec(item, spec));
+                                .insert(Weapon::from_item_and_spec(item, spec, slot));
                         }
                         None => {
                             // equipped slot 放入了非武器(理论上 inventory 会拒但兜底)
@@ -155,6 +158,22 @@ pub fn sync_weapon_component_from_equipped(
             _ => {}
         }
     }
+}
+
+fn current_weapon_from_inventory(inv: &PlayerInventory) -> Option<(&ItemInstance, EquipSlot)> {
+    inv.equipped
+        .get("main_hand")
+        .map(|item| (item, EquipSlot::MainHand))
+        .or_else(|| {
+            inv.equipped
+                .get("two_hand")
+                .map(|item| (item, EquipSlot::TwoHand))
+        })
+        .or_else(|| {
+            inv.equipped
+                .get("off_hand")
+                .map(|item| (item, EquipSlot::OffHand))
+        })
 }
 
 /// plan-weapon-v1 §6.3: 武器损坏事件。`Weapon` component 已被调用方移除,ItemInstance 仍在。
@@ -211,6 +230,7 @@ mod tests {
 
     fn sample_weapon(tier: u8, durability: f32) -> Weapon {
         Weapon {
+            slot: EquipSlot::MainHand,
             instance_id: 1,
             template_id: "iron_sword".into(),
             weapon_kind: WeaponKind::Sword,
@@ -256,6 +276,7 @@ mod tests {
     #[test]
     fn damage_multiplier_uses_all_factors() {
         let w = Weapon {
+            slot: EquipSlot::MainHand,
             instance_id: 1,
             template_id: "spirit_sword".into(),
             weapon_kind: WeaponKind::Sword,
