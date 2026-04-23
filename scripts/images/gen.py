@@ -85,10 +85,10 @@ def _env(env: dict[str, str], key: str, default: str | None = None) -> str | Non
 # -------- prompt helper ------------------------------------------------------
 
 
-def read_prompt_file(path: Path, style: str) -> str:
+def read_prompt_file(path: Path, style: str, transparent: bool = False) -> str:
     """读 *_prompt.md，按 style 拼 prefix。"""
     body = path.read_text(encoding="utf-8").strip()
-    return style_mod.apply(style, body)
+    return style_mod.apply(style, body, transparent=transparent)
 
 
 def derive_name_from_prompt_file(path: Path) -> str:
@@ -443,10 +443,14 @@ def main() -> None:
 
     style = args.style
     if args.prompt_file:
-        prompt = read_prompt_file(args.prompt_file, style)
+        prompt = read_prompt_file(args.prompt_file, style, transparent=args.transparent)
         name = args.name or derive_name_from_prompt_file(args.prompt_file)
     else:
-        prompt = style_mod.apply(style, args.prompt) if style != "none" else args.prompt
+        prompt = (
+            style_mod.apply(style, args.prompt, transparent=args.transparent)
+            if style != "none"
+            else args.prompt
+        )
         if not args.name:
             ap.error("直接给 prompt 时必须指定 --name")
         name = args.name

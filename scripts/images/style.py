@@ -47,16 +47,23 @@ PREFIXES: dict[str, str] = {
 }
 
 
-def apply(style: str, body: str) -> str:
+def apply(style: str, body: str, transparent: bool = False) -> str:
     """把画风 prefix 拼到 body 前面。
 
     - `style` 不在 PREFIXES 中：原样返回 body（允许自定义）
     - body 开头三个词已与 prefix 的开头三个词一致：跳过拼接（手动叠写）
+    - item 档 + transparent=True：把 prefix 里 "solid black background"
+      换成透明描述，避免 prompt 文字和 API background=transparent 打架
     - 否则返回 `<prefix> — <body>`
     """
     prefix = PREFIXES.get(style)
     if not prefix:
         return body
+    if transparent and style == "item":
+        prefix = prefix.replace(
+            "solid black background",
+            "fully transparent background (alpha=0), no background fill",
+        )
     body_stripped = body.strip()
     prefix_head = " ".join(prefix.split()[:3]).lower()
     body_head = " ".join(body_stripped.split()[:3]).lower()
