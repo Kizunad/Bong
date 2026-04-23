@@ -63,7 +63,8 @@ public class ServerDataRouterTest {
             "skill_xp_gain",
             "skill_lv_up",
             "skill_cap_changed",
-            "skill_scroll_used"
+            "skill_scroll_used",
+            "skill_snapshot"
         ), router.registeredTypes());
     }
 

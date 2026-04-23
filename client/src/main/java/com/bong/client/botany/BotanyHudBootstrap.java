@@ -2,6 +2,7 @@ package com.bong.client.botany;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.hud.BotanyHudPlanner;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -33,7 +34,9 @@ public final class BotanyHudBootstrap {
 
     static void resetOnDisconnect() {
         HarvestSessionStore.clearOnDisconnect();
-        BotanySkillStore.clearOnDisconnect();
+        com.bong.client.skill.SkillSetStore.clearOnDisconnect();
+        com.bong.client.skill.SkillMilestoneStore.clearOnDisconnect();
+        com.bong.client.skill.SkillRecentEventStore.clearOnDisconnect();
     }
 
     private static void onStartClientTick(MinecraftClient client) {
@@ -105,7 +108,7 @@ public final class BotanyHudBootstrap {
     }
 
     private static void dispatchModeRequest(HarvestSessionViewModel session, BotanyHarvestMode mode) {
-        BotanySkillViewModel skill = BotanySkillStore.snapshot();
+        BotanySkillViewModel skill = BotanyHudPlanner.herbalismView();
         if (!session.interactive() || session.sessionId().isEmpty() || session.requestPending()) {
             return;
         }

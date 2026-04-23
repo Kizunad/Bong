@@ -271,6 +271,9 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         Integer stackCount = readRequiredInt(itemObject, "stack_count");
         Double spiritQuality = readRequiredDouble(itemObject, "spirit_quality");
         Double durability = readRequiredDouble(itemObject, "durability");
+        String scrollKind = readOptionalString(itemObject, "scroll_kind");
+        String scrollSkillId = readOptionalString(itemObject, "scroll_skill_id");
+        Integer scrollXpGrant = readOptionalInt(itemObject, "scroll_xp_grant");
 
         if (instanceId == null || itemId == null || displayName == null
             || gridWidth == null || gridHeight == null || weight == null
@@ -282,7 +285,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             return null;
         }
 
-        return InventoryItem.createFull(
+        return InventoryItem.createFullWithScrollMeta(
             instanceId,
             itemId,
             displayName,
@@ -293,8 +296,46 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             description,
             stackCount,
             spiritQuality,
-            durability
+            durability,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant == null ? 0 : scrollXpGrant
         );
+    }
+
+    private static String readOptionalString(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isString()) {
+            return null;
+        }
+        String value = primitive.getAsString();
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static Integer readOptionalInt(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isNumber()) {
+            return null;
+        }
+        String token = primitive.getAsString();
+        if (!INTEGER_TOKEN_PATTERN.matcher(token).matches()) {
+            return null;
+        }
+        try {
+            long value = Long.parseLong(token);
+            if (value < 0 || value > Integer.MAX_VALUE) return null;
+            return (int) value;
+        } catch (NumberFormatException exception) {
+            return null;
+        }
     }
 
     private static JsonArray readRequiredArray(JsonObject object, String fieldName) {

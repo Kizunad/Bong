@@ -105,6 +105,7 @@ public final class ServerDataRouter {
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
         handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
         handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
+        handlers.put("skill_snapshot", new SkillSnapshotHandler());
         return new ServerDataRouter(handlers);
     }
 

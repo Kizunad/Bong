@@ -70,6 +70,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesLearnSkillScroll() {
+        String json = ClientRequestProtocol.encodeLearnSkillScroll(3003L);
+        assertEquals(
+            "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":3003}",
+            json
+        );
+    }
+
+    @Test
     void encodesInventoryMoveFromContainerToHotbar() {
         String json = ClientRequestProtocol.encodeInventoryMove(
             1001L,

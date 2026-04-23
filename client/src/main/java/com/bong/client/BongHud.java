@@ -17,6 +17,7 @@ import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.inventory.component.GridSlotComponent;
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
 import com.bong.client.inventory.state.PhysicalBodyStore;
@@ -233,7 +234,7 @@ public class BongHud {
      */
     private static void drawItemTexture(DrawContext context, String itemId, int dx, int dy, int size) {
         if (itemId == null || itemId.isEmpty() || size <= 0) return;
-        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
+        Identifier tex = GridSlotComponent.textureIdForItemId(itemId);
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();

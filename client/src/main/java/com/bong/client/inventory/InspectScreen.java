@@ -21,6 +21,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -58,8 +59,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
     private FlowLayout skillTabContent;
+    private FlowLayout skillScrollDropZone;
+    private LabelComponent skillScrollDropTitle;
+    private LabelComponent skillScrollDropHint;
+    private String skillScrollDropFeedback = "仅 skill 残卷可悟";
     // plan-skill-v1 §5.1 三行固定（herbalism / alchemy / forging）
     private com.bong.client.skill.SkillRowComponent[] skillRows;
+    private com.bong.client.skill.SkillId selectedSkill = com.bong.client.skill.SkillId.HERBALISM;
+    private LabelComponent skillDetailTitle;
+    private LabelComponent skillDetailLevel;
+    private LabelComponent skillDetailProgress;
+    private LabelComponent skillDetailCurrent;
+    private LabelComponent skillDetailNext;
+    private LabelComponent skillDetailHint;
+    private LabelComponent skillRecentHeader;
+    private LabelComponent[] skillRecentLines;
+    private LabelComponent skillMilestoneHeader;
+    private LabelComponent[] skillMilestoneLines;
     /** Screen 存活期间持有的 SkillSetStore 订阅，close 时解绑避免泄漏。 */
     private java.util.function.Consumer<com.bong.client.skill.SkillSetSnapshot> skillListener;
 
@@ -336,8 +352,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         // Tab 2: 技艺 (plan-skill-v1 §5.1)
-        //   实装范围：左列 380 三行固定（herbalism/alchemy/forging）；中列 1020 留空占位；
-        //   右列由现有 BackpackGridPanel 渲染。详情四象限 / 曲线 canvas / 里程碑 / 残卷拖入槽留 P4/P6。
+        //   现阶段做最小闭环：左列固定三行 + 选中高亮；中列展示当前生效等级、cap 压制与效果说明。
+        //   曲线 canvas / 里程碑 / 残卷拖入槽留 P4/P5/P6。
         skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         skillTabContent.gap(2);
         skillTabContent.padding(Insets.of(2));
@@ -350,12 +366,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
         for (int i = 0; i < order.length; i++) {
             skillRows[i] = new com.bong.client.skill.SkillRowComponent(order[i]);
+            final com.bong.client.skill.SkillId skillId = order[i];
+            skillRows[i].component().cursorStyle(CursorStyle.HAND);
+            skillRows[i].component().mouseDown().subscribe((mx, my, btn) -> {
+                if (btn == 0) {
+                    selectedSkill = skillId;
+                    refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+                    return true;
+                }
+                return false;
+            });
             skillTabContent.child(skillRows[i].component());
         }
-        // 中列占位 —— 详情面板见后续迭代（P3 effective_lv 灰显 / P4 残卷槽 / P5 里程碑）。
-        LabelComponent skillDetailPlaceholder = Components.label(Text.of("详情 —— 见后续迭代"));
-        skillDetailPlaceholder.color(Color.ofArgb(0xFF606060));
-        skillTabContent.child(skillDetailPlaceholder);
+        skillTabContent.child(buildSkillScrollDropZone());
+        skillTabContent.child(buildSkillDetailPanel());
 
         // 初次填充
         refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
@@ -619,7 +643,403 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (com.bong.client.skill.SkillRowComponent row : skillRows) {
             if (row == null) continue;
             row.update(snapshot.get(row.skill()), now);
+            row.setSelected(row.skill() == selectedSkill);
         }
+        refreshSkillDetail(snapshot.get(selectedSkill));
+    }
+
+    private FlowLayout buildSkillDetailPanel() {
+        FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+        panel.surface(Surface.flat(0xFF121712).and(Surface.outline(0xFF4A5C46)));
+        panel.padding(Insets.of(4));
+        panel.gap(2);
+
+        skillDetailTitle = Components.label(Text.literal("采药"));
+        skillDetailTitle.color(Color.ofArgb(0xFFD8E4D0));
+        panel.child(skillDetailTitle);
+
+        skillDetailLevel = Components.label(Text.literal("Lv.0 / effective 0 / cap 10"));
+        skillDetailLevel.color(Color.ofArgb(0xFFE0B060));
+        panel.child(skillDetailLevel);
+
+        skillDetailProgress = Components.label(Text.literal("当前 XP 0 / 100 · 累计 0"));
+        skillDetailProgress.color(Color.ofArgb(0xFFAAAAAA));
+        panel.child(skillDetailProgress);
+
+        skillDetailCurrent = Components.label(Text.literal("当前效果：尚未入门。"));
+        skillDetailCurrent.color(Color.ofArgb(0xFFCCCCCC));
+        skillDetailCurrent.maxWidth(160);
+        panel.child(skillDetailCurrent);
+
+        skillDetailNext = Components.label(Text.literal("下一阶：继续修习可见首层变化。"));
+        skillDetailNext.color(Color.ofArgb(0xFF88B090));
+        skillDetailNext.maxWidth(160);
+        panel.child(skillDetailNext);
+
+        skillDetailHint = Components.label(Text.literal("点左侧条目切换；若境界不足，超出 cap 的等级只按 effective 生效。"));
+        skillDetailHint.color(Color.ofArgb(0xFF666666));
+        skillDetailHint.maxWidth(160);
+        panel.child(skillDetailHint);
+
+        skillRecentHeader = Components.label(Text.literal("近期流水"));
+        skillRecentHeader.color(Color.ofArgb(0xFF88B090));
+        panel.child(skillRecentHeader);
+
+        skillRecentLines = new LabelComponent[3];
+        for (int i = 0; i < skillRecentLines.length; i++) {
+            LabelComponent line = Components.label(Text.literal("§8（暂无）"));
+            line.color(Color.ofArgb(0xFF888888));
+            line.maxWidth(160);
+            skillRecentLines[i] = line;
+            panel.child(line);
+        }
+
+        skillMilestoneHeader = Components.label(Text.literal("最近里程碑"));
+        skillMilestoneHeader.color(Color.ofArgb(0xFF88B090));
+        panel.child(skillMilestoneHeader);
+
+        skillMilestoneLines = new LabelComponent[3];
+        for (int i = 0; i < skillMilestoneLines.length; i++) {
+            LabelComponent line = Components.label(Text.literal("§8（暂无）"));
+            line.color(Color.ofArgb(0xFF888888));
+            line.maxWidth(160);
+            skillMilestoneLines[i] = line;
+            panel.child(line);
+        }
+
+        return panel;
+    }
+
+    private FlowLayout buildSkillScrollDropZone() {
+        FlowLayout zone = Containers.verticalFlow(Sizing.fixed(56), Sizing.fixed(68));
+        zone.surface(Surface.flat(0xFF201A14).and(Surface.outline(0xFF6A5030)));
+        zone.padding(Insets.of(3));
+        zone.gap(2);
+        zone.horizontalAlignment(HorizontalAlignment.CENTER);
+        zone.verticalAlignment(VerticalAlignment.CENTER);
+
+        FlowLayout slot = Containers.verticalFlow(Sizing.fixed(28), Sizing.fixed(56));
+        slot.surface(Surface.flat(0xFF15110E).and(Surface.outline(0xFF8A6A40)));
+        zone.child(slot);
+
+        skillScrollDropTitle = Components.label(Text.literal("技能残卷"));
+        skillScrollDropTitle.color(Color.ofArgb(0xFFB89A68));
+        zone.child(skillScrollDropTitle);
+
+        skillScrollDropHint = Components.label(Text.literal(skillScrollDropFeedback));
+        skillScrollDropHint.color(Color.ofArgb(0xFF888888));
+        zone.child(skillScrollDropHint);
+        skillScrollDropZone = zone;
+        return zone;
+    }
+
+    private void refreshSkillDetail(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (skillDetailTitle == null || entry == null) return;
+        skillDetailTitle.text(Text.literal(selectedSkill.displayName()));
+        skillDetailLevel.text(Text.literal(formatSkillLevelLine(selectedSkill, entry)));
+        skillDetailLevel.color(Color.ofArgb(entry.lv() > entry.cap() ? 0xFF907050 : 0xFFE0B060));
+        skillDetailProgress.text(Text.literal(formatSkillProgressLine(entry)));
+        skillDetailCurrent.text(Text.literal(formatSkillCurrentEffect(selectedSkill, entry)));
+        skillDetailNext.text(Text.literal(formatSkillNextEffect(selectedSkill, entry)));
+        skillDetailHint.text(Text.literal(formatSkillHint(entry)));
+        refreshSkillRecentEvents();
+        refreshSkillMilestones();
+    }
+
+    private void refreshSkillRecentEvents() {
+        if (skillRecentHeader == null || skillRecentLines == null) return;
+        java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> lines = recentEventsForSkill(selectedSkill);
+        skillRecentHeader.text(Text.literal("近期流水" + (lines.isEmpty() ? "" : " · " + selectedSkill.displayName())));
+        for (int i = 0; i < skillRecentLines.length; i++) {
+            LabelComponent line = skillRecentLines[i];
+            if (line == null) continue;
+            if (i >= lines.size()) {
+                line.text(Text.literal(i == 0 ? "§8（暂无）" : ""));
+                line.color(Color.ofArgb(0xFF888888));
+                continue;
+            }
+            line.text(Text.literal(formatSkillRecentEventLine(lines.get(i))));
+            line.color(Color.ofArgb(0xFFAAAAAA));
+        }
+    }
+
+    private void refreshSkillMilestones() {
+        if (skillMilestoneHeader == null || skillMilestoneLines == null) return;
+        java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> lines = recentMilestonesForSkill(selectedSkill);
+        skillMilestoneHeader.text(Text.literal("最近里程碑" + (lines.isEmpty() ? "" : " · " + selectedSkill.displayName())));
+        for (int i = 0; i < skillMilestoneLines.length; i++) {
+            LabelComponent line = skillMilestoneLines[i];
+            if (line == null) continue;
+            if (i >= lines.size()) {
+                line.text(Text.literal(i == 0 ? "§8（暂无）" : ""));
+                line.color(Color.ofArgb(0xFF888888));
+                continue;
+            }
+            line.text(Text.literal(formatSkillMilestoneLine(lines.get(i))));
+            line.color(Color.ofArgb(0xFFAAAAAA));
+        }
+    }
+
+    private static java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> recentMilestonesForSkill(
+        com.bong.client.skill.SkillId skill
+    ) {
+        java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> all =
+            com.bong.client.skill.SkillMilestoneStore.snapshot();
+        java.util.ArrayList<com.bong.client.skill.SkillMilestoneSnapshot> filtered = new java.util.ArrayList<>();
+        for (int i = all.size() - 1; i >= 0 && filtered.size() < 3; i--) {
+            com.bong.client.skill.SkillMilestoneSnapshot snapshot = all.get(i);
+            if (snapshot != null && snapshot.skill() == skill) {
+                filtered.add(snapshot);
+            }
+        }
+        return java.util.List.copyOf(filtered);
+    }
+
+    private static java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> recentEventsForSkill(
+        com.bong.client.skill.SkillId skill
+    ) {
+        java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> all =
+            com.bong.client.skill.SkillRecentEventStore.snapshot();
+        java.util.ArrayList<com.bong.client.skill.SkillRecentEventStore.Entry> filtered = new java.util.ArrayList<>();
+        for (com.bong.client.skill.SkillRecentEventStore.Entry entry : all) {
+            if (entry != null && entry.skill() == skill) {
+                filtered.add(entry);
+                if (filtered.size() >= 3) break;
+            }
+        }
+        return java.util.List.copyOf(filtered);
+    }
+
+    static String formatSkillRecentEventLine(com.bong.client.skill.SkillRecentEventStore.Entry entry) {
+        if (entry == null) return "（暂无）";
+        return switch (entry.kind()) {
+            case "xp_gain" -> entry.text();
+            case "lv_up" -> entry.text();
+            case "cap_changed" -> entry.text();
+            case "scroll_used" -> entry.text();
+            default -> entry.text();
+        };
+    }
+
+    static String formatSkillMilestoneLine(com.bong.client.skill.SkillMilestoneSnapshot milestone) {
+        if (milestone == null) return "（暂无）";
+        String narration = milestone.narration();
+        if (narration != null && !narration.isBlank()) {
+            return "Lv." + milestone.newLv() + " · " + narration;
+        }
+        return "Lv." + milestone.newLv() + " · t" + milestone.achievedAt() + " · 累计 " + milestone.totalXpAt() + " XP";
+    }
+
+    static String formatSkillLevelLine(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (skill == null || entry == null) return "Lv.0 / effective 0 / cap 10";
+        String line = "Lv." + entry.lv() + " / effective " + entry.effectiveLv() + " / cap " + entry.cap();
+        if (entry.lv() > entry.cap()) {
+            line += " · 境界压制";
+        }
+        return line;
+    }
+
+    static String formatSkillProgressLine(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (entry == null) return "当前 XP 0 / 100 · 累计 0";
+        if (entry.lv() >= 10) {
+            return "Lv.10 已满 · 累计 " + entry.totalXp() + " XP";
+        }
+        return "当前 XP " + entry.xp() + " / " + entry.xpToNext() + " · 累计 " + entry.totalXp();
+    }
+
+    static String formatSkillCurrentEffect(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (skill == null || entry == null) return "当前效果：尚未入门。";
+        int lv = entry.effectiveLv();
+        return "当前效果：" + switch (skill) {
+            case HERBALISM -> herbalismCurrentEffect(lv);
+            case ALCHEMY -> alchemyCurrentEffect(lv);
+            case FORGING -> forgingCurrentEffect(lv);
+        };
+    }
+
+    static String formatSkillNextEffect(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (skill == null || entry == null) return "下一阶：继续修习可见首层变化。";
+        int effective = entry.effectiveLv();
+        if (entry.lv() >= 10) {
+            return "下一阶：已至极限，后续只看境界能否完全承住这门手艺。";
+        }
+        if (entry.lv() > entry.cap()) {
+            return "下一阶：真实等级已高于境界上限；待突破后，压住的效果会直接放开。";
+        }
+        int nextLv = Math.min(10, effective + 1);
+        return "下一阶：effective 提到 " + nextLv + " 时，"
+            + switch (skill) {
+                case HERBALISM -> herbalismNextEffect(nextLv);
+                case ALCHEMY -> alchemyNextEffect(nextLv);
+                case FORGING -> forgingNextEffect(nextLv);
+            };
+    }
+
+    static String formatSkillHint(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
+        if (entry == null) return "点左侧条目切换；若境界不足，超出 cap 的等级只按 effective 生效。";
+        if (entry.lv() > entry.cap()) {
+            return "你已练到更高层次，但经脉未承住，只能按 effective_lv 发挥。";
+        }
+        if (entry.cap() < 10) {
+            return "当前境界最多承到 cap " + entry.cap() + "；继续突破后，高等级效果会自然放开。";
+        }
+        return "当前境界已不再压制这门技艺，条目显示的 real_lv 就是实际生效等级。";
+    }
+
+    private static String herbalismCurrentEffect(int effectiveLv) {
+        return String.format(
+            Locale.ROOT,
+            "手动采集 %.1fs，加成种子掉率 +%s%%，品质偏移 +%s%%。%s",
+            herbalismManualDurationDelta(effectiveLv),
+            formatPercent1(herbalismSeedBonus(effectiveLv)),
+            formatInt(herbalismQualityBias(effectiveLv)),
+            herbalismAutoText(effectiveLv)
+        );
+    }
+
+    private static String herbalismNextEffect(int nextLv) {
+        return String.format(
+            Locale.ROOT,
+            "手动采集 %.1fs，种子掉率 +%s%%，品质偏移 +%s%%。%s",
+            herbalismManualDurationDelta(nextLv),
+            formatPercent1(herbalismSeedBonus(nextLv)),
+            formatInt(herbalismQualityBias(nextLv)),
+            herbalismAutoText(nextLv)
+        );
+    }
+
+    private static String alchemyCurrentEffect(int effectiveLv) {
+        return String.format(
+            Locale.ROOT,
+            "火候容差 ×%s，坏副作用权重 ×%s，丹毒排异 +%s%%。",
+            formatPercent2(alchemyToleranceScale(effectiveLv)),
+            formatPercent2(alchemyBadWeightScale(effectiveLv)),
+            formatPercent1(alchemyPurgeBonus(effectiveLv) * 100.0)
+        );
+    }
+
+    private static String alchemyNextEffect(int nextLv) {
+        return String.format(
+            Locale.ROOT,
+            "火候容差 ×%s，坏副作用权重 ×%s，丹毒排异 +%s%%。",
+            formatPercent2(alchemyToleranceScale(nextLv)),
+            formatPercent2(alchemyBadWeightScale(nextLv)),
+            formatPercent1(alchemyPurgeBonus(nextLv) * 100.0)
+        );
+    }
+
+    private static String forgingCurrentEffect(int effectiveLv) {
+        return String.format(
+            Locale.ROOT,
+            "淬火命中窗 +%s tick，允许失误 +%s，铭文失败率 -%s%%。",
+            formatInt(forgingWindowBonus(effectiveLv)),
+            formatInt(forgingAllowedMiss(effectiveLv)),
+            formatPercent1(forgingFailureReduction(effectiveLv) * 100.0)
+        );
+    }
+
+    private static String forgingNextEffect(int nextLv) {
+        return String.format(
+            Locale.ROOT,
+            "淬火命中窗 +%s tick，允许失误 +%s，铭文失败率 -%s%%。",
+            formatInt(forgingWindowBonus(nextLv)),
+            formatInt(forgingAllowedMiss(nextLv)),
+            formatPercent1(forgingFailureReduction(nextLv) * 100.0)
+        );
+    }
+
+    private static String herbalismAutoText(int effectiveLv) {
+        if (effectiveLv < 3) return "自动采集未开。";
+        return String.format(Locale.ROOT, "自动采集已开，时长 %.1fs。", herbalismAutoDuration(effectiveLv));
+    }
+
+    private static double herbalismManualDurationDelta(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 0.0}, {1, -0.2}, {3, -0.5}, {5, -1.0}, {7, -1.2}, {10, -1.5}
+        });
+    }
+
+    private static double herbalismSeedBonus(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 0.0}, {1, 2.0}, {3, 5.0}, {5, 10.0}, {7, 15.0}, {10, 25.0}
+        });
+    }
+
+    private static double herbalismQualityBias(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 0.0}, {1, 5.0}, {3, 10.0}, {5, 15.0}, {7, 20.0}, {10, 30.0}
+        });
+    }
+
+    private static double herbalismAutoDuration(int effectiveLv) {
+        if (effectiveLv < 3) return 0.0;
+        return interpolate(effectiveLv, new double[][] {
+            {3, 8.0}, {5, 6.0}, {7, 5.0}, {10, 5.0}
+        });
+    }
+
+    private static double alchemyToleranceScale(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 1.00}, {1, 1.05}, {3, 1.15}, {5, 1.25}, {7, 1.35}, {10, 1.50}
+        });
+    }
+
+    private static double alchemyBadWeightScale(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 1.00}, {1, 0.95}, {3, 0.85}, {5, 0.75}, {7, 0.60}, {10, 0.40}
+        });
+    }
+
+    private static double alchemyPurgeBonus(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 0.00}, {1, 0.02}, {3, 0.05}, {5, 0.10}, {7, 0.15}, {10, 0.25}
+        });
+    }
+
+    private static double forgingWindowBonus(int effectiveLv) {
+        return Math.round(interpolate(effectiveLv, new double[][] {
+            {0, 0.0}, {1, 1.0}, {3, 3.0}, {5, 5.0}, {7, 6.0}, {10, 8.0}
+        }));
+    }
+
+    private static double forgingAllowedMiss(int effectiveLv) {
+        return Math.round(interpolate(effectiveLv, new double[][] {
+            {0, 0.0}, {1, 0.0}, {3, 1.0}, {5, 1.0}, {7, 2.0}, {10, 3.0}
+        }));
+    }
+
+    private static double forgingFailureReduction(int effectiveLv) {
+        return interpolate(effectiveLv, new double[][] {
+            {0, 0.00}, {1, 0.03}, {3, 0.10}, {5, 0.15}, {7, 0.22}, {10, 0.30}
+        });
+    }
+
+    private static double interpolate(int lv, double[][] points) {
+        if (points == null || points.length == 0) return 0.0;
+        if (lv <= points[0][0]) return points[0][1];
+        for (int i = 0; i < points.length - 1; i++) {
+            double l0 = points[i][0];
+            double v0 = points[i][1];
+            double l1 = points[i + 1][0];
+            double v1 = points[i + 1][1];
+            if (lv <= l1) {
+                double t = (lv - l0) / (l1 - l0);
+                return v0 + (v1 - v0) * t;
+            }
+        }
+        return points[points.length - 1][1];
+    }
+
+    private static String formatPercent1(double value) {
+        return String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    private static String formatPercent2(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private static String formatInt(double value) {
+        return Integer.toString((int) Math.round(value));
     }
 
     private void switchBodyLayer(BodyInspectComponent.Layer layer) {
@@ -917,6 +1337,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // Discard
         if (isOverDiscard(mouseX, mouseY)) {
             if (dispatchDiscardIntent(dragged, fromLoc)) {
+                dragState.drop();
+            } else {
+                returnDragToSource();
+            }
+            clearAllHighlights();
+            return;
+        }
+
+        if (activeTab == 2 && isOverSkillScrollDropZone(mouseX, mouseY)) {
+            if (tryLearnSkillScroll(dragged)) {
                 dragState.drop();
             } else {
                 returnDragToSource();
@@ -1316,6 +1746,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) return;
 
+        if (activeTab == 2 && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
+            setSkillScrollDropZoneState(skillScrollDropState(dragged));
+        }
+
         BackpackGridPanel grid = activeGrid();
         if (grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
@@ -1374,6 +1808,83 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         discardStrip.surface(Surface.flat(0xFF201010));
+        setSkillScrollDropZoneState(SkillScrollDropState.IDLE);
+    }
+
+    private boolean isOverSkillScrollDropZone(double sx, double sy) {
+        if (skillScrollDropZone == null) return false;
+        return sx >= skillScrollDropZone.x() && sx < skillScrollDropZone.x() + skillScrollDropZone.width()
+            && sy >= skillScrollDropZone.y() && sy < skillScrollDropZone.y() + skillScrollDropZone.height();
+    }
+
+    private enum SkillScrollDropState {
+        IDLE, VALID, INVALID
+    }
+
+    private SkillScrollDropState skillScrollDropState(InventoryItem item) {
+        if (item == null) return SkillScrollDropState.IDLE;
+        if (item.isSkillScroll() && isKnownSkillScroll(item) && !isConsumedSkillScroll(item)) {
+            return SkillScrollDropState.VALID;
+        }
+        return SkillScrollDropState.INVALID;
+    }
+
+    private void setSkillScrollDropZoneState(SkillScrollDropState state) {
+        if (skillScrollDropZone == null || skillScrollDropTitle == null || skillScrollDropHint == null) return;
+        switch (state) {
+            case VALID -> {
+                skillScrollDropZone.surface(Surface.flat(0xFF1A2418).and(Surface.outline(0xFF5C8A50)));
+                skillScrollDropTitle.text(Text.literal("技能残卷"));
+                skillScrollDropHint.text(Text.literal("拖入即可顿悟"));
+                skillScrollDropHint.color(Color.ofArgb(0xFF88CC88));
+            }
+            case INVALID -> {
+                skillScrollDropZone.surface(Surface.flat(0xFF241616).and(Surface.outline(0xFFAA5050)));
+                skillScrollDropTitle.text(Text.literal("不可投入"));
+                skillScrollDropHint.text(Text.literal(skillScrollDropFeedback));
+                skillScrollDropHint.color(Color.ofArgb(0xFFCC8888));
+            }
+            case IDLE -> {
+                skillScrollDropZone.surface(Surface.flat(0xFF201A14).and(Surface.outline(0xFF6A5030)));
+                skillScrollDropTitle.text(Text.literal("技能残卷"));
+                skillScrollDropHint.text(Text.literal(skillScrollDropFeedback));
+                skillScrollDropHint.color(Color.ofArgb(0xFF888888));
+            }
+        }
+    }
+
+    boolean tryLearnSkillScroll(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L) {
+            skillScrollDropFeedback = "残卷无效";
+            return false;
+        }
+        if (!item.isSkillScroll()) {
+            skillScrollDropFeedback = "此物非 skill，不可入";
+            return false;
+        }
+        if (!isKnownSkillScroll(item)) {
+            skillScrollDropFeedback = "不识此技，暂不能悟";
+            return false;
+        }
+        if (isConsumedSkillScroll(item)) {
+            skillScrollDropFeedback = "此卷已悟";
+            return false;
+        }
+        skillScrollDropFeedback = "已送出顿悟请求";
+        com.bong.client.network.ClientRequestSender.sendLearnSkillScroll(item.instanceId());
+        return true;
+    }
+
+    private boolean isKnownSkillScroll(InventoryItem item) {
+        return com.bong.client.skill.SkillId.fromWire(item.scrollSkillId()) != null;
+    }
+
+    private boolean isConsumedSkillScroll(InventoryItem item) {
+        return com.bong.client.skill.SkillSetStore.snapshot().hasConsumedScroll(item.itemId());
+    }
+
+    String debugSkillScrollDropFeedback() {
+        return skillScrollDropFeedback;
     }
 
     /** 检查装备槽是否可用（断臂不能持物） */
@@ -1455,7 +1966,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int cs = GridSlotComponent.CELL_SIZE;
             int gw = item.gridWidth() * cs, gh = item.gridHeight() * cs;
 
-            Identifier tex = new Identifier("bong-client", "textures/gui/items/" + item.itemId() + ".png");
+            Identifier tex = GridSlotComponent.textureIdForItem(item);
             var matrices = context.getMatrices();
             matrices.push();
             matrices.translate(0, 0, 200);
@@ -1503,7 +2014,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private static void drawItemTextureRaw(DrawContext ctx, InventoryItem item, int dx, int dy, int dw, int dh) {
         if (item == null || item.isEmpty()) return;
-        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + item.itemId() + ".png");
+        Identifier tex = GridSlotComponent.textureIdForItem(item);
         int fitSize = Math.min(dw, dh);
         int ox = (dw - fitSize) / 2, oy = (dh - fitSize) / 2;
 

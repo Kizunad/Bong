@@ -13,7 +13,11 @@ import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.model.MockInventoryData;
 import com.bong.client.inventory.state.DragState;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.client.MinecraftClient;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -23,6 +27,8 @@ import io.wispforest.owo.ui.core.*;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+
+import java.util.function.Consumer;
 
 /** plan-alchemy-v1 §3.3 — 紧凑炼丹炉界面（600×340，UI scale 3 下完整可见）。 */
 public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
@@ -43,6 +49,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private LabelComponent recipeTitle;
     private LabelComponent recipeSubtitle;
     private LabelComponent recipeBody;
+    private LabelComponent alchemySkillLabel;
     private LabelComponent furnaceStatusLabel;
     private LabelComponent furnaceInfoLabel;
     private LabelComponent progressLabel;
@@ -65,6 +72,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private BackpackGridPanel backpack;
     private final InventoryModel mockModel;
     private final DragState dragState = new DragState();
+    private Consumer<SkillSetSnapshot> skillListener;
 
     private int dupFlashTicks = 0;
 
@@ -76,6 +84,15 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     protected OwoUIAdapter<FlowLayout> createAdapter() {
         return OwoUIAdapter.create(this, Containers::verticalFlow);
+    }
+
+    @Override
+    public void removed() {
+        if (skillListener != null) {
+            SkillSetStore.removeListener(skillListener);
+            skillListener = null;
+        }
+        super.removed();
     }
 
     @Override
@@ -102,12 +119,19 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
 
         root.child(panel);
         backpack.populateFromModel(mockModel);
+        refreshAlchemySkillText();
+        skillListener = next -> MinecraftClient.getInstance().execute(this::refreshAlchemySkillText);
+        SkillSetStore.addListener(skillListener);
     }
 
     private FlowLayout buildHeader() {
         FlowLayout h = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         h.verticalAlignment(VerticalAlignment.CENTER);
         h.child(Components.label(Text.literal("§f§l炼丹炉")));
+        h.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
+        alchemySkillLabel = Components.label(Text.literal("炼丹 Lv.0 · 本次火候容差 +0%"));
+        alchemySkillLabel.color(Color.ofArgb(0xFFE0B060));
+        h.child(alchemySkillLabel);
         h.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
         h.child(Components.label(Text.literal("§7ESC 关闭 · session 续 tick")));
         return h;
@@ -378,6 +402,33 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         String sub = "§o" + cur.author() + " · " + snap.learned().size() + "/" + cur.maxKnown();
         recipeSubtitle.text(Text.literal(sub));
         recipeBody.text(Text.literal(cur.bodyText()));
+    }
+
+    private void refreshAlchemySkillText() {
+        if (alchemySkillLabel == null) return;
+        alchemySkillLabel.text(Text.literal(formatAlchemySkillHeader(
+            SkillSetStore.snapshot().get(SkillId.ALCHEMY)
+        )));
+    }
+
+    static String formatAlchemySkillHeader(SkillSetSnapshot.Entry entry) {
+        if (entry == null) entry = SkillSetSnapshot.Entry.zero();
+        int effectiveLv = entry.effectiveLv();
+        int bonusPercent = (int) Math.round((alchemyToleranceScale(effectiveLv) - 1.0) * 100.0);
+        if (entry.lv() > entry.cap()) {
+            return "炼丹 Lv." + entry.lv() + " (压制→" + effectiveLv + ") · 本次火候容差 +" + bonusPercent + "%";
+        }
+        return "炼丹 Lv." + effectiveLv + " · 本次火候容差 +" + bonusPercent + "%";
+    }
+
+    private static double alchemyToleranceScale(int effectiveLv) {
+        if (effectiveLv <= 0) return 1.0;
+        if (effectiveLv <= 1) return 1.05;
+        if (effectiveLv <= 3) return 1.05 + (effectiveLv - 1) * 0.05;
+        if (effectiveLv <= 5) return 1.15 + (effectiveLv - 3) * 0.05;
+        if (effectiveLv <= 7) return 1.25 + (effectiveLv - 5) * 0.05;
+        if (effectiveLv <= 10) return 1.35 + (effectiveLv - 7) * 0.05;
+        return 1.50;
     }
 
     private void refreshFurnaceText() {
@@ -709,7 +760,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             int gw = item.gridWidth() * cs, gh = item.gridHeight() * cs;
             int fitSize = Math.min(gw, gh);
             int fx = mouseX - fitSize / 2, fy = mouseY - fitSize / 2;
-            Identifier tex = new Identifier("bong-client", "textures/gui/items/" + item.itemId() + ".png");
+            Identifier tex = GridSlotComponent.textureIdForItem(item);
             var m = context.getMatrices();
             m.push();
             m.translate(0, 0, 200);
