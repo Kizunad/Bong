@@ -202,6 +202,7 @@ fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
 }
 
 pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
+    let (scroll_kind, scroll_skill_id, scroll_xp_grant) = skill_scroll_metadata(item.template_id.as_str());
     InventoryItemViewV1 {
         instance_id: item.instance_id,
         item_id: item.template_id.clone(),
@@ -218,6 +219,40 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         // M3a — 衍生数据由 caller 调 `enrich_with_derived_freshness` 后填；
         // 默认 None 防止未注入 registry 的 caller 漏算。
         freshness_current: None,
+        scroll_kind,
+        scroll_skill_id,
+        scroll_xp_grant,
+    }
+}
+
+fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, Option<u32>) {
+    match template_id {
+        "skill_scroll_herbalism_baicao_can" => (
+            Some("skill_scroll".to_string()),
+            Some("herbalism".to_string()),
+            Some(500),
+        ),
+        "skill_scroll_alchemy_danhuo_can" => (
+            Some("skill_scroll".to_string()),
+            Some("alchemy".to_string()),
+            Some(500),
+        ),
+        "skill_scroll_forging_duantie_can" => (
+            Some("skill_scroll".to_string()),
+            Some("forging".to_string()),
+            Some(500),
+        ),
+        id if id.starts_with("recipe_scroll_") => (
+            Some("recipe_scroll".to_string()),
+            None,
+            None,
+        ),
+        id if id.starts_with("blueprint_scroll_") => (
+            Some("blueprint_scroll".to_string()),
+            None,
+            None,
+        ),
+        _ => (None, None, None),
     }
 }
 
@@ -655,6 +690,50 @@ mod tests {
             }
             other => panic!("expected dropped inventory_event payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn item_view_marks_skill_scroll_metadata() {
+        let item = make_item(
+            3001,
+            "skill_scroll_herbalism_baicao_can",
+            "《百草图考·残》",
+            0.05,
+            1,
+        );
+
+        let view = item_view_from_instance(&item);
+        assert_eq!(view.scroll_kind.as_deref(), Some("skill_scroll"));
+        assert_eq!(view.scroll_skill_id.as_deref(), Some("herbalism"));
+        assert_eq!(view.scroll_xp_grant, Some(500));
+    }
+
+    #[test]
+    fn item_view_marks_recipe_and_blueprint_scroll_metadata() {
+        let recipe = make_item(
+            3002,
+            "recipe_scroll_qixue_pill",
+            "丹方残卷·气血丹",
+            0.05,
+            1,
+        );
+        let blueprint = make_item(
+            3003,
+            "blueprint_scroll_bronze_tripod",
+            "器图残卷·青铜鼎",
+            0.08,
+            1,
+        );
+
+        let recipe_view = item_view_from_instance(&recipe);
+        assert_eq!(recipe_view.scroll_kind.as_deref(), Some("recipe_scroll"));
+        assert!(recipe_view.scroll_skill_id.is_none());
+        assert!(recipe_view.scroll_xp_grant.is_none());
+
+        let blueprint_view = item_view_from_instance(&blueprint);
+        assert_eq!(blueprint_view.scroll_kind.as_deref(), Some("blueprint_scroll"));
+        assert!(blueprint_view.scroll_skill_id.is_none());
+        assert!(blueprint_view.scroll_xp_grant.is_none());
     }
 
     // =========== plan-shelflife-v1 M3a — enrich_with_derived_freshness ===========

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
 use super::components::{ColorKind, MeridianId, Realm};
+use crate::skill::components::SkillId;
 
 const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
 
@@ -126,6 +127,15 @@ pub struct TakenInsight {
     pub realm_at_time: Realm,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkillMilestone {
+    pub skill: SkillId,
+    pub new_lv: u8,
+    pub achieved_at: u64,
+    pub narration: String,
+    pub total_xp_at: u64,
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct LifeRecord {
     #[serde(default = "default_character_id")]
@@ -133,6 +143,8 @@ pub struct LifeRecord {
     pub created_at: u64,
     pub biography: Vec<BiographyEntry>,
     pub insights_taken: Vec<TakenInsight>,
+    #[serde(default)]
+    pub skill_milestones: Vec<SkillMilestone>,
     pub spirit_root_first: Option<MeridianId>,
 }
 
@@ -149,6 +161,7 @@ impl LifeRecord {
             created_at: 0,
             biography: Vec::new(),
             insights_taken: Vec::new(),
+            skill_milestones: Vec::new(),
             spirit_root_first: None,
         }
     }
@@ -172,6 +185,20 @@ impl LifeRecord {
         self.recent_summary(n)
             .iter()
             .map(|e| format_entry(e))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    pub fn push_skill_milestone(&mut self, milestone: SkillMilestone) {
+        self.skill_milestones.push(milestone);
+    }
+
+    pub fn recent_skill_milestones_summary_text(&self, n: usize) -> String {
+        let len = self.skill_milestones.len();
+        let start = len.saturating_sub(n);
+        self.skill_milestones[start..]
+            .iter()
+            .map(format_skill_milestone)
             .collect::<Vec<_>>()
             .join(" | ")
     }
@@ -277,6 +304,15 @@ fn format_entry(entry: &BiographyEntry) -> String {
     }
 }
 
+fn format_skill_milestone(milestone: &SkillMilestone) -> String {
+    format!(
+        "t{}:skill:{}:lv{}",
+        milestone.achieved_at,
+        milestone.skill.as_str(),
+        milestone.new_lv
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +351,7 @@ mod tests {
         assert_eq!(lr.character_id, UNASSIGNED_CHARACTER_ID);
         assert_eq!(lr.created_at, 0);
         assert!(lr.biography.is_empty());
+        assert!(lr.skill_milestones.is_empty());
         assert!(lr.recent_summary_text(5).is_empty());
     }
 
@@ -353,6 +390,7 @@ mod tests {
             "created_at": 5,
             "biography": [],
             "insights_taken": [],
+            "skill_milestones": [],
             "spirit_root_first": null,
         });
 
@@ -376,6 +414,7 @@ mod tests {
                 }
             }],
             "insights_taken": [],
+            "skill_milestones": [],
             "spirit_root_first": null
         });
 
@@ -385,6 +424,65 @@ mod tests {
         assert_eq!(
             decoded.recent_summary_text(1),
             "t7:combat:offline:Azure:Chest:Blunt:9.0"
+        );
+    }
+
+    #[test]
+    fn legacy_skill_milestones_default_to_empty() {
+        let legacy = serde_json::json!({
+            "character_id": "offline:Alice",
+            "created_at": 5,
+            "biography": [],
+            "insights_taken": [],
+            "spirit_root_first": null,
+        });
+
+        let decoded: LifeRecord =
+            serde_json::from_value(legacy).expect("legacy life record should deserialize");
+
+        assert!(decoded.skill_milestones.is_empty());
+    }
+
+    #[test]
+    fn push_skill_milestone_appends() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Herbalism,
+            new_lv: 3,
+            achieved_at: 120,
+            narration: "熟能近道，草木不再尽是草木。".to_string(),
+            total_xp_at: 250,
+        });
+
+        assert_eq!(lr.skill_milestones.len(), 1);
+        assert_eq!(lr.skill_milestones[0].new_lv, 3);
+    }
+
+    #[test]
+    fn recent_skill_milestones_summary_returns_tail() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Herbalism,
+            new_lv: 2,
+            achieved_at: 80,
+            narration: "草木渐熟。".to_string(),
+            total_xp_at: 120,
+        });
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Alchemy,
+            new_lv: 3,
+            achieved_at: 160,
+            narration: "炉火识性稍深。".to_string(),
+            total_xp_at: 420,
+        });
+
+        assert_eq!(
+            lr.recent_skill_milestones_summary_text(1),
+            "t160:skill:alchemy:lv3"
+        );
+        assert_eq!(
+            lr.recent_skill_milestones_summary_text(5),
+            "t80:skill:herbalism:lv2 | t160:skill:alchemy:lv3"
         );
     }
 }

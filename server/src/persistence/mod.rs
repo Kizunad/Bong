@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 11;
+const CURRENT_USER_VERSION: i32 = 12;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1000,6 +1000,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             CREATE INDEX IF NOT EXISTS idx_agent_decisions_envelope_agent
             ON agent_decisions (envelope_id, agent_name, observed_at_wall, event_id);
             PRAGMA user_version = 11;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 12 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_skills (
+                username TEXT PRIMARY KEY,
+                skill_set_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 12;
             ",
         )?;
         transaction.commit()?;
@@ -4738,12 +4756,17 @@ mod persistence_tests {
             .expect("test should age decision row");
         prune_agent_world_model_append_only(&transaction, prune_now)
             .expect("retention prune should succeed");
-        transaction.commit().expect("retention transaction should commit");
+        transaction
+            .commit()
+            .expect("retention transaction should commit");
 
         let eras = load_agent_eras(&settings).expect("agent eras should load");
         let decisions = load_agent_decisions(&settings).expect("agent decisions should load");
         assert!(eras.is_empty(), "stale agent eras should be pruned");
-        assert!(decisions.is_empty(), "stale agent decisions should be pruned");
+        assert!(
+            decisions.is_empty(),
+            "stale agent decisions should be pruned"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5317,6 +5340,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
         let lifecycle = Lifecycle {
@@ -5389,6 +5413,78 @@ mod persistence_tests {
     }
 
     #[test]
+    fn persist_termination_transition_preserves_skill_milestones_and_narration_in_deceased_exports(
+    ) {
+        let (settings, root) = persistence_settings("deceased-export-skill-milestones");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let life_record = LifeRecord {
+            character_id: "offline:Ancestor".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            insights_taken: Vec::new(),
+            skill_milestones: vec![crate::cultivation::life_record::SkillMilestone {
+                skill: crate::skill::components::SkillId::Alchemy,
+                new_lv: 4,
+                achieved_at: 75,
+                narration: "丹火三转，炉意已成。".to_string(),
+                total_xp_at: 1_280,
+            }],
+            spirit_root_first: None,
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            death_count: 3,
+            fortune_remaining: 0,
+            last_death_tick: Some(77),
+            last_revive_tick: Some(55),
+            near_death_deadline_tick: None,
+            weakened_until_tick: None,
+            state: crate::combat::components::LifecycleState::Terminated,
+        };
+
+        persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect("terminated snapshot should persist");
+
+        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
+        )
+        .expect("public snapshot json should deserialize");
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let sqlite_snapshot_json: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("deceased snapshot row should exist");
+        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
+            .expect("sqlite snapshot json should deserialize");
+
+        for snapshot in [&public_snapshot, &sqlite_snapshot] {
+            assert_eq!(snapshot.life_record.skill_milestones.len(), 1);
+            assert_eq!(
+                snapshot.life_record.skill_milestones[0].skill,
+                crate::skill::components::SkillId::Alchemy
+            );
+            assert_eq!(snapshot.life_record.skill_milestones[0].new_lv, 4);
+            assert_eq!(snapshot.life_record.skill_milestones[0].achieved_at, 75);
+            assert_eq!(snapshot.life_record.skill_milestones[0].total_xp_at, 1_280);
+            assert_eq!(
+                snapshot.life_record.skill_milestones[0].narration,
+                "丹火三转，炉意已成。"
+            );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persist_termination_transition_rewrites_existing_public_index_entry_for_same_char() {
         let (settings, root) = persistence_settings("deceased-export-rewrite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -5402,6 +5498,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
         let first_lifecycle = Lifecycle {
@@ -5425,6 +5522,7 @@ mod persistence_tests {
                 tick: 99,
             }],
             insights_taken: Vec::new(),
+            skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
         let second_lifecycle = Lifecycle {
@@ -5496,6 +5594,7 @@ mod persistence_tests {
                     tick: died_at_tick as u64,
                 }],
                 insights_taken: Vec::new(),
+                skill_milestones: Vec::new(),
                 spirit_root_first: None,
             };
             let lifecycle = Lifecycle {
@@ -5553,6 +5652,7 @@ mod persistence_tests {
                 },
             ],
             insights_taken: Vec::new(),
+            skill_milestones: Vec::new(),
             spirit_root_first: None,
         }
     }
@@ -5636,6 +5736,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -5777,6 +5878,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -5944,6 +6046,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -6138,6 +6241,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -6384,6 +6488,7 @@ mod persistence_tests {
                                 tick,
                             }],
                             insights_taken: Vec::new(),
+                            skill_milestones: Vec::new(),
                             spirit_root_first: None,
                         };
                         let lifecycle = Lifecycle {

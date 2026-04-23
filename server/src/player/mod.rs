@@ -4,11 +4,12 @@ pub mod state;
 
 use self::state::{
     load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_progression_slice, save_player_slices, save_player_slow_slice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_progression_slice, save_player_skill_slice, save_player_slices,
+    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
+use crate::skill::components::SkillSet;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
@@ -38,6 +39,8 @@ type JoinedClientsWithoutStateQueryItem<'a> = (Entity, &'a Username);
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
 type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
+type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
+type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
@@ -54,9 +57,10 @@ pub fn register(app: &mut App) {
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
             autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
+            flush_changed_player_skills.after(autosave_player_progression_slices),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(autosave_player_progression_slices),
+                .after(flush_changed_player_skills),
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
@@ -125,14 +129,17 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let realm = persisted.state.realm.clone();
         let composite_power = persisted.state.composite_power();
         let restored_inventory = persisted.inventory.is_some();
+        let restored_skill = !persisted.skill_set.skills.is_empty()
+            || !persisted.skill_set.consumed_scrolls.is_empty();
         let mut entity_commands = commands.entity(entity);
 
         entity_commands.insert((persisted.state, Position::new(persisted.position)));
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
+        entity_commands.insert(persisted.skill_set);
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3}, restored_inventory={restored_inventory})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill})",
             username.0,
             realm,
         );
@@ -167,10 +174,16 @@ fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     mut disconnected_clients: RemovedComponents<Client>,
-    persisted_players: Query<(&Username, &PlayerState, &Position, Option<&PlayerInventory>)>,
+    persisted_players: Query<(
+        &Username,
+        &PlayerState,
+        &Position,
+        Option<&PlayerInventory>,
+        Option<&SkillSet>,
+    )>,
 ) {
     for entity in disconnected_clients.read() {
-        if let Ok((username, player_state, position, player_inventory)) =
+        if let Ok((username, player_state, position, player_inventory, skill_set)) =
             persisted_players.get(entity)
         {
             match save_player_slices(
@@ -179,6 +192,7 @@ fn despawn_disconnected_clients(
                 player_state,
                 position_to_array(position),
                 player_inventory,
+                skill_set.unwrap_or(&SkillSet::default()),
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -206,19 +220,29 @@ fn despawn_disconnected_clients(
 fn flush_connected_players_on_shutdown(
     persistence: Res<PlayerStatePersistence>,
     mut app_exit: EventReader<AppExit>,
-    players: Query<(&Username, &PlayerState, &Position, Option<&PlayerInventory>), With<Client>>,
+    players: Query<
+        (
+            &Username,
+            &PlayerState,
+            &Position,
+            Option<&PlayerInventory>,
+            Option<&SkillSet>,
+        ),
+        With<Client>,
+    >,
 ) {
     if app_exit.read().next().is_none() {
         return;
     }
 
-    for (username, player_state, position, player_inventory) in &players {
+    for (username, player_state, position, player_inventory, skill_set) in &players {
         match save_player_slices(
             &persistence,
             username.0.as_str(),
             player_state,
             position_to_array(position),
             player_inventory,
+            skill_set.unwrap_or(&SkillSet::default()),
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -331,6 +355,20 @@ fn flush_changed_player_inventories(
         {
             tracing::warn!(
                 "[bong][player] immediate inventory flush failed for `{}`: {error}",
+                username.0,
+            );
+        }
+    }
+}
+
+fn flush_changed_player_skills(
+    persistence: Res<PlayerStatePersistence>,
+    players: Query<ChangedSkillClientsQueryItem<'_>, ChangedSkillClientsQueryFilter>,
+) {
+    for (username, skill_set) in &players {
+        if let Err(error) = save_player_skill_slice(&persistence, username.0.as_str(), skill_set) {
+            tracing::warn!(
+                "[bong][player] immediate skill flush failed for `{}`: {error}",
                 username.0,
             );
         }

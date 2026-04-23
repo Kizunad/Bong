@@ -67,6 +67,12 @@ pub struct InventoryItemViewV1 {
     /// `None` = freshness 字段缺失 / profile 未在 registry / 无法衍生。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freshness_current: Option<FreshnessDerivedV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_skill_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_xp_grant: Option<u32>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -759,6 +765,9 @@ mod tests {
                 durability: 1.0,
                 freshness: None,
                 freshness_current: None,
+                scroll_kind: None,
+                scroll_skill_id: None,
+                scroll_xp_grant: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -910,6 +919,9 @@ mod tests {
                 frozen_since_tick: Some(1000),
             }),
             freshness_current: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -934,6 +946,9 @@ mod tests {
             durability: 1.0,
             freshness: None,
             freshness_current: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
