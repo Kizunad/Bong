@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import type { WorldStateV1 } from "@bong/schema";
 import {
   MAX_TOOL_CALL_ROUNDS,
   TOOL_LOOP_TRUNCATED_RESPONSE,
   createClient,
 } from "../src/llm.js";
 import { createToolContext, toolSchema } from "../src/tools/types.js";
+import { queryPlayerSkillMilestonesTool } from "../src/tools/query-player-skill-milestones.js";
 import { WorldModel } from "../src/world-model.js";
 import { createTestWorldState } from "./support/fakes.js";
 
@@ -229,6 +231,124 @@ describe("tool-calling loop", () => {
       totalCalls: 1,
       executedCalls: 0,
       errorCount: 1,
+      truncated: false,
+    });
+  });
+
+  it("executes query-player-skill-milestones and returns narration-rich milestone payloads", async () => {
+    const state: WorldStateV1 = {
+      ...createTestWorldState(),
+      players: [
+        {
+          uuid: "offline:Veteran",
+          name: "Veteran",
+          realm: "qi_refining_1",
+          composite_power: 0.82,
+          breakdown: {
+            combat: 0.8,
+            wealth: 0.3,
+            social: 0.2,
+            karma: -0.2,
+            territory: 0.1,
+          },
+          trend: "rising",
+          active_hours: 8,
+          zone: "blood_valley",
+          pos: [8, 66, 8],
+          recent_kills: 4,
+          recent_deaths: 1,
+          life_record: {
+            recent_biography_summary: "t82000:reach:Spirit",
+            recent_skill_milestones_summary: "t83000:skill:alchemy:lv2",
+            skill_milestones: [
+              {
+                skill: "alchemy" as const,
+                new_lv: 2,
+                achieved_at: 83000,
+                narration: "炉火识性稍深，丹道已至Lv.2。",
+                total_xp_at: 240,
+              },
+            ],
+          },
+        },
+      ],
+      zones: [
+        {
+          name: "blood_valley",
+          spirit_qi: 0.5,
+          danger_level: 1,
+          active_events: [],
+          player_count: 1,
+        },
+      ],
+    };
+    const chatCompletionRequest = vi
+      .fn()
+      .mockImplementationOnce(async ({ model }: { model: string }) => ({
+        content: "",
+        requestId: "req_skill_1",
+        model,
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "query-player-skill-milestones",
+            arguments: JSON.stringify({ uuid: "offline:Veteran", limit: 1 }),
+          },
+        ],
+      }))
+      .mockImplementationOnce(async ({ model, messages }: { model: string; messages: Array<{ role?: string; content?: string }> }) => {
+        const toolMessage = messages.find((message) => message.role === "tool");
+        const payload = JSON.parse(String(toolMessage?.content));
+        expect(payload).toMatchObject({
+          status: "ok",
+          output: {
+            player: {
+              uuid: "offline:Veteran",
+              name: "Veteran",
+            },
+            milestones: [
+              {
+                skill: "alchemy",
+                newLv: 2,
+                narration: "炉火识性稍深，丹道已至Lv.2。",
+                totalXpAt: 240,
+              },
+            ],
+          },
+        });
+        return {
+          content: JSON.stringify({ commands: [], narrations: [], reasoning: "used skill milestones" }),
+          requestId: "req_skill_2",
+          model,
+        };
+      });
+    const client = createClient({
+      baseURL: "http://unit-test.local",
+      apiKey: "test-key",
+      model: "mock-model",
+      chatCompletionRequest,
+    });
+
+    const result = await client.chat(
+      "mock-model",
+      [{ role: "user", content: "inspect recent skill breakthroughs" }],
+      {
+        tools: [queryPlayerSkillMilestonesTool],
+        toolContext: createToolContext({
+          latestState: state,
+          worldModel: WorldModel.fromState(state),
+        }),
+      },
+    );
+
+    expect(result.content).toBe(
+      JSON.stringify({ commands: [], narrations: [], reasoning: "used skill milestones" }),
+    );
+    expect(result.toolUsage).toMatchObject({
+      rounds: 1,
+      totalCalls: 1,
+      executedCalls: 1,
+      errorCount: 0,
       truncated: false,
     });
   });

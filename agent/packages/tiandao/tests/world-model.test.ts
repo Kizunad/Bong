@@ -27,6 +27,8 @@ function createPlayer(name: string, overrides: PlayerOverrides = {}): PlayerProf
     pos: overrides.pos ?? [0, 64, 0],
     recent_kills: overrides.recent_kills ?? 0,
     recent_deaths: overrides.recent_deaths ?? 0,
+    cultivation: overrides.cultivation,
+    life_record: overrides.life_record,
   };
 }
 
@@ -180,6 +182,42 @@ describe("WorldModel", () => {
     expect(peerDecisions[0]?.summary).toContain("blood_valley 灵气 -0.05");
     expect(peerDecisions[0]?.summary).toContain("green_cloud_peak 灵气 +0.05");
     expect(peerDecisions[1]?.summary).toBe("无行动");
+  });
+
+  it("surfaces recent skill milestone breakthroughs in key player reasons", () => {
+    const model = new WorldModel();
+
+    model.updateState(
+      createState({
+        tick: 1,
+        players: [
+          createPlayer("Craftsman", {
+            composite_power: 0.42,
+            zone: "green_cloud_peak",
+            life_record: {
+              recent_biography_summary: "t82000:reach:Spirit",
+              recent_skill_milestones_summary: "t83000:skill:alchemy:lv4",
+              skill_milestones: [
+                {
+                  skill: "alchemy",
+                  new_lv: 4,
+                  achieved_at: 83000,
+                  narration: "炉火识性渐深，丹道已至Lv.4。",
+                  total_xp_at: 1200,
+                },
+              ],
+            },
+          }),
+        ],
+        zones: [createZone("green_cloud_peak", 0.82, { player_count: 1 })],
+      }),
+    );
+
+    const keyPlayers = model.getKeyPlayers();
+    const craftsman = keyPlayers.find((player) => player.name === "Craftsman");
+
+    expect(craftsman?.reasons).toContain("技艺突破 炼丹 Lv.4");
+    expect(craftsman?.note).toBe("技艺突破 炼丹 Lv.4，手艺有成");
   });
 
   it("persists current era state with structured global effect", () => {
