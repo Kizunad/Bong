@@ -29,6 +29,25 @@ pub struct RecipeStage {
 pub struct IngredientSpec {
     pub material: String,
     pub count: u32,
+    /// plan-mineral-v1 §6 — 矿物辅料字段。当 `Some(...)` 时该 ingredient 为矿物，
+    /// consume 时必须用 inventory item NBT `mineral_id == 此值` 的物品；
+    /// 同时 `material` 字段仍参与精确匹配（用于配方查找的 key），但视作矿物 alias。
+    /// `None` 保持现有 botany 草药 / 凡俗物品行为不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
+}
+
+impl IngredientSpec {
+    /// plan-mineral-v1 §6 — 校验 inventory item NBT mineral_id 是否满足本 ingredient。
+    /// `None` ingredient.mineral_id → 任何 item 都通过（不要求矿物来源）。
+    /// `Some(req)` → item.mineral_id 必须等于 req。
+    pub fn matches_mineral(&self, item_mineral_id: Option<&str>) -> bool {
+        match (&self.mineral_id, item_mineral_id) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(req), Some(got)) => req == got,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -307,10 +326,12 @@ mod tests {
                     IngredientSpec {
                         material: "a".into(),
                         count: 2,
+                        mineral_id: None,
                     },
                     IngredientSpec {
                         material: "b".into(),
                         count: 1,
+                        mineral_id: None,
                     },
                 ],
                 window: 0,
@@ -423,5 +444,60 @@ mod tests {
         let recipe = registry.get("du_ming_san_v0").unwrap();
         assert_eq!(recipe.stages.len(), 3);
         assert_eq!(recipe.stages[2].at_tick, 160);
+    }
+
+    // =========== plan-mineral-v1 §6 — IngredientSpec.mineral_id ===========
+
+    #[test]
+    fn ingredient_mineral_id_legacy_recipe_json_omits_field() {
+        let json = r#"{ "material": "bai_cao", "count": 2 }"#;
+        let ing: IngredientSpec = serde_json::from_str(json).expect("legacy ingredient must parse");
+        assert!(ing.mineral_id.is_none());
+    }
+
+    #[test]
+    fn ingredient_mineral_id_new_recipe_json_carries_field() {
+        let json = r#"{ "material": "dan_sha_aux", "count": 1, "mineral_id": "dan_sha" }"#;
+        let ing: IngredientSpec = serde_json::from_str(json).expect("aux ingredient must parse");
+        assert_eq!(ing.mineral_id.as_deref(), Some("dan_sha"));
+    }
+
+    #[test]
+    fn ingredient_mineral_id_serialization_omits_when_none() {
+        let ing = IngredientSpec {
+            material: "bai_cao".into(),
+            count: 2,
+            mineral_id: None,
+        };
+        let json = serde_json::to_string(&ing).unwrap();
+        assert!(
+            !json.contains("mineral_id"),
+            "None mineral_id should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn ingredient_matches_mineral_when_no_constraint() {
+        let ing = IngredientSpec {
+            material: "bai_cao".into(),
+            count: 1,
+            mineral_id: None,
+        };
+        // 无约束 — 任何 item 都通过（包括没 mineral_id 的凡俗物品）
+        assert!(ing.matches_mineral(None));
+        assert!(ing.matches_mineral(Some("fan_tie")));
+    }
+
+    #[test]
+    fn ingredient_matches_mineral_requires_match_when_constrained() {
+        let ing = IngredientSpec {
+            material: "dan_sha_aux".into(),
+            count: 1,
+            mineral_id: Some("dan_sha".into()),
+        };
+        assert!(ing.matches_mineral(Some("dan_sha")));
+        assert!(!ing.matches_mineral(Some("zhu_sha")));
+        // 没 mineral_id NBT 的物品不可冒充矿物来源（plan §2.2 极端情况第 5 条）
+        assert!(!ing.matches_mineral(None));
     }
 }
