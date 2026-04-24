@@ -19,9 +19,8 @@
 | 部位状态阈值常量 | `combat/components.rs:27,29` | LEG_SLOWED=0.3 / HEAD_STUN=0.5 |
 | `JIEMAI_DEFENSE_WINDOW_MS=200` | `combat/components.rs:21` | 截脉主动防御窗口 |
 | `JIEMAI_CONTAM_MULTIPLIER=0.2` | `combat/components.rs:23` | 截脉污染降低系数 |
-| `UnlockedStyles { jiemai, tishi, jueling }` | `combat/components.rs:275-283` | 三档主动防御解锁 flag（截脉/替尸/绝灵涡流） |
 | `TICKS_PER_SECOND = 20` | `combat/components.rs:11` | 20TPS |
-| 截脉实际实装：`CombatState.incoming_window` + `apply_defense_intents` + jiemai_success 分支 | `combat/resolve.rs:77,404-434` | **截脉是本项目唯一已实装的主动防御流派**；替尸 / 绝灵涡流仅有 UnlockedStyles flag，主动逻辑未落地 |
+| 截脉主动防御实装：`CombatState.incoming_window` + `apply_defense_intents` + jiemai_success 分支 | `combat/resolve.rs:77,404-434` | 本 plan 的 `apply_armor_mitigation` 层紧跟在 jiemai 分支之后 |
 | 主攻击结算入口 `resolve_attack_intents` | `combat/resolve.rs:97` | severity 在 `:342,429,443` 多处生成；armor_mitigation 层需插入此处 |
 | `body_part_multipliers` / `wound_kind_profile` | `combat/resolve.rs:534,544` | 现有部位倍率 / kind 特性档；本 plan 的 `defense_profile` 叠加在其上 |
 | `PlayerInventory.equipped: HashMap<String, ItemInstance>` | `inventory/mod.rs:196` | 装备槽实际载体；Changed\<PlayerInventory\> 即装备变动 |
@@ -45,7 +44,7 @@
 
 ### Audit 修正（骨架 → active）
 
-原骨架基线表中几处行号与实际偏 ±1（已按实际回填）；**`DefenseStance` struct 实际不存在**（仅 `client_request_handler.rs:988,1054` 测试代码残留引用，无定义），原骨架 §4.1 的"DefenseStance 作为独立 Component"假设已推翻 —— 截脉依靠 `CombatState.incoming_window` + jiemai_success 分支实现，替尸 / 绝灵涡流尚未落地（仅解锁 flag 存在）。`§1.3` 同步 system 的 `Changed<PlayerEquipment>` 改为 `Changed<PlayerInventory>`（无 PlayerEquipment Component）。
+原骨架基线表中几处行号与实际偏 ±1（已按实际回填）；**`DefenseStance` struct 实际不存在**（仅 `client_request_handler.rs:988,1054` 测试代码残留引用，无定义），原骨架 §4.1 的"DefenseStance 作为独立 Component"假设已推翻 —— 截脉依靠 `CombatState.incoming_window` + jiemai_success 分支实现。`§1.3` 同步 system 的 `Changed<PlayerEquipment>` 改为 `Changed<PlayerInventory>`（无 PlayerEquipment Component）。
 
 ---
 
@@ -55,7 +54,7 @@
 2. **`WoundKind × BodyPart` 二维矩阵** — 不做"一个 defense 数值减所有伤"的简化；板甲挡 Cut/Pierce，皮甲缓 Blunt，无甲面对 Burn/Concussion 都弱
 3. **装备作用点是 `DerivedAttrs`**（不新建组件链路），新增 `defense_profile` 字段承载二维矩阵
 4. **体修流派绕过装备**（对齐 `worldview.md §五 体修`"不依赖外物"）— 体修 buff 作用于 `defense_power` 基础乘数，相当于"内力替代护甲"
-5. **主动防御与被动护甲顺序固定**：`attacker output → 截脉窗口判定 → armor_mitigation → Wound 写入`（§4.1 展开；替尸 / 绝灵涡流未实装，不在本 plan 链路中）
+5. **主动防御与被动护甲顺序固定**：`attacker output → 截脉窗口判定 → armor_mitigation → Wound 写入`（§4.1 展开）
 6. **骨架不引入"法宝级"分支** — 上古护甲（`§十六` 遗物）作为 `ArmorProfile` 数值极端点，走相同接口；cap 0.85（不完全免疫，Q7 已决）
 7. **护甲耐久独立维度**（不与真元/经脉混）— 破损护甲防护降级而非失效（`broken_multiplier=0.3`）；修复渠道归锻造 / 灵草 plan
 
@@ -204,7 +203,7 @@ fn apply_armor_mitigation(
 
 ## §4 与现有战斗流派 / 修炼的耦合
 
-### 4.1 截脉（已实装）与装备护甲的顺序
+### 4.1 截脉与装备护甲的顺序
 
 ```
 attacker.output (severity 初值)
@@ -222,17 +221,6 @@ apply_armor_mitigation（本 plan §1.4 新增）
   ↓
 Wounds.entries.push（resolve.rs:342,429,443）
 ```
-
-### 4.1.1 替尸 / 绝灵涡流（未实装，不影响本 plan）
-
-现状：`UnlockedStyles.tishi` 和 `.jueling` 只是解锁 flag，主动流派逻辑未落地。本 plan 不负责实装这两种流派，落地后它们的接入点**应该在本 plan 的 `apply_armor_mitigation` 之前**（与截脉同层级，处理完才走装备）：
-
-```
-(未来 plan)
-截脉 ─→ 替尸 ─→ 绝灵涡流 ─→ armor_mitigation ─→ Wound
-```
-
-active 阶段实装 armor 时预留这个插入点的文档注释即可。
 
 ### 4.2 体修流派（`worldview.md §五`）
 
