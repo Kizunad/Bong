@@ -99,25 +99,37 @@ pub fn build_default_registry() -> MineralRegistry {
     reg.insert(ling_shi(
         MineralId::LingShiFan,
         "凡品灵石",
-        LingShiQiRange { min: 5.0, max: 15.0 },
+        LingShiQiRange {
+            min: 5.0,
+            max: 15.0,
+        },
         "ling_shi_fan_v1",
     ));
     reg.insert(ling_shi(
         MineralId::LingShiZhong,
         "中品灵石",
-        LingShiQiRange { min: 30.0, max: 60.0 },
+        LingShiQiRange {
+            min: 30.0,
+            max: 60.0,
+        },
         "ling_shi_zhong_v1",
     ));
     reg.insert(ling_shi(
         MineralId::LingShiShang,
         "上品灵石",
-        LingShiQiRange { min: 120.0, max: 200.0 },
+        LingShiQiRange {
+            min: 120.0,
+            max: 200.0,
+        },
         "ling_shi_shang_v1",
     ));
     reg.insert(ling_shi(
         MineralId::LingShiYi,
         "遗品灵石",
-        LingShiQiRange { min: 500.0, max: 800.0 },
+        LingShiQiRange {
+            min: 500.0,
+            max: 800.0,
+        },
         "ling_shi_yi_v1",
     ));
 

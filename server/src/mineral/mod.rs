@@ -11,19 +11,33 @@
 //! 非矿脉 block 静默 no-op；M2 worldgen 写矿脉时同步插入 OreNode 到 index。
 
 pub mod break_handler;
+pub mod bridge;
 pub mod components;
 pub mod events;
+pub mod persistence;
 pub mod registry;
 pub mod types;
 
+// 公共 re-exports — M3 阶段只 register / break_handler 真正使用；其他类型作为
+// 模块公共 API surface（M2/M4/M5 后续接入用），故 #[allow(unused_imports)]。
+#[allow(unused_imports)]
 pub use components::{MineralOreIndex, MineralOreNode};
+#[allow(unused_imports)]
 pub use events::{KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralProbeIntent};
+#[allow(unused_imports)]
+pub use persistence::{
+    load_exhausted_log, ExhaustedEntry, ExhaustedLogFile, ExhaustedMineralsLog, MineralTickClock,
+};
+#[allow(unused_imports)]
 pub use registry::{build_default_registry, LingShiQiRange, MineralEntry, MineralRegistry};
+#[allow(unused_imports)]
 pub use types::{MineralCategory, MineralId, MineralRarity};
 
 use valence::prelude::{App, Update};
 
 use break_handler::handle_block_break_for_mineral;
+use bridge::forward_karma_flag_to_agent;
+use persistence::{record_exhausted_minerals, tick_mineral_clock};
 
 pub fn register(app: &mut App) {
     let registry = build_default_registry();
@@ -35,11 +49,21 @@ pub fn register(app: &mut App) {
 
     app.insert_resource(registry);
     app.insert_resource(MineralOreIndex::default());
+    app.insert_resource(ExhaustedMineralsLog::default());
+    app.insert_resource(MineralTickClock::default());
 
     app.add_event::<MineralProbeIntent>();
     app.add_event::<MineralDropEvent>();
     app.add_event::<MineralExhaustedEvent>();
     app.add_event::<KarmaFlagIntent>();
 
-    app.add_systems(Update, handle_block_break_for_mineral);
+    app.add_systems(
+        Update,
+        (
+            tick_mineral_clock,
+            handle_block_break_for_mineral,
+            record_exhausted_minerals,
+            forward_karma_flag_to_agent,
+        ),
+    );
 }

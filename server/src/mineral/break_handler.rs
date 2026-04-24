@@ -4,7 +4,7 @@
 //!  1. 读取 valence `DiggingEvent` 的"挖掘完成"语义（Stop = Survival 完成）。
 //!  2. 反查 `MineralOreIndex` 看 BlockPos 是否对应一个 `MineralOreNode`。
 //!  3. 是 → 不让 vanilla loot table 走默认掉落，主动发 `MineralDropEvent`，
-//!         让 inventory listener 按 mineral_id 写入物品 NBT。
+//!     让 inventory listener 按 mineral_id 写入物品 NBT。
 //!  4. `remaining_units` 减一；归零则发 `MineralExhaustedEvent`、移除 entity 与 index。
 //!  5. 品阶 ≥ 3 按概率 5% / 15% / 30% 发 `KarmaFlagIntent` 给天道 agent。
 //!

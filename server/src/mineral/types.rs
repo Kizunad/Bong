@@ -132,19 +132,22 @@ impl MineralId {
             | Self::ZhuSha
             | Self::XiongHuang
             | Self::LingShiZhong => MineralRarity::Ling,
-            Self::SuiTie
-            | Self::CanTie
-            | Self::WuYao
-            | Self::XiePhen
-            | Self::LingShiShang => MineralRarity::Xi,
+            Self::SuiTie | Self::CanTie | Self::WuYao | Self::XiePhen | Self::LingShiShang => {
+                MineralRarity::Xi
+            }
             Self::KuJin | Self::LingShiYi => MineralRarity::Yi,
         }
     }
 
     pub fn category(self) -> MineralCategory {
         match self {
-            Self::FanTie | Self::CuTie | Self::ZaGang | Self::LingTie | Self::SuiTie
-            | Self::CanTie | Self::KuJin => MineralCategory::Metal,
+            Self::FanTie
+            | Self::CuTie
+            | Self::ZaGang
+            | Self::LingTie
+            | Self::SuiTie
+            | Self::CanTie
+            | Self::KuJin => MineralCategory::Metal,
             Self::LingJing | Self::YuSui | Self::WuYao => MineralCategory::Crystal,
             Self::DanSha | Self::ZhuSha | Self::XiongHuang | Self::XiePhen => {
                 MineralCategory::AlchemyAux

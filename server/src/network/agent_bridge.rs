@@ -16,6 +16,18 @@ pub enum AgentCommand {
 #[derive(Debug, Clone)]
 pub enum GameEvent {
     Placeholder,
+    /// plan-mineral-v1 §3 / §M6 — 极品矿脉触发的天道劫气标记。
+    /// agent 侧（未实装）订阅此 GameEvent 给 LLM 输入"玩家挖到品阶 N 矿，
+    /// 概率 P 触发劫气"语义信号；当前阶段仅由 server 侧 emit。
+    /// 字段 `#[allow(dead_code)]`：消费侧（agent bridge daemon）尚未读取，
+    /// 但 server 侧已 emit；保留以确保 wire 接口稳定。
+    #[allow(dead_code)]
+    MineralKarmaFlag {
+        player_username: String,
+        mineral_id: String,
+        position: [i32; 3],
+        probability: f32,
+    },
 }
 
 pub struct NetworkBridgeResource {
@@ -542,16 +554,10 @@ mod server_data_tests {
         assert_eq!(alex_plain, vec![1]);
         assert_eq!(alex_alias, vec![1]);
 
-        let steve_char = route_recipient_indices(
-            &RecipientSelector::player("char:101"),
-            &recipients,
-            None,
-        );
-        let hidden_char = route_recipient_indices(
-            &RecipientSelector::player("char:303"),
-            &recipients,
-            None,
-        );
+        let steve_char =
+            route_recipient_indices(&RecipientSelector::player("char:101"), &recipients, None);
+        let hidden_char =
+            route_recipient_indices(&RecipientSelector::player("char:303"), &recipients, None);
         assert_eq!(steve_char, vec![0]);
         assert_eq!(hidden_char, vec![2]);
 
