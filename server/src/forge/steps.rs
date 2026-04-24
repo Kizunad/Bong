@@ -190,8 +190,8 @@ pub fn resolve_inscription(
     if state.filled_slots < profile.required_scroll_count {
         return InscriptionResult::Partial;
     }
-    let adjusted_fail_chance = profile.tolerance.fail_chance
-        * (1.0 - failure_rate_reduction.clamp(0.0, 1.0));
+    let adjusted_fail_chance =
+        profile.tolerance.fail_chance * (1.0 - failure_rate_reduction.clamp(0.0, 1.0));
     if roll_fail < adjusted_fail_chance {
         InscriptionResult::Failed
     } else {
@@ -510,9 +510,15 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "insc_a".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Partial);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.5, 0.0),
+            InscriptionResult::Partial
+        );
         apply_scroll(&mut s, "insc_b".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.5, 0.0),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]
@@ -524,8 +530,14 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "x".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.1, 0.0), InscriptionResult::Failed);
-        assert_eq!(resolve_inscription(&p, &s, 0.9, 0.0), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.1, 0.0),
+            InscriptionResult::Failed
+        );
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.9, 0.0),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]
@@ -537,8 +549,14 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "x".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.0), InscriptionResult::Failed);
-        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.3), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.4, 0.0),
+            InscriptionResult::Failed
+        );
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.4, 0.3),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]

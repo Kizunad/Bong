@@ -5413,8 +5413,8 @@ mod persistence_tests {
     }
 
     #[test]
-    fn persist_termination_transition_preserves_skill_milestones_and_narration_in_deceased_exports(
-    ) {
+    fn persist_termination_transition_preserves_skill_milestones_and_narration_in_deceased_exports()
+    {
         let (settings, root) = persistence_settings("deceased-export-skill-milestones");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");

@@ -366,8 +366,14 @@ mod tests {
         let scaled = build_flawed_result(&recipe, ColorKind::Turbid, 0.0, 2, 0.4)
             .expect("scaled flawed result should exist");
 
-        assert_eq!(unscaled.side_effect.as_ref().map(|s| s.tag.as_str()), Some("blurred_vision_15s"));
-        assert_eq!(scaled.side_effect.as_ref().map(|s| s.tag.as_str()), Some("stamina_boost"));
+        assert_eq!(
+            unscaled.side_effect.as_ref().map(|s| s.tag.as_str()),
+            Some("blurred_vision_15s")
+        );
+        assert_eq!(
+            scaled.side_effect.as_ref().map(|s| s.tag.as_str()),
+            Some("stamina_boost")
+        );
     }
 
     #[test]

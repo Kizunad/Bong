@@ -187,10 +187,10 @@ impl AlchemySession {
         let mut scaled_profile = recipe.fire_profile.clone();
         let tol_scale = f64::from(tolerance_scale(alchemy_effective_lv));
         scaled_profile.tolerance.temp_band *= tol_scale;
-        scaled_profile.tolerance.duration_band =
-            ((scaled_profile.tolerance.duration_band as f64) * tol_scale)
-                .round()
-                .max(1.0) as u32;
+        scaled_profile.tolerance.duration_band = ((scaled_profile.tolerance.duration_band as f64)
+            * tol_scale)
+            .round()
+            .max(1.0) as u32;
 
         let temp_deviation = compute_temp_deviation(&self.temp_track, &scaled_profile);
         let duration_deviation = compute_duration_deviation(self.elapsed_ticks, &scaled_profile);
@@ -394,8 +394,14 @@ mod tests {
             s.tick();
         }
 
-        assert_eq!(s.classify_with_alchemy_effective_lv(&r, 0), OutcomeBucket::Good);
-        assert_eq!(s.classify_with_alchemy_effective_lv(&r, 10), OutcomeBucket::Perfect);
+        assert_eq!(
+            s.classify_with_alchemy_effective_lv(&r, 0),
+            OutcomeBucket::Good
+        );
+        assert_eq!(
+            s.classify_with_alchemy_effective_lv(&r, 10),
+            OutcomeBucket::Perfect
+        );
     }
 
     #[test]

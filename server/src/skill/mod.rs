@@ -11,11 +11,11 @@ pub mod events;
 
 use valence::prelude::{App, EventReader, EventWriter, IntoSystemConfigs, Query, Res, Update};
 
-use components::SkillSet;
-use events::{SkillLvUp, SkillXpGain};
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
+use components::SkillSet;
+use events::{SkillLvUp, SkillXpGain};
 
 /// P1 阶段：注册 4 个 Event + 消费 `SkillXpGain` 的 system。
 ///
@@ -143,13 +143,16 @@ mod tests {
                 recent_repeat_count: 0,
             },
         );
-        let entity = app.world_mut().spawn((
-            skill_set,
-            Cultivation {
-                realm: Realm::Awaken,
-                ..Default::default()
-            },
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                skill_set,
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+            ))
+            .id();
         app.world_mut().send_event(SkillXpGain {
             char_entity: entity,
             skill: SkillId::Herbalism,
@@ -173,13 +176,16 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillLvUp>();
         app.add_systems(Update, consume_skill_xp_gain);
-        let entity = app.world_mut().spawn((
-            SkillSet::default(),
-            Cultivation {
-                realm: Realm::Awaken,
-                ..Default::default()
-            },
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                SkillSet::default(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+            ))
+            .id();
 
         app.world_mut().send_event(SkillXpGain {
             char_entity: entity,
@@ -214,7 +220,10 @@ mod tests {
                 recent_repeat_count: 0,
             },
         );
-        let entity = app.world_mut().spawn((skill_set, LifeRecord::default())).id();
+        let entity = app
+            .world_mut()
+            .spawn((skill_set, LifeRecord::default()))
+            .id();
         app.world_mut().send_event(SkillLvUp {
             char_entity: entity,
             skill: SkillId::Forging,
@@ -236,25 +245,28 @@ mod tests {
         app.add_event::<SkillLvUp>();
         app.add_systems(Update, consume_skill_xp_gain);
 
-        let entity = app.world_mut().spawn((
-            Cultivation {
-                realm: Realm::Induce,
-                ..Default::default()
-            },
-            SkillSet {
-                skills: std::collections::HashMap::from([(
-                    SkillId::Herbalism,
-                    SkillEntry {
-                        lv: 6,
-                        xp: 10,
-                        total_xp: 100,
-                        last_action_at: 0,
-                        recent_repeat_count: 0,
-                    },
-                )]),
-                consumed_scrolls: Default::default(),
-            },
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    ..Default::default()
+                },
+                SkillSet {
+                    skills: std::collections::HashMap::from([(
+                        SkillId::Herbalism,
+                        SkillEntry {
+                            lv: 6,
+                            xp: 10,
+                            total_xp: 100,
+                            last_action_at: 0,
+                            recent_repeat_count: 0,
+                        },
+                    )]),
+                    consumed_scrolls: Default::default(),
+                },
+            ))
+            .id();
 
         app.world_mut().send_event(SkillXpGain {
             char_entity: entity,
@@ -268,11 +280,26 @@ mod tests {
 
         app.update();
 
-        let set = app.world().get::<SkillSet>(entity).expect("skill set should remain attached");
-        let entry = set.skills.get(&SkillId::Herbalism).expect("entry should exist");
-        assert_eq!(entry.xp, 13, "10 xp over cap should be reduced to 3 before adding");
-        assert_eq!(entry.total_xp, 103, "total_xp should track effective awarded xp");
-        assert_eq!(entry.last_action_at, 0, "missing GameplayTick resource should fall back to tick 0");
+        let set = app
+            .world()
+            .get::<SkillSet>(entity)
+            .expect("skill set should remain attached");
+        let entry = set
+            .skills
+            .get(&SkillId::Herbalism)
+            .expect("entry should exist");
+        assert_eq!(
+            entry.xp, 13,
+            "10 xp over cap should be reduced to 3 before adding"
+        );
+        assert_eq!(
+            entry.total_xp, 103,
+            "total_xp should track effective awarded xp"
+        );
+        assert_eq!(
+            entry.last_action_at, 0,
+            "missing GameplayTick resource should fall back to tick 0"
+        );
     }
 
     #[test]
@@ -325,8 +352,14 @@ mod tests {
             .skills
             .get(&SkillId::Herbalism)
             .expect("entry should exist");
-        assert_eq!(entry.lv, 6, "penalized xp should no longer be enough to level up");
-        assert_eq!(entry.xp, 4_894, "only 3 effective xp should be added over cap");
+        assert_eq!(
+            entry.lv, 6,
+            "penalized xp should no longer be enough to level up"
+        );
+        assert_eq!(
+            entry.xp, 4_894,
+            "only 3 effective xp should be added over cap"
+        );
         assert_eq!(entry.total_xp, 9_994);
 
         let lv_events = app.world().resource::<Events<SkillLvUp>>();
