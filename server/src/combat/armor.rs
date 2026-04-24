@@ -252,7 +252,8 @@ impl ArmorProfileRegistry {
                 parsed.instance_id,
                 parsed.profile.slot
             );
-            reg.by_instance_id.insert(parsed.instance_id, parsed.profile);
+            reg.by_instance_id
+                .insert(parsed.instance_id, parsed.profile);
         }
 
         Ok(reg)

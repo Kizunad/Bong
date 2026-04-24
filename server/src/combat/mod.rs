@@ -1,3 +1,5 @@
+pub mod armor;
+pub mod armor_sync;
 pub mod components;
 pub mod debug;
 pub mod events;
@@ -5,8 +7,6 @@ pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
-pub mod armor;
-pub mod armor_sync;
 pub mod weapon;
 
 use valence::prelude::{
@@ -91,12 +91,11 @@ pub fn register(app: &mut App) {
 
     // plan-armor-v1 §1.1：启动期加载护甲 profile（instance_id -> ArmorProfile）。
     // 失败不 panic: 允许空 registry（未配置护甲数据时不会有减免）。
-    let armor_registry =
-        armor::ArmorProfileRegistry::load_dir(armor::DEFAULT_ARMOR_PROFILES_DIR)
-            .unwrap_or_else(|e| {
-                tracing::error!("[bong][combat][armor] armor profile load failed: {e}");
-                armor::ArmorProfileRegistry::new()
-            });
+    let armor_registry = armor::ArmorProfileRegistry::load_dir(armor::DEFAULT_ARMOR_PROFILES_DIR)
+        .unwrap_or_else(|e| {
+            tracing::error!("[bong][combat][armor] armor profile load failed: {e}");
+            armor::ArmorProfileRegistry::new()
+        });
     tracing::info!(
         "[bong][combat][armor] loaded {} armor profile(s)",
         armor_registry.len()

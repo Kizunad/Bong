@@ -76,6 +76,7 @@ mod tests {
             spirit_quality: 0.8,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -114,22 +115,23 @@ mod tests {
 
         // Changed<PlayerInventory> 需要一次 mutation 才触发。
         {
-            let mut inv = app
-                .world_mut()
-                .entity_mut(entity)
-                .get_mut::<PlayerInventory>()
-                .unwrap();
+            let mut world = app.world_mut();
+            let mut entity_mut = world.entity_mut(entity);
+            let mut inv = entity_mut.get_mut::<PlayerInventory>().unwrap();
             inv.revision = InventoryRevision(inv.revision.0.saturating_add(1));
         }
         app.update();
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         assert_eq!(
-            attrs.defense_profile.get(&(BodyPart::Chest, WoundKind::Cut)),
+            attrs
+                .defense_profile
+                .get(&(BodyPart::Chest, WoundKind::Cut)),
             Some(&0.25)
         );
         assert_eq!(
-            attrs.defense_profile
+            attrs
+                .defense_profile
                 .get(&(BodyPart::Abdomen, WoundKind::Cut)),
             Some(&0.25)
         );
