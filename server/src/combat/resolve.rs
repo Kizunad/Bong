@@ -2845,6 +2845,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_systems(Update, resolve_attack_intents);
 
         // 两个 NPC 用真实生产 bundle，无 LifeRecord。

@@ -3396,6 +3396,9 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(AscensionQuotaStore::default());
+        app.insert_resource(crate::persistence::PersistenceSettings::default());
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationWaveCleared>();
