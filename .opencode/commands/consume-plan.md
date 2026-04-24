@@ -1,10 +1,21 @@
 ---
-description: 开 worktree → 实施 docs/plan-<name>.md → PR → 等 CI+Claude review → merge → 清理。线性、失败即停。
+description: 开 worktree → 实施 docs/plan-<name>.md → PR → 等 CI+Claude review → merge → 清理。线性、测试/CI 失败允许有限修复（≤2 轮）、Claude review 异议即停。
 ---
 
 # consume-plan $ARGUMENTS
 
-线性消费 `docs/plan-$ARGUMENTS.md`。每一步失败**即停**、报告现场、保留 worktree/已推分支、交给人接手。不自动重试、不跳过失败 TODO。
+线性消费 `docs/plan-$ARGUMENTS.md`。实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；Claude review 出现任何修改意见一律**即停交人工**。不自动跳过失败 TODO。
+
+---
+
+## 核心约束（执行前必读）
+
+1. **所有 git / commit / push / test / gh 命令必须在 worktree 内执行**。主仓库根目录（`/home/kiz/Code/Bong`）HEAD 指向 `main`，在那里做任何写操作等同于直接写 main 分支——**严禁**。
+2. 你的 bash 调用之间 cwd **不保证持久**。每个 bash block 开头都必须 `cd "$WT_ABS"`，或用 `git -C "$WT_ABS" ...` 显式指定。
+3. 只有 step 9 收尾清理才允许 `cd "$REPO_ROOT"` 回主工作区。中途**严禁** `cd ..` / `cd -` / `cd /home/kiz/Code/Bong` 离开 worktree。
+4. 严禁 `--no-verify` / `--no-gpg-sign` / `git reset --hard` / `git push --force` 等绕过或破坏操作。
+5. 严禁修改 `docs/` / `CLAUDE.md` / `worldview.md`（plan 归档由人工决定）。
+6. 严禁用注释掉测试 / `#[ignore]` / skip case / 改断言数值等方式"让测试过"。
 
 ---
 
@@ -13,6 +24,10 @@ description: 开 worktree → 实施 docs/plan-<name>.md → PR → 等 CI+Claud
 ```bash
 PLAN="$ARGUMENTS"
 [ -n "$PLAN" ] || { echo "❌ 用法：/consume-plan <plan-name>（不含 plan- 前缀和 .md 后缀）"; exit 1; }
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
 [ -f "docs/plan-$PLAN.md" ] || { echo "❌ docs/plan-$PLAN.md 不存在"; exit 1; }
 # 骨架 / 归档拒绝
 if git ls-files "docs/plans-skeleton/plan-$PLAN.md" "docs/finished_plans/plan-$PLAN.md" 2>/dev/null | grep -q .; then
@@ -22,40 +37,62 @@ fi
 git fetch origin main
 ```
 
-## 2. 开 worktree（幂等）
+## 2. 开 worktree（幂等，固定绝对路径）
 
 ```bash
-WT=".worktree/plan-$PLAN"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WT_ABS="$REPO_ROOT/.worktree/plan-$PLAN"
 BRANCH="auto/plan-$PLAN"
 
-if [ -d "$WT" ]; then
-  echo "[info] worktree 已存在，复用 $WT"
+if [ -d "$WT_ABS" ]; then
+  echo "[info] worktree 已存在，复用 $WT_ABS"
 else
-  git worktree add "$WT" -b "$BRANCH" origin/main
+  git -C "$REPO_ROOT" worktree add "$WT_ABS" -b "$BRANCH" origin/main
 fi
-cd "$WT"
+
+cd "$WT_ABS"
+# 双重校验：cwd 和分支
+[ "$(pwd -P)" = "$(cd "$WT_ABS" && pwd -P)" ] || { echo "❌ cwd 不在 $WT_ABS"; exit 1; }
+[ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ] || { echo "❌ 分支错误，应为 $BRANCH"; exit 1; }
+echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 ```
 
-**后续所有操作都在这个 worktree 内完成**（commit、push、测试）。
+**`$WT_ABS` 和 `$BRANCH` 从这里起为固定值**。后续任一 bash block 都先 `cd "$WT_ABS"` 并在必要时重算这两个变量。
 
 ## 3. 实施 plan
 
-- 把 `docs/plan-$PLAN.md` 作为 source of truth
-- 按 P0/P1/§N 顺序推进
-- 每个 TODO / 逻辑单元一个 **atomic commit**，消息风格照 `CLAUDE.md`（fix/feat/refactor 中文）
-- 跑对应子项目测试，**必须全绿**才能进下一步：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-  - `cd client && ./gradlew test build`
-  - `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`
-  - Python 改动：`ruff` PostToolUse hook 会自动格式化
-- **禁止修改** `docs/` `CLAUDE.md` `worldview.md`（plan 归档由人工决定）
+- 把 `docs/plan-$PLAN.md` 作为 source of truth，按 P0/P1/§N 顺序推进
+- 每个 TODO / 逻辑单元一个 **atomic commit**，消息风格照 `CLAUDE.md`（fix/feat/refactor 中文前缀）
+- 每次 commit 后在 `$WT_ABS` 内跑对应子项目测试，必须全绿才能进下一个 TODO：
 
-任一测试失败 → 停，报告失败项 + 输出，保留 worktree 和已有 commit。
+  ```bash
+  cd "$WT_ABS"
+  # Rust（server/ 改动）：
+  cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+  # Java（client/ 改动）：
+  cd client && ./gradlew test build
+  # TypeScript（agent/ 改动）：
+  cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)
+  # Python 改动：ruff PostToolUse hook 会自动格式化
+  ```
+
+### 测试/编译失败处理（有限修复循环，≤2 轮）
+
+1. **读错误输出，判定归属**：
+   - 本 TODO 的 patch 引入（typo、漏 import、新增代码小 bug、forget `?` / borrow）→ 走 2
+   - plan 本身问题 / 需要扩大改动面超出当前 TODO → 走 3
+   - 明显 flaky / 环境抖动 → 在 `$WT_ABS` 内重跑一次，仍挂走 3
+2. **本 TODO 自修**：允许**最多 2 次**修复尝试（每次一个独立 atomic fix commit，如 `fix(test): 补 XX import`），每次 commit 后重跑对应测试。2 次仍不过 → 走 3
+3. **停**：保留 `$WT_ABS` 内所有 commit 和未提交改动，输出失败命令 + 错误原文 + `$WT_ABS`，**不继续后续 TODO、不试图跳过、不 `cd` 离开**，交人工
+
+**修复范围严格限于"当前 TODO patch 引入的明显错误"**——禁止顺手修其他模块、重构、改 plan 范围外代码。
 
 ## 4. 提 PR（不 auto-merge）
 
 ```bash
+cd "$WT_ABS"
 git push -u origin "$BRANCH"
+
 PR_URL=$(gh pr create \
   --title "plan-$PLAN: <一句话摘要>" \
   --body "$(cat <<EOF
@@ -78,18 +115,28 @@ echo "PR: $PR_URL (#$PR_NUM)"
 
 ## 5. 等 CI 跑完
 
-阻塞等 `e2e.yml` 的 required status checks：
-
 ```bash
+cd "$WT_ABS"
 gh pr checks "$PR_NUM" --watch --fail-fast
 ```
 
 - exit 0 = 全绿 → 进入 step 6
-- 非 0 = 有 check 挂了 → 用 `gh run view --log-failed` 拉失败日志，**停，不 merge**、报告用户
+- 非 0 = 有 check 挂了 → 进入 CI 失败修复
+
+### CI 失败修复策略（≤2 轮）
+
+1. `cd "$WT_ABS" && gh run view --log-failed` 拉失败日志
+2. **在 `$WT_ABS` 内复现**失败 step 的命令（通常是 `cargo clippy` / `./gradlew test` / `npm test`）
+3. 本地能复现 → 本地修 + atomic fix commit + `cd "$WT_ABS" && git push` → 回到 step 5 重等
+   - 最多 **2 轮修复**（首次失败后最多再推 2 次）
+   - 每轮修复必须先在本地测试通过才 push
+   - 修复范围同 step 3：限于引起 CI 失败的 patch 本身
+4. 本地不能复现 / infra 问题 / 2 轮仍红 → **停**，输出失败 check 名 + 日志摘要 + PR URL + `$WT_ABS`，交人工
 
 ## 6. 等 Claude review 评论
 
 ```bash
+cd "$WT_ABS"
 bash .claude/skills/pr-watch/watch.sh "$PR_NUM" --timeout 540 --interval 60
 ```
 
@@ -97,13 +144,14 @@ bash .claude/skills/pr-watch/watch.sh "$PR_NUM" --timeout 540 --interval 60
 - exit 10 = 9 分钟无新活动 → **fallback**：Claude review 可能在 pr-watch 启动前就已经出评论（进了 baseline），拉现有评论：
 
   ```bash
+  cd "$WT_ABS"
   gh pr view "$PR_NUM" --json comments,reviews,reviewRequests \
     --jq '{comments: [.comments[] | {user: .author.login, body: .body, at: .createdAt}],
            reviews: [.reviews[] | {user: .author.login, state: .state, body: .body, at: .submittedAt}]}'
   ```
 
   - 若拉到 Claude 相关评论/review → 按 step 7 判定
-  - 若确实一条没有 → 报告"Claude review 超时未反馈"、**停，不 merge**
+  - 若确实一条没有 → 报告 "Claude review 超时未反馈"、**停，不 merge**
 
 ## 7. 判定评审意见（严格门槛）
 
@@ -127,28 +175,26 @@ bash .claude/skills/pr-watch/watch.sh "$PR_NUM" --timeout 540 --interval 60
 
 1. 一句话判定结论："检测到 X 条修改建议，暂不 merge"
 2. 分 reviewer 原文列出所有评论 + 行内评论的 `file:line`
-3. PR URL + worktree 路径
-4. 不要擅自处理评论、不要改代码
+3. PR URL + `$WT_ABS`
+4. **不要擅自处理评论、不要改代码**（与 step 3/5 修复不同：review 异议是质量判断，必须交人工）
 
 ## 8. Merge
 
 step 7 过关才走到这里：
 
 ```bash
+cd "$WT_ABS"
 gh pr merge "$PR_NUM" --squash --delete-branch
 ```
 
 等 GitHub 返回 merged 确认。
 
-## 9. 收尾清理
-
-merge 成功后：
+## 9. 收尾清理（此处才允许回主工作区）
 
 ```bash
-cd -    # 回主工作区
-git worktree remove ".worktree/plan-$PLAN"
-# 本地分支 gh 已 --delete-branch 清了远程，本地可选：
-git branch -D "auto/plan-$PLAN" 2>/dev/null || true
+cd "$REPO_ROOT"
+git worktree remove "$WT_ABS"
+git branch -D "$BRANCH" 2>/dev/null || true
 ```
 
 最终输出：
@@ -163,8 +209,9 @@ git branch -D "auto/plan-$PLAN" 2>/dev/null || true
 
 任何 step 停下时：
 
-- 输出：哪一步挂的、错误原文、当前 worktree 路径、PR URL（若已开）
-- **不**自动重试
+- 输出：哪一步挂的、错误原文、**`$WT_ABS` 路径**、PR URL（若已开）
+- **不**自动重试（超出 step 3 / step 5 中明确允许的 ≤2 轮修复）
 - **不**清理 worktree / 分支 / PR
-- **不**试图自己改代码处理评审意见
+- **不**试图自己改代码处理 Claude review 评审意见（step 7 异议一律交人工）
+- **不** `cd` 回主仓库根目录（除非已到 step 9）
 - 把控制权完全交给人
