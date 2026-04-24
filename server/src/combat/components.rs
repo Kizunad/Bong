@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, Component};
 
 use crate::combat::events::StatusEffectKind;
@@ -29,7 +30,7 @@ pub const LEG_SLOWED_DURATION_TICKS: u64 = 40;
 pub const HEAD_STUN_SEVERITY_THRESHOLD: f32 = 0.5;
 pub const HEAD_STUN_DURATION_TICKS: u64 = 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BodyPart {
     Head,
     Chest,
@@ -40,7 +41,7 @@ pub enum BodyPart {
     LegR,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WoundKind {
     Cut,
     Blunt,
@@ -224,6 +225,10 @@ pub struct DerivedAttrs {
     pub attack_power: f32,
     pub defense_power: f32,
     pub move_speed_multiplier: f32,
+    /// plan-armor-v1 §1.2：被动护甲二维矩阵（BodyPart × WoundKind -> mitigation）。
+    /// 查询 miss 表示该部位/伤害类型无护甲减免。
+    #[serde(default)]
+    pub defense_profile: HashMap<(BodyPart, WoundKind), f32>,
 }
 
 impl Default for DerivedAttrs {
@@ -232,6 +237,7 @@ impl Default for DerivedAttrs {
             attack_power: 1.0,
             defense_power: 1.0,
             move_speed_multiplier: 1.0,
+            defense_profile: HashMap::new(),
         }
     }
 }

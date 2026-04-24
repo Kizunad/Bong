@@ -5,6 +5,8 @@ pub mod lifecycle;
 pub mod raycast;
 pub mod resolve;
 pub mod status;
+pub mod armor;
+pub mod armor_sync;
 pub mod weapon;
 
 use valence::prelude::{
@@ -87,6 +89,20 @@ fn attach_combat_bundle_to_joined_npcs(
 pub fn register(app: &mut App) {
     tracing::info!("[bong][combat] registering combat skeleton systems");
 
+    // plan-armor-v1 §1.1：启动期加载护甲 profile（instance_id -> ArmorProfile）。
+    // 失败不 panic: 允许空 registry（未配置护甲数据时不会有减免）。
+    let armor_registry =
+        armor::ArmorProfileRegistry::load_dir(armor::DEFAULT_ARMOR_PROFILES_DIR)
+            .unwrap_or_else(|e| {
+                tracing::error!("[bong][combat][armor] armor profile load failed: {e}");
+                armor::ArmorProfileRegistry::new()
+            });
+    tracing::info!(
+        "[bong][combat][armor] loaded {} armor profile(s)",
+        armor_registry.len()
+    );
+    app.insert_resource(armor_registry);
+
     app.insert_resource(CombatClock::default());
     app.add_event::<AttackIntent>();
     app.add_event::<DefenseIntent>();
@@ -138,6 +154,8 @@ pub fn register(app: &mut App) {
             // plan-weapon-v1 §2.3: 装备槽 → Weapon component 同步。放 Intent 阶段,
             // 让 resolve 阶段查 Weapon 时已经是当前 tick 的最新装备状态。
             weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),
+            // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
+            armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
     );
 }

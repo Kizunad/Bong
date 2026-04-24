@@ -1,0 +1,17 @@
+{
+  "instance_id": 1,
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.25,
+      "blunt": 0.30,
+      "pierce": 0.20,
+      "burn": 0.10,
+      "concussion": 0.15
+    },
+    "durability_cur": 10,
+    "durability_max": 10,
+    "broken_multiplier": 0.3
+  }
+}
