@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "comment": "plan-mineral-v1 §2.1 — 矿脉固定锚点。zone × mineral 富集点（worldview §十 青云残峰 + 血谷）。坐标按 worldview 骨架大地图绝对定位；each anchor 是一个 sphere/blob 中心，半径由 zone profile 自定。worldgen stitcher 读此 manifest，把 mineral_density 在 anchor 半径内提升至 1.0、mineral_kind 写为对应索引。鲸落化石 / 血谷灵眼 / 上古遗迹 (event-only) 走 structure 系统不在此表。",
+  "anchors": [
+    {
+      "zone": "qingyun_peaks",
+      "mineral_id": "fan_tie",
+      "position": [128, 72, 256],
+      "radius": 32,
+      "max_units": 240,
+      "note": "青云外门凡铁矿脉 — 入门玩家第一脉"
+    },
+    {
+      "zone": "qingyun_peaks",
+      "mineral_id": "za_gang",
+      "position": [192, 56, 320],
+      "radius": 24,
+      "max_units": 120,
+      "note": "青云杂钢矿 — 灵铁炉炉胎主料"
+    },
+    {
+      "zone": "qingyun_peaks",
+      "mineral_id": "ling_jing",
+      "position": [256, 64, 288],
+      "radius": 18,
+      "max_units": 80,
+      "note": "青云灵晶 — 法宝核 / 阵眼"
+    },
+    {
+      "zone": "blood_valley",
+      "mineral_id": "ling_tie",
+      "position": [-256, 48, -128],
+      "radius": 28,
+      "max_units": 160,
+      "note": "血谷灵铁矿 — 储灵兵胎主料；worldview §十 提示血谷地脉含戾气"
+    },
+    {
+      "zone": "blood_valley",
+      "mineral_id": "wu_yao",
+      "position": [-320, 32, -192],
+      "radius": 16,
+      "max_units": 60,
+      "note": "血谷深岩乌曜石 — 镇邪 / 欺天阵核"
+    },
+    {
+      "zone": "blood_valley",
+      "mineral_id": "zhu_sha",
+      "position": [-288, 40, -160],
+      "radius": 14,
+      "max_units": 50,
+      "note": "血谷火山朱砂 — 高阶炼丹药引"
+    },
+    {
+      "zone": "rift_valley",
+      "mineral_id": "cu_tie",
+      "position": [0, -32, -512],
+      "radius": 36,
+      "max_units": 300,
+      "note": "裂谷深岩粗铁 — 劣质护甲料；worldview §四 距离衰减外圈"
+    },
+    {
+      "zone": "lingquan_marsh",
+      "mineral_id": "yu_sui",
+      "position": [512, 60, 64],
+      "radius": 14,
+      "max_units": 40,
+      "note": "灵泉湿地玉髓 — 末法审美代表 / 炼丹炉容器内壁"
+    },
+    {
+      "zone": "lingquan_marsh",
+      "mineral_id": "dan_sha",
+      "position": [488, 58, 96],
+      "radius": 16,
+      "max_units": 90,
+      "note": "灵泉地表丹砂 — 炼丹师辛度 Mellow 主辅料"
+    },
+    {
+      "zone": "spawn",
+      "mineral_id": "fan_tie",
+      "position": [16, 70, 16],
+      "radius": 18,
+      "max_units": 100,
+      "note": "出生点旁的小型凡铁矿 — 教学用脉"
+    }
+  ],
+  "structure_only": [
+    "sui_tie",
+    "can_tie",
+    "ku_jin",
+    "ling_shi_shang",
+    "ling_shi_yi",
+    "xiong_huang",
+    "xie_fen"
+  ],
+  "structure_only_note": "上述矿种仅在 structure 系统中出现（鲸落化石 / 上古遗迹 / 负灵域 / 火山深处）— event-only，不走 anchor 程序生成。结构系统由 plan-worldgen-v3.1 落地。"
+}

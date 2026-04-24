@@ -635,6 +635,11 @@
                   ]
                 }
               }
+            },
+            "mineral_id": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
             }
           }
         }

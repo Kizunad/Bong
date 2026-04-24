@@ -92,7 +92,8 @@ pub fn resolve_with_alchemy_effective_lv(
     registry: &RecipeRegistry,
     alchemy_effective_lv: u8,
 ) -> ResolvedOutcome {
-    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, alchemy_effective_lv).outcome
+    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, alchemy_effective_lv)
+        .outcome
 }
 
 pub fn resolve_with_meta(
@@ -447,8 +448,7 @@ mod tests {
         assert_eq!(resolved.xp, 2);
         match resolved.outcome {
             ResolvedOutcome::Pill {
-                flawed_path: true,
-                ..
+                flawed_path: true, ..
             } => {}
             other => panic!("expected flawed fallback outcome, got {other:?}"),
         }
@@ -574,7 +574,11 @@ mod tests {
                     flawed_path: true,
                     side_effect,
                     ..
-                } => side_effect.expect("low-skill flawed result should keep side effect").tag,
+                } => {
+                    side_effect
+                        .expect("low-skill flawed result should keep side effect")
+                        .tag
+                }
                 other => panic!("expected flawed pill outcome, got {other:?}"),
             };
             let high_side = match high {
@@ -582,7 +586,11 @@ mod tests {
                     flawed_path: true,
                     side_effect,
                     ..
-                } => side_effect.expect("high-skill flawed result should keep side effect").tag,
+                } => {
+                    side_effect
+                        .expect("high-skill flawed result should keep side effect")
+                        .tag
+                }
                 other => panic!("expected flawed pill outcome, got {other:?}"),
             };
 

@@ -13,8 +13,8 @@ use crate::alchemy::skill_hook::purge_rate_bonus;
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 
-use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem};
 use super::breakthrough::skill_cap_for_realm;
+use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
 use valence::prelude::Res;
@@ -60,9 +60,15 @@ pub fn contamination_tick(
             continue;
         }
         let alchemy_real_lv = skill_set
-            .and_then(|skill_set| skill_set.skills.get(&SkillId::Alchemy).map(|entry| entry.lv))
+            .and_then(|skill_set| {
+                skill_set
+                    .skills
+                    .get(&SkillId::Alchemy)
+                    .map(|entry| entry.lv)
+            })
             .unwrap_or(0);
-        let alchemy_effective_lv = effective_lv(alchemy_real_lv, skill_cap_for_realm(cultivation.realm));
+        let alchemy_effective_lv =
+            effective_lv(alchemy_real_lv, skill_cap_for_realm(cultivation.realm));
         let purge_rate = BASE_PURGE_RATE * (1.0 + purge_rate_bonus(alchemy_effective_lv) as f64);
         let mut any_qi_deficit = false;
         // 按 amount 从大到小处理
