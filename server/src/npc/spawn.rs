@@ -18,6 +18,10 @@ use crate::npc::brain::{
     SeclusionScorer, StartDuXuAction, TribulationReadyScorer, WanderAction, WanderScorer,
     WanderState,
 };
+use crate::npc::faction::{
+    FactionId, FactionMembership, FactionRank, Lineage, LoyaltyScorer, MissionExecuteAction,
+    MissionExecuteState, MissionQueue, MissionQueueScorer, Reputation,
+};
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
     npc_runtime_bundle, NpcArchetype, NpcLifespan, NpcRegistry, NpcReproductionRequest,
@@ -444,6 +448,22 @@ fn beast_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, TerritoryPatrolAction)
 }
 
+/// Disciple thinker（plan §2）：Rogue 基线（修炼 / 避战 / 流浪）+ 派系任务。
+/// MissionQueue 有待办 + 忠诚足够 → 执行任务；否则沿 Rogue 行为链。
+fn disciple_npc_thinker() -> ThinkerBuilder {
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(AgeingScorer, RetireAction)
+        .when(SeclusionScorer, SeclusionAction)
+        .when(TribulationReadyScorer, StartDuXuAction)
+        .when(PlayerProximityScorer, FleeAction)
+        .when(MissionQueueScorer, MissionExecuteAction)
+        .when(LoyaltyScorer, WanderAction)
+        .when(CultivationDriveScorer, CultivateAction)
+        .when(CuriosityScorer, WanderAction)
+        .when(WanderScorer, WanderAction)
+}
+
 /// Spawn a Rogue (散修) NPC. 用 `VillagerEntityBundle` 外观（未来接 GeyserMC skin 再区分）。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
 pub fn spawn_rogue_npc_at(
@@ -613,6 +633,79 @@ pub fn spawn_beast_npc_at(
     runtime.lifespan = NpcLifespan::new(
         initial_age_ticks.max(0.0),
         NpcArchetype::Beast.default_max_age_ticks(),
+    );
+
+    commands.entity(entity).insert(runtime);
+
+    entity
+}
+
+/// Spawn a Disciple (宗门弟子) NPC. 基于 Rogue 外观 + 挂 FactionMembership。
+/// `faction_id` 决定所属派系（Attack / Defend / Neutral）。`master_id` 可选
+/// 挂师承；缺省表示无师父。
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_disciple_npc_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    patrol_target: DVec3,
+    faction_id: FactionId,
+    rank: FactionRank,
+    master_id: Option<String>,
+    initial_age_ticks: f64,
+) -> Entity {
+    let loadout = NpcCombatLoadout::civilian();
+    let entity = commands
+        .spawn((
+            VillagerEntityBundle {
+                kind: EntityKind::VILLAGER,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            },
+            Transform::from_xyz(
+                spawn_position.x as f32,
+                spawn_position.y as f32,
+                spawn_position.z as f32,
+            ),
+            GlobalTransform::default(),
+            NpcMarker,
+            NpcBlackboard::default(),
+            loadout.clone(),
+            loadout.melee_archetype,
+            loadout.melee_profile(),
+            NpcArchetype::Disciple,
+            Navigator::new(),
+            MovementController::new(),
+            loadout.movement_capabilities,
+            MovementCooldowns::default(),
+            NpcPatrol::new(home_zone, patrol_target),
+        ))
+        .id();
+
+    commands.entity(entity).insert((
+        WanderState::default(),
+        CultivateState::default(),
+        CultivationDriveHistory::default(),
+        MissionExecuteState::default(),
+        FactionMembership {
+            faction_id,
+            rank,
+            reputation: Reputation::default(),
+            lineage: master_id.map(|id| Lineage {
+                master_id: Some(id),
+                disciple_ids: Vec::new(),
+            }),
+            mission_queue: MissionQueue::default(),
+        },
+        disciple_npc_thinker(),
+    ));
+
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Disciple);
+    runtime.lifespan = NpcLifespan::new(
+        initial_age_ticks.max(0.0),
+        NpcArchetype::Disciple.default_max_age_ticks(),
     );
 
     commands.entity(entity).insert(runtime);

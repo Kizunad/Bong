@@ -1,8 +1,11 @@
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Component, DVec3, Entity, Position, Query, Res, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, IntoSystemConfigs, Position, PreUpdate,
+    Query, Res, Resource, Update, With,
 };
 
+use crate::npc::navigator::Navigator;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -336,9 +339,151 @@ pub struct FactionMembership {
     pub mission_queue: MissionQueue,
 }
 
+/// Disciple 执行任务的停留位置（挂在 actor 上，由 MissionExecuteAction 使用）。
+/// MissionExecuteAction 本身依赖 plan-quest-v1 落实剧本，本 plan 只维护最小状态机。
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct MissionExecuteState {
+    pub elapsed_ticks: u32,
+}
+
+/// 派系忠诚度评分：读 entity 的 FactionMembership.reputation.loyalty，
+/// 加上所在 faction 的 loyalty_bias，给 0..=1。
+/// Disciple thinker 用此决定是否服从派系任务。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct LoyaltyScorer;
+
+/// 待办任务数量评分：FactionMembership.mission_queue.pending 越多分越高，
+/// 上限 1.0 在 pending >= `MISSION_QUEUE_SCORER_CAP` 时达到。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct MissionQueueScorer;
+
+/// MissionExecuteAction 占位 Action：由 plan-quest-v1 承接，本 plan 仅给
+/// "弟子抽任务 → 原地走流程 → 超时 Success → 弹出一个 mission" 的最小骨架，
+/// 避免 disciple thinker 没有下游出口。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct MissionExecuteAction;
+
+/// MissionQueueScorer 饱和阈值：pending ≥ 此值时分数封顶 1.0。
+pub const MISSION_QUEUE_SCORER_CAP: u32 = 3;
+/// Disciple 执行单个任务的最大 tick 数（超时 Success，避免卡死）。
+pub const MISSION_EXECUTE_MAX_TICKS: u32 = 600;
+
+impl ScorerBuilder for LoyaltyScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+    fn label(&self) -> Option<&str> {
+        Some("LoyaltyScorer")
+    }
+}
+
+impl ScorerBuilder for MissionQueueScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+    fn label(&self) -> Option<&str> {
+        Some("MissionQueueScorer")
+    }
+}
+
+impl ActionBuilder for MissionExecuteAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+    fn label(&self) -> Option<&str> {
+        Some("MissionExecuteAction")
+    }
+}
+
 pub fn register(app: &mut App) {
     app.insert_resource(FactionStore::default());
     app.add_systems(Update, assign_hostile_encounters);
+    app.add_systems(
+        PreUpdate,
+        (loyalty_scorer_system, mission_queue_scorer_system).in_set(BigBrainSet::Scorers),
+    );
+    app.add_systems(
+        PreUpdate,
+        mission_execute_action_system.in_set(BigBrainSet::Actions),
+    );
+}
+
+fn loyalty_scorer_system(
+    store: Res<FactionStore>,
+    members: Query<&FactionMembership, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<LoyaltyScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match members.get(*actor) {
+            Ok(membership) => {
+                let bias = store
+                    .iter()
+                    .find(|f| f.id == membership.faction_id)
+                    .map(|f| f.loyalty_bias)
+                    .unwrap_or(0.5);
+                ((membership.reputation.loyalty() + bias) * 0.5).clamp(0.0, 1.0) as f32
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+fn mission_queue_scorer_system(
+    members: Query<&FactionMembership, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<MissionQueueScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match members.get(*actor) {
+            Ok(m) => {
+                let pending = m.mission_queue.pending_count().min(MISSION_QUEUE_SCORER_CAP);
+                (pending as f32 / MISSION_QUEUE_SCORER_CAP as f32).clamp(0.0, 1.0)
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+/// 最小 MissionExecuteAction：停 Navigator → 计时 → 达到上限 pop 掉
+/// 队首任务 → Success。真实剧本由 plan-quest-v1 替换。
+fn mission_execute_action_system(
+    mut members: Query<
+        (&mut FactionMembership, &mut Navigator, &mut MissionExecuteState),
+        With<NpcMarker>,
+    >,
+    mut actions: Query<(&Actor, &mut ActionState), With<MissionExecuteAction>>,
+) {
+    for (Actor(actor), mut state) in &mut actions {
+        let Ok((mut membership, mut navigator, mut exec_state)) = members.get_mut(*actor) else {
+            *state = ActionState::Failure;
+            continue;
+        };
+        match *state {
+            ActionState::Requested => {
+                if membership.mission_queue.pending.is_empty() {
+                    *state = ActionState::Success;
+                    continue;
+                }
+                navigator.stop();
+                exec_state.elapsed_ticks = 0;
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                exec_state.elapsed_ticks = exec_state.elapsed_ticks.saturating_add(1);
+                if exec_state.elapsed_ticks >= MISSION_EXECUTE_MAX_TICKS {
+                    if !membership.mission_queue.pending.is_empty() {
+                        membership.mission_queue.pending.remove(0);
+                    }
+                    *state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
 }
 
 type EncounterNpcQueryItem<'a> = (
@@ -624,5 +769,248 @@ mod tests {
             Some(attack)
         );
         assert!(app.world().get::<DuelTarget>(neutral).is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 5 Disciple Scorer / Action 饱和测试
+    // ---------------------------------------------------------------------
+
+    use valence::prelude::{App, PreUpdate};
+
+    fn base_membership(faction: FactionId, loyalty: f64, pending: u32) -> FactionMembership {
+        let pending_ids: Vec<MissionId> = (0..pending)
+            .map(|i| MissionId(format!("mission_{i}")))
+            .collect();
+        FactionMembership {
+            faction_id: faction,
+            rank: FactionRank::Disciple,
+            reputation: Reputation { loyalty },
+            lineage: None,
+            mission_queue: MissionQueue {
+                pending: pending_ids,
+            },
+        }
+    }
+
+    fn build_loyalty_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        app.add_systems(PreUpdate, loyalty_scorer_system);
+        app
+    }
+
+    #[test]
+    fn loyalty_scorer_zero_when_entity_has_no_membership() {
+        let mut app = build_loyalty_app();
+        let npc = app.world_mut().spawn(NpcMarker).id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), LoyaltyScorer))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn loyalty_scorer_averages_reputation_and_faction_bias() {
+        let mut app = build_loyalty_app();
+        app.world_mut()
+            .resource_mut::<FactionStore>()
+            .faction_mut(FactionId::Attack)
+            .unwrap()
+            .loyalty_bias = 0.8;
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, base_membership(FactionId::Attack, 0.4, 0)))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), LoyaltyScorer))
+            .id();
+        app.update();
+        // (0.4 + 0.8) * 0.5 = 0.6
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        assert!((got - 0.6).abs() < 1e-6, "expected 0.6, got {got}");
+    }
+
+    #[test]
+    fn loyalty_scorer_clamps_out_of_range_inputs() {
+        let mut app = build_loyalty_app();
+        app.world_mut()
+            .resource_mut::<FactionStore>()
+            .faction_mut(FactionId::Defend)
+            .unwrap()
+            .loyalty_bias = 2.0; // 超标，Scorer 不信任 store 状态时自保
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, base_membership(FactionId::Defend, 5.0, 0)))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), LoyaltyScorer))
+            .id();
+        app.update();
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(got >= 0.0 && got <= 1.0);
+    }
+
+    fn build_mq_app() -> App {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, mission_queue_scorer_system);
+        app
+    }
+
+    #[test]
+    fn mission_queue_scorer_zero_when_empty() {
+        let mut app = build_mq_app();
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, base_membership(FactionId::Attack, 0.5, 0)))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MissionQueueScorer))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn mission_queue_scorer_scales_with_pending_count() {
+        let mut app = build_mq_app();
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, base_membership(FactionId::Attack, 0.5, 2)))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MissionQueueScorer))
+            .id();
+        app.update();
+        // 2 / 3 ≈ 0.667
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        assert!((got - 2.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mission_queue_scorer_saturates_at_cap() {
+        let mut app = build_mq_app();
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, base_membership(FactionId::Attack, 0.5, 10)))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MissionQueueScorer))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 1.0);
+    }
+
+    fn build_exec_app() -> App {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            mission_execute_action_system.in_set(BigBrainSet::Actions),
+        );
+        app
+    }
+
+    #[test]
+    fn mission_execute_success_when_queue_empty() {
+        let mut app = build_exec_app();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                base_membership(FactionId::Attack, 0.5, 0),
+                Navigator::new(),
+                MissionExecuteState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), MissionExecuteAction, ActionState::Requested))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Success
+        );
+    }
+
+    #[test]
+    fn mission_execute_pops_mission_on_timeout() {
+        let mut app = build_exec_app();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                base_membership(FactionId::Attack, 0.5, 2),
+                Navigator::new(),
+                MissionExecuteState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), MissionExecuteAction, ActionState::Requested))
+            .id();
+        app.update(); // Requested → Executing
+        {
+            let mut exec = app.world_mut().get_mut::<MissionExecuteState>(npc).unwrap();
+            exec.elapsed_ticks = MISSION_EXECUTE_MAX_TICKS - 1;
+        }
+        app.update(); // Executing → +1 elapsed → 到上限 → Success
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Success
+        );
+        let m = app.world().get::<FactionMembership>(npc).unwrap();
+        assert_eq!(m.mission_queue.pending_count(), 1, "应弹出 1 个任务");
+    }
+
+    #[test]
+    fn mission_execute_stops_navigator_on_requested() {
+        let mut app = build_exec_app();
+        let mut nav = Navigator::new();
+        nav.set_goal(DVec3::new(10.0, 64.0, 10.0), 1.0);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                base_membership(FactionId::Attack, 0.5, 1),
+                nav,
+                MissionExecuteState::default(),
+            ))
+            .id();
+        let _action = app
+            .world_mut()
+            .spawn((Actor(npc), MissionExecuteAction, ActionState::Requested))
+            .id();
+        app.update();
+        assert!(app.world().get::<Navigator>(npc).unwrap().is_idle());
+    }
+
+    #[test]
+    fn mission_execute_cancelled_transitions_to_failure() {
+        let mut app = build_exec_app();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                base_membership(FactionId::Attack, 0.5, 1),
+                Navigator::new(),
+                MissionExecuteState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), MissionExecuteAction, ActionState::Cancelled))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Failure
+        );
     }
 }
