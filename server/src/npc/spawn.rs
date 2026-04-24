@@ -29,6 +29,10 @@ use crate::npc::lifecycle::{
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::relic::{
+    GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
+    TrialEval, TrialEvalScorer, TrialState,
+};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
     TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
@@ -464,6 +468,17 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
+/// GuardianRelic thinker（plan §2）：GuardianDuty 入侵 → GuardAction；
+/// 附近有玩家 + 考验可开 → TrialAction；兜底 Wander（停在遗迹中心附近）。
+/// 不走 AgeingScorer —— GuardianRelic 不老。
+fn relic_guard_thinker() -> ThinkerBuilder {
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(GuardianDutyScorer, GuardAction)
+        .when(TrialEvalScorer, TrialAction)
+        .when(WanderScorer, WanderAction)
+}
+
 /// Spawn a Rogue (散修) NPC. 用 `VillagerEntityBundle` 外观（未来接 GeyserMC skin 再区分）。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
 pub fn spawn_rogue_npc_at(
@@ -708,6 +723,62 @@ pub fn spawn_disciple_npc_at(
         NpcArchetype::Disciple.default_max_age_ticks(),
     );
 
+    commands.entity(entity).insert(runtime);
+
+    entity
+}
+
+/// Spawn 仙家遗种守护者（绑定遗迹 ID + 警戒范围）。外观复用 Villager。
+pub fn spawn_relic_guard_npc_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    relic_center: DVec3,
+    alarm_radius: f64,
+    relic_id: impl Into<String>,
+    trial_template_id: impl Into<String>,
+) -> Entity {
+    let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword);
+    let entity = commands
+        .spawn((
+            VillagerEntityBundle {
+                kind: EntityKind::VILLAGER,
+                layer: EntityLayerId(layer),
+                position: Position::new([relic_center.x, relic_center.y, relic_center.z]),
+                ..Default::default()
+            },
+            Transform::from_xyz(
+                relic_center.x as f32,
+                relic_center.y as f32,
+                relic_center.z as f32,
+            ),
+            GlobalTransform::default(),
+            NpcMarker,
+            NpcBlackboard::default(),
+            loadout.clone(),
+            loadout.melee_archetype,
+            loadout.melee_profile(),
+            NpcArchetype::GuardianRelic,
+            Navigator::new(),
+            MovementController::new(),
+            loadout.movement_capabilities,
+            MovementCooldowns::default(),
+            NpcPatrol::new(home_zone, relic_center),
+        ))
+        .id();
+
+    commands.entity(entity).insert((
+        WanderState::default(),
+        GuardState::default(),
+        TrialState::default(),
+        GuardianRelicTag,
+        GuardianDuty::new(relic_id, relic_center).with_radius(alarm_radius),
+        TrialEval::new(trial_template_id),
+        relic_guard_thinker(),
+    ));
+
+    // GuardianRelic 不老：max_age 极大 + rate_multiplier 不会撞上限
+    let runtime = npc_runtime_bundle(entity, NpcArchetype::GuardianRelic);
     commands.entity(entity).insert(runtime);
 
     entity
