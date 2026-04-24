@@ -69,15 +69,9 @@ impl ActionBuilder for SocializeAction {
     }
 }
 
-pub fn register(app: &mut App) {
-    app.add_systems(
-        PreUpdate,
-        (socialize_scorer_system, faction_duel_scorer_system).in_set(BigBrainSet::Scorers),
-    )
-    .add_systems(
-        PreUpdate,
-        socialize_action_system.in_set(BigBrainSet::Actions),
-    );
+pub fn register(_app: &mut App) {
+    // Scorer/Action 注册临时撤回；等 FactionMembership NPC 真实投放后
+    // 单独 PR 再接入。测试走局部 add_systems 不依赖 register。
 }
 
 type SocializeNpcQuery<'w, 's> = Query<

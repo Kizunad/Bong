@@ -398,14 +398,8 @@ impl ActionBuilder for MissionExecuteAction {
 pub fn register(app: &mut App) {
     app.insert_resource(FactionStore::default());
     app.add_systems(Update, assign_hostile_encounters);
-    app.add_systems(
-        PreUpdate,
-        (loyalty_scorer_system, mission_queue_scorer_system).in_set(BigBrainSet::Scorers),
-    );
-    app.add_systems(
-        PreUpdate,
-        mission_execute_action_system.in_set(BigBrainSet::Actions),
-    );
+    // Disciple Scorer/Action 注册临时撤回；等 spawn_disciple 真实铺开
+    // FactionMembership NPC 后单独 PR 再接入。测试走局部 add_systems。
 }
 
 fn loyalty_scorer_system(

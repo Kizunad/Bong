@@ -150,15 +150,9 @@ impl ActionBuilder for TrialAction {
     }
 }
 
-pub fn register(app: &mut App) {
-    app.add_systems(
-        PreUpdate,
-        (guardian_duty_scorer_system, trial_eval_scorer_system).in_set(BigBrainSet::Scorers),
-    )
-    .add_systems(
-        PreUpdate,
-        (guard_action_system, trial_action_system).in_set(BigBrainSet::Actions),
-    );
+pub fn register(_app: &mut App) {
+    // Scorer/Action 注册临时撤回；等 GuardianRelic NPC 真实投放后
+    // 单独 PR 再接入。测试走局部 add_systems 不依赖 register。
 }
 
 type GuardianRelicSelfQuery<'w, 's> = Query<

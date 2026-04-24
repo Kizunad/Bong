@@ -189,28 +189,13 @@ impl ActionBuilder for ProtectYoungAction {
 }
 
 pub fn register(app: &mut App) {
+    // 只注册繁衍所需的系统；Beast Scorer/Action 的 register 临时撤回，
+    // 测试走 add_systems 不受影响。等实际场景产出 Beast NPC 再接入。
     app.insert_resource(BeastReproductionTick::default())
         .add_systems(
             PreUpdate,
             (mark_young_beasts, beast_reproduction_tick_system)
                 .before(big_brain::prelude::BigBrainSet::Scorers),
-        )
-        .add_systems(
-            PreUpdate,
-            (
-                territory_intruder_scorer_system,
-                protect_young_scorer_system,
-            )
-                .in_set(BigBrainSet::Scorers),
-        )
-        .add_systems(
-            PreUpdate,
-            (
-                territory_patrol_action_system,
-                hunt_action_system,
-                protect_young_action_system,
-            )
-                .in_set(BigBrainSet::Actions),
         );
 }
 

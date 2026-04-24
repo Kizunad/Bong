@@ -20,7 +20,6 @@ use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{
     NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
 };
-use crate::npc::lod::{is_dormant, should_skip_scorer_tick, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
@@ -651,14 +650,10 @@ pub fn update_npc_blackboard(
 }
 
 fn player_proximity_scorer_system(
-    npcs: Query<(&NpcBlackboard, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<PlayerProximityScorer>>,
     npc_behavior: Option<Res<NpcBehaviorConfig>>,
-    lod_config: Option<Res<NpcLodConfig>>,
-    lod_tick: Option<Res<NpcLodTick>>,
 ) {
-    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
-    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let flee_threshold = npc_behavior
             .as_deref()
@@ -666,24 +661,8 @@ fn player_proximity_scorer_system(
             .unwrap_or(DEFAULT_FLEE_THRESHOLD)
             .clamp(0.0, 1.0);
 
-        let value = if let Ok((blackboard, tier)) = npcs.get(*actor) {
-            if is_dormant(tier) {
-                0.0
-            } else if let Some(t) = tier.copied() {
-                if should_skip_scorer_tick(t, tick, &cfg) {
-                    // Far 档非计算 tick：保持原值
-                    continue;
-                }
-                score_for_flee_threshold(
-                    proximity_score(blackboard.player_distance),
-                    flee_threshold,
-                )
-            } else {
-                score_for_flee_threshold(
-                    proximity_score(blackboard.player_distance),
-                    flee_threshold,
-                )
-            }
+        let value = if let Ok(blackboard) = npcs.get(*actor) {
+            score_for_flee_threshold(proximity_score(blackboard.player_distance), flee_threshold)
         } else {
             0.0
         };
@@ -1146,62 +1125,26 @@ fn fear_cultivator_scorer_system(
 }
 
 fn hunger_scorer_system(
-    npcs: Query<(&Hunger, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<&Hunger, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<HungerScorer>>,
-    lod_config: Option<Res<NpcLodConfig>>,
-    lod_tick: Option<Res<NpcLodTick>>,
 ) {
-    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
-    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = match npcs.get(*actor) {
-            Ok((h, tier)) => {
-                if is_dormant(tier) {
-                    0.0
-                } else if tier
-                    .copied()
-                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
-                    .unwrap_or(false)
-                {
-                    continue;
-                } else {
-                    h.hunger_pressure()
-                }
-            }
-            Err(_) => 0.0,
-        };
+        let value = npcs
+            .get(*actor)
+            .ok()
+            .map(|h| h.hunger_pressure())
+            .unwrap_or(0.0);
         score.set(value);
     }
 }
 
 fn wander_scorer_system(
-    npcs: Query<(Option<&PendingRetirement>, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<Option<&PendingRetirement>, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<WanderScorer>>,
-    lod_config: Option<Res<NpcLodConfig>>,
-    lod_tick: Option<Res<NpcLodTick>>,
 ) {
-    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
-    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = match npcs.get(*actor) {
-            Ok((pending, tier)) => {
-                if is_dormant(tier) {
-                    0.0
-                } else if tier
-                    .copied()
-                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
-                    .unwrap_or(false)
-                {
-                    continue;
-                } else if pending.is_some() {
-                    0.0
-                } else {
-                    WANDER_BASELINE_SCORE
-                }
-            }
-            Err(_) => 0.0,
-        };
-        score.set(value);
+        let pending = npcs.get(*actor).ok().flatten().is_some();
+        score.set(if pending { 0.0 } else { WANDER_BASELINE_SCORE });
     }
 }
 
@@ -3563,149 +3506,4 @@ mod tests {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Phase 9 LOD gate 集成测试（NpcLodTier 如何影响 scorer 系统）
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn dormant_tier_zeros_player_proximity_scorer_even_when_player_nearby() {
-        let mut app = App::new();
-        app.insert_resource(NpcLodConfig::default());
-        app.insert_resource(NpcLodTick(5));
-        app.insert_resource(NpcBehaviorConfig::default());
-        app.add_systems(PreUpdate, player_proximity_scorer_system);
-
-        let mut bb = NpcBlackboard::default();
-        bb.player_distance = 3.0; // 很近，本来应该 flee
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, bb, NpcLodTier::Dormant))
-            .id();
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), PlayerProximityScorer))
-            .id();
-        app.update();
-        assert_eq!(
-            app.world().get::<Score>(scorer).unwrap().get(),
-            0.0,
-            "Dormant NPC 不应被玩家距离触发 flee"
-        );
-    }
-
-    #[test]
-    fn far_tier_preserves_score_on_non_interval_tick() {
-        let mut app = App::new();
-        let mut cfg = NpcLodConfig::default();
-        cfg.far_skip_interval = 10;
-        app.insert_resource(cfg);
-        app.insert_resource(NpcLodTick(3)); // 3 % 10 != 0 → skip
-        app.add_systems(PreUpdate, wander_scorer_system);
-
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, NpcLodTier::Far))
-            .id();
-        let scorer = app
-            .world_mut()
-            .spawn((
-                Actor(npc),
-                Score::default(),
-                WanderScorer,
-            ))
-            .id();
-
-        // 手工先把分数设成 0.42 模拟上一次计算结果
-        {
-            let mut s = app.world_mut().get_mut::<Score>(scorer).unwrap();
-            s.set(0.42);
-        }
-
-        app.update();
-        let got = app.world().get::<Score>(scorer).unwrap().get();
-        assert!(
-            (got - 0.42).abs() < 1e-6,
-            "Far 非 interval tick 应保留分数，实际 {got}"
-        );
-    }
-
-    #[test]
-    fn far_tier_recomputes_score_on_interval_tick() {
-        let mut app = App::new();
-        let mut cfg = NpcLodConfig::default();
-        cfg.far_skip_interval = 10;
-        app.insert_resource(cfg);
-        app.insert_resource(NpcLodTick(10)); // 10 % 10 == 0 → 跑
-        app.add_systems(PreUpdate, wander_scorer_system);
-
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, NpcLodTier::Far))
-            .id();
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), WanderScorer))
-            .id();
-        app.update();
-        let got = app.world().get::<Score>(scorer).unwrap().get();
-        assert!(
-            (got - WANDER_BASELINE_SCORE).abs() < 1e-6,
-            "Far interval tick 应重新计算 → WANDER_BASELINE_SCORE，实际 {got}"
-        );
-    }
-
-    #[test]
-    fn near_tier_scorer_runs_every_tick() {
-        let mut app = App::new();
-        app.insert_resource(NpcLodConfig::default());
-        app.insert_resource(NpcLodTick(7));
-        app.add_systems(PreUpdate, wander_scorer_system);
-
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, NpcLodTier::Near))
-            .id();
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), WanderScorer))
-            .id();
-        app.update();
-        let got = app.world().get::<Score>(scorer).unwrap().get();
-        assert!((got - WANDER_BASELINE_SCORE).abs() < 1e-6);
-    }
-
-    #[test]
-    fn no_tier_component_defaults_to_full_compute() {
-        // 老 NPC 还没被 update_npc_lod_tier_system 评估 → 不应因 LOD 而 skip
-        let mut app = App::new();
-        app.insert_resource(NpcLodConfig::default());
-        app.insert_resource(NpcLodTick(3));
-        app.add_systems(PreUpdate, wander_scorer_system);
-        let npc = app.world_mut().spawn(NpcMarker).id();
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), WanderScorer))
-            .id();
-        app.update();
-        let got = app.world().get::<Score>(scorer).unwrap().get();
-        assert!((got - WANDER_BASELINE_SCORE).abs() < 1e-6);
-    }
-
-    #[test]
-    fn dormant_hunger_scorer_always_zero() {
-        let mut app = App::new();
-        app.insert_resource(NpcLodConfig::default());
-        app.insert_resource(NpcLodTick(10));
-        app.add_systems(PreUpdate, hunger_scorer_system);
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, Hunger::new(0.0), NpcLodTier::Dormant))
-            .id();
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), HungerScorer))
-            .id();
-        app.update();
-        assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 0.0);
-    }
 }
