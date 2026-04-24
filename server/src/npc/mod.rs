@@ -3,6 +3,7 @@ pub mod faction;
 pub mod hunger;
 pub mod lifecycle;
 pub mod lingtian_pressure;
+pub mod lod;
 pub mod movement;
 pub mod navigator;
 pub mod patrol;
@@ -37,4 +38,5 @@ pub fn register(app: &mut App) {
     territory::register(app);
     social::register(app);
     relic::register(app);
+    lod::register(app);
 }
