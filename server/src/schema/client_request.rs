@@ -149,13 +149,6 @@ pub enum ClientRequestV1 {
         slot: u8,
         item_id: Option<String>,
     },
-    /// plan-HUD-v1 §7.3 / §11.3 切换防御姿态。`stance` 一个：
-    /// "JIEMAI" / "TISHI" / "JUELING" / "NONE"（与 client `Stance.name()` 对齐）。
-    /// server 校验 UnlockedStyles 后写入 DefenseStance Component。
-    SwitchDefenseStance {
-        v: u8,
-        stance: String,
-    },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
     /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。

@@ -5,7 +5,7 @@ use super::alchemy::{
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
 use super::combat_hud::{
-    CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
+    CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1,
     QuickSlotConfigV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1,
     WoundsSnapshotV1,
 };
@@ -57,7 +57,6 @@ pub enum ServerDataType {
     QuickSlotConfig,
     UnlocksSync,
     EventStreamPush,
-    DefenseSync,
     WeaponEquipped,
     WeaponBroken,
     TreasureEquipped,
@@ -161,7 +160,6 @@ pub enum ServerDataPayloadV1 {
     QuickSlotConfig(QuickSlotConfigV1),
     UnlocksSync(UnlocksSyncV1),
     EventStreamPush(EventStreamPushV1),
-    DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
@@ -315,10 +313,6 @@ enum ServerDataPayloadWireV1 {
     EventStreamPush {
         #[serde(flatten)]
         event: EventStreamPushV1,
-    },
-    DefenseSync {
-        #[serde(flatten)]
-        state: DefenseSyncV1,
     },
     WeaponEquipped {
         #[serde(flatten)]
@@ -626,7 +620,6 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
             ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
-            ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
             ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
                 Ok(Self::WeaponEquipped(weapon_equipped))
             }
@@ -837,7 +830,6 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
                 event: event.clone(),
             },
-            ServerDataPayloadV1::DefenseSync(state) => Self::DefenseSync { state: *state },
             ServerDataPayloadV1::WeaponEquipped(w) => Self::WeaponEquipped {
                 weapon_equipped: w.clone(),
             },
@@ -989,7 +981,6 @@ impl ServerDataPayloadV1 {
             Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
-            Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
@@ -1045,12 +1036,6 @@ mod tests {
                 text: "x".to_string(),
                 color: 0,
                 created_at_ms: 0,
-            }),
-            ServerDataPayloadV1::DefenseSync(DefenseSyncV1 {
-                stance: DefenseStanceV1::None,
-                fake_skin_layers: 0,
-                vortex_active: false,
-                vortex_ready_at_ms: 0,
             }),
         ];
 

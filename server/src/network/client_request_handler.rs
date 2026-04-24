@@ -20,9 +20,7 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry,
 };
-use crate::combat::components::{
-    Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
-};
+use crate::combat::components::{Casting, QuickSlotBindings};
 use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
@@ -75,14 +73,12 @@ pub struct AlchemyMockState {
     pub recipe_index: HashMap<String, i32>,
 }
 
-/// 把 cast / quickslot / 防御姿态相关查询打包，避免 `handle_client_request_payloads`
+/// 把 cast / quickslot 相关查询打包，避免 `handle_client_request_payloads`
 /// 顶部参数 tuple 超出 Bevy 0.14 SystemParam 16-tuple 上限。
 #[derive(SystemParam)]
 pub struct CombatRequestParams<'w, 's> {
     pub casting_q: Query<'w, 's, &'static Casting>,
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
-    pub defense_stance_q: Query<'w, 's, &'static mut DefenseStance>,
-    pub unlocked_q: Query<'w, 's, &'static UnlockedStyles>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
@@ -209,7 +205,6 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
-            | ClientRequestV1::SwitchDefenseStance { v, .. }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
@@ -513,14 +508,6 @@ pub fn handle_client_request_payloads(
                     item_id,
                     &mut combat_params.bindings_q,
                     &inventories,
-                );
-            }
-            ClientRequestV1::SwitchDefenseStance { stance, .. } => {
-                handle_switch_defense_stance(
-                    ev.client,
-                    &stance,
-                    &mut combat_params.defense_stance_q,
-                    &combat_params.unlocked_q,
                 );
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
@@ -1110,55 +1097,6 @@ fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
         "ling_shui" => Some(ReplenishSource::LingShui),
         _ => None,
     }
-}
-
-fn handle_switch_defense_stance(
-    entity: valence::prelude::Entity,
-    stance_str: &str,
-    defense_stance_q: &mut Query<&mut DefenseStance>,
-    unlocked_q: &Query<&UnlockedStyles>,
-) {
-    let new_stance = match stance_str.to_ascii_uppercase().as_str() {
-        "NONE" => DefenseStanceKind::None,
-        "JIEMAI" => DefenseStanceKind::Jiemai,
-        "TISHI" => DefenseStanceKind::Tishi,
-        "JUELING" => DefenseStanceKind::Jueling,
-        other => {
-            tracing::warn!(
-                "[bong][network] switch_defense_stance entity={entity:?} ignored: unknown stance '{other}'"
-            );
-            return;
-        }
-    };
-    let unlocked = unlocked_q.get(entity).copied().unwrap_or(UnlockedStyles {
-        jiemai: false,
-        tishi: false,
-        jueling: false,
-    });
-    let allowed = match new_stance {
-        DefenseStanceKind::None => true,
-        DefenseStanceKind::Jiemai => unlocked.jiemai,
-        DefenseStanceKind::Tishi => unlocked.tishi,
-        DefenseStanceKind::Jueling => unlocked.jueling,
-    };
-    if !allowed {
-        tracing::debug!(
-            "[bong][network] switch_defense_stance entity={entity:?} ignored: stance {new_stance:?} not unlocked"
-        );
-        return;
-    }
-    let Ok(mut stance) = defense_stance_q.get_mut(entity) else {
-        tracing::warn!(
-            "[bong][network] switch_defense_stance entity={entity:?} has no DefenseStance Component"
-        );
-        return;
-    };
-    if stance.stance == new_stance {
-        // Bevy 不会触发 Changed，但也不报错；client 已经知道状态。
-        return;
-    }
-    stance.stance = new_stance;
-    tracing::info!("[bong][network] switch_defense_stance entity={entity:?} -> {new_stance:?}");
 }
 
 fn handle_use_quick_slot(

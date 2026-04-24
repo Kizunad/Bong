@@ -306,12 +306,6 @@ public final class ClientRequestProtocol {
         return envelope("jiemai").toString();
     }
 
-    public static String encodeSwitchDefenseStance(String stance) {
-        JsonObject obj = envelope("switch_defense_stance");
-        obj.addProperty("stance", stance);
-        return obj.toString();
-    }
-
     // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
 
     /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */

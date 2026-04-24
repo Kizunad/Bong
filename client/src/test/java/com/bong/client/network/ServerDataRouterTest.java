@@ -53,7 +53,6 @@ public class ServerDataRouterTest {
             "quickslot_config",
             "unlocks_sync",
             "event_stream_push",
-            "defense_sync",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",

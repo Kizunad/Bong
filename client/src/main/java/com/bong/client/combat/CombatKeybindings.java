@@ -13,8 +13,7 @@ import java.util.function.IntConsumer;
 
 /**
  * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
- * reaction key (V, DefenseWindow only), the R spell-volume hold, and the three
- * unbound defense-stance toggles.
+ * reaction key (V, DefenseWindow only), and the R spell-volume hold.
  *
  * <p>Dispatch is wired through simple {@link IntConsumer} hooks so the
  * networking layer can plug in without pulling MC types into the combat
@@ -26,14 +25,10 @@ public final class CombatKeybindings {
     private static final KeyBinding[] QUICK_SLOT_KEYS = new KeyBinding[QuickSlotConfig.SLOT_COUNT];
     private static KeyBinding jiemaiKey;
     private static KeyBinding spellVolumeKey;
-    private static KeyBinding switchStanceJiemai;
-    private static KeyBinding switchStanceTishi;
-    private static KeyBinding switchStanceJueling;
 
     private static volatile IntConsumer quickSlotHandler = slot -> { };
     private static volatile Runnable jiemaiHandler = () -> { };
     private static volatile SpellVolumeHoldHandler spellVolumeHandler = pressed -> { };
-    private static volatile StanceHandler stanceHandler = stance -> { };
 
     private static boolean spellVolumeHeldLastTick = false;
 
@@ -61,28 +56,9 @@ public final class CombatKeybindings {
             GLFW.GLFW_KEY_R,
             CATEGORY
         ));
-        // Unbound by default — the player binds these in MC settings (§7.3).
-        switchStanceJiemai = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-            "key.bong-client.stance_jiemai",
-            InputUtil.Type.KEYSYM,
-            InputUtil.UNKNOWN_KEY.getCode(),
-            CATEGORY
-        ));
-        switchStanceTishi = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-            "key.bong-client.stance_tishi",
-            InputUtil.Type.KEYSYM,
-            InputUtil.UNKNOWN_KEY.getCode(),
-            CATEGORY
-        ));
-        switchStanceJueling = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-            "key.bong-client.stance_jueling",
-            InputUtil.Type.KEYSYM,
-            InputUtil.UNKNOWN_KEY.getCode(),
-            CATEGORY
-        ));
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R, stance triad).");
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R).");
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {
@@ -95,10 +71,6 @@ public final class CombatKeybindings {
 
     public static void setSpellVolumeHoldHandler(SpellVolumeHoldHandler handler) {
         spellVolumeHandler = handler == null ? pressed -> { } : handler;
-    }
-
-    public static void setStanceHandler(StanceHandler handler) {
-        stanceHandler = handler == null ? stance -> { } : handler;
     }
 
     private static void onTick(MinecraftClient client) {
@@ -129,24 +101,10 @@ public final class CombatKeybindings {
             }
         }
 
-        while (switchStanceJiemai.wasPressed()) {
-            stanceHandler.onStanceSwitch(DefenseStanceState.Stance.JIEMAI);
-        }
-        while (switchStanceTishi.wasPressed()) {
-            stanceHandler.onStanceSwitch(DefenseStanceState.Stance.TISHI);
-        }
-        while (switchStanceJueling.wasPressed()) {
-            stanceHandler.onStanceSwitch(DefenseStanceState.Stance.JUELING);
-        }
     }
 
     @FunctionalInterface
     public interface SpellVolumeHoldHandler {
         void onSpellVolumeHold(boolean pressed);
-    }
-
-    @FunctionalInterface
-    public interface StanceHandler {
-        void onStanceSwitch(DefenseStanceState.Stance stance);
     }
 }
