@@ -985,8 +985,6 @@ mod tests {
             Cultivation::default(),
             PlayerState::default(),
             QuickSlotBindings::default(),
-            DefenseStance::default(),
-            UnlockedStyles::default(),
         )).id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -1051,8 +1049,6 @@ mod tests {
             Cultivation::default(),
             PlayerState::default(),
             QuickSlotBindings::default(),
-            DefenseStance::default(),
-            UnlockedStyles::default(),
         )).id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
