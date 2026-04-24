@@ -14,6 +14,9 @@ public final class InventoryItem {
     private final int stackCount;
     private final double spiritQuality;   // 0..1，< 1.0 暗示已流失灵气
     private final double durability;      // 0..1，< 1.0 暗示损耗
+    private final String scrollKind;
+    private final String scrollSkillId;
+    private final int scrollXpGrant;
 
     private InventoryItem(
         long instanceId,
@@ -26,7 +29,10 @@ public final class InventoryItem {
         String description,
         int stackCount,
         double spiritQuality,
-        double durability
+        double durability,
+        String scrollKind,
+        String scrollSkillId,
+        int scrollXpGrant
     ) {
         this.instanceId = instanceId;
         this.itemId = Objects.requireNonNull(itemId, "itemId");
@@ -39,6 +45,9 @@ public final class InventoryItem {
         this.stackCount = Math.max(1, stackCount);
         this.spiritQuality = clamp01(spiritQuality);
         this.durability = clamp01(durability);
+        this.scrollKind = scrollKind == null ? "" : scrollKind;
+        this.scrollSkillId = scrollSkillId == null ? "" : scrollSkillId;
+        this.scrollXpGrant = Math.max(0, scrollXpGrant);
     }
 
     private static double clamp01(double v) {
@@ -56,7 +65,7 @@ public final class InventoryItem {
         String rarity,
         String description
     ) {
-        return createFull(
+        return createFullWithScrollMeta(
             0L,
             itemId,
             displayName,
@@ -67,7 +76,10 @@ public final class InventoryItem {
             description,
             1,
             1.0,
-            1.0
+            1.0,
+            "",
+            "",
+            0
         );
     }
 
@@ -96,7 +108,44 @@ public final class InventoryItem {
             description == null ? "" : description.trim(),
             stackCount,
             spiritQuality,
-            durability
+            durability,
+            "",
+            "",
+            0
+        );
+    }
+
+    public static InventoryItem createFullWithScrollMeta(
+        long instanceId,
+        String itemId,
+        String displayName,
+        int gridWidth,
+        int gridHeight,
+        double weight,
+        String rarity,
+        String description,
+        int stackCount,
+        double spiritQuality,
+        double durability,
+        String scrollKind,
+        String scrollSkillId,
+        int scrollXpGrant
+    ) {
+        return new InventoryItem(
+            instanceId,
+            itemId == null ? "" : itemId.trim(),
+            displayName == null ? "" : displayName.trim(),
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity == null ? "common" : rarity.trim(),
+            description == null ? "" : description.trim(),
+            stackCount,
+            spiritQuality,
+            durability,
+            scrollKind == null ? "" : scrollKind.trim(),
+            scrollSkillId == null ? "" : scrollSkillId.trim(),
+            scrollXpGrant
         );
     }
 
@@ -148,6 +197,22 @@ public final class InventoryItem {
         return durability;
     }
 
+    public String scrollKind() {
+        return scrollKind;
+    }
+
+    public String scrollSkillId() {
+        return scrollSkillId;
+    }
+
+    public int scrollXpGrant() {
+        return scrollXpGrant;
+    }
+
+    public boolean isSkillScroll() {
+        return "skill_scroll".equals(scrollKind);
+    }
+
     public boolean isEmpty() {
         return itemId.isEmpty();
     }
@@ -169,20 +234,24 @@ public final class InventoryItem {
             && gridWidth == other.gridWidth
             && gridHeight == other.gridHeight
             && stackCount == other.stackCount
+            && scrollXpGrant == other.scrollXpGrant
             && Double.compare(weight, other.weight) == 0
             && Double.compare(spiritQuality, other.spiritQuality) == 0
             && Double.compare(durability, other.durability) == 0
             && itemId.equals(other.itemId)
             && displayName.equals(other.displayName)
             && rarity.equals(other.rarity)
-            && description.equals(other.description);
+            && description.equals(other.description)
+            && scrollKind.equals(other.scrollKind)
+            && scrollSkillId.equals(other.scrollSkillId);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(
             instanceId, itemId, displayName, gridWidth, gridHeight, weight,
-            rarity, description, stackCount, spiritQuality, durability
+            rarity, description, stackCount, spiritQuality, durability,
+            scrollKind, scrollSkillId, scrollXpGrant
         );
     }
 

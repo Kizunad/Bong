@@ -13,6 +13,7 @@ import { normalizeLlmChatResult, type LlmClient, type LlmToolUsage } from "./llm
 import { type AgentDecision, parseDecision } from "./parse.js";
 import { createToolContext, type AgentTool } from "./tools/types.js";
 import { queryPlayerTool } from "./tools/query-player.js";
+import { queryPlayerSkillMilestonesTool } from "./tools/query-player-skill-milestones.js";
 import { queryZoneHistoryTool } from "./tools/query-zone-history.js";
 import { listActiveEventsTool } from "./tools/list-active-events.js";
 import type { WorldModel } from "./world-model.js";
@@ -22,7 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export function resolveAgentTools(skillFile: string): readonly AgentTool[] {
   switch (skillFile) {
     case "calamity.md":
-      return [queryPlayerTool, listActiveEventsTool];
+      return [queryPlayerTool, queryPlayerSkillMilestonesTool, listActiveEventsTool];
     case "mutation.md":
       return [queryZoneHistoryTool];
     case "era.md":

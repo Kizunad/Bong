@@ -54,6 +54,11 @@ import {
   ServerDataAlchemySessionV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanySkillV1,
+  ServerDataSkillCapChangedV1,
+  ServerDataSkillLvUpV1,
+  ServerDataSkillSnapshotV1,
+  ServerDataSkillScrollUsedV1,
+  ServerDataSkillXpGainV1,
   ServerDataV1,
 } from "./server-data.js";
 import { VfxEventV1 } from "./vfx-event.js";
@@ -93,6 +98,11 @@ export const SCHEMA_REGISTRY = {
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
+  serverDataSkillLvUpV1: ServerDataSkillLvUpV1,
+  serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
+  serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
+  serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -156,6 +166,16 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
   "server-data-botany-skill-v1.json":
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "server-data-skill-xp-gain-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillXpGainV1,
+  "server-data-skill-lv-up-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillLvUpV1,
+  "server-data-skill-cap-changed-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillCapChangedV1,
+  "server-data-skill-snapshot-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillSnapshotV1,
+  "server-data-skill-scroll-used-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)

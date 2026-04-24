@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "v",
+    "char_id",
+    "skill",
+    "new_cap"
+  ],
+  "properties": {
+    "type": {
+      "const": "skill_cap_changed",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "herbalism",
+          "type": "string"
+        },
+        {
+          "const": "alchemy",
+          "type": "string"
+        },
+        {
+          "const": "forging",
+          "type": "string"
+        }
+      ]
+    },
+    "new_cap": {
+      "minimum": 0,
+      "maximum": 10,
+      "type": "integer"
+    }
+  }
+}

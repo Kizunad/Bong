@@ -9,9 +9,19 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class GridSlotComponent extends BaseComponent {
     public static final int CELL_SIZE = 28;
     private static final int ICON_SIZE = 128;
+    private static final Identifier FALLBACK_ITEM_TEXTURE = new Identifier(
+        "bong-client", "textures/gui/items/broken_artifact.png"
+    );
+    private static final Identifier FALLBACK_SCROLL_TEXTURE = new Identifier(
+        "bong-client", "textures/gui/items/broken_artifact_scroll.png"
+    );
+    private static final Map<String, Identifier> TEXTURE_CACHE = new ConcurrentHashMap<>();
 
     // Gray palette
     private static final int BG_COLOR = 0xFF1E1E1E;
@@ -111,7 +121,7 @@ public class GridSlotComponent extends BaseComponent {
     public static void drawItemTexture(OwoUIDrawContext context, InventoryItem item, int dx, int dy, int dw, int dh) {
         if (item == null || item.isEmpty()) return;
 
-        Identifier textureId = new Identifier("bong-client", "textures/gui/items/" + item.itemId() + ".png");
+        Identifier textureId = textureIdForItem(item);
 
         int fitSize = Math.min(dw, dh);
         int offsetX = (dw - fitSize) / 2;
@@ -130,6 +140,42 @@ public class GridSlotComponent extends BaseComponent {
 
         matrices.pop();
         RenderSystem.disableBlend();
+    }
+
+    public static Identifier textureIdForItem(InventoryItem item) {
+        return textureIdForItemId(item == null ? "" : item.itemId());
+    }
+
+    public static Identifier textureIdForItemId(String itemId) {
+        String normalized = itemId == null ? "" : itemId.trim();
+        return TEXTURE_CACHE.computeIfAbsent(normalized, GridSlotComponent::resolveTextureIdForItemId);
+    }
+
+    private static Identifier resolveTextureIdForItemId(String itemId) {
+        if (itemId.isEmpty()) {
+            return FALLBACK_ITEM_TEXTURE;
+        }
+
+        Identifier candidate = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.getResourceManager().getResource(candidate).isPresent()) {
+            return candidate;
+        }
+        return fallbackTextureIdForItemId(itemId);
+    }
+
+    static Identifier fallbackTextureIdForItemId(String itemId) {
+        return isScrollTextureCandidate(itemId) ? FALLBACK_SCROLL_TEXTURE : FALLBACK_ITEM_TEXTURE;
+    }
+
+    static boolean isScrollTextureCandidate(String itemId) {
+        if (itemId == null || itemId.isBlank()) {
+            return false;
+        }
+        return itemId.startsWith("skill_scroll_")
+            || itemId.startsWith("recipe_scroll_")
+            || itemId.startsWith("blueprint_scroll_")
+            || itemId.endsWith("_scroll");
     }
 
     static void drawSlotBorder(OwoUIDrawContext context, int x, int y, int w, int h, int color) {

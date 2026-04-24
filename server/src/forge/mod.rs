@@ -37,11 +37,13 @@ use self::session::{ForgeSession, ForgeSessions, ForgeStep, StepState};
 use self::station::WeaponForgeStation;
 use self::steps::{
     advance_step, apply_scroll, apply_tempering_hit, compute_achieved_tier, inject_qi,
-    resolve_billet, resolve_tempering, select_bucket, ConsecrationResult, InscriptionResult,
-    TemperingResult,
+    resolve_billet, resolve_consecration, resolve_inscription, resolve_tempering, select_bucket,
+    ConsecrationResult, InscriptionResult, TemperingResult,
 };
+use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
-use crate::skill::components::SkillId;
+use crate::skill::components::{SkillId, SkillSet};
+use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
 pub fn register(app: &mut App) {
@@ -155,6 +157,8 @@ fn handle_start_forge_requests(
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
         session.committed_materials = inputs;
         session.step_state = StepState::Billet(billet_res.state.clone());
+        session.billet_flawed = billet_res.flawed;
+        session.billet_carrier_cap = billet_res.state.resolved_tier_cap;
         session.flawed_marker = billet_res.flawed;
         session.achieved_tier = 1;
         station.session = Some(id);
@@ -173,6 +177,7 @@ fn handle_tempering_hits(
     mut ev: EventReader<TemperingHit>,
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
+    casters: Query<(&Cultivation, &SkillSet)>,
 ) {
     for hit in ev.read() {
         let Some(session) = sessions.get_mut(hit.session) else {
@@ -190,8 +195,14 @@ fn handle_tempering_hits(
         }) else {
             continue;
         };
+        let forging_lv = casters
+            .get(session.caster)
+            .ok()
+            .map(|(cultivation, skill_set)| forging_effective_lv(cultivation, skill_set))
+            .unwrap_or(0);
+        let window_bonus = skill_hook::tempering_window_bonus_ticks(forging_lv);
         if let StepState::Tempering(state) = &mut session.step_state {
-            apply_tempering_hit(profile, state, hit.beat, hit.ticks_remaining);
+            apply_tempering_hit(profile, state, hit.beat, hit.ticks_remaining, window_bonus);
         }
     }
 }
@@ -236,7 +247,7 @@ fn handle_step_advance(
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
     mut stations: Query<&mut WeaponForgeStation>,
-    mut caster_q: Query<(&Cultivation, &QiColor)>,
+    mut caster_q: Query<(&Cultivation, &QiColor, &SkillSet)>,
     mut history_q: Query<&mut ForgeHistory>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
     mut skill_xp_events: EventWriter<SkillXpGain>,
@@ -250,19 +261,51 @@ fn handle_step_advance(
         };
 
         let prev_step = session.current_step;
+        let caster_info = caster_q
+            .get(session.caster)
+            .ok()
+            .map(|(cultivation, qi_color, skill_set)| {
+                let forging_lv = forging_effective_lv(cultivation, skill_set);
+                (cultivation.realm, qi_color.main, forging_lv)
+            });
         // 对当前步骤做结算。
-        let (tempering_flawed, tempering_waste) =
-            match (&session.step_state, bp.steps.get(session.step_index)) {
-                (StepState::Tempering(state), Some(blueprint::StepSpec::Tempering { profile })) => {
-                    let r = resolve_tempering(profile, state);
-                    (
-                        matches!(r, TemperingResult::Flawed | TemperingResult::Good),
-                        matches!(r, TemperingResult::Waste),
-                    )
-                }
-                _ => (false, false),
-            };
-        if tempering_waste {
+        let (step_flawed, step_waste) = match (&session.step_state, bp.steps.get(session.step_index)) {
+            (StepState::Tempering(state), Some(blueprint::StepSpec::Tempering { profile })) => {
+                let miss_bonus = caster_info
+                    .map(|(_, _, lv)| skill_hook::allowed_miss_bonus(lv))
+                    .unwrap_or(0);
+                let result = resolve_tempering(profile, state, miss_bonus);
+                session.tempering_result = Some(result);
+                (
+                    matches!(result, TemperingResult::Flawed | TemperingResult::Good),
+                    matches!(result, TemperingResult::Waste),
+                )
+            }
+            (StepState::Inscription(state), Some(blueprint::StepSpec::Inscription { profile })) => {
+                let failure_reduction = caster_info
+                    .map(|(_, _, lv)| skill_hook::inscription_failure_rate_reduction(lv))
+                    .unwrap_or(0.0);
+                let roll = deterministic_step_roll(session.id.0, session.step_index, 0x1bad5eed);
+                let result = resolve_inscription(profile, state, roll, failure_reduction);
+                session.inscription_result = Some(result);
+                (
+                    matches!(result, InscriptionResult::Partial | InscriptionResult::Failed),
+                    false,
+                )
+            }
+            (StepState::Consecration(state), Some(blueprint::StepSpec::Consecration { profile })) => {
+                let result = caster_info
+                    .map(|(realm, color, _)| resolve_consecration(profile, state, color, realm))
+                    .unwrap_or(ConsecrationResult::Failed);
+                session.consecration_result = Some(result);
+                (
+                    matches!(result, ConsecrationResult::Insufficient | ConsecrationResult::Failed),
+                    false,
+                )
+            }
+            _ => (false, false),
+        };
+        if step_waste {
             finalize_outcome(
                 session,
                 bp,
@@ -276,7 +319,7 @@ fn handle_step_advance(
             );
             continue;
         }
-        if tempering_flawed {
+        if step_flawed {
             session.flawed_marker = true;
         }
 
@@ -294,16 +337,11 @@ fn handle_step_advance(
         if session.is_done() {
             // 汇总各步结果 → bucket
             let bucket = finalize_bucket(session, bp);
-            // 从 caster 读 color/realm 用于 consecration（若未来存 step_state 中更好，这里简化）
-            let caster_info = caster_q
-                .get(session.caster)
-                .ok()
-                .map(|(c, qc)| (c.realm, qc.main));
             finalize_outcome(
                 session,
                 bp,
                 bucket,
-                caster_info,
+                caster_info.map(|(realm, color, _)| (realm, color)),
                 &mut stations,
                 &mut caster_q,
                 &mut history_q,
@@ -315,28 +353,20 @@ fn handle_step_advance(
 }
 
 fn finalize_bucket(session: &ForgeSession, bp: &blueprint::Blueprint) -> ForgeBucket {
-    // 简化：当前实现中非 tempering 步骤的 resolution 需要调用方传 roll —— 这里走最保守判定
-    // （真正 roll 应在 step_advance 分步落盘，本 MVP 用 flawed_marker + 步骤缺失兜底）。
     let billet_ok = session.achieved_tier >= 1;
-    let billet_flawed = session.flawed_marker;
+    let billet_flawed = session.billet_flawed;
     let tempering = if bp.has_step(StepKind::Tempering) {
-        Some(if session.flawed_marker {
-            TemperingResult::Flawed
-        } else {
-            TemperingResult::Perfect
-        })
+        session.tempering_result
     } else {
         None
     };
     let inscription = if bp.has_step(StepKind::Inscription) {
-        Some(InscriptionResult::Filled)
+        session.inscription_result
     } else {
         None
     };
     let consecration = if bp.has_step(StepKind::Consecration) {
-        Some(ConsecrationResult::Succeeded {
-            color: crate::cultivation::components::ColorKind::Mellow,
-        })
+        session.consecration_result
     } else {
         None
     };
@@ -359,7 +389,7 @@ fn finalize_outcome(
         crate::cultivation::components::ColorKind,
     )>,
     stations: &mut Query<&mut WeaponForgeStation>,
-    _caster_q: &mut Query<(&Cultivation, &QiColor)>,
+    _caster_q: &mut Query<(&Cultivation, &QiColor, &SkillSet)>,
     history_q: &mut Query<&mut ForgeHistory>,
     outcomes: &mut EventWriter<ForgeOutcomeEvent>,
     skill_xp_events: &mut EventWriter<SkillXpGain>,
@@ -439,25 +469,12 @@ fn finalize_outcome(
             bucket,
             ForgeBucket::Perfect | ForgeBucket::Good | ForgeBucket::Flawed
         ),
-        if bp.has_step(StepKind::Tempering) {
-            Some(!matches!(bucket, ForgeBucket::Flawed | ForgeBucket::Waste))
-        } else {
-            None
-        },
-        if bp.has_step(StepKind::Inscription) {
-            Some(!matches!(bucket, ForgeBucket::Flawed | ForgeBucket::Waste))
-        } else {
-            None
-        },
-        if bp.has_step(StepKind::Consecration) {
-            Some(matches!(bucket, ForgeBucket::Perfect | ForgeBucket::Good))
-        } else {
-            None
-        },
-        match &session.step_state {
-            StepState::Billet(b) => b.resolved_tier_cap,
-            _ => bp.tier_cap,
-        },
+        session.tempering_result.map(|r| !matches!(r, TemperingResult::Flawed | TemperingResult::Waste)),
+        session.inscription_result.map(|r| matches!(r, InscriptionResult::Filled)),
+        session
+            .consecration_result
+            .map(|r| matches!(r, ConsecrationResult::Succeeded { .. })),
+        session.billet_carrier_cap,
     );
 
     // Append LifeRecord / ForgeHistory
@@ -515,4 +532,21 @@ fn forge_action_for_bucket(bucket: ForgeBucket) -> &'static str {
         ForgeBucket::Waste => "craft_waste",
         ForgeBucket::Explode => "craft_explode",
     }
+}
+
+fn forging_effective_lv(cultivation: &Cultivation, skill_set: &SkillSet) -> u8 {
+    let real_lv = skill_set
+        .skills
+        .get(&SkillId::Forging)
+        .map(|entry| entry.lv)
+        .unwrap_or(0);
+    effective_lv(real_lv, skill_cap_for_realm(cultivation.realm))
+}
+
+fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f32 {
+    let mut x = session_seed ^ ((step_index as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)) ^ salt;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    (x as f64 / u64::MAX as f64).clamp(0.0, 0.999_999) as f32
 }

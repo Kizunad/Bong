@@ -924,6 +924,7 @@ mod tests {
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,

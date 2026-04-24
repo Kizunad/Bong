@@ -1,0 +1,128 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "v",
+    "char_id",
+    "skill",
+    "amount",
+    "source"
+  ],
+  "properties": {
+    "type": {
+      "const": "skill_xp_gain",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "herbalism",
+          "type": "string"
+        },
+        {
+          "const": "alchemy",
+          "type": "string"
+        },
+        {
+          "const": "forging",
+          "type": "string"
+        }
+      ]
+    },
+    "amount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source": {
+      "description": "plan §8 XP 来源 tagged union",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "plan_id",
+            "action"
+          ],
+          "properties": {
+            "type": {
+              "const": "action",
+              "type": "string"
+            },
+            "plan_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "action": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "scroll_id",
+            "xp_grant"
+          ],
+          "properties": {
+            "type": {
+              "const": "scroll",
+              "type": "string"
+            },
+            "scroll_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "xp_grant": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "realm_breakthrough",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "mentor_char"
+          ],
+          "properties": {
+            "type": {
+              "const": "mentor",
+              "type": "string"
+            },
+            "mentor_char": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

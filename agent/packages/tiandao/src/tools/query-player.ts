@@ -86,6 +86,25 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
             },
             { additionalProperties: false },
           ),
+          lifeRecord: toolSchema.object(
+            {
+              recentBiographySummary: toolSchema.string(),
+              recentSkillMilestonesSummary: toolSchema.string(),
+              recentSkillMilestones: toolSchema.array(
+                toolSchema.object(
+                  {
+                    skill: toolSchema.string(),
+                    newLv: toolSchema.number(),
+                    achievedAt: toolSchema.number(),
+                    narration: toolSchema.string(),
+                    totalXpAt: toolSchema.number(),
+                  },
+                  { additionalProperties: false },
+                ),
+              ),
+            },
+            { additionalProperties: false },
+          ),
         },
         { additionalProperties: false },
       ),
@@ -152,6 +171,19 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
           event.target === player.name),
     );
     const newbieProtected = player.composite_power < NEWBIE_POWER_THRESHOLD;
+    const lifeRecord = player.life_record as {
+      recent_biography_summary?: string;
+      recent_skill_milestones_summary?: string;
+      skill_milestones?: Array<{
+        skill: string;
+        new_lv: number;
+        achieved_at: number;
+        narration: string;
+        total_xp_at: number;
+      }>;
+    } | undefined;
+    const recentSkillMilestones = lifeRecord?.skill_milestones ?? [];
+    const latestSkillMilestone = recentSkillMilestones.at(-1);
     const protectionReasons: string[] = [];
     if (newbieProtected) {
       protectionReasons.push(`composite_power < ${NEWBIE_POWER_THRESHOLD}`);
@@ -183,6 +215,19 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
           karma: player.breakdown.karma,
           territory: player.breakdown.territory,
         },
+        lifeRecord: {
+          recentBiographySummary: lifeRecord?.recent_biography_summary ?? "",
+          recentSkillMilestonesSummary:
+            lifeRecord?.recent_skill_milestones_summary ?? "",
+          recentSkillMilestones:
+            recentSkillMilestones.map((milestone) => ({
+              skill: milestone.skill,
+              newLv: milestone.new_lv,
+              achievedAt: milestone.achieved_at,
+              narration: milestone.narration,
+              totalXpAt: milestone.total_xp_at,
+            })) ?? [],
+        },
       },
       protection: {
         newbieThreshold: NEWBIE_POWER_THRESHOLD,
@@ -191,7 +236,7 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
         protected: newbieProtected || newcomerDetected,
         reasons: protectionReasons,
       },
-      summary: `${player.name}@${player.zone} power ${player.composite_power.toFixed(2)}, kills ${player.recent_kills}, deaths ${player.recent_deaths}`,
+      summary: `${player.name}@${player.zone} power ${player.composite_power.toFixed(2)}, kills ${player.recent_kills}, deaths ${player.recent_deaths}, ${latestSkillMilestone ? `latest skill ${latestSkillMilestone.skill} Lv.${latestSkillMilestone.new_lv}` : `skill milestones ${recentSkillMilestones.length}`}`,
     };
   },
 };

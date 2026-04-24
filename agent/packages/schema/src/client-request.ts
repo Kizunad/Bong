@@ -285,6 +285,16 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const LearnSkillScrollRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("learn_skill_scroll"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -306,5 +316,6 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  LearnSkillScrollRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

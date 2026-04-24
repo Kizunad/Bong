@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "skill_cap_changed",
+  "char_id": 1001,
+  "skill": "forging",
+  "new_cap": 7
+}

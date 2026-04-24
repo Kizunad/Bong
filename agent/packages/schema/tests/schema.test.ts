@@ -25,6 +25,7 @@ import { ServerDataV1 } from "../src/server-data.js";
 import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
+  SkillSnapshotPayloadV1,
   SkillScrollUsedPayloadV1,
   SkillXpGainPayloadV1,
 } from "../src/skill.js";
@@ -196,6 +197,36 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.skill-xp-gain.sample.json", () => {
+    const data = loadSample("server-data.skill-xp-gain.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.skill-lv-up.sample.json", () => {
+    const data = loadSample("server-data.skill-lv-up.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.skill-cap-changed.sample.json", () => {
+    const data = loadSample("server-data.skill-cap-changed.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.skill-scroll-used.sample.json", () => {
+    const data = loadSample("server-data.skill-scroll-used.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.skill-snapshot.sample.json", () => {
+    const data = loadSample("server-data.skill-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.alchemy-feed-slot.sample.json", () => {
     const data = loadSample("client-request.alchemy-feed-slot.sample.json");
     const result = validate(ClientRequestV1, data);
@@ -304,6 +335,10 @@ describe("skill IPC payload samples pass schema validation", () => {
       SkillScrollUsedPayloadV1,
     );
   });
+
+  it("skill-snapshot.sample.json", () => {
+    expectAllPass("skill-snapshot.sample.json", SkillSnapshotPayloadV1);
+  });
 });
 
 describe("negative sample files fail schema validation", () => {
@@ -377,6 +412,20 @@ describe("schema rejects invalid data", () => {
 
     expectContractAccepts(
       "WorldStateV1 legacy-compatible optional faction fields",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
+  it("accepts life record skill milestone snapshots in world state", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const firstPlayer = (data.players as Array<Record<string, unknown>>)[0];
+    const lifeRecord = firstPlayer.life_record as Record<string, unknown>;
+    expect(Array.isArray(lifeRecord.skill_milestones)).toBe(true);
+    expect((lifeRecord.skill_milestones as unknown[]).length).toBe(2);
+
+    expectContractAccepts(
+      "WorldStateV1 life record skill milestone snapshots",
       validateWorldStateV1Contract,
       data,
     );

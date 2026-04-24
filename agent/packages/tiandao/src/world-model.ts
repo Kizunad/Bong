@@ -285,6 +285,16 @@ export class WorldModel {
       if (this.newPlayersThisTick.has(player.uuid)) {
         addKeyPlayerReason(tracked, player, `新入世(${player.composite_power.toFixed(2)})`);
       }
+
+      const latestSkillMilestone = player.life_record?.skill_milestones.at(-1);
+      if (latestSkillMilestone) {
+        const skillLabel = describeSkill(latestSkillMilestone.skill);
+        addKeyPlayerReason(
+          tracked,
+          player,
+          `技艺突破 ${skillLabel} Lv.${latestSkillMilestone.new_lv}`,
+        );
+      }
     }
 
     return [...tracked.values()]
@@ -439,6 +449,11 @@ function summarizeKeyPlayerNote(player: PlayerProfile, reasons: string[]): strin
     return "因果将至";
   }
 
+  const skillBreakthroughReason = reasons.find((reason) => reason.startsWith("技艺突破 "));
+  if (skillBreakthroughReason) {
+    return `${skillBreakthroughReason}，手艺有成`;
+  }
+
   if (reasons.some((reason) => reason.startsWith("新入世") || reason.startsWith("综合最弱"))) {
     return "天道可扶";
   }
@@ -448,6 +463,19 @@ function summarizeKeyPlayerNote(player: PlayerProfile, reasons: string[]): strin
   }
 
   return "局势所系";
+}
+
+function describeSkill(skill: string): string {
+  switch (skill) {
+    case "herbalism":
+      return "采药";
+    case "alchemy":
+      return "炼丹";
+    case "forging":
+      return "锻造";
+    default:
+      return skill;
+  }
 }
 
 function compareAgentNames(left: string, right: string): number {
@@ -565,7 +593,14 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       recent_kills: player.recent_kills,
       recent_deaths: player.recent_deaths,
       cultivation: player.cultivation ? { ...player.cultivation } : undefined,
-      life_record: player.life_record ? { ...player.life_record } : undefined,
+      life_record: player.life_record
+        ? {
+            ...player.life_record,
+            skill_milestones: player.life_record.skill_milestones.map((milestone) => ({
+              ...milestone,
+            })),
+          }
+        : undefined,
     })),
     npcs: clonedNpcs,
     factions: state.factions?.map((faction): NonNullable<WorldStateV1["factions"]>[number] => ({

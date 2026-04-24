@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import Redis from "ioredis";
 import type { Command, Narration } from "@bong/schema";
 import { InsightRuntime } from "./insight-runtime.js";
+import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -107,10 +108,17 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey,
     model: options.model,
   });
+  const skillLvUpCleanup = await startSkillLvUpRuntime({
+    redisUrl: config.redisUrl,
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    model: options.model,
+  });
 
   try {
     await runRuntime(config);
   } finally {
+    await skillLvUpCleanup();
     await insightCleanup();
   }
 }
@@ -152,6 +160,44 @@ async function startInsightRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] insight runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startSkillLvUpRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof SkillLvUpNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof SkillLvUpNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new SkillLvUpNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] skill lv up runtime online"))
+    .catch((error) => console.warn("[tiandao] skill lv up runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] skill lv up runtime disconnect error:", error);
     }
   };
 }

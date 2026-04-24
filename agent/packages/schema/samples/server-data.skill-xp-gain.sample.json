@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "skill_xp_gain",
+  "char_id": 1001,
+  "skill": "herbalism",
+  "amount": 5,
+  "source": {
+    "type": "action",
+    "plan_id": "botany",
+    "action": "harvest_auto"
+  }
+}

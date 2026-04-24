@@ -168,6 +168,39 @@ rarity = "rare"
 spirit_quality_initial = 1.0
 description = "记载爆脉流修炼法门的残卷。读之经脉作痒。"
 
+[[item]]
+id = "skill_scroll_herbalism_baicao_can"
+name = "《百草图考·残》"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "残页只存草木形气，久观则手眼渐熟。"
+
+[[item]]
+id = "skill_scroll_alchemy_danhuo_can"
+name = "《丹火候论·残》"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "断简残章，仍可窥火候盈亏之理。"
+
+[[item]]
+id = "skill_scroll_forging_duantie_can"
+name = "《锻铁手录·残》"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "旧匠遗稿，敲击之间自有迟急轻重。"
+
 # ─── 货币 / 交易 ──────────────────────────────────────────────────────────
 [[item]]
 id = "fengling_bone_coin"

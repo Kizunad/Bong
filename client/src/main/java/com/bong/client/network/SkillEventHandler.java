@@ -1,6 +1,7 @@
 package com.bong.client.network;
 
 import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillRecentEventStore;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
 import com.google.gson.JsonElement;
@@ -71,6 +72,12 @@ public final class SkillEventHandler {
             amount, System.currentTimeMillis()
         );
         SkillSetStore.updateEntry(skill, next);
+        SkillRecentEventStore.append(new SkillRecentEventStore.Entry(
+            skill,
+            "xp_gain",
+            "+" + amount + " XP",
+            System.currentTimeMillis()
+        ));
         return ServerDataDispatch.handled(envelope.type(),
             "skill_xp_gain +" + amount + " applied to " + skill.wireId());
     }
@@ -89,6 +96,12 @@ public final class SkillEventHandler {
             cur.recentGainXp(), cur.recentGainMillis()
         );
         SkillSetStore.updateEntry(skill, next);
+        SkillRecentEventStore.append(new SkillRecentEventStore.Entry(
+            skill,
+            "lv_up",
+            "升至 Lv." + newLv,
+            System.currentTimeMillis()
+        ));
         return ServerDataDispatch.handled(envelope.type(),
             "skill_lv_up " + skill.wireId() + " → Lv." + newLv);
     }
@@ -107,6 +120,12 @@ public final class SkillEventHandler {
             cur.recentGainXp(), cur.recentGainMillis()
         );
         SkillSetStore.updateEntry(skill, next);
+        SkillRecentEventStore.append(new SkillRecentEventStore.Entry(
+            skill,
+            "cap_changed",
+            "cap 调整为 " + newCap,
+            System.currentTimeMillis()
+        ));
         return ServerDataDispatch.handled(envelope.type(),
             "skill_cap_changed " + skill.wireId() + " cap=" + newCap);
     }
@@ -114,12 +133,16 @@ public final class SkillEventHandler {
     private static ServerDataDispatch handleScrollUsed(ServerDataEnvelope envelope) {
         JsonObject p = envelope.payload();
         SkillId skill = SkillId.fromWire(readString(p, "skill"));
+        String scrollId = readString(p, "scroll_id");
         Long granted = readLong(p, "xp_granted");
         Boolean dup = readBool(p, "was_duplicate");
-        if (skill == null || granted == null || dup == null) {
+        if (skill == null || scrollId == null || granted == null || dup == null) {
             return ServerDataDispatch.noOp(envelope.type(),
                 "Ignoring skill_scroll_used: invalid or missing fields");
         }
+        SkillSetStore.replace(SkillSetStore.snapshot().withConsumedScrolls(
+            mergeConsumedScroll(scrollId)
+        ));
         // P2 阶段仅更新 store 用作 UI 最近动作提示；不消耗残卷视为 0 xp，不改 entry xp 字段。
         if (dup) {
             return ServerDataDispatch.handled(envelope.type(),
@@ -131,8 +154,20 @@ public final class SkillEventHandler {
             granted, System.currentTimeMillis()
         );
         SkillSetStore.updateEntry(skill, next);
+        SkillRecentEventStore.append(new SkillRecentEventStore.Entry(
+            skill,
+            "scroll_used",
+            "残卷顿悟 +" + granted + " XP",
+            System.currentTimeMillis()
+        ));
         return ServerDataDispatch.handled(envelope.type(),
             "skill_scroll_used " + skill.wireId() + " +" + granted);
+    }
+
+    private static java.util.Set<String> mergeConsumedScroll(String scrollId) {
+        java.util.LinkedHashSet<String> next = new java.util.LinkedHashSet<>(SkillSetStore.snapshot().consumedScrolls());
+        next.add(scrollId);
+        return java.util.Set.copyOf(next);
     }
 
     // ==================== JSON helpers ====================

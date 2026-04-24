@@ -14,6 +14,7 @@ pub mod integration;
 pub mod lifecycle;
 pub mod plant_kind;
 pub mod registry;
+pub mod skill_hook;
 
 #[allow(unused_imports)]
 pub use plant_kind::{GrowthCost, PlantId, PlantKind, PlantRarity};

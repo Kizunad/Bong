@@ -118,12 +118,14 @@ pub fn apply_tempering_hit(
     state: &mut TemperingState,
     beat: TemperBeat,
     ticks_remaining: u32,
+    window_bonus_ticks: u32,
 ) {
     if state.beat_cursor >= profile.pattern.len() {
         return;
     }
     let expected = profile.pattern[state.beat_cursor];
-    let in_window = ticks_remaining > 0 && ticks_remaining <= profile.window_ticks;
+    let window_limit = profile.window_ticks.saturating_add(window_bonus_ticks);
+    let in_window = ticks_remaining > 0 && ticks_remaining <= window_limit;
     if expected == beat && in_window {
         state.hits = state.hits.saturating_add(1);
     } else {
@@ -134,7 +136,7 @@ pub fn apply_tempering_hit(
     state.beat_cursor += 1;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemperingResult {
     Perfect,
     Good,
@@ -142,8 +144,15 @@ pub enum TemperingResult {
     Waste,
 }
 
-pub fn resolve_tempering(profile: &TemperingProfile, state: &TemperingState) -> TemperingResult {
-    let allowed = profile.tolerance.miss_allowed;
+pub fn resolve_tempering(
+    profile: &TemperingProfile,
+    state: &TemperingState,
+    allowed_miss_bonus: u32,
+) -> TemperingResult {
+    let allowed = profile
+        .tolerance
+        .miss_allowed
+        .saturating_add(allowed_miss_bonus);
     let total = profile.pattern.len() as u32;
     if state.misses == 0 && state.hits >= total {
         TemperingResult::Perfect
@@ -158,7 +167,7 @@ pub fn resolve_tempering(profile: &TemperingProfile, state: &TemperingState) -> 
 
 // ══════════════════════════════ Inscription ══════════════════════════════
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InscriptionResult {
     Filled,
     /// 公差内允许的少填（flawed）。
@@ -176,11 +185,14 @@ pub fn resolve_inscription(
     profile: &InscriptionProfile,
     state: &InscriptionState,
     roll_fail: f32,
+    failure_rate_reduction: f32,
 ) -> InscriptionResult {
     if state.filled_slots < profile.required_scroll_count {
         return InscriptionResult::Partial;
     }
-    if roll_fail < profile.tolerance.fail_chance {
+    let adjusted_fail_chance = profile.tolerance.fail_chance
+        * (1.0 - failure_rate_reduction.clamp(0.0, 1.0));
+    if roll_fail < adjusted_fail_chance {
         InscriptionResult::Failed
     } else {
         InscriptionResult::Filled
@@ -189,7 +201,7 @@ pub fn resolve_inscription(
 
 // ══════════════════════════════ Consecration ══════════════════════════════
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsecrationResult {
     Succeeded { color: ColorKind },
     Insufficient,
@@ -422,10 +434,10 @@ mod tests {
             tolerance: TemperingTolerance { miss_allowed: 0 },
         };
         let mut s = TemperingState::default();
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 5);
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5);
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Fold, 5);
-        assert_eq!(resolve_tempering(&profile, &s), TemperingResult::Perfect);
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 5, 0);
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5, 0);
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Fold, 5, 0);
+        assert_eq!(resolve_tempering(&profile, &s, 0), TemperingResult::Perfect);
         assert!((s.qi_spent - 1.5).abs() < 1e-9);
     }
 
@@ -438,10 +450,10 @@ mod tests {
             tolerance: TemperingTolerance { miss_allowed: 1 },
         };
         let mut s = TemperingState::default();
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5); // wrong
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5); // right
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5, 0); // wrong
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5, 0); // right
         assert_eq!(s.misses, 1);
-        assert_eq!(resolve_tempering(&profile, &s), TemperingResult::Good);
+        assert_eq!(resolve_tempering(&profile, &s, 0), TemperingResult::Good);
     }
 
     #[test]
@@ -453,8 +465,37 @@ mod tests {
             tolerance: TemperingTolerance { miss_allowed: 0 },
         };
         let mut s = TemperingState::default();
-        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 0); // 过窗
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 0, 0); // 过窗
         assert_eq!(s.misses, 1);
+    }
+
+    #[test]
+    fn tempering_window_bonus_allows_late_hit_inside_extended_window() {
+        let profile = TemperingProfile {
+            pattern: vec![TemperBeat::Light],
+            window_ticks: 5,
+            qi_per_hit: 0.5,
+            tolerance: TemperingTolerance { miss_allowed: 0 },
+        };
+        let mut s = TemperingState::default();
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 7, 3);
+        assert_eq!(s.hits, 1);
+        assert_eq!(s.misses, 0);
+    }
+
+    #[test]
+    fn tempering_allowed_miss_bonus_upgrades_result() {
+        let profile = TemperingProfile {
+            pattern: vec![TemperBeat::Light, TemperBeat::Heavy],
+            window_ticks: 10,
+            qi_per_hit: 0.5,
+            tolerance: TemperingTolerance { miss_allowed: 1 },
+        };
+        let mut s = TemperingState::default();
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Heavy, 5, 0);
+        apply_tempering_hit(&profile, &mut s, TemperBeat::Light, 5, 0);
+        assert_eq!(resolve_tempering(&profile, &s, 0), TemperingResult::Flawed);
+        assert_eq!(resolve_tempering(&profile, &s, 1), TemperingResult::Good);
     }
 
     #[test]
@@ -466,9 +507,9 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "insc_a".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5), InscriptionResult::Partial);
+        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Partial);
         apply_scroll(&mut s, "insc_b".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5), InscriptionResult::Filled);
+        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Filled);
     }
 
     #[test]
@@ -480,8 +521,21 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "x".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.1), InscriptionResult::Failed);
-        assert_eq!(resolve_inscription(&p, &s, 0.9), InscriptionResult::Filled);
+        assert_eq!(resolve_inscription(&p, &s, 0.1, 0.0), InscriptionResult::Failed);
+        assert_eq!(resolve_inscription(&p, &s, 0.9, 0.0), InscriptionResult::Filled);
+    }
+
+    #[test]
+    fn inscription_failure_reduction_lowers_effective_fail_chance() {
+        let p = InscriptionProfile {
+            slots: 1,
+            required_scroll_count: 1,
+            tolerance: InscriptionTolerance { fail_chance: 0.5 },
+        };
+        let mut s = InscriptionState::default();
+        apply_scroll(&mut s, "x".into());
+        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.0), InscriptionResult::Failed);
+        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.3), InscriptionResult::Filled);
     }
 
     #[test]
