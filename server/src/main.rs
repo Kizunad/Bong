@@ -9,6 +9,10 @@ mod forge;
 mod inventory;
 #[allow(dead_code)]
 mod lingtian;
+// mineral：M3 注册 MineralRegistry + MineralOreIndex + DiggingEvent listener；
+// M2 worldgen 接入前 OreIndex 始终空，listener 对所有 block 静默 no-op。
+#[allow(dead_code)]
+mod mineral;
 mod network;
 mod npc;
 mod persistence;
@@ -77,6 +81,7 @@ fn run_server() {
     combat::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);
+    mineral::register(&mut app);
     shelflife::register(&mut app);
     npc::register(&mut app);
     network::register(&mut app);

@@ -393,6 +393,7 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         };
         PlayerInventory {
             revision: InventoryRevision(5),
@@ -497,6 +498,7 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);

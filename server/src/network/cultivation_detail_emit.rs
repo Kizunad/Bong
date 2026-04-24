@@ -14,8 +14,8 @@ use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::cultivation::SkillMilestoneSnapshotV1;
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 const EMIT_INTERVAL_TICKS: u64 = 20;
 

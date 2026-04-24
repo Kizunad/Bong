@@ -93,6 +93,17 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   tuple (or into a merged palette — manifest declares both). 0 = none.
     "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- mineral layers (plan-mineral-v1 §2.1) ---
+    # mineral_density: [0,1] likelihood a mineral ore-block occupies this column.
+    #   Rust consumer samples per-chunk and rolls against per-tier rarity (品阶反比 —
+    #   sui_tie / can_tie / ku_jin 极稀). `maximum` blend so zone overlays can ADD
+    #   mineral pockets but never erase neighbour zone's veins.
+    # mineral_kind: uint8 index into the zone profile's MineralPalette tuple
+    #   (0 = none, 1..N = mineral_id from MineralRegistry order). `swap` so per-cell
+    #   the dominant zone wins; 同 vanilla block 多矿 (e.g. ling_tie / dan_sha 共
+    #   redstone_ore) 由此 kind 在 server 区分。
+    "mineral_density":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "mineral_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
     # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
     # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
     #   system spawns themed mobs / visual FX when intensity > threshold.

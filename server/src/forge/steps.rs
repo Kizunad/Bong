@@ -190,8 +190,8 @@ pub fn resolve_inscription(
     if state.filled_slots < profile.required_scroll_count {
         return InscriptionResult::Partial;
     }
-    let adjusted_fail_chance = profile.tolerance.fail_chance
-        * (1.0 - failure_rate_reduction.clamp(0.0, 1.0));
+    let adjusted_fail_chance =
+        profile.tolerance.fail_chance * (1.0 - failure_rate_reduction.clamp(0.0, 1.0));
     if roll_fail < adjusted_fail_chance {
         InscriptionResult::Failed
     } else {
@@ -400,9 +400,11 @@ mod tests {
 
     #[test]
     fn carrier_unlocks_higher_tier_cap() {
+        // plan-mineral-v1 §5 — placeholder 替换：xuan_iron → sui_tie。
+        // yi_beast_bone 属 fauna 范围（plan §5 依赖切分），保留 TODO 等 plan-fauna-v1 立项替换。
         let p = BilletProfile {
             required: vec![MaterialStack {
-                material: "xuan_iron".into(),
+                material: "sui_tie".into(),
                 count: 3,
             }],
             optional_carriers: vec![
@@ -411,6 +413,7 @@ mod tests {
                     unlocks_tier: 3,
                 },
                 CarrierSpec {
+                    // TODO[fauna]: yi_beast_bone → 妖兽材料正典（plan-fauna-v1 立项后替换）
                     material: "yi_beast_bone".into(),
                     unlocks_tier: 4,
                 },
@@ -418,7 +421,7 @@ mod tests {
             tolerance: BilletTolerance::default(),
         };
         let mut inputs = HashMap::new();
-        inputs.insert("xuan_iron".into(), 3);
+        inputs.insert("sui_tie".into(), 3);
         inputs.insert("yi_beast_bone".into(), 1);
         let r = resolve_billet(&p, &inputs, 4).unwrap();
         assert_eq!(r.state.resolved_tier_cap, 4);
@@ -507,9 +510,15 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "insc_a".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Partial);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.5, 0.0),
+            InscriptionResult::Partial
+        );
         apply_scroll(&mut s, "insc_b".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.5, 0.0), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.5, 0.0),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]
@@ -521,8 +530,14 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "x".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.1, 0.0), InscriptionResult::Failed);
-        assert_eq!(resolve_inscription(&p, &s, 0.9, 0.0), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.1, 0.0),
+            InscriptionResult::Failed
+        );
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.9, 0.0),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]
@@ -534,8 +549,14 @@ mod tests {
         };
         let mut s = InscriptionState::default();
         apply_scroll(&mut s, "x".into());
-        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.0), InscriptionResult::Failed);
-        assert_eq!(resolve_inscription(&p, &s, 0.4, 0.3), InscriptionResult::Filled);
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.4, 0.0),
+            InscriptionResult::Failed
+        );
+        assert_eq!(
+            resolve_inscription(&p, &s, 0.4, 0.3),
+            InscriptionResult::Filled
+        );
     }
 
     #[test]

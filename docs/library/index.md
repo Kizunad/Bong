@@ -22,5 +22,5 @@
 | 世界总志 | 4 | 0/4 | [进入](./world/index.md) |
 | 地理志 | 4 | 0/4 | [进入](./geography/index.md) |
 | 众生谱 | 8 | 2/23 | [进入](./peoples/index.md) |
-| 生态录 | 5 | 0/20 | [进入](./ecology/index.md) |
+| 生态录 | 6 | 0/29 | [进入](./ecology/index.md) |
 | 修行藏 | 6 | 0/8 | [进入](./cultivation/index.md) |

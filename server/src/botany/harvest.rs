@@ -72,10 +72,7 @@ pub fn complete_harvest_for_player(
     player_id: &str,
     plant_query: &mut Query<&mut Plant, With<Plant>>,
     inventory_query: &mut Query<&mut PlayerInventory, With<valence::prelude::Client>>,
-    harvesters: &Query<
-        (Option<&Cultivation>, Option<&SkillSet>),
-        With<valence::prelude::Client>,
-    >,
+    harvesters: &Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
     kind_registry: &BotanyKindRegistry,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
@@ -200,8 +197,9 @@ fn apply_harvest_modifiers_to_instance(
             if placed.instance.instance_id != instance_id {
                 continue;
             }
-            let q =
-                placed.instance.spirit_quality + herbalism_quality_bonus + variant.quality_modifier();
+            let q = placed.instance.spirit_quality
+                + herbalism_quality_bonus
+                + variant.quality_modifier();
             placed.instance.spirit_quality = q.clamp(0.0, 1.0);
             if let Some(prefix) = variant.display_prefix() {
                 placed.instance.display_name =
@@ -214,7 +212,12 @@ fn apply_harvest_modifiers_to_instance(
 
 fn herbalism_effective_lv(cultivation: Option<&Cultivation>, skill_set: Option<&SkillSet>) -> u8 {
     let real_lv = skill_set
-        .and_then(|skill_set| skill_set.skills.get(&SkillId::Herbalism).map(|entry| entry.lv))
+        .and_then(|skill_set| {
+            skill_set
+                .skills
+                .get(&SkillId::Herbalism)
+                .map(|entry| entry.lv)
+        })
         .unwrap_or(0);
     let cap = cultivation
         .map(|cultivation| skill_cap_for_realm(cultivation.realm))
@@ -378,10 +381,7 @@ pub fn tick_harvest_sessions(
     mut store: ResMut<HarvestSessionStore>,
     mut plants: Query<&mut Plant, With<Plant>>,
     mut inventories: Query<&mut PlayerInventory, With<valence::prelude::Client>>,
-    harvesters: Query<
-        (Option<&Cultivation>, Option<&SkillSet>),
-        With<valence::prelude::Client>,
-    >,
+    harvesters: Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
     kind_registry: Res<BotanyKindRegistry>,
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
@@ -652,8 +652,7 @@ mod tests {
             })
             .expect("harvested herb should be inserted into main pack");
 
-        let expected =
-            base_quality + crate::botany::skill_hook::spirit_quality_bonus(3);
+        let expected = base_quality + crate::botany::skill_hook::spirit_quality_bonus(3);
         assert!(
             (harvested.instance.spirit_quality - expected).abs() < 1e-6,
             "harvested spirit_quality should use effective herbalism Lv.3, got {} expected {}",

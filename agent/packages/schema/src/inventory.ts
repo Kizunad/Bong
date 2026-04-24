@@ -105,6 +105,10 @@ export const InventoryItemViewV1 = Type.Object(
     freshness: Type.Optional(FreshnessV1),
     // M3a 衍生数据；None = freshness 缺失 / profile 未在 registry / 无法衍生。
     freshness_current: Type.Optional(FreshnessDerivedV1),
+    // plan-mineral-v1 §2.2 — mineral_id NBT；从矿脉挖出的物品挂正典 mineral_id
+    // 字符串（如 "fan_tie" / "ling_shi_zhong"），非矿物来源 item 留 undefined。
+    // alchemy / forge 配方校验 inventory.material 时即按此字段比对。
+    mineral_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   },
   { additionalProperties: false },
 );

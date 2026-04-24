@@ -238,7 +238,8 @@ fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
 }
 
 pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
-    let (scroll_kind, scroll_skill_id, scroll_xp_grant) = skill_scroll_metadata(item.template_id.as_str());
+    let (scroll_kind, scroll_skill_id, scroll_xp_grant) =
+        skill_scroll_metadata(item.template_id.as_str());
     InventoryItemViewV1 {
         instance_id: item.instance_id,
         item_id: item.template_id.clone(),
@@ -255,6 +256,9 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         // M3a — 衍生数据由 caller 调 `enrich_with_derived_freshness` 后填；
         // 默认 None 防止未注入 registry 的 caller 漏算。
         freshness_current: None,
+        // plan-mineral-v1 §2.2 — mineral_id 由 mineral::inventory_grant 系统
+        // 在 MineralDropEvent 落地时写入 ItemInstance.mineral_id；此处透传到 snapshot view。
+        mineral_id: item.mineral_id.clone(),
         scroll_kind,
         scroll_skill_id,
         scroll_xp_grant,
@@ -278,16 +282,10 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
             Some("forging".to_string()),
             Some(500),
         ),
-        id if id.starts_with("recipe_scroll_") => (
-            Some("recipe_scroll".to_string()),
-            None,
-            None,
-        ),
-        id if id.starts_with("blueprint_scroll_") => (
-            Some("blueprint_scroll".to_string()),
-            None,
-            None,
-        ),
+        id if id.starts_with("recipe_scroll_") => (Some("recipe_scroll".to_string()), None, None),
+        id if id.starts_with("blueprint_scroll_") => {
+            (Some("blueprint_scroll".to_string()), None, None)
+        }
         _ => (None, None, None),
     }
 }
@@ -446,6 +444,7 @@ mod tests {
             spirit_quality: 0.5,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -748,13 +747,7 @@ mod tests {
 
     #[test]
     fn item_view_marks_recipe_and_blueprint_scroll_metadata() {
-        let recipe = make_item(
-            3002,
-            "recipe_scroll_qixue_pill",
-            "丹方残卷·气血丹",
-            0.05,
-            1,
-        );
+        let recipe = make_item(3002, "recipe_scroll_qixue_pill", "丹方残卷·气血丹", 0.05, 1);
         let blueprint = make_item(
             3003,
             "blueprint_scroll_bronze_tripod",
@@ -769,7 +762,10 @@ mod tests {
         assert!(recipe_view.scroll_xp_grant.is_none());
 
         let blueprint_view = item_view_from_instance(&blueprint);
-        assert_eq!(blueprint_view.scroll_kind.as_deref(), Some("blueprint_scroll"));
+        assert_eq!(
+            blueprint_view.scroll_kind.as_deref(),
+            Some("blueprint_scroll")
+        );
         assert!(blueprint_view.scroll_skill_id.is_none());
         assert!(blueprint_view.scroll_xp_grant.is_none());
     }
@@ -855,6 +851,7 @@ mod tests {
                 initial_qi,
                 profile,
             )),
+            mineral_id: None,
         }
     }
 
@@ -874,6 +871,7 @@ mod tests {
             spirit_quality: 0.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

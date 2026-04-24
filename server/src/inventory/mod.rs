@@ -147,6 +147,12 @@ pub struct ItemInstance {
     /// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT。
     /// `None` = 无时间敏感（凡俗工具 / 瑶器 等），`Some` = 接 shelflife 路径计算。
     pub freshness: Option<crate::shelflife::Freshness>,
+    /// plan-mineral-v1 §2.2 — 矿物来源 item 的正典 mineral_id（如 `"fan_tie"`）。
+    /// `None` = 非矿物物品 / 凡俗 item（打怪掉落 / creative 给的 vanilla 方块）；
+    /// `Some` = `MineralDropEvent` 产出，`MineralRegistry::is_valid_mineral_id(..)` 保证正典性。
+    /// 序列化省略 None 以兼容旧 snapshot（见 freshness）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -329,6 +335,7 @@ fn instantiate_item_instance(
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
         freshness: None,
+        mineral_id: None,
     })
 }
 
@@ -466,6 +473,7 @@ pub fn add_item_to_player_inventory(
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
         freshness: None,
+        mineral_id: None,
     };
 
     let Some(main_pack) = inventory
@@ -2297,6 +2305,7 @@ fn build_item_instance_from_template(
         spirit_quality,
         durability,
         freshness: None,
+        mineral_id: None,
     })
 }
 
@@ -2837,6 +2846,7 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -2946,6 +2956,7 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         });
 
         let outcome = apply_inventory_move(
@@ -2998,6 +3009,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         });
 
@@ -3170,6 +3182,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3209,6 +3222,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3238,6 +3252,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.0,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3306,6 +3321,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3321,6 +3337,7 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3337,6 +3354,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.5,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3396,6 +3414,7 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
                 },
             });
         }
@@ -3438,6 +3457,7 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
                 },
             }],
         );
@@ -3530,6 +3550,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.75,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3587,6 +3608,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.25,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3614,6 +3636,7 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3630,6 +3653,7 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         );
 
@@ -3684,6 +3708,7 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 

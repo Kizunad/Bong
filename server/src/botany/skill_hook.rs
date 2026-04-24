@@ -14,7 +14,14 @@ const EXTRA_EXTREME_BONUS_POINTS_AT_LV10: f32 = 5.0;
 pub fn quality_bias_points(effective_lv: u8) -> f32 {
     interp(
         effective_lv,
-        &[(0, 0.0), (1, 5.0), (3, 10.0), (5, 15.0), (7, 20.0), (10, 30.0)],
+        &[
+            (0, 0.0),
+            (1, 5.0),
+            (3, 10.0),
+            (5, 15.0),
+            (7, 20.0),
+            (10, 30.0),
+        ],
     )
     .floor()
 }

@@ -29,8 +29,8 @@ use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::inventory::{
-    apply_inventory_move, consume_item_instance_once, inventory_item_by_instance_borrow,
-    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance, pickup_dropped_loot_instance,
+    apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
 };
 use crate::inventory::{
@@ -54,8 +54,8 @@ use crate::network::cast_emit::{
 };
 use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
-use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::send_server_data_payload;
+use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::client_request::ClientRequestV1;
@@ -658,13 +658,15 @@ fn handle_learn_skill_scroll(
     };
 
     if is_duplicate {
-        skill_scroll_params.skill_scroll_used_tx.send(SkillScrollUsed {
-            char_entity: entity,
-            scroll_id,
-            skill,
-            xp_granted: 0,
-            was_duplicate: true,
-        });
+        skill_scroll_params
+            .skill_scroll_used_tx
+            .send(SkillScrollUsed {
+                char_entity: entity,
+                scroll_id,
+                skill,
+                xp_granted: 0,
+                was_duplicate: true,
+            });
         if let Ok(inventory) = inventories.get(entity) {
             resync_snapshot(
                 entity,
@@ -716,13 +718,15 @@ fn handle_learn_skill_scroll(
             xp_grant,
         },
     });
-    skill_scroll_params.skill_scroll_used_tx.send(SkillScrollUsed {
-        char_entity: entity,
-        scroll_id,
-        skill,
-        xp_granted: xp_grant,
-        was_duplicate: false,
-    });
+    skill_scroll_params
+        .skill_scroll_used_tx
+        .send(SkillScrollUsed {
+            char_entity: entity,
+            scroll_id,
+            skill,
+            xp_granted: xp_grant,
+            was_duplicate: false,
+        });
 
     let Ok(player_state) = player_states.get(entity) else {
         return;
@@ -767,10 +771,12 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 mod tests {
     use super::*;
 
-    use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+    };
     use crate::skill::components::SkillSet;
-    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
     #[derive(Default)]
@@ -823,6 +829,7 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -978,16 +985,20 @@ mod tests {
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn((
-            client_bundle,
-            inventory_with_skill_scroll(skill_scroll_item(42, "skill_scroll_herbalism_baicao_can")),
-            SkillSet::default(),
-            Cultivation::default(),
-            PlayerState::default(),
-            QuickSlotBindings::default(),
-            DefenseStance::default(),
-            UnlockedStyles::default(),
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "skill_scroll_herbalism_baicao_can",
+                )),
+                SkillSet::default(),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+            ))
+            .id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -1003,13 +1014,23 @@ mod tests {
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
         assert!(inventory.containers[0].items.is_empty());
         let skill_set = app.world().get::<SkillSet>(entity).unwrap();
-        assert!(skill_set.consumed_scrolls.contains(&ScrollId::new("skill_scroll_herbalism_baicao_can")));
+        assert!(skill_set
+            .consumed_scrolls
+            .contains(&ScrollId::new("skill_scroll_herbalism_baicao_can")));
 
-        let xp_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillXpGain>>().drain().collect();
+        let xp_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillXpGain>>()
+            .drain()
+            .collect();
         assert_eq!(xp_events.len(), 1);
         assert_eq!(xp_events[0].skill, SkillId::Herbalism);
         assert_eq!(xp_events[0].amount, 500);
-        let used_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillScrollUsed>>().drain().collect();
+        let used_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillScrollUsed>>()
+            .drain()
+            .collect();
         assert_eq!(used_events.len(), 1);
         assert!(!used_events[0].was_duplicate);
         assert_eq!(used_events[0].xp_granted, 500);
@@ -1043,17 +1064,23 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut skill_set = SkillSet::default();
-        skill_set.consumed_scrolls.insert(ScrollId::new("skill_scroll_herbalism_baicao_can"));
-        let entity = app.world_mut().spawn((
-            client_bundle,
-            inventory_with_skill_scroll(skill_scroll_item(42, "skill_scroll_herbalism_baicao_can")),
-            skill_set,
-            Cultivation::default(),
-            PlayerState::default(),
-            QuickSlotBindings::default(),
-            DefenseStance::default(),
-            UnlockedStyles::default(),
-        )).id();
+        skill_set
+            .consumed_scrolls
+            .insert(ScrollId::new("skill_scroll_herbalism_baicao_can"));
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "skill_scroll_herbalism_baicao_can",
+                )),
+                skill_set,
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+            ))
+            .id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -1073,9 +1100,17 @@ mod tests {
             has_inventory_snapshot_payload(&mut helper),
             "duplicate rejection must resync inventory after optimistic client drop"
         );
-        let xp_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillXpGain>>().drain().collect();
+        let xp_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillXpGain>>()
+            .drain()
+            .collect();
         assert!(xp_events.is_empty());
-        let used_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillScrollUsed>>().drain().collect();
+        let used_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillScrollUsed>>()
+            .drain()
+            .collect();
         assert_eq!(used_events.len(), 1);
         assert!(used_events[0].was_duplicate);
         assert_eq!(used_events[0].xp_granted, 0);
@@ -1867,6 +1902,7 @@ mod take_pill_tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 

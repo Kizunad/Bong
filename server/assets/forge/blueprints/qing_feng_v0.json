@@ -9,7 +9,7 @@
       "profile": {
         "required": [
           { "material": "iron_ingot", "count": 4 },
-          { "material": "qing_steel", "count": 1 }
+          { "material": "za_gang", "count": 1 }
         ],
         "optional_carriers": [],
         "tolerance": { "count_miss": 0 }
