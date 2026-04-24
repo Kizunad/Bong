@@ -13,11 +13,10 @@ use std::collections::HashMap;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Component, DVec3, Despawned, Entity, IntoSystemConfigs, Position, PreUpdate,
-    Query, Res, ResMut, Resource, With, Without,
+    bevy_ecs, App, Component, DVec3, Despawned, Entity, Position, Query, Res, ResMut, Resource,
+    With, Without,
 };
 
-use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 
 /// 三档 LOD。GuardianRelic 强制 Near（考验需要实时响应）。
@@ -56,14 +55,17 @@ impl Default for NpcLodConfig {
 pub struct NpcLodTick(pub u32);
 
 pub fn register(app: &mut App) {
+    // LOD ECS 系统 `tick_lod_counter` + `update_npc_lod_tier_system` 暂不挂 add_systems。
+    //
+    // 背景：brain.rs 的 LOD gate（consumer 侧）在 `ccfbb458` 为解 e2e CI TPS 回归
+    // 已撤回；此时保留 tier 写入系统是"纯开销无消费者" —— 每 `reassess_interval`
+    // tick 全表扫 NPC × Player 写 `NpcLodTier`，却没有 scorer 读它。
+    //
+    // 恢复路径（follow-up PR）：接入 brain.rs 3 个核心 scorer 的 skip gate 后，
+    // 把下面的 `add_systems` 同步接回。数据结构 / 纯函数 / classify_tier 单测全部
+    // 保留，方便下一 PR 直接 wire-up。
     app.insert_resource(NpcLodConfig::default())
-        .insert_resource(NpcLodTick::default())
-        .add_systems(
-            PreUpdate,
-            (tick_lod_counter, update_npc_lod_tier_system)
-                .chain()
-                .before(big_brain::prelude::BigBrainSet::Scorers),
-        );
+        .insert_resource(NpcLodTick::default());
 }
 
 fn tick_lod_counter(mut counter: ResMut<NpcLodTick>) {
@@ -167,7 +169,7 @@ pub fn count_by_tier(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::App;
+    use valence::prelude::{App, IntoSystemConfigs, PreUpdate};
 
     #[test]
     fn classify_tier_no_players_is_dormant() {
@@ -372,8 +374,3 @@ mod tests {
         assert!(!is_dormant(None));
     }
 }
-
-// GameTick is imported for future scorer-side integration; keep here to avoid
-// dead import warnings once gate logic lands in brain.rs.
-#[allow(dead_code)]
-fn _keep_gametick_import(_: &GameTick) {}

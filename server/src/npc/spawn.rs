@@ -19,8 +19,8 @@ use crate::npc::brain::{
     WanderState,
 };
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, Lineage, LoyaltyScorer, MissionExecuteAction,
-    MissionExecuteState, MissionQueue, MissionQueueScorer, Reputation,
+    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteState, MissionQueue,
+    Reputation,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
@@ -29,14 +29,12 @@ use crate::npc::lifecycle::{
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-use crate::npc::relic::{
-    GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
-    TrialEval, TrialEvalScorer, TrialState,
-};
-use crate::npc::territory::{
-    HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
-    TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
-};
+// Scorer/Action symbols (TerritoryIntruderScorer / LoyaltyScorer / GuardianDutyScorer / ...)
+// 暂不 import —— thinker 已降级到 core scorers，直到 ccfbb458 撤回的 ECS
+// 注册恢复后再接回。状态组件 (HuntState / GuardState / TrialState / MissionExecuteState)
+// 仍保留，等后续 PR 挂新 Scorer/Action 时不用重写 spawn 流程。
+use crate::npc::relic::{GuardState, GuardianDuty, GuardianRelicTag, TrialEval, TrialState};
+use crate::npc::territory::{HuntState, ProtectYoungState, Territory, TerritoryPatrolState};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
@@ -287,6 +285,16 @@ fn seed_initial_rogue_population_on_startup(
         return;
     };
 
+    // P2-5: 先 classify，确认 at least one zone 可 spawn 再 reserve —— 否则
+    // 空 ZoneRegistry 会让 reserve 留下 1-tick 暂态泄漏，误触发 spawn_paused。
+    let (resource_zones, other_zones) =
+        classify_zones_by_qi(&zones.zones, cfg.resource_spirit_qi_threshold);
+    if resource_zones.is_empty() && other_zones.is_empty() {
+        tracing::warn!("[bong][npc] rogue seed skipped — no spawnable zones");
+        *already_seeded = true;
+        return;
+    }
+
     let reserved = match registry.as_deref_mut() {
         Some(r) => r.reserve_spawn_batch(cfg.target_count as usize) as u32,
         None => cfg.target_count,
@@ -299,11 +307,14 @@ fn seed_initial_rogue_population_on_startup(
         return;
     }
 
-    let (resource_zones, other_zones) =
-        classify_zones_by_qi(&zones.zones, cfg.resource_spirit_qi_threshold);
-
     let (resource_count, other_count) = match (resource_zones.is_empty(), other_zones.is_empty()) {
-        (true, true) => return,
+        (true, true) => {
+            // classify 已兜底，这里不可达；保守回滚再退出。
+            if let Some(r) = registry.as_deref_mut() {
+                r.release_spawn_batch(reserved as usize);
+            }
+            return;
+        }
         (true, false) => (0u32, reserved),
         (false, true) => (reserved, 0u32),
         (false, false) => {
@@ -362,8 +373,26 @@ fn process_npc_reproduction_requests(
     };
 
     for request in requests.read() {
-        if !matches!(request.archetype, NpcArchetype::Commoner) {
-            continue; // plan §3.3: 只有凡人走邻居生子；其它 archetype 另行处理
+        // plan §3.3 Commoner 邻居生子 + §8 Beast 领地繁衍共享同一事件通道。
+        match request.archetype {
+            NpcArchetype::Commoner => {}
+            NpcArchetype::Beast => {
+                if request.territory_center.is_none() || request.territory_radius.is_none() {
+                    tracing::warn!(
+                        "[bong][npc] beast reproduction rejected — missing territory hint (zone=`{}`)",
+                        request.home_zone
+                    );
+                    continue;
+                }
+            }
+            other => {
+                tracing::warn!(
+                    "[bong][npc] reproduction archetype `{:?}` not supported yet (zone=`{}`)",
+                    other,
+                    request.home_zone
+                );
+                continue;
+            }
         }
 
         if let Some(registry) = registry.as_deref_mut() {
@@ -376,17 +405,34 @@ fn process_npc_reproduction_requests(
             }
         }
 
-        let patrol_target = request.position;
-        let entity = spawn_commoner_npc_at(
-            &mut commands,
-            layer,
-            request.home_zone.as_str(),
-            request.position,
-            patrol_target,
-            request.initial_age_ticks.max(0.0),
-        );
+        let entity = match request.archetype {
+            NpcArchetype::Commoner => spawn_commoner_npc_at(
+                &mut commands,
+                layer,
+                request.home_zone.as_str(),
+                request.position,
+                request.position,
+                request.initial_age_ticks.max(0.0),
+            ),
+            NpcArchetype::Beast => {
+                let territory = Territory::new(
+                    request.territory_center.expect("checked above"),
+                    request.territory_radius.expect("checked above"),
+                );
+                spawn_beast_npc_at(
+                    &mut commands,
+                    layer,
+                    request.home_zone.as_str(),
+                    request.position,
+                    territory,
+                    request.initial_age_ticks.max(0.0),
+                )
+            }
+            _ => unreachable!("archetype filter above rejects unsupported variants"),
+        };
         tracing::info!(
-            "[bong][npc] reproduction spawn commoner entity={:?} zone=`{}` pos={:?}",
+            "[bong][npc] reproduction spawn {:?} entity={:?} zone=`{}` pos={:?}",
+            request.archetype,
             entity,
             request.home_zone,
             request.position
@@ -440,20 +486,30 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
 }
 
 /// Beast thinker（plan §2）：
-/// ProtectYoung → Hunt（入侵者）→ 已有近战链 → 领地巡逻 → 兜底 Wander。
+/// 完整行为链是 ProtectYoung → Hunt（入侵者）→ 近战 → Chase → 领地巡逻
+/// → Wander。但 Phase 4 的 `TerritoryIntruder` / `ProtectYoung` Scorer
+/// 与 `Hunt` / `TerritoryPatrol` / `ProtectYoung` Action 的 ECS 注册在
+/// `ccfbb458` 因 e2e TPS 回归被撤回，尚未接入。
+///
+/// 当前降级到已注册的 core scorers / actions —— 幼崽繁衍真的 spawn
+/// 后仍能走"老化退休 / 近战 / 追击 / 游荡"的基础链，不会卡在
+/// `TerritoryPatrolAction::Requested`。下一 PR 恢复 Scorer/Action
+/// 注册时把 territory 行为接回来。
 fn beast_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
-        .when(ProtectYoungScorer, ProtectYoungAction)
-        .when(TerritoryIntruderScorer, HuntAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
-        .when(WanderScorer, TerritoryPatrolAction)
+        .when(WanderScorer, WanderAction)
 }
 
-/// Disciple thinker（plan §2）：Rogue 基线（修炼 / 避战 / 流浪）+ 派系任务。
-/// MissionQueue 有待办 + 忠诚足够 → 执行任务；否则沿 Rogue 行为链。
+/// Disciple thinker（plan §2）：完整设计是 Rogue 基线 + `MissionQueue` /
+/// `Loyalty` 的派系任务链；`MissionExecuteAction` / `LoyaltyScorer` /
+/// `MissionQueueScorer` 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到
+/// Rogue 行为链，行为和 `rogue_npc_thinker` 等价（保留独立 fn 是为了
+/// 让 spawn_disciple_npc_at 的 FactionMembership 组件仍有唯一入口，
+/// 等任务行为接入时从此处扩展）。
 fn disciple_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
@@ -461,21 +517,19 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
         .when(PlayerProximityScorer, FleeAction)
-        .when(MissionQueueScorer, MissionExecuteAction)
-        .when(LoyaltyScorer, WanderAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(CuriosityScorer, WanderAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// GuardianRelic thinker（plan §2）：GuardianDuty 入侵 → GuardAction；
-/// 附近有玩家 + 考验可开 → TrialAction；兜底 Wander（停在遗迹中心附近）。
+/// GuardianRelic thinker（plan §2）：完整行为是 `GuardianDuty` 追入侵者
+/// + `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
+/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander
+/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
 /// 不走 AgeingScorer —— GuardianRelic 不老。
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
-        .when(GuardianDutyScorer, GuardAction)
-        .when(TrialEvalScorer, TrialAction)
         .when(WanderScorer, WanderAction)
 }
 
@@ -1386,6 +1440,8 @@ mod tests {
             position: DVec3::new(30.0, 66.0, 30.0),
             home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             initial_age_ticks: 0.0,
+            territory_center: None,
+            territory_radius: None,
         });
 
         app.update();
@@ -1405,7 +1461,78 @@ mod tests {
     }
 
     #[test]
-    fn reproduction_processor_skips_non_commoner_archetype() {
+    fn reproduction_processor_dispatches_beast_request_with_territory_hint() {
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        app.add_event::<NpcReproductionRequest>();
+        app.insert_resource(NpcRegistry::default());
+        app.add_systems(Update, process_npc_reproduction_requests);
+
+        app.update();
+
+        let center = DVec3::new(50.0, 66.0, 50.0);
+        app.world_mut().send_event(NpcReproductionRequest {
+            archetype: NpcArchetype::Beast,
+            position: center,
+            home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            initial_age_ticks: 0.0,
+            territory_center: Some(center),
+            territory_radius: Some(30.0),
+        });
+
+        app.update();
+
+        let (arch, has_territory) = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<(&NpcArchetype, Option<&Territory>), With<NpcMarker>>();
+            let (arch, territory) = query.iter(world).next().expect("spawned beast");
+            (*arch, territory.is_some())
+        };
+        assert_eq!(arch, NpcArchetype::Beast);
+        assert!(has_territory, "beast reproduction must attach Territory");
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(registry.live_npc_count, 1);
+    }
+
+    #[test]
+    fn reproduction_processor_skips_beast_request_without_territory_hint() {
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        app.add_event::<NpcReproductionRequest>();
+        app.insert_resource(NpcRegistry::default());
+        app.add_systems(Update, process_npc_reproduction_requests);
+
+        app.update();
+
+        app.world_mut().send_event(NpcReproductionRequest {
+            archetype: NpcArchetype::Beast,
+            position: DVec3::new(30.0, 66.0, 30.0),
+            home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            initial_age_ticks: 0.0,
+            territory_center: None,
+            territory_radius: None,
+        });
+
+        app.update();
+
+        let npc_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(npc_count, 0, "beast without territory hint must not spawn");
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(
+            registry.live_npc_count, 0,
+            "budget must not be reserved on rejected beast request"
+        );
+    }
+
+    #[test]
+    fn reproduction_processor_skips_unsupported_archetype() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
@@ -1419,6 +1546,8 @@ mod tests {
             position: DVec3::new(30.0, 66.0, 30.0),
             home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             initial_age_ticks: 0.0,
+            territory_center: None,
+            territory_radius: None,
         });
 
         app.update();
@@ -1452,6 +1581,8 @@ mod tests {
             position: DVec3::new(30.0, 66.0, 30.0),
             home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             initial_age_ticks: 0.0,
+            territory_center: None,
+            territory_radius: None,
         });
 
         app.update();

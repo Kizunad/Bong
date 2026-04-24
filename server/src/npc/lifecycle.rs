@@ -173,6 +173,20 @@ impl NpcRegistry {
         granted
     }
 
+    /// 回滚已 reserve 但未实际落盘的配额。用于"先 reserve 再决定能否 spawn"
+    /// 路径在早退分支未回退导致的 1-tick 暂态泄漏 —— 这一 tick 里
+    /// `live_npc_count >= resume_npc_count` 会误触发 `spawn_paused=true`，
+    /// 同 tick 后续 spawn 分支被误杀。
+    pub fn release_spawn_batch(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.live_npc_count = self.live_npc_count.saturating_sub(count);
+        if self.live_npc_count < self.resume_npc_count {
+            self.spawn_paused = false;
+        }
+    }
+
     pub fn should_reduce_population(&self) -> bool {
         self.live_npc_count >= self.max_npc_count
     }
@@ -188,12 +202,20 @@ pub struct NpcRetireRequest {
 
 /// 邻居生子（plan §3.3）：Commoner 老死后由 spawn 侧消费，在死者附近
 /// 生一个年龄 0–5% max_age 的新生儿。受 `NpcRegistry` 预留预算约束。
+///
+/// Beast 领地繁衍（§8）复用同一通道：`archetype = Beast` + 必填
+/// `territory_center` / `territory_radius`（新生幼崽要挂 Territory 组件，
+/// spawn 侧据此重建）。避免 lifecycle.rs 反向依赖 territory.rs。
 #[derive(Clone, Debug, Event)]
 pub struct NpcReproductionRequest {
     pub archetype: NpcArchetype,
     pub position: DVec3,
     pub home_zone: String,
     pub initial_age_ticks: f64,
+    /// Beast 必填；Commoner 忽略。
+    pub territory_center: Option<DVec3>,
+    /// Beast 必填；Commoner 忽略。
+    pub territory_radius: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,6 +352,8 @@ fn process_npc_retire_requests(
                     position: pos.get(),
                     home_zone: patrol.home_zone.clone(),
                     initial_age_ticks: 0.0,
+                    territory_center: None,
+                    territory_radius: None,
                 });
             }
         }

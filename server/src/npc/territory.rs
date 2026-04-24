@@ -317,16 +317,22 @@ fn beast_reproduction_tick_system(
         }
 
         let capacity = t.capacity();
-        let spawn_pos = if *young_count < capacity {
-            t.center
+        let (spawn_pos, new_territory_center) = if *young_count < capacity {
+            // 未满员：就地繁衍，沿用父领地。
+            (t.center, t.center)
         } else {
-            // 满员：迁出 200 格外，方向由第一个成体位置与中心形成的向量派生
-            let outward = DVec3::new(1.0, 0.0, 0.0);
-            DVec3::new(
+            // 满员：幼崽迁出 YOUNG_EMIGRATE_DISTANCE 外开新领地锚点。
+            // 迁出方向由第一个饱腹成体相对领地中心的方位派生，
+            // 若正好在中心则退化到 index 散列四向量，避免所有满员领
+            // 地都朝同一方向 overflow。
+            let first = *fed_adults.first().expect("fed_adults non-empty");
+            let outward = derive_emigrate_direction(first, t.center, &adults);
+            let pos = DVec3::new(
                 t.center.x + outward.x * YOUNG_EMIGRATE_DISTANCE,
                 t.center.y,
                 t.center.z + outward.z * YOUNG_EMIGRATE_DISTANCE,
-            )
+            );
+            (pos, pos)
         };
 
         reproduction_requests.send(NpcReproductionRequest {
@@ -334,10 +340,42 @@ fn beast_reproduction_tick_system(
             position: spawn_pos,
             home_zone: home.clone(),
             initial_age_ticks: 0.0,
+            territory_center: Some(new_territory_center),
+            territory_radius: Some(t.radius),
         });
 
         // 同一 tick 内登记一次，防止双成体一 tick 内连发同领地
         young_positions.push(spawn_pos);
+    }
+}
+
+/// 把"成体相对领地中心的方位"归一化为单位向量；距离过近则退化到
+/// 按 entity index 散列的四向量（+X / +Z / -X / -Z），避免 E-W 相邻
+/// 领地 overflow 全部撞到同一条线。
+fn derive_emigrate_direction(
+    adult: Entity,
+    center: DVec3,
+    adults: &AdultBeastQuery<'_, '_>,
+) -> DVec3 {
+    let Ok((_, pos, _, _, _, _)) = adults.get(adult) else {
+        return emigrate_fallback_direction(adult);
+    };
+    let offset = pos.get() - center;
+    let len2 = offset.x * offset.x + offset.z * offset.z;
+    if len2 < 1.0 {
+        emigrate_fallback_direction(adult)
+    } else {
+        let len = len2.sqrt();
+        DVec3::new(offset.x / len, 0.0, offset.z / len)
+    }
+}
+
+fn emigrate_fallback_direction(actor: Entity) -> DVec3 {
+    match actor.index() % 4 {
+        0 => DVec3::new(1.0, 0.0, 0.0),
+        1 => DVec3::new(0.0, 0.0, 1.0),
+        2 => DVec3::new(-1.0, 0.0, 0.0),
+        _ => DVec3::new(0.0, 0.0, -1.0),
     }
 }
 
@@ -910,6 +948,36 @@ mod tests {
             (d - YOUNG_EMIGRATE_DISTANCE).abs() < 1e-6,
             "满员时幼崽外迁应在 {YOUNG_EMIGRATE_DISTANCE:.0} 格处，实际 {d:.1}"
         );
+    }
+
+    #[test]
+    fn reproduction_emigrate_direction_follows_adult_offset_from_center() {
+        // P2-4（Claude review）: 满员迁出方向必须派生自"成体相对领地中心的偏移"，
+        // 而不是硬编码 +X —— 否则多个相邻领地的 overflow 会全部撞到同一条线。
+        let mut app = build_app();
+        let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0); // capacity=1
+        // 成体位于中心正 +Z 方向；领地满员（1 幼崽占位）。
+        let _adult = spawn_adult_beast(
+            &mut app,
+            DVec3::new(0.0, 64.0, 5.0),
+            0.5,
+            0.95,
+            territory,
+        );
+        let _existing_young =
+            spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
+
+        tick_to_interval(&mut app);
+
+        let events = app.world().resource::<Events<NpcReproductionRequest>>();
+        let mut reader = events.get_reader();
+        let batch: Vec<_> = reader.read(events).cloned().collect();
+        assert_eq!(batch.len(), 1);
+        let req = &batch[0];
+        let dx = req.position.x - territory.center.x;
+        let dz = req.position.z - territory.center.z;
+        assert!(dz > 0.0, "成体在 +Z，迁出方向也应偏 +Z（实际 dz={dz:.2}）");
+        assert!(dx.abs() < 1e-6, "成体只偏 Z 轴，dx 应 ≈ 0（实际 dx={dx:.2}）");
     }
 
     #[test]

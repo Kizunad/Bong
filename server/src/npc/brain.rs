@@ -1363,6 +1363,12 @@ pub(crate) fn cultivation_drive_score(
     meridians: &MeridianSystem,
     zone_qi: f64,
 ) -> f32 {
+    // 门槛与 `cultivate_action_system` 的硬失败条件（CULTIVATE_MIN_ZONE_QI）对齐。
+    // 低于门槛时 scorer 返回 0，避免散修在低灵气带反复选 CultivateAction 却每次
+    // 立即 Failure —— picker 陷在这一路径上，Curiosity / Wander 永远不接棒。
+    if zone_qi < CULTIVATE_MIN_ZONE_QI {
+        return 0.0;
+    }
     let qi = zone_qi_normalized(zone_qi);
     if qi <= 0.0 {
         return 0.0;
@@ -2615,6 +2621,23 @@ mod tests {
         let mut m = MeridianSystem::default();
         m.regular[0].opened = true;
         assert_eq!(cultivation_drive_score(&c, &m, -0.4), 0.0);
+    }
+
+    #[test]
+    fn cultivation_drive_score_zero_below_cultivate_min_zone_qi() {
+        // P1: Codex review — scorer 门槛必须和 cultivate_action_system 的
+        // CULTIVATE_MIN_ZONE_QI 硬失败条件对齐，否则散修在 0.1–0.29 区间
+        // 会反复选 CultivateAction 立刻失败，picker 卡死。
+        let c = Cultivation::default();
+        let mut m = MeridianSystem::default();
+        m.regular[0].opened = true;
+        assert_eq!(cultivation_drive_score(&c, &m, 0.0), 0.0);
+        assert_eq!(cultivation_drive_score(&c, &m, 0.1), 0.0);
+        assert_eq!(cultivation_drive_score(&c, &m, 0.29), 0.0);
+        assert!(
+            cultivation_drive_score(&c, &m, 0.3) > 0.0,
+            "at exactly CULTIVATE_MIN_ZONE_QI scorer must unblock cultivate path"
+        );
     }
 
     #[test]
