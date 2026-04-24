@@ -112,10 +112,6 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
-    public static void sendSwitchDefenseStance(String stance) {
-        dispatch(ClientRequestProtocol.encodeSwitchDefenseStance(stance));
-    }
-
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static void sendAlchemyTurnPage(int delta) {

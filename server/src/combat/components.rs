@@ -267,40 +267,8 @@ pub struct Casting {
     pub complete_cooldown_ticks: u64,
 }
 
-/// plan-HUD-v1 §3.4 / §11.4 玩家当前防御姿态 + 流派状态指示。
-/// `stance` 同时受 `UnlockedStyles` 门禁约束（switch 时校验）。
-#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
-pub struct DefenseStance {
-    pub stance: DefenseStanceKind,
-    /// 替尸流剩余伪皮层数（被攻击替死后递减）。
-    pub fake_skin_layers: u32,
-    /// 绝灵涡流是否激活中。
-    pub vortex_active: bool,
-    /// 涡流冷却结束 server tick；0 表示无冷却。
-    pub vortex_ready_at_tick: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefenseStanceKind {
-    None,
-    Jiemai,
-    Tishi,
-    Jueling,
-}
-
-impl Default for DefenseStance {
-    fn default() -> Self {
-        Self {
-            stance: DefenseStanceKind::None,
-            fake_skin_layers: 0,
-            vortex_active: false,
-            vortex_ready_at_tick: 0,
-        }
-    }
-}
-
-/// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制三个流派指示器
-/// （截脉环 / 替尸层数 / 绝灵涡流）的条件渲染门禁——未解锁完全不渲染（§1.4）。
+/// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制流派指示器的
+/// 条件渲染门禁——未解锁完全不渲染（§1.4）。
 ///
 /// v1 默认全部解锁以便观察 HUD；后续接入修炼系统按真实解锁条件 mutate。
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]

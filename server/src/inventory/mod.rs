@@ -256,10 +256,6 @@ pub(crate) fn attach_inventory_to_joined_clients(
         commands
             .entity(entity)
             .insert(crate::combat::components::UnlockedStyles::default());
-        // plan-HUD-v1 §3.4 默认 stance=None，伪皮 0，涡流未激活。switch 后才出现指示器。
-        commands
-            .entity(entity)
-            .insert(crate::combat::components::DefenseStance::default());
         // plan-skill-v1 §8 SkillSet 挂玩家 entity；consumed_scrolls 一生累积（死透重生由
         // plan-death-lifecycle §4/§5 新建 default 实例，不迁移）。
         commands

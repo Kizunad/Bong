@@ -10,7 +10,7 @@ import com.google.gson.JsonPrimitive;
  * plan-HUD-v1 §1.3 / §11.4 unlocks_sync 客户端 handler。
  * server 在 `UnlockedStyles` Component 变化（join 首推 / 修炼解锁）时推送，
  * 本 handler 整体替换 {@link UnlockedStylesStore}，HUD planner 据此条件渲染
- * 防御姿态指示器（截脉环 / 替尸层数 / 绝灵涡流）。
+ * 流派指示器。
  */
 public final class UnlocksSyncHandler implements ServerDataHandler {
     @Override

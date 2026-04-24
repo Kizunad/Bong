@@ -8,7 +8,6 @@ pub mod combat_hud_state_emit;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
-pub mod defense_sync_emit;
 pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
@@ -278,13 +277,6 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
-        ),
-    );
-    app.add_systems(
-        Update,
-        (
-            // Fires on Added (join hydration) + later mutation via switch / fake-skin / vortex.
-            defense_sync_emit::emit_defense_sync_payloads,
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();

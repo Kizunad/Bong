@@ -4,7 +4,6 @@ import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
-import com.bong.client.combat.DefenseStanceStore;
 import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SpellVolumeStore;
@@ -178,7 +177,6 @@ public class BongHud {
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),
             DefenseWindowStore.snapshot(),
-            DefenseStanceStore.snapshot(),
             UnlockedStylesStore.snapshot()
         );
     }
