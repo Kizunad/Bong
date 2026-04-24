@@ -894,6 +894,7 @@ fn award_item_to_inventory(
                     spirit_quality: template.spirit_quality_initial,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1280,6 +1281,7 @@ mod tests {
             spirit_quality: 1.0,
             durability,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -1452,6 +1454,7 @@ mod tests {
                 spirit_quality: 0.8,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
             },
         );
         let inv = PlayerInventory {
@@ -1768,6 +1771,7 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -2213,6 +2217,7 @@ mod tests {
                     spirit_quality: 0.85,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2335,6 +2340,7 @@ mod tests {
                     spirit_quality: 0.7,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
                 },
             });
         inv

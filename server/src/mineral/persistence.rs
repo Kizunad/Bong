@@ -175,6 +175,40 @@ pub fn load_exhausted_log(path: impl AsRef<Path>) -> Result<ExhaustedLogFile, St
     serde_json::from_str(&raw).map_err(|e| format!("parse {} failed: {e}", path.display()))
 }
 
+impl ExhaustedMineralsLog {
+    /// 启动期 hydrator — 从 `path` 读回磁盘 log，还原 in-memory entries。
+    ///
+    /// - 文件不存在：等价 `default()`，静默（首次启动常态）。
+    /// - 文件存在但解析失败：warn + 启动一份空 log（避免 corrupt 文件阻塞启动）。
+    /// - 成功：entries 预填；`dirty=false` 防止启动立即重写文件。
+    pub fn hydrated_from_path(path: impl Into<PathBuf>) -> Self {
+        let path: PathBuf = path.into();
+        let mut log = Self::default().with_path(path.clone());
+        if !path.exists() {
+            return log;
+        }
+        match load_exhausted_log(&path) {
+            Ok(file) => {
+                log.entries = file.entries;
+                log.dirty = false;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "bong::mineral",
+                    "failed to load exhausted log at {}: {err} — starting fresh",
+                    path.display()
+                );
+            }
+        }
+        log
+    }
+
+    /// 默认路径（`data/minerals/exhausted.json`）hydrator — `register` 启动路径用。
+    pub fn hydrated() -> Self {
+        Self::hydrated_from_path(DEFAULT_EXHAUSTED_PATH)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::MineralId;
@@ -255,6 +289,53 @@ mod tests {
         let path = unique_tmp_path("invalid_json");
         fs::write(&path, "not valid json").unwrap();
         assert!(load_exhausted_log(&path).is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    // plan-mineral-v1 §M6 — startup hydrate path
+    #[test]
+    fn hydrated_from_missing_path_returns_empty_log() {
+        let path = unique_tmp_path("hydrate_missing");
+        assert!(!path.exists());
+        let log = ExhaustedMineralsLog::hydrated_from_path(&path);
+        assert!(log.entries().is_empty());
+        assert!(!log.dirty, "fresh startup log must not be dirty");
+        assert_eq!(log.file_path, path);
+    }
+
+    #[test]
+    fn hydrated_restores_entries_from_prior_flush() {
+        let path = unique_tmp_path("hydrate_restore");
+        // 先 flush 一份到磁盘（模拟上次关服）
+        let mut prior = ExhaustedMineralsLog::default().with_path(&path);
+        prior.record(ExhaustedEntry {
+            mineral_id: MineralId::SuiTie.as_str().to_string(),
+            x: 10,
+            y: 64,
+            z: -5,
+            tick: 12345,
+        });
+        prior.flush().expect("flush should succeed");
+
+        // hydrate 回来
+        let restored = ExhaustedMineralsLog::hydrated_from_path(&path);
+        assert_eq!(restored.entries().len(), 1);
+        assert_eq!(restored.entries()[0].mineral_id, "sui_tie");
+        assert_eq!(restored.entries()[0].x, 10);
+        assert_eq!(restored.entries()[0].tick, 12345);
+        assert!(!restored.dirty, "hydrated log must not be dirty on startup");
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn hydrated_falls_back_when_file_corrupt() {
+        let path = unique_tmp_path("hydrate_corrupt");
+        fs::write(&path, "corrupted json {{{").unwrap();
+        let log = ExhaustedMineralsLog::hydrated_from_path(&path);
+        // 坏文件 → 空 log（warn log 已发，启动不阻塞）
+        assert!(log.entries().is_empty());
+        assert!(!log.dirty);
         let _ = fs::remove_file(&path);
     }
 }

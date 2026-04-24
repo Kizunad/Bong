@@ -14,6 +14,7 @@ pub mod break_handler;
 pub mod bridge;
 pub mod components;
 pub mod events;
+pub mod inventory_grant;
 pub mod persistence;
 pub mod registry;
 pub mod types;
@@ -37,6 +38,7 @@ use valence::prelude::{App, Update};
 
 use break_handler::handle_block_break_for_mineral;
 use bridge::forward_karma_flag_to_agent;
+use inventory_grant::consume_mineral_drops_into_inventory;
 use persistence::{record_exhausted_minerals, tick_mineral_clock};
 
 pub fn register(app: &mut App) {
@@ -49,7 +51,15 @@ pub fn register(app: &mut App) {
 
     app.insert_resource(registry);
     app.insert_resource(MineralOreIndex::default());
-    app.insert_resource(ExhaustedMineralsLog::default());
+    // plan-mineral-v1 §M6 — 启动时从 data/minerals/exhausted.json hydrate
+    // 已耗尽矿脉记录，避免 worldgen 重新生成已挖穿的 ore 块。
+    let exhausted_log = ExhaustedMineralsLog::hydrated();
+    tracing::info!(
+        target: "bong::mineral",
+        "[bong][mineral] hydrated {} exhausted entries from disk",
+        exhausted_log.entries().len()
+    );
+    app.insert_resource(exhausted_log);
     app.insert_resource(MineralTickClock::default());
 
     app.add_event::<MineralProbeIntent>();
@@ -62,6 +72,9 @@ pub fn register(app: &mut App) {
         (
             tick_mineral_clock,
             handle_block_break_for_mineral,
+            // plan-mineral-v1 §2.2 — drop 事件由 inventory_grant 在同一 Update 内消费；
+            // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。
+            consume_mineral_drops_into_inventory,
             record_exhausted_minerals,
             forward_karma_flag_to_agent,
         ),
