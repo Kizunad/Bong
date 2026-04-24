@@ -282,19 +282,21 @@ fn tick_extract_progress(
 ```rust
 fn handle_extract_completed(
     mut events: EventReader<ExtractCompleted>,
-    portals: Query<&RiftPortal>,
-    mut player_tfs: Query<&mut Transform, With<Player>>,
-    mut presences: Query<&mut TsyPresence>,
-    main_world_anchor: Res<MainWorldRiftAnchor>,  // 主世界裂缝附近坐标
+    mut commands: Commands,
+    presences: Query<&TsyPresence>,
+    mut dim_transfer: EventWriter<DimensionTransferRequest>,
 ) {
     for e in events.read() {
-        let Ok(portal) = portals.get(e.portal) else { continue };
+        let Ok(presence) = presences.get(e.player) else { continue };
 
-        // 1. 传送玩家到主世界裂缝附近
-        let out_pos = main_world_anchor.resolve_for(&portal.family_id);
-        if let Ok(mut tf) = player_tfs.get_mut(e.player) {
-            tf.translation = out_pos.into();
-        }
+        // 1. 跨位面传回主世界入场锚点
+        //    layer 切换 + Position 更新 + Respawn packet 由
+        //    `plan-tsy-dimension-v1 §3` 的 `apply_dimension_transfers` 统一处理
+        dim_transfer.send(DimensionTransferRequest {
+            entity: e.player,
+            target: presence.return_to.dimension,   // = DimensionKind::Overworld
+            target_pos: presence.return_to.pos,     // = 进入裂缝时记录的主世界锚点
+        });
 
         // 2. 移除 TsyPresence（玩家离开秘境会话）
         // 注：inventory 内容保留——上古遗物 / 凡物都带出

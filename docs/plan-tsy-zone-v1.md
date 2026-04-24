@@ -247,6 +247,11 @@ const BASE_DRAIN_PER_TICK: f64 = 0.5;  // server tick = 20Hz，0.5/tick = 10/sec
 
 ```rust
 /// 系统：每 tick 扫描有 TsyPresence 的玩家，按当前 zone 抽真元
+///
+/// 架构反转后：`find_zone` 需要位面参数。system 已被 `TsyPresence` gate 过滤，
+/// 理论上玩家都在 TSY dim，直接传 `DimensionKind::Tsy` 即可；若出现
+/// `TsyPresence` 存在但 `CurrentDimension != Tsy` 的 inconsistent state，
+/// `find_zone(Tsy, pos)` 会返回 None 自然 skip（暴露 bug 而非静默错传）。
 pub fn tsy_drain_tick(
     mut players: Query<(Entity, &mut PlayerState, &Position, &TsyPresence)>,
     zones: Res<ZoneRegistry>,
@@ -254,7 +259,7 @@ pub fn tsy_drain_tick(
     mut death_events: EventWriter<DeathEvent>,
 ) {
     for (entity, mut state, pos, _presence) in &mut players {
-        let Some(zone) = zones.find_zone(pos.0) else { continue };
+        let Some(zone) = zones.find_zone(DimensionKind::Tsy, pos.0) else { continue };
         if !zone.is_tsy() { continue; }
 
         let drain = compute_drain_per_tick(zone, &state);

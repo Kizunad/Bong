@@ -36,6 +36,7 @@
 
 **已知缺口**（本系列 plan 要解决）：
 
+- **无独立 Dimension 基础设施**（2026-04-24 架构反转新增缺口）— 无 TSY `DimensionType`、无 TSY `LayerBundle`、无跨位面传送 API (`DimensionTransferRequest`)、无 per-dimension `TerrainProvider` routing、无 `CurrentDimension` component、无 `Zone.dimension` 字段；由 **P-1 `plan-tsy-dimension-v1`** 承担，是 P0 及后续所有子 plan 的硬前置
 - 无 TSY zone type / 无负压抽真元机制 / 无入场过滤器 / 无裂缝入口 POI
 - 无 "zone-aware" 死亡结算 — `apply_death_drop_on_revive` 不区分主世界 vs 秘境
 - 无 Fabric keepInventory mixin — MC 原生掉落可能和自研掉落 double-fire
@@ -73,33 +74,44 @@
               │ (overview)  │
               └──────┬──────┘
                      │
-    ┌────────────────┼────────────────┐
-    ↓                ↓                ↓
-┌─────────┐     ┌─────────┐     ┌──────────────┐
-│ P0 zone │ ──→ │ P1 loot │ ──→ │ P2 lifecycle │   ← 核心闭环（搜打撤骨架）
-└─────────┘     └─────────┘     └──────────────┘
-    │               │                  │
-    │               │                  └── 依赖 zone 的 state machine / loot 的遗物标记
-    │               └── 依赖 zone 的识别能力（"这次死在不在 TSY"）
-    └── 基础设施
+              ┌──────▼─────────────────┐
+              │ P-1 tsy-dimension      │  ← Valence DimensionType + LayerBundle
+              │  （位面基础设施）         │    跨位面传送 API + per-dim TerrainProvider
+              └──────┬─────────────────┘    **所有 P0-P5 / worldgen 的共同前置**
                      │
-    ┌────────────────┼────────────────┐
-    ↓                ↓                ↓
-┌──────────────┐ ┌──────────────┐ ┌─────────────┐
-│ P3 container │ │ P4 hostile   │ │ P5 extract  │   ← 搜打撤玩法层（需要 P0-P2 闭环）
-└──────────────┘ └──────────────┘ └─────────────┘
-    │                │                  │
-    │                │                  └── 监听 P2 塌缩事件 + 传出玩家
-    │                └── drop 接 P1 ownerless + 道伥 archetype 来自 P2
+     ┌───────────────┴───────────────┐
+     ↓                               ↓ （并行独立轨）
+┌───────────┐                ┌────────────────┐
+│  P0 zone  │                │  tsy-worldgen  │
+└─────┬─────┘                │ （地形 / POI   │
+      │                      │   自动生成）    │
+      ↓                      └────────────────┘
+┌───────────┐
+│  P1 loot  │
+└─────┬─────┘
+      │
+      ↓
+┌──────────────┐   ← 核心闭环完成（搜打撤骨架 demoable）
+│ P2 lifecycle │
+└──────┬───────┘
+       │
+    ┌──┴───────────────────┬──────────────────┐
+    ↓                      ↓                  ↓
+┌──────────────┐   ┌──────────────┐   ┌─────────────┐
+│ P3 container │   │ P4 hostile   │   │ P5 extract  │   ← 玩法层（需 P0-P2 闭环）
+└──────────────┘   └──────────────┘   └─────────────┘
+    │                   │                    │
+    │                   │                    └── 监听 P2 塌缩事件 + 传出玩家
+    │                   └── drop 接 P1 ownerless + 道伥 archetype 来自 P2
     └── 读 P2 relics_remaining（发 RelicExtracted 事件给 P2）
-                     │
-                     │  P3/P4/P5 之间也有互相依赖：
-                     │    P4 Fuya aura × P3 search drain（drain multiplier 叠加）
-                     │    P4 NPC drop 钥匙 → P3 容器用
-                     │    P5 忙态互斥 P3 搜刮（互相拒绝启动）
+
+P3/P4/P5 之间也有互相依赖：
+  P4 Fuya aura × P3 search drain（drain multiplier 叠加）
+  P4 NPC drop 钥匙 → P3 容器用
+  P5 忙态互斥 P3 搜刮（互相拒绝启动）
 ```
 
-**消费顺序**：P0 → P1 → P2 必须严格顺序（核心闭环）；P3/P4/P5 之间可灵活排序但都必须在 P2 之后。每个子 plan 独立 demoable，不可跳过前置。
+**消费顺序**：**P-1 必须最先落地**（基础设施，否则 P0 `CurrentDimension` / `DimensionTransferRequest` / `find_zone(dim,pos)` 全部悬空）；之后 P0 → P1 → P2 严格顺序（核心闭环）；P3/P4/P5 之间可灵活排序但都必须在 P2 之后；worldgen 骨架与 P0/P1/P2 无强耦合，可并行推进但升级 active 要求 P-1 落地 + P0 merged + P3/P4/P5 至少一个开工。每个子 plan 独立 demoable，不可跳过前置。
 
 | 阶段 | 依赖 | demoable 终态 |
 |------|------|---------------|
@@ -344,6 +356,8 @@ pub enum BusyKind {
 ## §8 落地节奏建议
 
 ```
+week 0: plan-tsy-dimension-v1 → /consume-plan tsy-dimension → PR → review → merge
+         （骨架升 active 前：Q10 client mixin 手动 audit + Q2/Q4/Q5 标关闭）
 week 1: plan-tsy-zone-v1      → /consume-plan tsy-zone      → PR → review → merge
 week 2: plan-tsy-loot-v1      → /consume-plan tsy-loot      → PR → review → merge
 week 3: plan-tsy-lifecycle-v1 → /consume-plan tsy-lifecycle → PR → review → merge
@@ -352,9 +366,11 @@ week 4: plan-tsy-container-v1 → /consume-plan tsy-container → PR → review 
 week 5: plan-tsy-hostile-v1   → /consume-plan tsy-hostile   → PR → review → merge
 week 6: plan-tsy-extract-v1   → /consume-plan tsy-extract   → PR → review → merge
 week 7: smoke-tsy-full.sh + manual E2E + 归档
+（worldgen 并行轨：骨架→active 触发于 week 4 之后，消费时机按 P3/P4/P5 真实 POI 数据驱动需求）
 ```
 
 **关键里程碑**：
+- **M-dim**（week 0 结束）：P-1 merged → P0 才能开工（`DimensionKind`/`DimensionTransferRequest`/`CurrentDimension`/`TerrainProviders` 全部就位）
 - **M-core**（week 3 结束）：P0+P1+P2 merged → 骨架版搜打撤可 demo（进 TSY + 捡遗物 + 死亡掉 + 塌缩）
 - **M-full**（week 6 结束）：+P3+P4+P5 merged → 完整搜打撤玩法（容器 + NPC + 撤离）
 
