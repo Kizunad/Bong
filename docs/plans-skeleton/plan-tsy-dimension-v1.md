@@ -178,6 +178,43 @@ pub fn apply_dimension_transfers(
 - 目标位面未 load → log error + skip（不 panic）
 - 传送前 unload entity 在原 layer 的 chunk 订阅（Valence 侧 auto，但要验）
 
+### 3.3 Portal 视觉形态（复用 MC 原版模型，不自制资源）
+
+**决策**：不做自定义 portal 方块 / 粒子 / mesh，直接复用 MC 1.20.1 原版的两种 portal 方块 + 框架，客户端原生渲染零成本。形态按**方向语义**分两类：
+
+| 方向 | 原版模型 | 方块组 | 世界观解释 |
+|------|---------|--------|----------|
+| **Entry**（主世界 → TSY） | **竖式 Nether 门** | `obsidian` 4×5 框 + 内部 `nether_portal` | "地壳上一道凝结负灵气的竖直裂缝"，玩家钻进去；对齐 `worldview §十六` 原话"地壳上一道看似普通的裂缝" |
+| **Exit**（TSY → 主世界） | **横式 End 门** | 12 × `end_portal_frame`（带 eye）围一圈，中心 3×3 填 `end_portal` | "TSY 深处阵盘残件 / 法阵核心托起的回程阵，踏上去负压反吐"；对齐 `worldview §十六.一` "阵盘残件 / 法阵核心" 的描述 |
+
+视觉心智："**竖 = 入，横 = 出**"。玩家一眼就能认出哪个是进哪个是出，不需要 UI 提示。
+
+**P5 撤离点（DeepRift / CollapseTear）的形态分配由 `plan-tsy-extract-v1` 定，建议同样用横式 End 门表达"从 TSY 向外"的所有方向**（包括深层缝和塌缩裂口）。竖式 Nether 门只用于主世界侧 Entry，保持一致性。
+
+#### 触发方式
+
+**不复用原版的触发逻辑**——
+- Nether 门原版是"站在 portal 方块内 4 秒才传送"，我们要**瞬时**
+- End 门原版目标 dimension 写死是 End，我们要路由到 TSY
+
+**做法**：在 portal 方块上方（Entry）或中心（Exit）spawn 一个**不可见标记 entity**（armor stand 或 Valence 原生 marker），挂 `RiftPortal` + `Position`；触发完全走我们的 `trigger_radius` + AABB 检测 + 发 `DimensionTransferRequest`。portal 方块只是**视觉/听觉皮肤**，玩家看到的是原版门的紫色/紫黑效果 + 原版 ambient sound。
+
+#### 方块构造（Worldgen 产出）
+
+Entry / Exit portal 的方块实体组在 `manifest.json` 里作为 POI 的附带 block patch（或由 consumer system 在 spawn 时主动摆放 2×3/4×5 obsidian 框 + portal 内部方块）：
+
+| Portal | 尺寸 | 占位 | 朝向 |
+|--------|------|------|------|
+| Entry（Nether 竖式） | 4 宽 × 5 高 × 1 深 | XZ 平面任一朝向（blueprint 指定） | 玩家可从任一面进入 |
+| Exit（End 横式） | 5 × 1 × 5（含 3×3 portal 中心） | 地面朝上 | 玩家从上方落入 / 踏上 |
+
+Worldgen POI tag 新增 `orientation:vertical\|horizontal`（可选；按 `direction` 推导默认值：entry→vertical, exit→horizontal）。
+
+#### Q 新增（留给 active plan 收敛）
+
+- Valence 有 `BlockState::NETHER_PORTAL` / `END_PORTAL`，但它们在原版带自动 AI 逻辑（e.g. 实体碰到会触发原版 portal travel）——需验证 Valence 是否保留这些 vanilla 行为，如果保留必须禁用或 intercept。做法 A：`BlockState::END_PORTAL` 客户端看得见、服务端标记为"我们自己管触发"；做法 B：用外观接近的装饰方块（`purple_stained_glass` 半透 + particle）替代 —— 牺牲视觉但隔离原版逻辑
+- 玩家身处 portal 方块内时的**相机/移动**行为是否需要 intercept（e.g. 原版 Nether portal 里玩家会看到 screen 紫色 overlay）；若保留会造成奇怪的"触发前几帧"紫幕，active plan 前实机验
+
 ---
 
 ## §4 Client 侧 dimension 切换

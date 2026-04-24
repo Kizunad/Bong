@@ -324,7 +324,12 @@ pub struct RiftPortal {
 pub enum PortalDirection { Entry, Exit }
 ```
 
-裂缝本身**不是方块**，是各位面 layer 内某坐标上的 marker entity（Valence 里是带 `Position` + `RiftPortal` 的 entity，附在对应 layer）。MVP 用隐形 armor stand，后续可换 particle 或自定义特殊方块。
+**视觉形态（复用 MC 原版 portal 模型，零资源成本）**：详见 `plan-tsy-dimension-v1 §3.3`。
+
+- **Entry**（主世界裂缝）= **竖式 Nether 门**：`obsidian` 4×5 框 + 内部 `nether_portal` 方块；"地壳上一道凝结负灵气的竖直裂缝"
+- **Exit**（TSY `_shallow` 中心回程阵）= **横式 End 门**：12 × `end_portal_frame`（带 eye）围一圈 + 中心 3×3 `end_portal`；"阵盘残件托起的回程阵，踏上去负压反吐"
+
+**实现**：portal 方块由 worldgen blueprint / `/tsy-spawn` 直接摆放到对应 layer；中心位置 spawn 一个**不可见 marker entity**（armor stand 等），挂 `Position` + `RiftPortal`。玩家靠近 → AABB 命中 marker → 走本 plan §3.3 的 `DimensionTransferRequest` 路径。portal 方块本身只是皮肤，**不复用原版的 portal travel 逻辑**（原版 Nether 4s 延迟、End 目标 dim 写死 End，都不适用于跨位面到 TSY）。需要验证 Valence 是否对这些 vanilla 方块有 auto-travel 行为（见 dimension plan §3.3 Q）。
 
 ### 3.3 Entry 传送 System
 
