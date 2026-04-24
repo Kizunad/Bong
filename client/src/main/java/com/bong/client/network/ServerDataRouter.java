@@ -57,7 +57,6 @@ public final class ServerDataRouter {
         QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
-        DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
@@ -97,7 +96,6 @@ public final class ServerDataRouter {
         handlers.put("quickslot_config", quickSlotConfigHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
-        handlers.put("defense_sync", defenseSyncHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
@@ -107,6 +105,7 @@ public final class ServerDataRouter {
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
         handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
         handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
+        handlers.put("skill_snapshot", new SkillSnapshotHandler());
         return new ServerDataRouter(handlers);
     }
 

@@ -9,7 +9,11 @@
 //! 对齐测试：samples `agent/packages/schema/samples/skill-*.sample.json` 走 TypeBox validate；
 //! 本文件通过 `include_str!` 反序列化同一份 samples 做 roundtrip 双端校验（参考 `botany.rs` 模式）。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::skill::components::{SkillEntry as RuntimeSkillEntry, SkillSet as RuntimeSkillSet};
 
 /// plan §8 SkillId — snake_case 字符串枚举，与 TS 侧 Type.Union 对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +135,80 @@ impl SkillScrollUsedPayloadV1 {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillEntrySnapshotV1 {
+    pub lv: u8,
+    pub xp: u32,
+    pub xp_to_next: u32,
+    pub total_xp: u64,
+    pub cap: u8,
+    pub recent_gain_xp: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSnapshotPayloadV1 {
+    pub v: u8,
+    pub char_id: u64,
+    pub skills: BTreeMap<String, SkillEntrySnapshotV1>,
+    pub consumed_scrolls: Vec<String>,
+}
+
+impl SkillEntrySnapshotV1 {
+    pub fn from_runtime(entry: &RuntimeSkillEntry, cap: u8) -> Self {
+        Self {
+            lv: entry.lv,
+            xp: entry.xp,
+            xp_to_next: crate::skill::curve::xp_to_next(entry.lv),
+            total_xp: entry.total_xp,
+            cap,
+            recent_gain_xp: 0,
+        }
+    }
+}
+
+impl SkillSnapshotPayloadV1 {
+    pub fn new(
+        char_id: u64,
+        skills: BTreeMap<String, SkillEntrySnapshotV1>,
+        consumed_scrolls: Vec<String>,
+    ) -> Self {
+        Self {
+            v: 1,
+            char_id,
+            skills,
+            consumed_scrolls,
+        }
+    }
+
+    pub fn from_runtime(
+        char_id: u64,
+        skill_set: &RuntimeSkillSet,
+        cap_for: impl Fn(crate::skill::components::SkillId) -> u8,
+    ) -> Self {
+        let mut skills = BTreeMap::new();
+        for skill in [
+            crate::skill::components::SkillId::Herbalism,
+            crate::skill::components::SkillId::Alchemy,
+            crate::skill::components::SkillId::Forging,
+        ] {
+            let entry = skill_set.skills.get(&skill).cloned().unwrap_or_default();
+            skills.insert(
+                skill.as_str().to_string(),
+                SkillEntrySnapshotV1::from_runtime(&entry, cap_for(skill)),
+            );
+        }
+        let mut consumed_scrolls = skill_set
+            .consumed_scrolls
+            .iter()
+            .map(|scroll| scroll.as_str().to_string())
+            .collect::<Vec<_>>();
+        consumed_scrolls.sort();
+        Self::new(char_id, skills, consumed_scrolls)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +222,8 @@ mod tests {
         include_str!("../../../agent/packages/schema/samples/skill-cap-changed.sample.json");
     const SAMPLE_SCROLL_USED: &str =
         include_str!("../../../agent/packages/schema/samples/skill-scroll-used.sample.json");
+    const SAMPLE_SNAPSHOT: &str =
+        include_str!("../../../agent/packages/schema/samples/skill-snapshot.sample.json");
 
     /// samples 是 JSON array（多案例），每一条都能反序列化成 Payload 并 roundtrip。
     fn assert_array_roundtrip<T>(raw: &str)
@@ -183,6 +263,11 @@ mod tests {
     }
 
     #[test]
+    fn skill_snapshot_samples_roundtrip() {
+        assert_array_roundtrip::<SkillSnapshotPayloadV1>(SAMPLE_SNAPSHOT);
+    }
+
+    #[test]
     fn xp_gain_source_tagged_union_parses_all_variants() {
         let action: XpGainSourceV1 = serde_json::from_str(
             r#"{"type":"action","plan_id":"lingtian","action":"harvest_auto"}"#,
@@ -202,5 +287,27 @@ mod tests {
         let mentor: XpGainSourceV1 =
             serde_json::from_str(r#"{"type":"mentor","mentor_char":42}"#).unwrap();
         assert!(matches!(mentor, XpGainSourceV1::Mentor { .. }));
+    }
+
+    #[test]
+    fn skill_snapshot_from_runtime_fills_missing_skills() {
+        let mut set = RuntimeSkillSet::default();
+        set.skills.insert(
+            crate::skill::components::SkillId::Alchemy,
+            RuntimeSkillEntry {
+                lv: 3,
+                xp: 40,
+                total_xp: 1_440,
+                last_action_at: 99,
+                recent_repeat_count: 0,
+            },
+        );
+
+        let payload = SkillSnapshotPayloadV1::from_runtime(1001, &set, |_| 5);
+        assert_eq!(payload.char_id, 1001);
+        assert_eq!(payload.skills.len(), 3);
+        assert_eq!(payload.skills.get("alchemy").unwrap().lv, 3);
+        assert_eq!(payload.skills.get("alchemy").unwrap().cap, 5);
+        assert_eq!(payload.skills.get("forging").unwrap().lv, 0);
     }
 }

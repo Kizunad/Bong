@@ -8,7 +8,6 @@ pub mod combat_hud_state_emit;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
-pub mod defense_sync_emit;
 pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
@@ -16,6 +15,8 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod skill_emit;
+pub mod skill_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
@@ -59,12 +60,15 @@ use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldMode
 use crate::schema::common::{
     CommandType, EventKind, NarrationScope, NarrationStyle, NpcStateKind, PlayerTrend,
 };
-use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
+use crate::schema::cultivation::{
+    CultivationSnapshotV1, LifeRecordSnapshotV1, SkillMilestoneSnapshotV1,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
     NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
 };
+use crate::skill::components::SkillId;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -228,6 +232,12 @@ pub fn register(app: &mut App) {
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
+            skill_snapshot_emit::emit_join_skill_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
+            skill_emit::emit_skill_xp_gain_payloads.after(crate::skill::consume_skill_xp_gain),
+            skill_emit::emit_skill_lv_up_payloads.after(crate::skill::consume_skill_xp_gain),
+            skill_emit::emit_skill_cap_changed_payloads,
+            skill_emit::emit_skill_scroll_used_payloads,
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
@@ -266,6 +276,7 @@ pub fn register(app: &mut App) {
                 .after(cast_emit::tick_casts_or_interrupt),
             inventory_snapshot_emit::emit_changed_inventory_snapshots,
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
+            skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
@@ -278,13 +289,6 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
-        ),
-    );
-    app.add_systems(
-        Update,
-        (
-            // Fires on Added (join hydration) + later mutation via switch / fake-skin / vortex.
-            defense_sync_emit::emit_defense_sync_payloads,
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
@@ -389,11 +393,25 @@ fn collect_cultivation_snapshots(
     q: &Query<(Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord), With<Client>>,
 ) -> HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)> {
     const RECENT_BIO_N: usize = 12;
+    const RECENT_SKILL_MILESTONES_N: usize = 6;
     q.iter()
         .map(|(entity, c, m, q, life)| {
             let snap = CultivationSnapshotV1::from_components(c, m, q);
+            let skill_milestones = life
+                .skill_milestones
+                .iter()
+                .rev()
+                .take(RECENT_SKILL_MILESTONES_N)
+                .collect::<Vec<_>>();
             let life_snap = LifeRecordSnapshotV1 {
                 recent_biography_summary: life.recent_summary_text(RECENT_BIO_N),
+                recent_skill_milestones_summary: life
+                    .recent_skill_milestones_summary_text(RECENT_SKILL_MILESTONES_N),
+                skill_milestones: skill_milestones
+                    .into_iter()
+                    .rev()
+                    .map(SkillMilestoneSnapshotV1::from_runtime)
+                    .collect(),
             };
             (entity, (snap, life_snap))
         })
@@ -981,6 +999,7 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut player_life_records: Query<&mut LifeRecord>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut commands: Commands,
@@ -1022,6 +1041,10 @@ fn process_redis_inbound(
                 );
             }
             RedisInbound::AgentNarration(narr) => {
+                backfill_skill_milestone_narrations_from_batch(
+                    &mut player_life_records,
+                    narr.narrations.as_slice(),
+                );
                 process_agent_narrations_with_dedupe(
                     &mut clients,
                     zone_registry.as_deref(),
@@ -1377,6 +1400,58 @@ fn process_agent_narrations_with_dedupe(
     }
 }
 
+fn backfill_skill_milestone_narrations_from_batch(
+    players: &mut Query<&mut LifeRecord>,
+    narrations: &[crate::schema::narration::Narration],
+) {
+    for narration in narrations {
+        let Some(target) = narration.target.as_deref() else {
+            continue;
+        };
+        let Some((entity, skill, new_lv)) = parse_skill_milestone_narration_target(target) else {
+            continue;
+        };
+        let Ok(mut life_record) = players.get_mut(entity) else {
+            continue;
+        };
+        if let Some(milestone) = life_record
+            .skill_milestones
+            .iter_mut()
+            .rev()
+            .find(|milestone| milestone.skill == skill && milestone.new_lv == new_lv)
+        {
+            milestone.narration = narration.text.clone();
+        }
+    }
+}
+
+fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, SkillId, u8)> {
+    let mut char_bits = None;
+    let mut skill = None;
+    let mut new_lv = None;
+
+    for part in target.split('|').map(str::trim).filter(|part| !part.is_empty()) {
+        if let Some(bits) = part.strip_prefix("char:") {
+            char_bits = bits.parse::<u64>().ok();
+            continue;
+        }
+        if let Some(raw_skill) = part.strip_prefix("skill:") {
+            skill = match raw_skill {
+                "herbalism" => Some(SkillId::Herbalism),
+                "alchemy" => Some(SkillId::Alchemy),
+                "forging" => Some(SkillId::Forging),
+                _ => None,
+            };
+            continue;
+        }
+        if let Some(raw_lv) = part.strip_prefix("lv:") {
+            new_lv = raw_lv.parse::<u8>().ok();
+        }
+    }
+
+    Some((Entity::from_bits(char_bits?), skill?, new_lv?))
+}
+
 fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
     format!(
         "scope={:?}|target={}|style={:?}|text={}",
@@ -1477,6 +1552,7 @@ fn collect_routed_targets(
                 entity,
                 RecipientMetadata {
                     username: Some(username.0.clone()),
+                    char_id: Some(format!("char:{}", entity.to_bits())),
                     zone: computed_zone,
                 },
             )
@@ -1915,8 +1991,10 @@ mod tests {
 
     mod narration_tests {
         use super::*;
+        use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
         use crate::schema::common::{NarrationScope, NarrationStyle};
         use crate::schema::narration::{Narration, NarrationV1};
+        use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
         use crossbeam_channel::Sender;
         use valence::prelude::DVec3;
@@ -2191,6 +2269,82 @@ mod tests {
             assert_eq!(
                 alex_alias_chat_packets, 0,
                 "non-targeted player must not receive chat packets"
+            );
+        }
+
+        #[test]
+        fn player_scope_matches_char_id_alias() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (azure, mut azure_helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            let (_bob, mut bob_helper) =
+                spawn_test_client_with_helper(&mut app, "Bob", [18.0, 66.0, 18.0]);
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Player,
+                    target: Some(format!("char:{}", azure.to_bits())),
+                    text: "第三段单人叙事。".to_string(),
+                    style: NarrationStyle::Narration,
+                },
+            );
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let azure_payloads = collect_typed_narration_payloads(&mut azure_helper);
+            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
+            let azure_chat_packets = collect_game_message_packets(&mut azure_helper);
+            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+
+            assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
+            assert!(bob_payloads.is_empty(), "char-id targeted narration must not leak to Bob");
+            assert_eq!(azure_chat_packets, 0, "player-scoped narration should not mirror chat packets");
+            assert_eq!(bob_chat_packets, 0, "non-targeted player must not receive chat packets");
+        }
+
+        #[test]
+        fn agent_skill_lv_up_narration_backfills_matching_life_record_milestone() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (azure, _azure_helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(azure).insert(LifeRecord {
+                character_id: "offline:Azure".to_string(),
+                created_at: 0,
+                biography: Vec::new(),
+                insights_taken: Vec::new(),
+                skill_milestones: vec![SkillMilestone {
+                    skill: SkillId::Herbalism,
+                    new_lv: 4,
+                    achieved_at: 120,
+                    narration: "默认文案。".to_string(),
+                    total_xp_at: 900,
+                }],
+                spirit_root_first: None,
+            });
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Player,
+                    target: Some(format!(
+                        "char:{}|skill:herbalism|lv:4",
+                        azure.to_bits()
+                    )),
+                    text: "你摘辨草木渐熟，今又进一层，已至Lv.4。".to_string(),
+                    style: NarrationStyle::Narration,
+                },
+            );
+
+            app.update();
+
+            let life_record = app.world().get::<LifeRecord>(azure).expect("life record should stay attached");
+            assert_eq!(life_record.skill_milestones.len(), 1);
+            assert_eq!(
+                life_record.skill_milestones[0].narration,
+                "你摘辨草木渐熟，今又进一层，已至Lv.4。"
             );
         }
 
@@ -2822,9 +2976,9 @@ mod tests {
             CombatClock,
         };
         use crate::cultivation::components::{
-            Contamination, Cultivation, MeridianId, MeridianSystem,
+            Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
         };
-        use crate::cultivation::life_record::LifeRecord;
+        use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
         use crate::persistence::{
             load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
             PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
@@ -2839,6 +2993,7 @@ mod tests {
         use crate::schema::agent_world_model::{
             AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
         };
+        use crate::skill::components::SkillId;
         use crate::world::events::ActiveEventsResource;
         use crossbeam_channel::{unbounded, Receiver};
         use std::collections::BTreeMap;
@@ -2935,6 +3090,7 @@ mod tests {
                     },
                     Contamination::default(),
                     MeridianSystem::default(),
+                    QiColor::default(),
                     LifeRecord::new(canonical_player_id(username)),
                 ))
                 .id();
@@ -2996,6 +3152,61 @@ mod tests {
                 RedisOutbound::WorldState(state) => state,
                 other => panic!("expected world-state publish, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn world_state_includes_structured_skill_milestones_in_life_record_snapshot() {
+            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (entity, _helper) = spawn_test_client_with_state(
+                &mut app,
+                "Azure",
+                [8.0, 66.0, 8.0],
+                PlayerState {
+                    realm: "qi_refining_1".to_string(),
+                    spirit_qi: 50.0,
+                    spirit_qi_max: 100.0,
+                    karma: 0.1,
+                    experience: 120,
+                    inventory_score: 0.2,
+                },
+            );
+            app.world_mut().entity_mut(entity).insert(LifeRecord {
+                character_id: canonical_player_id("Azure"),
+                created_at: 0,
+                biography: Vec::new(),
+                insights_taken: Vec::new(),
+                skill_milestones: vec![SkillMilestone {
+                    skill: SkillId::Herbalism,
+                    new_lv: 3,
+                    achieved_at: 82000,
+                    narration: "你摘辨草木渐熟，今已至Lv.3。".to_string(),
+                    total_xp_at: 550,
+                }],
+                spirit_root_first: None,
+            });
+
+            app.update();
+
+            let world_state = dequeue_world_state(&rx_outbound);
+            let player = world_state
+                .players
+                .iter()
+                .find(|player| player.uuid == canonical_player_id("Azure"))
+                .expect("Azure should be included in world state");
+            let life_record = player
+                .life_record
+                .as_ref()
+                .expect("life_record snapshot should be present");
+
+            assert_eq!(life_record.skill_milestones.len(), 1);
+            assert_eq!(life_record.skill_milestones[0].skill, "herbalism");
+            assert_eq!(life_record.skill_milestones[0].new_lv, 3);
+            assert_eq!(life_record.skill_milestones[0].achieved_at, 82000);
+            assert_eq!(life_record.skill_milestones[0].total_xp_at, 550);
+            assert_eq!(
+                life_record.skill_milestones[0].narration,
+                "你摘辨草木渐熟，今已至Lv.3。"
+            );
         }
 
         #[test]

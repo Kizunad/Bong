@@ -112,10 +112,6 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
-    public static void sendSwitchDefenseStance(String stance) {
-        dispatch(ClientRequestProtocol.encodeSwitchDefenseStance(stance));
-    }
-
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static void sendAlchemyTurnPage(int delta) {
@@ -160,6 +156,10 @@ public final class ClientRequestSender {
 
     public static void sendApplyPillSelf(long instanceId) {
         dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
+    }
+
+    public static void sendLearnSkillScroll(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeLearnSkillScroll(instanceId));
     }
 
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────

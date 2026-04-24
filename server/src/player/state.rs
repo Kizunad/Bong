@@ -11,6 +11,7 @@ use crate::inventory::PlayerInventory;
 use crate::persistence::DEFAULT_DATABASE_PATH;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::PlayerPowerBreakdown;
+use crate::skill::components::SkillSet;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
@@ -56,6 +57,7 @@ pub struct LoadedPlayerSlices {
     pub state: PlayerState,
     pub position: [f64; 3],
     pub inventory: Option<PlayerInventory>,
+    pub skill_set: SkillSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +68,7 @@ pub struct PlayerExportBundle {
     pub state: PlayerState,
     pub position: [f64; 3],
     pub inventory: Option<PlayerInventory>,
+    pub skill_set: SkillSet,
     pub ui_prefs: serde_json::Value,
 }
 
@@ -269,6 +272,7 @@ pub fn load_player_slices(
                 state,
                 position: crate::player::spawn_position(),
                 inventory: None,
+                skill_set: SkillSet::default(),
             };
         }
     };
@@ -296,11 +300,23 @@ pub fn load_player_slices(
             None
         }
     };
+    let skill_set = match load_player_skill_set_from_sqlite(&connection, username) {
+        Ok(skill_set) => skill_set,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted skill set for `{}` from sqlite {}: {error}; using default skill set",
+                username,
+                persistence.db_path().display()
+            );
+            SkillSet::default()
+        }
+    };
 
     LoadedPlayerSlices {
         state,
         position,
         inventory,
+        skill_set,
     }
 }
 
@@ -315,6 +331,7 @@ pub fn save_player_state(
         state,
         crate::player::spawn_position(),
         None,
+        &SkillSet::default(),
     )
 }
 
@@ -324,9 +341,17 @@ pub fn save_player_slices(
     state: &PlayerState,
     position: [f64; 3],
     inventory: Option<&PlayerInventory>,
+    skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_slices_in_sqlite(&mut connection, username, state, position, inventory)?;
+    persist_player_slices_in_sqlite(
+        &mut connection,
+        username,
+        state,
+        position,
+        inventory,
+        skill_set,
+    )?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -370,6 +395,16 @@ pub fn save_player_inventory_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+pub fn save_player_skill_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    skill_set: &SkillSet,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_skill_slice_in_sqlite(&mut connection, username, skill_set)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub fn export_player_bundle(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -400,6 +435,7 @@ pub fn export_player_bundle(
         state: loaded.state,
         position: loaded.position,
         inventory: loaded.inventory,
+        skill_set: loaded.skill_set,
         ui_prefs,
     })
 }
@@ -422,6 +458,7 @@ pub fn import_player_bundle(
     let ui_prefs_json = serde_json::to_string(&ui_prefs)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let inventory_json = serialize_inventory_json(bundle.inventory.as_ref())?;
+    let skill_set_json = serialize_skill_set_json(&bundle.skill_set)?;
     let normalized = bundle.state.normalized();
     let experience = experience_to_sql(normalized.experience)?;
     let [pos_x, pos_y, pos_z] = bundle.position;
@@ -514,6 +551,28 @@ pub fn import_player_bundle(
             params![
                 bundle.username,
                 inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_skills (
+                username,
+                skill_set_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                skill_set_json = excluded.skill_set_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                skill_set_json,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -647,6 +706,31 @@ fn load_player_inventory_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn load_player_skill_set_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<SkillSet> {
+    let skill_set_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT skill_set_json
+            FROM player_skills
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(skill_set_json) = skill_set_json else {
+        return Ok(SkillSet::default());
+    };
+
+    serde_json::from_str::<SkillSet>(&skill_set_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
 fn persist_player_core_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
@@ -683,6 +767,7 @@ fn persist_player_core_slice_in_sqlite(
             state,
             crate::player::spawn_position(),
             None,
+            &SkillSet::default(),
         )?;
     }
 
@@ -796,6 +881,7 @@ fn persist_player_progression_slice_in_sqlite(
             state,
             crate::player::spawn_position(),
             None,
+            &SkillSet::default(),
         )?;
     }
 
@@ -836,12 +922,47 @@ fn persist_player_inventory_slice_in_sqlite(
     Ok(())
 }
 
+fn persist_player_skill_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    skill_set: &SkillSet,
+) -> io::Result<()> {
+    let skill_set_json = serialize_skill_set_json(skill_set)?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_skills (
+                username,
+                skill_set_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                skill_set_json = excluded.skill_set_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                skill_set_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
 fn persist_player_slices_in_sqlite(
     connection: &mut Connection,
     username: &str,
     state: &PlayerState,
     position: [f64; 3],
     inventory: Option<&PlayerInventory>,
+    skill_set: &SkillSet,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let realm = normalized.realm;
@@ -852,6 +973,7 @@ fn persist_player_slices_in_sqlite(
     let inventory_score = normalized.inventory_score;
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
+    let skill_set_json = serialize_skill_set_json(skill_set)?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
 
@@ -960,6 +1082,28 @@ fn persist_player_slices_in_sqlite(
     transaction
         .execute(
             "
+            INSERT INTO player_skills (
+                username,
+                skill_set_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                skill_set_json = excluded.skill_set_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                skill_set_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
             INSERT OR IGNORE INTO player_ui_prefs (
                 username,
                 prefs_json,
@@ -994,6 +1138,8 @@ fn insert_default_player_slice_rows(
     prefs_json: &str,
 ) -> rusqlite::Result<()> {
     let [pos_x, pos_y, pos_z] = crate::player::spawn_position();
+    let skill_set_json = serialize_skill_set_json(&SkillSet::default())
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
     transaction.execute(
         "
@@ -1027,6 +1173,22 @@ fn insert_default_player_slice_rows(
         params![
             username,
             DEFAULT_INVENTORY_JSON,
+            PLAYER_ROW_SCHEMA_VERSION,
+            last_updated_wall
+        ],
+    )?;
+    transaction.execute(
+        "
+        INSERT OR IGNORE INTO player_skills (
+            username,
+            skill_set_json,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ",
+        params![
+            username,
+            skill_set_json,
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -1072,6 +1234,7 @@ fn migrate_legacy_player_json_to_sqlite(
         &state,
         crate::player::spawn_position(),
         None,
+        &SkillSet::default(),
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -1088,6 +1251,11 @@ fn serialize_inventory_json(inventory: Option<&PlayerInventory>) -> io::Result<S
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         None => Ok(DEFAULT_INVENTORY_JSON.to_string()),
     }
+}
+
+fn serialize_skill_set_json(skill_set: &SkillSet) -> io::Result<String> {
+    serde_json::to_string(skill_set)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn experience_to_sql(experience: u64) -> io::Result<i64> {
@@ -1271,6 +1439,7 @@ mod player_state_tests {
             &exported_state,
             [64.0, 80.0, -12.0],
             None,
+            &SkillSet::default(),
         )
         .expect("source player slices should persist");
 
@@ -1380,6 +1549,7 @@ mod player_state_tests {
             },
             position: [64.0, 80.0, -12.0],
             inventory: None,
+            skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({
                 "quick_slots": [null, null, null, null, null, null, null, null, null]
             }),
@@ -1448,6 +1618,7 @@ mod player_state_tests {
             },
             position: [64.0, 80.0, -12.0],
             inventory: None,
+            skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({
                 "quick_slots": [0, 1, 2]
             }),

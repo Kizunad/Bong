@@ -5,16 +5,20 @@ use super::alchemy::{
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
 use super::combat_hud::{
-    CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
+    CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1,
     QuickSlotConfigV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1,
     WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
+use super::cultivation::SkillMilestoneSnapshotV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
+use super::skill::{
+    SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
+    SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
+};
 use super::world_state::PlayerPowerBreakdown;
-
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -53,11 +57,15 @@ pub enum ServerDataType {
     QuickSlotConfig,
     UnlocksSync,
     EventStreamPush,
-    DefenseSync,
     WeaponEquipped,
     WeaponBroken,
     TreasureEquipped,
     LingtianSession,
+    SkillXpGain,
+    SkillLvUp,
+    SkillCapChanged,
+    SkillScrollUsed,
+    SkillSnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +119,10 @@ pub enum ServerDataPayloadV1 {
         cracks_count: Vec<u8>,
         /// 整个实体的污染总量（所有 `Contamination.entries.amount` 求和）。
         contamination_total: f64,
+        /// 最近里程碑摘要，供客户端轻量展示；空串表示暂无。
+        recent_skill_milestones_summary: String,
+        /// 结构化 skill milestone 列表，通常只传最近若干条。
+        skill_milestones: Vec<SkillMilestoneSnapshotV1>,
     },
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
@@ -148,11 +160,15 @@ pub enum ServerDataPayloadV1 {
     QuickSlotConfig(QuickSlotConfigV1),
     UnlocksSync(UnlocksSyncV1),
     EventStreamPush(EventStreamPushV1),
-    DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
+    SkillXpGain(Box<SkillXpGainPayloadV1>),
+    SkillLvUp(SkillLvUpPayloadV1),
+    SkillCapChanged(SkillCapChangedPayloadV1),
+    SkillScrollUsed(Box<SkillScrollUsedPayloadV1>),
+    SkillSnapshot(Box<SkillSnapshotPayloadV1>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +222,10 @@ enum ServerDataPayloadWireV1 {
         open_progress: Vec<f64>,
         cracks_count: Vec<u8>,
         contamination_total: f64,
+        #[serde(default)]
+        recent_skill_milestones_summary: String,
+        #[serde(default)]
+        skill_milestones: Vec<SkillMilestoneSnapshotV1>,
     },
     InventorySnapshot {
         #[serde(flatten)]
@@ -294,10 +314,6 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         event: EventStreamPushV1,
     },
-    DefenseSync {
-        #[serde(flatten)]
-        state: DefenseSyncV1,
-    },
     WeaponEquipped {
         #[serde(flatten)]
         weapon_equipped: WeaponEquippedV1,
@@ -313,6 +329,34 @@ enum ServerDataPayloadWireV1 {
     LingtianSession {
         #[serde(flatten)]
         lingtian_session: LingtianSessionDataV1,
+    },
+    SkillXpGain {
+        char_id: u64,
+        skill: SkillIdV1,
+        amount: u32,
+        source: XpGainSourceV1,
+    },
+    SkillLvUp {
+        char_id: u64,
+        skill: SkillIdV1,
+        new_lv: u8,
+    },
+    SkillCapChanged {
+        char_id: u64,
+        skill: SkillIdV1,
+        new_cap: u8,
+    },
+    SkillScrollUsed {
+        char_id: u64,
+        scroll_id: String,
+        skill: SkillIdV1,
+        xp_granted: u32,
+        was_duplicate: bool,
+    },
+    SkillSnapshot {
+        char_id: u64,
+        skills: std::collections::BTreeMap<String, SkillEntrySnapshotV1>,
+        consumed_scrolls: Vec<String>,
     },
 }
 
@@ -492,6 +536,8 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                recent_skill_milestones_summary,
+                skill_milestones,
             } => Ok(Self::CultivationDetail {
                 realm,
                 opened,
@@ -501,6 +547,8 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                recent_skill_milestones_summary,
+                skill_milestones,
             }),
             ServerDataPayloadWireV1::InventorySnapshot { snapshot } => {
                 Ok(Self::InventorySnapshot(snapshot))
@@ -572,7 +620,6 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
             ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
-            ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
             ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
                 Ok(Self::WeaponEquipped(weapon_equipped))
             }
@@ -585,6 +632,44 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
+            ServerDataPayloadWireV1::SkillXpGain {
+                char_id,
+                skill,
+                amount,
+                source,
+            } => Ok(Self::SkillXpGain(Box::new(SkillXpGainPayloadV1::new(
+                char_id, skill, amount, source,
+            )))),
+            ServerDataPayloadWireV1::SkillLvUp {
+                char_id,
+                skill,
+                new_lv,
+            } => Ok(Self::SkillLvUp(SkillLvUpPayloadV1::new(
+                char_id, skill, new_lv,
+            ))),
+            ServerDataPayloadWireV1::SkillCapChanged {
+                char_id,
+                skill,
+                new_cap,
+            } => Ok(Self::SkillCapChanged(SkillCapChangedPayloadV1::new(
+                char_id, skill, new_cap,
+            ))),
+            ServerDataPayloadWireV1::SkillScrollUsed {
+                char_id,
+                scroll_id,
+                skill,
+                xp_granted,
+                was_duplicate,
+            } => Ok(Self::SkillScrollUsed(Box::new(
+                SkillScrollUsedPayloadV1::new(char_id, scroll_id, skill, xp_granted, was_duplicate),
+            ))),
+            ServerDataPayloadWireV1::SkillSnapshot {
+                char_id,
+                skills,
+                consumed_scrolls,
+            } => Ok(Self::SkillSnapshot(
+                Box::new(SkillSnapshotPayloadV1::new(char_id, skills, consumed_scrolls)),
+            )),
         }
     }
 }
@@ -653,6 +738,8 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                recent_skill_milestones_summary,
+                skill_milestones,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 opened: opened.clone(),
@@ -662,6 +749,8 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress: open_progress.clone(),
                 cracks_count: cracks_count.clone(),
                 contamination_total: *contamination_total,
+                recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
+                skill_milestones: skill_milestones.clone(),
             },
             ServerDataPayloadV1::InventorySnapshot(snapshot) => Self::InventorySnapshot {
                 snapshot: snapshot.clone(),
@@ -741,7 +830,6 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
                 event: event.clone(),
             },
-            ServerDataPayloadV1::DefenseSync(state) => Self::DefenseSync { state: *state },
             ServerDataPayloadV1::WeaponEquipped(w) => Self::WeaponEquipped {
                 weapon_equipped: w.clone(),
             },
@@ -753,6 +841,34 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
+            },
+            ServerDataPayloadV1::SkillXpGain(data) => Self::SkillXpGain {
+                char_id: data.char_id,
+                skill: data.skill,
+                amount: data.amount,
+                source: data.source.clone(),
+            },
+            ServerDataPayloadV1::SkillLvUp(data) => Self::SkillLvUp {
+                char_id: data.char_id,
+                skill: data.skill,
+                new_lv: data.new_lv,
+            },
+            ServerDataPayloadV1::SkillCapChanged(data) => Self::SkillCapChanged {
+                char_id: data.char_id,
+                skill: data.skill,
+                new_cap: data.new_cap,
+            },
+            ServerDataPayloadV1::SkillScrollUsed(data) => Self::SkillScrollUsed {
+                char_id: data.char_id,
+                scroll_id: data.scroll_id.clone(),
+                skill: data.skill,
+                xp_granted: data.xp_granted,
+                was_duplicate: data.was_duplicate,
+            },
+            ServerDataPayloadV1::SkillSnapshot(data) => Self::SkillSnapshot {
+                char_id: data.char_id,
+                skills: data.skills.clone(),
+                consumed_scrolls: data.consumed_scrolls.clone(),
             },
         }
     }
@@ -865,11 +981,15 @@ impl ServerDataPayloadV1 {
             Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
-            Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
+            Self::SkillXpGain(..) => ServerDataType::SkillXpGain,
+            Self::SkillLvUp(..) => ServerDataType::SkillLvUp,
+            Self::SkillCapChanged(..) => ServerDataType::SkillCapChanged,
+            Self::SkillScrollUsed(..) => ServerDataType::SkillScrollUsed,
+            Self::SkillSnapshot(..) => ServerDataType::SkillSnapshot,
         }
     }
 }
@@ -917,12 +1037,6 @@ mod tests {
                 color: 0,
                 created_at_ms: 0,
             }),
-            ServerDataPayloadV1::DefenseSync(DefenseSyncV1 {
-                stance: DefenseStanceV1::None,
-                fake_skin_layers: 0,
-                vortex_active: false,
-                vortex_ready_at_ms: 0,
-            }),
         ];
 
         for payload in cases {
@@ -952,6 +1066,14 @@ mod tests {
             open_progress: vec![1.0; 20],
             cracks_count: vec![0; 20],
             contamination_total: 0.0,
+            recent_skill_milestones_summary: "t82000:skill:herbalism:lv3".to_string(),
+            skill_milestones: vec![SkillMilestoneSnapshotV1 {
+                skill: "herbalism".to_string(),
+                new_lv: 3,
+                achieved_at: 82_000,
+                narration: "你摘得百草渐熟，今已识八分。".to_string(),
+                total_xp_at: 550,
+            }],
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -964,11 +1086,18 @@ mod tests {
         let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
         match back.payload {
             ServerDataPayloadV1::CultivationDetail {
-                opened, flow_rate, ..
+                opened,
+                flow_rate,
+                recent_skill_milestones_summary,
+                skill_milestones,
+                ..
             } => {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
+                assert_eq!(recent_skill_milestones_summary, "t82000:skill:herbalism:lv3");
+                assert_eq!(skill_milestones.len(), 1);
+                assert_eq!(skill_milestones[0].skill, "herbalism");
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }
@@ -1026,6 +1155,21 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-xp-gain.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-lv-up.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-cap-changed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-scroll-used.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skill-snapshot.sample.json"
             ),
         ];
 

@@ -9,7 +9,12 @@
 
 use valence::prelude::{Entity, EventWriter, Query};
 
+use crate::alchemy::skill_hook::purge_rate_bonus;
+use crate::skill::components::{SkillId, SkillSet};
+use crate::skill::curve::effective_lv;
+
 use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem};
+use super::breakthrough::skill_cap_for_realm;
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
 use valence::prelude::Res;
@@ -23,8 +28,9 @@ pub const BASE_PURGE_RATE: f64 = 0.1;
 pub fn purge_step(
     contam: &mut super::components::ContamSource,
     qi_budget: f64,
+    purge_rate: f64,
 ) -> (f64, f64, bool) {
-    let want_purge = BASE_PURGE_RATE.min(contam.amount);
+    let want_purge = purge_rate.min(contam.amount);
     let want_cost = want_purge * DRAIN_RATIO;
     let actual_cost = want_cost.min(qi_budget);
     let actual_purge = if want_cost > 0.0 {
@@ -45,13 +51,19 @@ pub fn contamination_tick(
         &mut Cultivation,
         &mut Contamination,
         &mut MeridianSystem,
+        Option<&SkillSet>,
     )>,
 ) {
     let now = clock.tick;
-    for (entity, mut cultivation, mut contam, mut meridians) in players.iter_mut() {
+    for (entity, mut cultivation, mut contam, mut meridians, skill_set) in players.iter_mut() {
         if contam.entries.is_empty() {
             continue;
         }
+        let alchemy_real_lv = skill_set
+            .and_then(|skill_set| skill_set.skills.get(&SkillId::Alchemy).map(|entry| entry.lv))
+            .unwrap_or(0);
+        let alchemy_effective_lv = effective_lv(alchemy_real_lv, skill_cap_for_realm(cultivation.realm));
+        let purge_rate = BASE_PURGE_RATE * (1.0 + purge_rate_bonus(alchemy_effective_lv) as f64);
         let mut any_qi_deficit = false;
         // 按 amount 从大到小处理
         contam.entries.sort_by(|a, b| {
@@ -62,7 +74,7 @@ pub fn contamination_tick(
 
         for entry in contam.entries.iter_mut() {
             let budget = cultivation.qi_current.max(0.0);
-            let (_purge, cost, _cleared) = purge_step(entry, budget);
+            let (_purge, cost, _cleared) = purge_step(entry, budget, purge_rate);
             cultivation.qi_current -= cost;
             if cultivation.qi_current < 0.0 {
                 any_qi_deficit = true;
@@ -101,6 +113,10 @@ pub fn contamination_tick(
 mod tests {
     use super::*;
     use crate::cultivation::components::{ColorKind, ContamSource};
+    use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
+    use crate::cultivation::death_hooks::CultivationDeathTrigger;
+    use crate::skill::components::{SkillEntry, SkillSet};
+    use valence::prelude::{App, Update};
 
     #[test]
     fn purge_consumes_qi_at_10_to_15_ratio() {
@@ -110,7 +126,7 @@ mod tests {
             attacker_id: None,
             introduced_at: 0,
         };
-        let (purge, cost, _) = purge_step(&mut c, 100.0);
+        let (purge, cost, _) = purge_step(&mut c, 100.0, BASE_PURGE_RATE);
         assert!((cost / purge - DRAIN_RATIO).abs() < 1e-9);
     }
 
@@ -122,7 +138,7 @@ mod tests {
             attacker_id: None,
             introduced_at: 0,
         };
-        let (_purge, cost, _) = purge_step(&mut c, 0.05);
+        let (_purge, cost, _) = purge_step(&mut c, 0.05, BASE_PURGE_RATE);
         assert!(cost <= 0.05 + 1e-9);
     }
 
@@ -134,7 +150,82 @@ mod tests {
             attacker_id: None,
             introduced_at: 0,
         };
-        let (_, _, cleared) = purge_step(&mut c, 100.0);
+        let (_, _, cleared) = purge_step(&mut c, 100.0, BASE_PURGE_RATE);
         assert!(cleared);
+    }
+
+    #[test]
+    fn alchemy_skill_increases_contamination_purge_rate() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_systems(Update, contamination_tick);
+
+        let baseline = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                Contamination {
+                    entries: vec![ContamSource {
+                        amount: 1.0,
+                        color: ColorKind::Mellow,
+                        attacker_id: None,
+                        introduced_at: 1,
+                    }],
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        let mut skilled_set = SkillSet::default();
+        skilled_set.skills.insert(
+            SkillId::Alchemy,
+            SkillEntry {
+                lv: 10,
+                ..Default::default()
+            },
+        );
+        let skilled = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                Contamination {
+                    entries: vec![ContamSource {
+                        amount: 1.0,
+                        color: ColorKind::Mellow,
+                        attacker_id: None,
+                        introduced_at: 1,
+                    }],
+                },
+                MeridianSystem::default(),
+                skilled_set,
+            ))
+            .id();
+
+        app.update();
+
+        let baseline_contam = app
+            .world()
+            .get::<Contamination>(baseline)
+            .expect("baseline player should still exist");
+        let skilled_contam = app
+            .world()
+            .get::<Contamination>(skilled)
+            .expect("skilled player should still exist");
+
+        assert!(
+            skilled_contam.entries[0].amount < baseline_contam.entries[0].amount,
+            "alchemy skill should purge more contamination per tick"
+        );
     }
 }

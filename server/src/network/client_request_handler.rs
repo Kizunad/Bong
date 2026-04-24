@@ -20,18 +20,18 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry,
 };
-use crate::combat::components::{
-    Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
-};
+use crate::combat::components::{Casting, QuickSlotBindings};
 use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::inventory::{
-    apply_inventory_move, discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
-    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
+    apply_inventory_move, consume_item_instance_once, inventory_item_by_instance_borrow,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance, pickup_dropped_loot_instance,
+    DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
 };
 use crate::inventory::{
     ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
@@ -54,6 +54,7 @@ use crate::network::cast_emit::{
 };
 use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::send_server_data_payload;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -61,6 +62,8 @@ use crate::schema::client_request::ClientRequestV1;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::skill::components::{ScrollId, SkillId, SkillSet};
+use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -70,17 +73,21 @@ pub struct AlchemyMockState {
     pub recipe_index: HashMap<String, i32>,
 }
 
-/// 把 cast / quickslot / 防御姿态相关查询打包，避免 `handle_client_request_payloads`
+/// 把 cast / quickslot 相关查询打包，避免 `handle_client_request_payloads`
 /// 顶部参数 tuple 超出 Bevy 0.14 SystemParam 16-tuple 上限。
 #[derive(SystemParam)]
 pub struct CombatRequestParams<'w, 's> {
     pub casting_q: Query<'w, 's, &'static Casting>,
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
-    pub defense_stance_q: Query<'w, 's, &'static mut DefenseStance>,
-    pub unlocked_q: Query<'w, 's, &'static UnlockedStyles>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+}
+
+#[derive(SystemParam)]
+pub struct DroppedLootRequestParams<'w, 's> {
+    pub registry: ResMut<'w, DroppedLootRegistry>,
+    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
 }
 
 /// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
@@ -108,6 +115,14 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
 }
 
+#[derive(SystemParam)]
+pub struct SkillScrollRequestParams<'w, 's> {
+    pub skill_xp_tx: EventWriter<'w, SkillXpGain>,
+    pub skill_scroll_used_tx: EventWriter<'w, SkillScrollUsed>,
+    pub skill_sets: Query<'w, 's, &'static mut SkillSet>,
+    pub cultivations: Query<'w, 's, &'static Cultivation>,
+}
+
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
@@ -129,9 +144,9 @@ pub fn handle_client_request_payloads(
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
     mut combat_params: CombatRequestParams,
-    mut dropped_loot_registry: ResMut<DroppedLootRegistry>,
-    positions: Query<&valence::prelude::Position>,
+    mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
+    mut skill_scroll_params: SkillScrollRequestParams,
 ) {
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
@@ -180,6 +195,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
             | ClientRequestV1::DropWeaponIntent { v, .. }
@@ -189,7 +205,6 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
-            | ClientRequestV1::SwitchDefenseStance { v, .. }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
@@ -358,6 +373,16 @@ pub fn handle_client_request_payloads(
                     item_instance_id,
                 });
             }
+            ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
+                handle_learn_skill_scroll(
+                    ev.client,
+                    instance_id,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &mut skill_scroll_params,
+                );
+            }
             // 涉及 inventory 联动的请求暂保留 stub(plan-inventory-v1 接入后再做)
             other @ (ClientRequestV1::AlchemyFeedSlot { .. }
             | ClientRequestV1::AlchemyTakeBack { .. }
@@ -392,10 +417,10 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     &mut inventories,
-                    &mut dropped_loot_registry,
+                    &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
-                    &positions,
+                    &dropped_loot_params.positions,
                 );
             }
             ClientRequestV1::DropWeaponIntent {
@@ -406,10 +431,10 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     &mut inventories,
-                    &mut dropped_loot_registry,
+                    &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
-                    &positions,
+                    &dropped_loot_params.positions,
                 );
             }
             ClientRequestV1::RepairWeaponIntent {
@@ -432,10 +457,10 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     instance_id,
                     &mut inventories,
-                    &mut dropped_loot_registry,
+                    &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
-                    &positions,
+                    &dropped_loot_params.positions,
                 );
             }
             ClientRequestV1::ApplyPill {
@@ -483,14 +508,6 @@ pub fn handle_client_request_payloads(
                     item_id,
                     &mut combat_params.bindings_q,
                     &inventories,
-                );
-            }
-            ClientRequestV1::SwitchDefenseStance { stance, .. } => {
-                handle_switch_defense_stance(
-                    ev.client,
-                    &stance,
-                    &mut combat_params.defense_stance_q,
-                    &combat_params.unlocked_q,
                 );
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
@@ -608,12 +625,153 @@ pub fn handle_client_request_payloads(
     }
 }
 
+fn handle_learn_skill_scroll(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    skill_scroll_params: &mut SkillScrollRequestParams,
+) {
+    let Some((skill, scroll_id, xp_grant)) = ({
+        let inventory = match inventories.get(entity) {
+            Ok(inv) => inv,
+            Err(_) => return,
+        };
+        let instance = match inventory_item_by_instance_borrow(&inventory, instance_id) {
+            Some(instance) => instance,
+            None => return,
+        };
+        skill_scroll_spec(instance.template_id.as_str())
+            .map(|(skill, xp_grant)| (skill, ScrollId::new(instance.template_id.clone()), xp_grant))
+    }) else {
+        tracing::warn!(
+            "[bong][network][skill] learn_skill_scroll rejected: instance_id={} is not a known skill scroll",
+            instance_id
+        );
+        return;
+    };
+
+    let is_duplicate = match skill_scroll_params.skill_sets.get(entity) {
+        Ok(skill_set) => skill_set.consumed_scrolls.contains(&scroll_id),
+        Err(_) => return,
+    };
+
+    if is_duplicate {
+        skill_scroll_params.skill_scroll_used_tx.send(SkillScrollUsed {
+            char_entity: entity,
+            scroll_id,
+            skill,
+            xp_granted: 0,
+            was_duplicate: true,
+        });
+        if let Ok(inventory) = inventories.get(entity) {
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "skill_scroll_duplicate",
+            );
+        }
+        if let Ok((username, mut client)) = clients.get_mut(entity) {
+            if let (Ok(skill_set), Ok(cultivation)) = (
+                skill_scroll_params.skill_sets.get(entity),
+                skill_scroll_params.cultivations.get(entity),
+            ) {
+                send_skill_snapshot_to_client(
+                    entity,
+                    &mut client,
+                    username.0.as_str(),
+                    skill_set,
+                    cultivation,
+                    "skill_scroll_duplicate",
+                );
+            }
+        }
+        return;
+    }
+
+    {
+        let Ok(mut inventory) = inventories.get_mut(entity) else {
+            return;
+        };
+        if consume_item_instance_once(&mut inventory, instance_id).is_err() {
+            return;
+        }
+    }
+
+    if let Ok(mut skill_set) = skill_scroll_params.skill_sets.get_mut(entity) {
+        skill_set.consumed_scrolls.insert(scroll_id.clone());
+    } else {
+        return;
+    }
+
+    skill_scroll_params.skill_xp_tx.send(SkillXpGain {
+        char_entity: entity,
+        skill,
+        amount: xp_grant,
+        source: XpGainSource::Scroll {
+            scroll_id: scroll_id.clone(),
+            xp_grant,
+        },
+    });
+    skill_scroll_params.skill_scroll_used_tx.send(SkillScrollUsed {
+        char_entity: entity,
+        scroll_id,
+        skill,
+        xp_granted: xp_grant,
+        was_duplicate: false,
+    });
+
+    let Ok(player_state) = player_states.get(entity) else {
+        return;
+    };
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        if let Ok(inventory) = inventories.get(entity) {
+            send_inventory_snapshot_to_client(
+                entity,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                "skill_scroll_consumed",
+            );
+        }
+        if let Ok(skill_set) = skill_scroll_params.skill_sets.get(entity) {
+            let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
+                return;
+            };
+            send_skill_snapshot_to_client(
+                entity,
+                &mut client,
+                username.0.as_str(),
+                skill_set,
+                cultivation,
+                "skill_scroll_consumed",
+            );
+        }
+    }
+}
+
+fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
+    match template_id {
+        "skill_scroll_herbalism_baicao_can" => Some((SkillId::Herbalism, 500)),
+        "skill_scroll_alchemy_danhuo_can" => Some((SkillId::Alchemy, 500)),
+        "skill_scroll_forging_duantie_can" => Some((SkillId::Forging, 500)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
+    use crate::skill::components::SkillSet;
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
-    use valence::testing::create_mock_client;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     #[derive(Default)]
     struct CapturedBreakthroughRequests(Vec<BreakthroughRequest>);
@@ -651,6 +809,72 @@ mod tests {
         captured.0.extend(events.read().cloned());
     }
 
+    fn skill_scroll_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 0.05,
+            rarity: ItemRarity::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+        }
+    }
+
+    fn inventory_with_skill_scroll(item: ItemInstance) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn has_inventory_snapshot_payload(helper: &mut MockClientHelper) -> bool {
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) else {
+                continue;
+            };
+            if value.get("type").and_then(|ty| ty.as_str()) == Some("inventory_snapshot") {
+                return true;
+            }
+        }
+        false
+    }
+
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
@@ -676,6 +900,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
         app.add_systems(
             Update,
             (
@@ -724,6 +950,136 @@ mod tests {
             "unsupported request version should not emit InsightChosen"
         );
     }
+
+    #[test]
+    fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(Update, handle_client_request_payloads);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn((
+            client_bundle,
+            inventory_with_skill_scroll(skill_scroll_item(42, "skill_scroll_herbalism_baicao_can")),
+            SkillSet::default(),
+            Cultivation::default(),
+            PlayerState::default(),
+            QuickSlotBindings::default(),
+            DefenseStance::default(),
+            UnlockedStyles::default(),
+        )).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"learn_skill_scroll","v":1,"instance_id":42}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(inventory.containers[0].items.is_empty());
+        let skill_set = app.world().get::<SkillSet>(entity).unwrap();
+        assert!(skill_set.consumed_scrolls.contains(&ScrollId::new("skill_scroll_herbalism_baicao_can")));
+
+        let xp_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillXpGain>>().drain().collect();
+        assert_eq!(xp_events.len(), 1);
+        assert_eq!(xp_events[0].skill, SkillId::Herbalism);
+        assert_eq!(xp_events[0].amount, 500);
+        let used_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillScrollUsed>>().drain().collect();
+        assert_eq!(used_events.len(), 1);
+        assert!(!used_events[0].was_duplicate);
+        assert_eq!(used_events[0].xp_granted, 500);
+    }
+
+    #[test]
+    fn learn_skill_scroll_duplicate_does_not_consume_item() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(Update, handle_client_request_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_set = SkillSet::default();
+        skill_set.consumed_scrolls.insert(ScrollId::new("skill_scroll_herbalism_baicao_can"));
+        let entity = app.world_mut().spawn((
+            client_bundle,
+            inventory_with_skill_scroll(skill_scroll_item(42, "skill_scroll_herbalism_baicao_can")),
+            skill_set,
+            Cultivation::default(),
+            PlayerState::default(),
+            QuickSlotBindings::default(),
+            DefenseStance::default(),
+            UnlockedStyles::default(),
+        )).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"learn_skill_scroll","v":1,"instance_id":42}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert!(
+            has_inventory_snapshot_payload(&mut helper),
+            "duplicate rejection must resync inventory after optimistic client drop"
+        );
+        let xp_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillXpGain>>().drain().collect();
+        assert!(xp_events.is_empty());
+        let used_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillScrollUsed>>().drain().collect();
+        assert_eq!(used_events.len(), 1);
+        assert!(used_events[0].was_duplicate);
+        assert_eq!(used_events[0].xp_granted, 0);
+    }
 }
 
 fn parse_session_mode(raw: &str) -> SessionMode {
@@ -741,55 +1097,6 @@ fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
         "ling_shui" => Some(ReplenishSource::LingShui),
         _ => None,
     }
-}
-
-fn handle_switch_defense_stance(
-    entity: valence::prelude::Entity,
-    stance_str: &str,
-    defense_stance_q: &mut Query<&mut DefenseStance>,
-    unlocked_q: &Query<&UnlockedStyles>,
-) {
-    let new_stance = match stance_str.to_ascii_uppercase().as_str() {
-        "NONE" => DefenseStanceKind::None,
-        "JIEMAI" => DefenseStanceKind::Jiemai,
-        "TISHI" => DefenseStanceKind::Tishi,
-        "JUELING" => DefenseStanceKind::Jueling,
-        other => {
-            tracing::warn!(
-                "[bong][network] switch_defense_stance entity={entity:?} ignored: unknown stance '{other}'"
-            );
-            return;
-        }
-    };
-    let unlocked = unlocked_q.get(entity).copied().unwrap_or(UnlockedStyles {
-        jiemai: false,
-        tishi: false,
-        jueling: false,
-    });
-    let allowed = match new_stance {
-        DefenseStanceKind::None => true,
-        DefenseStanceKind::Jiemai => unlocked.jiemai,
-        DefenseStanceKind::Tishi => unlocked.tishi,
-        DefenseStanceKind::Jueling => unlocked.jueling,
-    };
-    if !allowed {
-        tracing::debug!(
-            "[bong][network] switch_defense_stance entity={entity:?} ignored: stance {new_stance:?} not unlocked"
-        );
-        return;
-    }
-    let Ok(mut stance) = defense_stance_q.get_mut(entity) else {
-        tracing::warn!(
-            "[bong][network] switch_defense_stance entity={entity:?} has no DefenseStance Component"
-        );
-        return;
-    };
-    if stance.stance == new_stance {
-        // Bevy 不会触发 Changed，但也不报错；client 已经知道状态。
-        return;
-    }
-    stance.stance = new_stance;
-    tracing::info!("[bong][network] switch_defense_stance entity={entity:?} -> {new_stance:?}");
 }
 
 fn handle_use_quick_slot(

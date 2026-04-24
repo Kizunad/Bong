@@ -57,11 +57,15 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::QuickSlotConfig => "quickslot_config",
         ServerDataType::UnlocksSync => "unlocks_sync",
         ServerDataType::EventStreamPush => "event_stream_push",
-        ServerDataType::DefenseSync => "defense_sync",
         ServerDataType::WeaponEquipped => "weapon_equipped",
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::LingtianSession => "lingtian_session",
+        ServerDataType::SkillXpGain => "skill_xp_gain",
+        ServerDataType::SkillLvUp => "skill_lv_up",
+        ServerDataType::SkillCapChanged => "skill_cap_changed",
+        ServerDataType::SkillScrollUsed => "skill_scroll_used",
+        ServerDataType::SkillSnapshot => "skill_snapshot",
     }
 }
 
@@ -88,6 +92,7 @@ impl RecipientSelector {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RecipientMetadata {
     pub username: Option<String>,
+    pub char_id: Option<String>,
     pub zone: Option<String>,
 }
 
@@ -101,7 +106,12 @@ pub fn normalize_player_target(target: &str) -> Option<String> {
         return None;
     }
 
-    let logical_name = strip_offline_alias_prefix(trimmed).trim();
+    let routed = trimmed.split('|').next().unwrap_or(trimmed).trim();
+    if routed.is_empty() {
+        return None;
+    }
+
+    let logical_name = strip_offline_alias_prefix(routed).trim();
     if logical_name.is_empty() {
         return None;
     }
@@ -130,8 +140,14 @@ pub fn route_recipient_indices(
                         .username
                         .as_deref()
                         .and_then(normalize_player_target);
+                    let char_id_key = recipient
+                        .char_id
+                        .as_deref()
+                        .and_then(normalize_player_target);
 
-                    (username_key.as_deref() == Some(target_key.as_str())).then_some(index)
+                    (username_key.as_deref() == Some(target_key.as_str())
+                        || char_id_key.as_deref() == Some(target_key.as_str()))
+                    .then_some(index)
                 })
                 .collect()
         }
@@ -245,6 +261,9 @@ mod server_data_tests {
             durability: 0.9,
             freshness: None,
             freshness_current: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
         }
     }
 
@@ -483,14 +502,17 @@ mod server_data_tests {
         let recipients = vec![
             RecipientMetadata {
                 username: Some("Steve".to_string()),
+                char_id: Some("char:101".to_string()),
                 zone: Some("blood_valley".to_string()),
             },
             RecipientMetadata {
                 username: Some("offline:Alex".to_string()),
+                char_id: Some("char:202".to_string()),
                 zone: Some("spawn".to_string()),
             },
             RecipientMetadata {
                 username: None,
+                char_id: Some("char:303".to_string()),
                 zone: Some("blood_valley".to_string()),
             },
         ];
@@ -518,6 +540,19 @@ mod server_data_tests {
         );
         assert_eq!(alex_plain, vec![1]);
         assert_eq!(alex_alias, vec![1]);
+
+        let steve_char = route_recipient_indices(
+            &RecipientSelector::player("char:101"),
+            &recipients,
+            None,
+        );
+        let hidden_char = route_recipient_indices(
+            &RecipientSelector::player("char:303"),
+            &recipients,
+            None,
+        );
+        assert_eq!(steve_char, vec![0]);
+        assert_eq!(hidden_char, vec![2]);
 
         let zone_matches = route_recipient_indices(
             &RecipientSelector::zone("blood_valley"),
@@ -615,6 +650,9 @@ mod server_data_tests {
                     durability: 1.0,
                     freshness: None,
                     freshness_current: None,
+                    scroll_kind: None,
+                    scroll_skill_id: None,
+                    scroll_xp_grant: None,
                 },
             },
         ));

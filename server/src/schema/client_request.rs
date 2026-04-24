@@ -93,6 +93,10 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    LearnSkillScroll {
+        v: u8,
+        instance_id: u64,
+    },
     /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
     /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
     InventoryMoveIntent {
@@ -144,13 +148,6 @@ pub enum ClientRequestV1 {
         v: u8,
         slot: u8,
         item_id: Option<String>,
-    },
-    /// plan-HUD-v1 §7.3 / §11.3 切换防御姿态。`stance` 一个：
-    /// "JIEMAI" / "TISHI" / "JUELING" / "NONE"（与 client `Stance.name()` 对齐）。
-    /// server 校验 UnlockedStyles 后写入 DefenseStance Component。
-    SwitchDefenseStance {
-        v: u8,
-        stance: String,
     },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从

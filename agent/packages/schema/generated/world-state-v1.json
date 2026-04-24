@@ -307,12 +307,67 @@
             "additionalProperties": false,
             "type": "object",
             "required": [
-              "recent_biography_summary"
+              "recent_biography_summary",
+              "recent_skill_milestones_summary",
+              "skill_milestones"
             ],
             "properties": {
               "recent_biography_summary": {
                 "maxLength": 4096,
                 "type": "string"
+              },
+              "recent_skill_milestones_summary": {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "skill_milestones": {
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "skill",
+                    "new_lv",
+                    "achieved_at",
+                    "narration",
+                    "total_xp_at"
+                  ],
+                  "properties": {
+                    "skill": {
+                      "anyOf": [
+                        {
+                          "const": "herbalism",
+                          "type": "string"
+                        },
+                        {
+                          "const": "alchemy",
+                          "type": "string"
+                        },
+                        {
+                          "const": "forging",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "new_lv": {
+                      "minimum": 0,
+                      "maximum": 10,
+                      "type": "integer"
+                    },
+                    "achieved_at": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "narration": {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    "total_xp_at": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                }
               }
             }
           }

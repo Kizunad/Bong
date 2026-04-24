@@ -4,6 +4,9 @@ import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillMilestoneStore;
+import com.bong.client.skill.SkillSetStore;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
@@ -23,7 +26,11 @@ public class CultivationDetailHandlerTest {
     void setUp() { MeridianStateStore.resetForTests(); }
 
     @AfterEach
-    void tearDown() { MeridianStateStore.resetForTests(); }
+    void tearDown() {
+        MeridianStateStore.resetForTests();
+        SkillSetStore.resetForTests();
+        SkillMilestoneStore.resetForTests();
+    }
 
     private static ServerDataEnvelope envelope(JsonObject payload) {
         payload.addProperty("type", "cultivation_detail");
@@ -140,6 +147,9 @@ public class CultivationDetailHandlerTest {
         // LU=idx0 -> 0.0; HT=idx4 -> 0.2; BL=idx6 -> 0.3
         assertEquals(0.0, body.channel(MeridianChannel.LU).healProgress(), 1e-9);
         assertEquals(0.3, body.channel(MeridianChannel.BL).healProgress(), 1e-9);
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.HERBALISM).cap());
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.ALCHEMY).cap());
+        assertEquals(5, SkillSetStore.snapshot().get(SkillId.FORGING).cap());
     }
 
     @Test
@@ -162,5 +172,41 @@ public class CultivationDetailHandlerTest {
         assertEquals(MeridianChannel.LR, CultivationDetailHandler.CHANNEL_ORDER[11]);
         assertEquals(MeridianChannel.REN, CultivationDetailHandler.CHANNEL_ORDER[12]);
         assertEquals(MeridianChannel.YANG_WEI, CultivationDetailHandler.CHANNEL_ORDER[19]);
+    }
+
+    @Test
+    void skillCapForRealmMatchesPlanSectionFour() {
+        assertEquals(3, CultivationDetailHandler.skillCapForRealm("Awaken"));
+        assertEquals(5, CultivationDetailHandler.skillCapForRealm("Induce"));
+        assertEquals(7, CultivationDetailHandler.skillCapForRealm("Condense"));
+        assertEquals(8, CultivationDetailHandler.skillCapForRealm("Solidify"));
+        assertEquals(9, CultivationDetailHandler.skillCapForRealm("Spirit"));
+        assertEquals(10, CultivationDetailHandler.skillCapForRealm("Void"));
+        assertNull(CultivationDetailHandler.skillCapForRealm("炼气三层"));
+    }
+
+    @Test
+    void appliesSkillMilestonesWhenPresent() {
+        var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
+        payload.addProperty("realm", "Spirit");
+        payload.add("open_progress", new Gson().toJsonTree(twenty(1.0)));
+        payload.add("cracks_count", new Gson().toJsonTree(twenty(0)));
+        payload.addProperty("contamination_total", 0.0);
+        payload.addProperty("recent_skill_milestones_summary", "t82000:skill:alchemy:lv3");
+
+        JsonObject milestone = new JsonObject();
+        milestone.addProperty("skill", "alchemy");
+        milestone.addProperty("new_lv", 3);
+        milestone.addProperty("achieved_at", 82000);
+        milestone.addProperty("narration", "炉火渐驯，丹性稍明。 (alchemy Lv 2 → 3)");
+        milestone.addProperty("total_xp_at", 1400);
+        payload.add("skill_milestones", new Gson().toJsonTree(java.util.List.of(milestone)));
+
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+        assertEquals(1, SkillMilestoneStore.snapshot().size());
+        assertEquals(SkillId.ALCHEMY, SkillMilestoneStore.snapshot().get(0).skill());
+        assertEquals(3, SkillMilestoneStore.snapshot().get(0).newLv());
+        assertEquals("t82000:skill:alchemy:lv3", SkillMilestoneStore.summary());
     }
 }

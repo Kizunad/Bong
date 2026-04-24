@@ -16,6 +16,7 @@ use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use super::outcome::{build_flawed_result, classify_precise, OutcomeBucket};
 use super::recipe::{Recipe, RecipeRegistry, SideEffect};
 use super::session::AlchemySession;
+use super::skill_hook::{side_effect_weight_scale, xp_for_bucket};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResolvedOutcome {
@@ -38,6 +39,13 @@ pub enum ResolvedOutcome {
     Explode { damage: f64, meridian_crack: f64 },
     /// 不匹配任何配方（投错料且无 flawed_fallback 命中）。
     Mismatch,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedAlchemyResult {
+    pub bucket: OutcomeBucket,
+    pub xp: u32,
+    pub outcome: ResolvedOutcome,
 }
 
 /// plan §1.3 残缺匹配用 seed 来源 — session 本身的确定性哈希（不依赖 rand）。
@@ -75,17 +83,69 @@ pub fn resolve(
     recipe: &Recipe,
     registry: &RecipeRegistry,
 ) -> ResolvedOutcome {
-    let outcome = resolve_raw(session, recipe, registry);
-    // plan-shelflife-v1 §5.1 M5c — 按 staged.quality_factor 折算 qi_gain。
-    // Bucket / quality / pill ID 不变（freshness 不影响"炼丹技艺档位"，只影响"产出 qi 量"）。
-    apply_quality_factor(outcome, session.staged.quality_factor)
+    resolve_with_meta(session, recipe, registry).outcome
+}
+
+pub fn resolve_with_alchemy_effective_lv(
+    session: &AlchemySession,
+    recipe: &Recipe,
+    registry: &RecipeRegistry,
+    alchemy_effective_lv: u8,
+) -> ResolvedOutcome {
+    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, alchemy_effective_lv).outcome
+}
+
+pub fn resolve_with_meta(
+    session: &AlchemySession,
+    recipe: &Recipe,
+    registry: &RecipeRegistry,
+) -> ResolvedAlchemyResult {
+    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, 0)
+}
+
+pub fn resolve_with_meta_and_alchemy_effective_lv(
+    session: &AlchemySession,
+    recipe: &Recipe,
+    registry: &RecipeRegistry,
+    alchemy_effective_lv: u8,
+) -> ResolvedAlchemyResult {
+    let (bucket, outcome) = resolve_raw(session, recipe, registry, alchemy_effective_lv);
+    let outcome = apply_quality_factor(outcome, session.staged.quality_factor);
+    ResolvedAlchemyResult {
+        bucket,
+        xp: xp_for_bucket(bucket),
+        outcome,
+    }
+}
+
+pub fn resolve_with_meta_from_outcome(outcome: &ResolvedOutcome) -> ResolvedAlchemyResult {
+    let bucket = match outcome {
+        ResolvedOutcome::Pill {
+            flawed_path: true, ..
+        } => OutcomeBucket::Flawed,
+        ResolvedOutcome::Pill {
+            flawed_path: false,
+            quality,
+            ..
+        } if *quality >= 0.999_999 => OutcomeBucket::Perfect,
+        ResolvedOutcome::Pill { .. } => OutcomeBucket::Good,
+        ResolvedOutcome::Waste { .. } | ResolvedOutcome::Mismatch => OutcomeBucket::Waste,
+        ResolvedOutcome::Explode { .. } => OutcomeBucket::Explode,
+    };
+
+    ResolvedAlchemyResult {
+        bucket,
+        xp: xp_for_bucket(bucket),
+        outcome: outcome.clone(),
+    }
 }
 
 fn resolve_raw(
     session: &AlchemySession,
     recipe: &Recipe,
     registry: &RecipeRegistry,
-) -> ResolvedOutcome {
+    alchemy_effective_lv: u8,
+) -> (OutcomeBucket, ResolvedOutcome) {
     let staged = &session.staged.materials;
     let need = recipe.stage0_ingredients();
 
@@ -93,31 +153,40 @@ fn resolve_raw(
     let is_exact_stage0 = staged == &need;
 
     if is_exact_stage0 {
-        let summary = session.summarize(recipe);
+        let summary = session.summarize_with_alchemy_effective_lv(recipe, alchemy_effective_lv);
         let bucket = classify_precise(&summary);
-        return map_exact_bucket(recipe, bucket);
+        return (bucket, map_exact_bucket(recipe, bucket));
     }
 
     // 残缺匹配：在 registry 找 subset 命中
     if let Some((hit_recipe, missing_ratio)) = registry.match_flawed(staged) {
         // 仍然要看温度/qi：qi_deficit → 废，severe_overheat → 炸，其余走 flawed
-        let summary = session.summarize(hit_recipe);
+        let summary = session.summarize_with_alchemy_effective_lv(hit_recipe, alchemy_effective_lv);
         if summary.severe_overheat {
             if let Some(ex) = &hit_recipe.outcomes.explode {
-                return ResolvedOutcome::Explode {
-                    damage: ex.damage,
-                    meridian_crack: ex.meridian_crack,
-                };
+                return (
+                    OutcomeBucket::Explode,
+                    ResolvedOutcome::Explode {
+                        damage: ex.damage,
+                        meridian_crack: ex.meridian_crack,
+                    },
+                );
             }
-            return ResolvedOutcome::Explode {
-                damage: 10.0,
-                meridian_crack: 0.1,
-            };
+            return (
+                OutcomeBucket::Explode,
+                ResolvedOutcome::Explode {
+                    damage: 10.0,
+                    meridian_crack: 0.1,
+                },
+            );
         }
         if summary.qi_deficit {
-            return ResolvedOutcome::Waste {
-                recipe_id: Some(hit_recipe.id.clone()),
-            };
+            return (
+                OutcomeBucket::Waste,
+                ResolvedOutcome::Waste {
+                    recipe_id: Some(hit_recipe.id.clone()),
+                },
+            );
         }
         let toxin_color = hit_recipe
             .outcomes
@@ -131,35 +200,45 @@ fn resolve_raw(
             toxin_color,
             missing_ratio,
             session_seed(session),
+            side_effect_weight_scale(alchemy_effective_lv),
         ) {
-            return ResolvedOutcome::Pill {
-                recipe_id: hit_recipe.id.clone(),
-                pill: result.pill,
-                quality: result.quality,
-                toxin_amount: result.toxin_amount,
-                toxin_color: result.toxin_color,
-                qi_gain: None,
-                side_effect: result.side_effect,
-                flawed_path: true,
-            };
+            return (
+                OutcomeBucket::Flawed,
+                ResolvedOutcome::Pill {
+                    recipe_id: hit_recipe.id.clone(),
+                    pill: result.pill,
+                    quality: result.quality,
+                    toxin_amount: result.toxin_amount,
+                    toxin_color: result.toxin_color,
+                    qi_gain: None,
+                    side_effect: result.side_effect,
+                    flawed_path: true,
+                },
+            );
         }
     }
 
     // 乱投
-    let summary = session.summarize(recipe);
+    let summary = session.summarize_with_alchemy_effective_lv(recipe, alchemy_effective_lv);
     if summary.severe_overheat {
         if let Some(ex) = &recipe.outcomes.explode {
-            return ResolvedOutcome::Explode {
-                damage: ex.damage,
-                meridian_crack: ex.meridian_crack,
-            };
+            return (
+                OutcomeBucket::Explode,
+                ResolvedOutcome::Explode {
+                    damage: ex.damage,
+                    meridian_crack: ex.meridian_crack,
+                },
+            );
         }
-        return ResolvedOutcome::Explode {
-            damage: 10.0,
-            meridian_crack: 0.1,
-        };
+        return (
+            OutcomeBucket::Explode,
+            ResolvedOutcome::Explode {
+                damage: 10.0,
+                meridian_crack: 0.1,
+            },
+        );
     }
-    ResolvedOutcome::Mismatch
+    (OutcomeBucket::Waste, ResolvedOutcome::Mismatch)
 }
 
 /// plan-shelflife-v1 §5.1 M5c — 把 staged.quality_factor 应用到 Pill.qi_gain。
@@ -329,6 +408,120 @@ mod tests {
     }
 
     #[test]
+    fn resolve_with_meta_reports_bucket_and_xp_for_exact_match() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.45));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+
+        let resolved = resolve_with_meta(&s, &recipe, &registry);
+        assert_eq!(resolved.bucket, OutcomeBucket::Perfect);
+        assert_eq!(resolved.xp, 6);
+        match resolved.outcome {
+            ResolvedOutcome::Pill { pill, .. } => assert_eq!(pill, "hui_yuan_pill"),
+            other => panic!("expected exact-match pill outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_with_meta_reports_flawed_bucket_xp_for_subset_fallback() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
+            .unwrap_or_default();
+        s.apply_intervention(Intervention::AdjustTemp(0.60));
+        s.apply_intervention(Intervention::InjectQi(15.0));
+        drive_to_finish(&mut s, &recipe);
+
+        let resolved = resolve_with_meta(&s, &recipe, &registry);
+        assert_eq!(resolved.bucket, OutcomeBucket::Flawed);
+        assert_eq!(resolved.xp, 2);
+        match resolved.outcome {
+            ResolvedOutcome::Pill {
+                flawed_path: true,
+                ..
+            } => {}
+            other => panic!("expected flawed fallback outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_with_meta_reports_explode_bucket_xp() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(1.0));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+
+        let resolved = resolve_with_meta(&s, &recipe, &registry);
+        assert_eq!(resolved.bucket, OutcomeBucket::Explode);
+        assert_eq!(resolved.xp, 1);
+        assert!(matches!(resolved.outcome, ResolvedOutcome::Explode { .. }));
+    }
+
+    #[test]
+    fn higher_alchemy_skill_improves_exact_match_bucket_via_tolerance_scale() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "alice".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[("bai_cao".into(), 2, 1.0), ("ling_shui".into(), 1, 1.0)],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.72));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        drive_to_finish(&mut s, &recipe);
+
+        let low = resolve_with_alchemy_effective_lv(&s, &recipe, &registry, 0);
+        let high = resolve_with_alchemy_effective_lv(&s, &recipe, &registry, 10);
+
+        match low {
+            ResolvedOutcome::Pill {
+                pill,
+                quality,
+                qi_gain,
+                ..
+            } => {
+                assert_eq!(pill, "hui_yuan_pill");
+                assert!((quality - 0.7).abs() < 1e-9);
+                assert_eq!(qi_gain, Some(18.0));
+            }
+            other => panic!("expected low-skill pill outcome, got {other:?}"),
+        }
+        match high {
+            ResolvedOutcome::Pill {
+                pill,
+                quality,
+                qi_gain,
+                ..
+            } => {
+                assert_eq!(pill, "hui_yuan_pill");
+                assert!((quality - 1.0).abs() < 1e-9);
+                assert_eq!(qi_gain, Some(24.0));
+            }
+            other => panic!("expected high-skill pill outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn flawed_subset_hits_fallback_for_kai_mai() {
         let registry = load_recipe_registry().unwrap();
         let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
@@ -353,6 +546,52 @@ mod tests {
             }
             other => panic!("expected flawed pill, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn higher_alchemy_skill_reduces_bad_side_effect_weight_in_flawed_path() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("kai_mai_pill_v0").unwrap().clone();
+        let mut base = AlchemySession::new(recipe.id.clone(), "alice".into());
+        base.feed_stage(&recipe, 0, &[("kai_mai_cao".into(), 3, 1.0)])
+            .unwrap_or_default();
+        base.apply_intervention(Intervention::AdjustTemp(0.60));
+        base.apply_intervention(Intervention::InjectQi(15.0));
+        drive_to_finish(&mut base, &recipe);
+
+        for extra_ticks in 0..24 {
+            let mut s = base.clone();
+            for _ in 0..extra_ticks {
+                s.apply_intervention(Intervention::AdjustTemp(0.60));
+                s.tick();
+            }
+
+            let low = resolve_with_alchemy_effective_lv(&s, &recipe, &registry, 0);
+            let high = resolve_with_alchemy_effective_lv(&s, &recipe, &registry, 10);
+
+            let low_side = match low {
+                ResolvedOutcome::Pill {
+                    flawed_path: true,
+                    side_effect,
+                    ..
+                } => side_effect.expect("low-skill flawed result should keep side effect").tag,
+                other => panic!("expected flawed pill outcome, got {other:?}"),
+            };
+            let high_side = match high {
+                ResolvedOutcome::Pill {
+                    flawed_path: true,
+                    side_effect,
+                    ..
+                } => side_effect.expect("high-skill flawed result should keep side effect").tag,
+                other => panic!("expected flawed pill outcome, got {other:?}"),
+            };
+
+            if low_side != high_side {
+                return;
+            }
+        }
+
+        panic!("expected at least one deterministic seed window where high alchemy skill changes flawed side effect outcome");
     }
 
     #[test]

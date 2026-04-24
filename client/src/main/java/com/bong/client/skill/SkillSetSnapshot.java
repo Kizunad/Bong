@@ -1,20 +1,21 @@
 package com.bong.client.skill;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * plan-skill-v1 §8 SkillSet 客户端镜像（POJO）。对应 server {@code SkillSet} 的子集：
  * <ul>
  *   <li>{@code skills} — 按 {@link SkillId} 映射到当前 {@link Entry}</li>
+ *   <li>{@code consumedScrolls} — 当前角色已悟过的残卷 id（P4 残卷学习去重）</li>
  * </ul>
  *
- * <p>客户端不 mirror 服务器的 {@code consumed_scrolls}（P4 才接入残卷拖入学习）。
- *
- * <p>所有实例不可变（copy-on-write 风格）—— 用 {@link #withSkill(SkillId, Entry)} 派生新实例。
- */
+     * <p>所有实例不可变（copy-on-write 风格）—— 用 {@link #withSkill(SkillId, Entry)} 派生新实例。
+     */
 public final class SkillSetSnapshot {
     /** plan §6 单条 skill 的 UI 呈现数据。 */
     public record Entry(
@@ -54,12 +55,14 @@ public final class SkillSetSnapshot {
         }
     }
 
-    private static final SkillSetSnapshot EMPTY = new SkillSetSnapshot(Collections.emptyMap());
+    private static final SkillSetSnapshot EMPTY = new SkillSetSnapshot(Collections.emptyMap(), Collections.emptySet());
 
     private final Map<SkillId, Entry> skills;
+    private final Set<String> consumedScrolls;
 
-    private SkillSetSnapshot(Map<SkillId, Entry> skills) {
+    private SkillSetSnapshot(Map<SkillId, Entry> skills, Set<String> consumedScrolls) {
         this.skills = skills;
+        this.consumedScrolls = consumedScrolls;
     }
 
     public static SkillSetSnapshot empty() {
@@ -67,12 +70,24 @@ public final class SkillSetSnapshot {
     }
 
     public static SkillSetSnapshot of(Map<SkillId, Entry> skills) {
-        if (skills == null || skills.isEmpty()) return EMPTY;
-        return new SkillSetSnapshot(Collections.unmodifiableMap(new LinkedHashMap<>(skills)));
+        return of(skills, Collections.emptySet());
+    }
+
+    public static SkillSetSnapshot of(Map<SkillId, Entry> skills, Set<String> consumedScrolls) {
+        Set<String> normalized = normalizeConsumedScrolls(consumedScrolls);
+        if ((skills == null || skills.isEmpty()) && normalized.isEmpty()) return EMPTY;
+        return new SkillSetSnapshot(
+            Collections.unmodifiableMap(new LinkedHashMap<>(skills == null ? Collections.emptyMap() : skills)),
+            normalized
+        );
     }
 
     public Map<SkillId, Entry> skills() {
         return skills;
+    }
+
+    public Set<String> consumedScrolls() {
+        return consumedScrolls;
     }
 
     /**
@@ -90,6 +105,29 @@ public final class SkillSetSnapshot {
         Objects.requireNonNull(entry, "entry");
         Map<SkillId, Entry> next = new LinkedHashMap<>(skills);
         next.put(id, entry);
-        return new SkillSetSnapshot(Collections.unmodifiableMap(next));
+        return new SkillSetSnapshot(Collections.unmodifiableMap(next), consumedScrolls);
+    }
+
+    public SkillSetSnapshot withConsumedScrolls(Set<String> nextConsumedScrolls) {
+        return new SkillSetSnapshot(skills, normalizeConsumedScrolls(nextConsumedScrolls));
+    }
+
+    public boolean hasConsumedScroll(String scrollId) {
+        return scrollId != null && consumedScrolls.contains(scrollId);
+    }
+
+    private static Set<String> normalizeConsumedScrolls(Set<String> consumedScrolls) {
+        if (consumedScrolls == null || consumedScrolls.isEmpty()) {
+            return Collections.emptySet();
+        }
+        LinkedHashSet<String> next = new LinkedHashSet<>();
+        for (String scrollId : consumedScrolls) {
+            if (scrollId == null) continue;
+            String normalized = scrollId.trim();
+            if (!normalized.isEmpty()) {
+                next.add(normalized);
+            }
+        }
+        return next.isEmpty() ? Collections.emptySet() : Collections.unmodifiableSet(next);
     }
 }

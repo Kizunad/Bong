@@ -48,7 +48,8 @@ pub mod topology;
 pub mod tribulation;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, IntoSystemConfigs, Query, Res, Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Res,
+    Update, Username, Without,
 };
 
 use self::breakthrough::{breakthrough_system, BreakthroughOutcome, BreakthroughRequest};
@@ -87,6 +88,7 @@ use crate::cultivation::components::Realm;
 use crate::persistence::{load_active_tribulation, PersistenceSettings};
 use crate::player::state::canonical_player_id;
 use crate::player::state::PlayerState;
+use crate::skill::events::SkillCapChanged;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -126,6 +128,7 @@ pub fn register(app: &mut App) {
             qi_color_evolution_tick,
             composure_tick,
             qi_zero_decay_tick.after(qi_regen_and_zone_drain_tick),
+            emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
@@ -228,6 +231,26 @@ fn cultivation_realm_from_player_state(realm: &str) -> Option<Realm> {
     }
 }
 
+fn emit_skill_caps_on_realm_regressed(
+    mut regressed: EventReader<RealmRegressed>,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
+) {
+    for event in regressed.read() {
+        let new_cap = breakthrough::skill_cap_for_realm(event.to);
+        for skill in [
+            crate::skill::components::SkillId::Herbalism,
+            crate::skill::components::SkillId::Alchemy,
+            crate::skill::components::SkillId::Forging,
+        ] {
+            skill_cap_events.send(SkillCapChanged {
+                char_entity: event.entity,
+                skill,
+                new_cap,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +262,7 @@ mod tests {
     };
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
+    use crate::skill::events::SkillCapChanged;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
 
@@ -492,5 +516,30 @@ mod tests {
         assert_eq!(quota.occupied_slots, 1);
 
         let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn realm_regressed_emits_cap_changed_for_all_skills() {
+        let mut app = App::new();
+        app.add_event::<RealmRegressed>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, emit_skill_caps_on_realm_regressed);
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RealmRegressed {
+            entity,
+            from: Realm::Spirit,
+            to: Realm::Solidify,
+            closed_meridians: 2,
+        });
+        app.update();
+
+        let caps: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
+            .drain()
+            .collect();
+        assert_eq!(caps.len(), 3);
+        assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 }

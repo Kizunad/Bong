@@ -1,11 +1,13 @@
 package com.bong.client.hud;
 
-import com.bong.client.botany.BotanySkillStore;
 import com.bong.client.botany.BotanySkillViewModel;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -25,7 +27,7 @@ public class BongHudOrchestratorTest {
         BongToast.resetForTests();
         InventoryStateStore.resetForTests();
         HarvestSessionStore.resetForTests();
-        BotanySkillStore.resetForTests();
+        SkillSetStore.resetForTests();
     }
 
     @Test
@@ -168,7 +170,10 @@ public class BongHudOrchestratorTest {
             "晨露未散",
             10L
         ));
-        BotanySkillStore.replace(BotanySkillViewModel.create(2, 90L, 120L, 3));
+        SkillSetStore.updateEntry(
+            SkillId.HERBALISM,
+            new SkillSetSnapshot.Entry(2, 90L, 120L, 90L, 10, 0L, 0L)
+        );
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(),

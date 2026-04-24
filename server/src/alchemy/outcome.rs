@@ -82,13 +82,16 @@ pub fn pick_side_effect(pool: &[SideEffect], seed: u64) -> Option<SideEffect> {
     if pool.is_empty() {
         return None;
     }
-    let total: u64 = pool.iter().map(|s| s.weight.max(1) as u64).sum();
+    let total: u64 = pool.iter().map(|s| s.weight as u64).sum();
     if total == 0 {
         return None;
     }
     let mut pick = seed % total;
     for s in pool {
-        let w = s.weight.max(1) as u64;
+        let w = s.weight as u64;
+        if w == 0 {
+            continue;
+        }
         if pick < w {
             return Some(s.clone());
         }
@@ -97,12 +100,35 @@ pub fn pick_side_effect(pool: &[SideEffect], seed: u64) -> Option<SideEffect> {
     pool.last().cloned()
 }
 
+fn is_beneficial_side_effect(effect: &SideEffect) -> bool {
+    matches!(
+        effect.tag.as_str(),
+        "minor_qi_regen_boost" | "stamina_boost" | "rare_insight_flash"
+    )
+}
+
+pub fn scale_side_effect_pool(pool: &[SideEffect], bad_weight_scale: f32) -> Vec<SideEffect> {
+    pool.iter()
+        .map(|entry| {
+            let mut scaled = entry.clone();
+            if !is_beneficial_side_effect(entry) {
+                let base = scaled.weight as f32;
+                scaled.weight = (base * bad_weight_scale)
+                    .round()
+                    .clamp(0.0, u32::MAX as f32) as u32;
+            }
+            scaled
+        })
+        .collect()
+}
+
 /// 基于 base outcome 计算残缺版（注：base 是 recipe.outcomes.flawed 或构造的 default）。
 pub fn build_flawed_result(
     recipe: &Recipe,
     base_toxin_color: ColorKind,
     missing_ratio: f64,
     seed: u64,
+    bad_weight_scale: f32,
 ) -> Option<FlawedResult> {
     let fallback = recipe.flawed_fallback.as_ref()?;
     // missing_ratio: 0 → 丹效 ×0.6, 1 → 丹效 ×0.3（线性缩放到 [0.3, 0.6]）
@@ -121,7 +147,9 @@ pub fn build_flawed_result(
         .unwrap_or(0.6);
     let quality = base_quality * fallback.quality_scale * (eff_scale / 0.5);
     let toxin_amount = base_toxin * fallback.toxin_scale;
-    let side = pick_side_effect(&fallback.side_effect_pool, seed);
+    let scaled_pool = scale_side_effect_pool(&fallback.side_effect_pool, bad_weight_scale);
+    let side = pick_side_effect(&scaled_pool, seed)
+        .or_else(|| pick_side_effect(&fallback.side_effect_pool, seed));
 
     Some(FlawedResult {
         pill: fallback.pill.clone(),
@@ -166,6 +194,7 @@ pub fn compute_duration_deviation(elapsed: u32, profile: &FireProfile) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::recipe::Outcomes;
 
     fn mk_profile() -> FireProfile {
         FireProfile {
@@ -268,6 +297,77 @@ mod tests {
     #[test]
     fn pick_side_effect_empty_returns_none() {
         assert!(pick_side_effect(&[], 42).is_none());
+    }
+
+    #[test]
+    fn scale_side_effect_pool_can_zero_light_bad_effects() {
+        let scaled = scale_side_effect_pool(
+            &[SideEffect {
+                tag: "burn".into(),
+                duration_s: 0,
+                weight: 1,
+                perm: false,
+                color: None,
+                amount: None,
+            }],
+            0.4,
+        );
+        assert_eq!(scaled[0].weight, 0);
+    }
+
+    #[test]
+    fn build_flawed_result_uses_scaled_side_effect_weights() {
+        let recipe = Recipe {
+            id: "scaled".into(),
+            name: "scaled".into(),
+            furnace_tier_min: 1,
+            stages: vec![],
+            fire_profile: mk_profile(),
+            outcomes: Outcomes {
+                perfect: None,
+                good: None,
+                flawed: Some(PillOutcome {
+                    pill: "pill".into(),
+                    quality: 0.4,
+                    toxin_amount: 0.6,
+                    toxin_color: ColorKind::Turbid,
+                    qi_gain: None,
+                }),
+                waste: None,
+                explode: None,
+            },
+            flawed_fallback: Some(crate::alchemy::recipe::FlawedFallback {
+                pill: "pill_flawed".into(),
+                quality_scale: 1.0,
+                toxin_scale: 1.0,
+                side_effect_pool: vec![
+                    SideEffect {
+                        tag: "stamina_boost".into(),
+                        duration_s: 0,
+                        weight: 1,
+                        perm: false,
+                        color: None,
+                        amount: None,
+                    },
+                    SideEffect {
+                        tag: "blurred_vision_15s".into(),
+                        duration_s: 0,
+                        weight: 3,
+                        perm: false,
+                        color: None,
+                        amount: None,
+                    },
+                ],
+            }),
+        };
+
+        let unscaled = build_flawed_result(&recipe, ColorKind::Turbid, 0.0, 2, 1.0)
+            .expect("unscaled flawed result should exist");
+        let scaled = build_flawed_result(&recipe, ColorKind::Turbid, 0.0, 2, 0.4)
+            .expect("scaled flawed result should exist");
+
+        assert_eq!(unscaled.side_effect.as_ref().map(|s| s.tag.as_str()), Some("blurred_vision_15s"));
+        assert_eq!(scaled.side_effect.as_ref().map(|s| s.tag.as_str()), Some("stamina_boost"));
     }
 
     #[test]

@@ -204,6 +204,12 @@ public final class ClientRequestProtocol {
         return encodeApplyPill(instanceId, SelfTarget.INSTANCE);
     }
 
+    public static String encodeLearnSkillScroll(long instanceId) {
+        JsonObject obj = envelope("learn_skill_scroll");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     // ─── Inventory move intent (client → server) ────────────────────────────
 
     /** 库存位置三态联合，匹配 server schema InventoryLocationV1。 */
@@ -298,12 +304,6 @@ public final class ClientRequestProtocol {
 
     public static String encodeJiemai() {
         return envelope("jiemai").toString();
-    }
-
-    public static String encodeSwitchDefenseStance(String stance) {
-        JsonObject obj = envelope("switch_defense_stance");
-        obj.addProperty("stance", stance);
-        return obj.toString();
     }
 
     // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
