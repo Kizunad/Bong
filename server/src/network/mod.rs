@@ -73,6 +73,11 @@ use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
+use crate::cultivation::breakthrough::{breakthrough_system, BreakthroughRequest};
+#[cfg(test)]
+use crate::cultivation::tick::CultivationClock;
+
+#[cfg(test)]
 use crate::persistence::{load_agent_decisions, load_agent_eras};
 
 const REDIS_URL_ENV_KEY: &str = "REDIS_URL";
@@ -3046,7 +3051,13 @@ mod tests {
             app.insert_resource(PendingGameplayNarrations::default());
             app.insert_resource(GameplayTick::default());
             app.insert_resource(CombatClock::default());
+            app.insert_resource(CultivationClock::default());
             app.add_event::<AttackIntent>();
+            app.add_event::<BreakthroughRequest>();
+            app.add_event::<crate::cultivation::breakthrough::BreakthroughOutcome>();
+            app.add_event::<crate::cultivation::death_hooks::CultivationDeathTrigger>();
+            app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+            app.add_event::<crate::skill::events::SkillCapChanged>();
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
@@ -3057,6 +3068,8 @@ mod tests {
                     crate::combat::debug::tick_combat_clock,
                     crate::player::gameplay::apply_queued_gameplay_actions
                         .after(crate::combat::debug::tick_combat_clock),
+                    breakthrough_system
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::status_effect_apply_tick
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::attribute_aggregate_tick
