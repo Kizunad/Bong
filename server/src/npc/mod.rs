@@ -8,6 +8,7 @@ pub mod navigator;
 pub mod patrol;
 pub mod possession;
 pub mod scenario;
+pub mod social;
 pub mod spawn;
 pub mod sync;
 pub mod territory;
@@ -33,4 +34,5 @@ pub fn register(app: &mut App) {
     scenario::register(app);
     lingtian_pressure::register(app);
     territory::register(app);
+    social::register(app);
 }
