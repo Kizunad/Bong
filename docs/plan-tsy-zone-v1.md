@@ -23,7 +23,7 @@
 
 **隐形前置依赖**：本 plan §3.1 假设 `ZoneRegistry` 支持运行时动态 add（`/tsy-spawn` 追加 3 subzone）。现有 `ZoneRegistry::apply_runtime_records()` (`server/src/world/zone.rs:195`) 只支持修改已注册 zone 的 `active_events`/`blocked_tiles`，**不支持 add/remove zone**。本 plan 需补 `ZoneRegistry::register_runtime_zone(zone: Zone) -> Result<()>`（幂等、同名 zone 已存在则拒绝、push 到内部 Vec 末尾）。此能力属于 P0 范围，不外推给 worldgen plan。
 
-**架构前置依赖（2026-04-24 反转）**：本 plan 原 §-1 点 5 / §0 轴心 5 约定"传送是同一 MC world 内的坐标传送"，**已推翻**——`worldview.md §十六 世界层实现注` 明确坍缩渊以**独立位面**实现（类 Nether）。相关基础设施由 `docs/plans-skeleton/plan-tsy-dimension-v1.md` 承载：Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API (`DimensionTransferRequest`)、per-dimension `TerrainProvider`。本 P0 plan 的裂缝/入场/出关系统全部改为消费 dimension plan 提供的跨位面 API，而非自己直 `insert Position`。
+**架构前置依赖（2026-04-24 反转）**：本 plan 原 §-1 点 5 / §0 轴心 5 约定"传送是同一 MC world 内的坐标传送"，**已推翻**——`worldview.md §十六 世界层实现注` 明确坍缩渊以**独立位面**实现（类 Nether）。相关基础设施由 `docs/plan-tsy-dimension-v1.md` 承载：Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API (`DimensionTransferRequest`)、per-dimension `TerrainProvider`。本 P0 plan 的裂缝/入场/出关系统全部改为消费 dimension plan 提供的跨位面 API，而非自己直 `insert Position`。
 
 ---
 

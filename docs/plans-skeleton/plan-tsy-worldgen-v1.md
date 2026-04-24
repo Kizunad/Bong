@@ -388,7 +388,7 @@ P0 `plan-tsy-zone-v1` 已在 2026-04-23 修订：
 
 ### 2026-04-24（架构反转连带修订）
 - P0 `plan-tsy-zone-v1` §-1 点 5 / §0 轴心 5 反转为"跨位面传送"；§1.1 zones.tsy.json 模板坐标改 TSY dim 内部；§1.3 `TsyPresence.entry_portal_pos` 升级为 `return_to: DimensionAnchor`；§3.1/§3.3/§3.4 entry/exit 系统改发 `DimensionTransferRequest` event
-- 新增 `docs/plans-skeleton/plan-tsy-dimension-v1.md` 作为本 plan + P0 的共同前置（Valence `DimensionType` / 跨位面传送 / per-dimension `TerrainProvider`）
+- 新增 `docs/plan-tsy-dimension-v1.md` 作为本 plan + P0 的共同前置（Valence `DimensionType` / 跨位面传送 / per-dimension `TerrainProvider`）
 - 本 plan §0 轴心 0 新增；§1 consumer 拆两侧；§2 blueprint 强制分两文件；§4 layer 作用域收窄到 TSY dim；§8 Q5/Q7/Q10 关闭
 
 本 plan 仍不反向改 P0 的**业务逻辑**——P0 实装的 `TsyPresence`/`RiftPortal`/入场过滤/负压 tick 概念全部保留，本 plan 只负责**从两份 POI 表自动 spawn 出来**，替代 `/tsy-spawn` 的手工流程。

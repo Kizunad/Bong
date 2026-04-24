@@ -5,7 +5,7 @@
 
 本 plan 是**方向性 meta**，不含实现细节。实施由 **P-1 + 6 个子 plan** 线性推进：
 
-- `plan-tsy-dimension-v1.md` (**P-1 位面基础设施** — 骨架)（2026-04-24 架构反转新增）— Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API、per-dimension `TerrainProvider`。**所有其他子 plan 的前置**
+- `plan-tsy-dimension-v1.md` (**P-1 位面基础设施** — active，2026-04-24 audit 升级)— Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API、per-dimension `TerrainProvider`、`CurrentDimension` component。**所有其他子 plan 的前置**
 - `plan-tsy-zone-v1.md` (**P0 基础**) — TSY zone type、负压抽真元、裂缝入口、入场过滤
 - `plan-tsy-loot-v1.md` (**P1 物资与死亡**) — 99/1 遗物分布、秘境内死亡 100% 掉落、干尸化、keepInventory mixin
 - `plan-tsy-lifecycle-v1.md` (**P2 塌缩与道伥**) — 遗物骨架、塌缩事件、race-out、道伥生态
