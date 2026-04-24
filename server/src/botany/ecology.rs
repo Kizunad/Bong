@@ -70,6 +70,7 @@ pub fn aggregate<'a>(
     plants: impl IntoIterator<Item = &'a Plant>,
 ) -> BotanyEcologySnapshotV1 {
     // zone → (kind_id → count, variant → count)。BTreeMap 保证输出排序稳定。
+    #[allow(clippy::type_complexity)]
     let mut per_zone: BTreeMap<String, (BTreeMap<String, u64>, BTreeMap<u8, u64>)> =
         BTreeMap::new();
 
@@ -214,7 +215,7 @@ mod tests {
     fn aggregate_drops_plants_in_unregistered_zones() {
         // 植物 zone_name 不在 ZoneRegistry 中 → 被忽略（防止 agent 收到未知 zone）
         let zones = vec![make_zone("spawn", 0.5)];
-        let plants = vec![
+        let plants = [
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::None),
             make_plant(BotanyPlantId::CiSheHao, "ghost_zone", PlantVariant::None),
         ];

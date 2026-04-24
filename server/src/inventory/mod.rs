@@ -3473,7 +3473,7 @@ cols = 4
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);
-        assert!(registry.by_owner.get(&owner).is_none());
+        assert!(!registry.by_owner.contains_key(&owner));
     }
 
     #[test]

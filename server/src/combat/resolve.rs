@@ -93,7 +93,7 @@ pub fn apply_defense_intents(
         });
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn resolve_attack_intents(
     clock: Res<CombatClock>,
     mut intents: EventReader<AttackIntent>,
@@ -108,7 +108,7 @@ pub fn resolve_attack_intents(
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
-    mut weapon_break: (
+    weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
         Commands,
@@ -260,7 +260,7 @@ pub fn resolve_attack_intents(
             let mut broken_dislodged = false;
             if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
                 let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
-                    (item.instance_id == instance_id).then(|| match slot.as_str() {
+                    (item.instance_id == instance_id).then_some(match slot.as_str() {
                         crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
                         crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
                         crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,

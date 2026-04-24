@@ -255,6 +255,7 @@ pub fn handle_alchemy_furnace_place(
 ///
 /// plan §1.2：炉必须由玩家手持物品右键地面放置（`ClientRequestV1::AlchemyFurnacePlace`）。
 /// 没有世界炉 = 炼不了丹 — 不再给玩家挂自带虚拟炉作保底。
+#[allow(clippy::type_complexity)]
 pub(crate) fn attach_alchemy_to_joined_clients(
     mut commands: Commands,
     joined: Query<(Entity, &Username), (Added<Username>, With<Client>, Without<LearnedRecipes>)>,

@@ -51,7 +51,7 @@ impl ScrollId {
 }
 
 /// plan §8 单条 skill 状态快照。`lv` 是 real_lv（不含 cap 压制），展示层再做 effective_lv = min(lv, cap)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillEntry {
     /// real_lv，0-10；超 cap 不扣，只影响 effective_lv。
@@ -64,18 +64,6 @@ pub struct SkillEntry {
     pub last_action_at: Tick,
     /// plan §3.1 多样性奖励去重计数：连续重复同一动作 +1，换动作归零。
     pub recent_repeat_count: u8,
-}
-
-impl Default for SkillEntry {
-    fn default() -> Self {
-        Self {
-            lv: 0,
-            xp: 0,
-            total_xp: 0,
-            last_action_at: 0,
-            recent_repeat_count: 0,
-        }
-    }
 }
 
 /// plan §8 玩家的 skill 集合。挂玩家 entity；`consumed_scrolls` 一生累积不清零。

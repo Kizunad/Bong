@@ -141,7 +141,7 @@ pub fn complete_harvest_for_player(
         BotanyHarvestMode::Manual => MANUAL_SKILL_XP,
         BotanyHarvestMode::Auto => AUTO_SKILL_XP,
     };
-    let xp = base_xp.saturating_add_signed(variant.xp_delta()).max(0) as u64;
+    let xp = base_xp.saturating_add_signed(variant.xp_delta());
     let new_skill = store.add_skill_xp(player_id, xp);
     skill_events.send(BotanySkillChangedEvent {
         client_entity: session.client_entity,
@@ -812,7 +812,7 @@ mod tests {
 
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
-        let client_entity = app.world_mut().spawn(client_bundle).id();
+        let _client_entity = app.world_mut().spawn(client_bundle).id();
 
         // 植物离玩家 0.2 块（在 0.7 半径内）
         let target = app

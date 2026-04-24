@@ -115,7 +115,7 @@ mod tests {
 
         // Changed<PlayerInventory> 需要一次 mutation 才触发。
         {
-            let mut world = app.world_mut();
+            let world = app.world_mut();
             let mut entity_mut = world.entity_mut(entity);
             let mut inv = entity_mut.get_mut::<PlayerInventory>().unwrap();
             inv.revision = InventoryRevision(inv.revision.0.saturating_add(1));

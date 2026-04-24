@@ -198,6 +198,8 @@ impl ArmorProfileRegistry {
         self.by_instance_id.len()
     }
 
+    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（is_empty 供 registry 消费者使用）
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.by_instance_id.is_empty()
     }
@@ -206,6 +208,8 @@ impl ArmorProfileRegistry {
         self.by_instance_id.get(&instance_id)
     }
 
+    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（insert 供装备 sync 手动装载用）
+    #[allow(dead_code)]
     pub fn insert(&mut self, instance_id: u64, profile: ArmorProfile) -> Result<(), String> {
         profile.validate()?;
         self.by_instance_id.insert(instance_id, profile);

@@ -659,26 +659,19 @@ mod tests {
 
     #[test]
     fn coalesce_preserves_non_particle_payloads() {
-        let mut reqs = Vec::new();
-        reqs.push(VfxEventRequest::new(
-            DVec3::ZERO,
-            VfxEventPayloadV1::PlayAnim {
-                target_player: TEST_UUID.to_string(),
-                anim_id: "bong:sword_swing".to_string(),
-                priority: 1000,
-                fade_in_ticks: Some(3),
-            },
-        ));
-        reqs.push(make_particle_request(
-            "bong:sword_qi_slash",
-            [10.0, 64.0, 10.0],
-            4,
-        ));
-        reqs.push(make_particle_request(
-            "bong:sword_qi_slash",
-            [10.1, 64.0, 10.2],
-            4,
-        ));
+        let reqs = vec![
+            VfxEventRequest::new(
+                DVec3::ZERO,
+                VfxEventPayloadV1::PlayAnim {
+                    target_player: TEST_UUID.to_string(),
+                    anim_id: "bong:sword_swing".to_string(),
+                    priority: 1000,
+                    fade_in_ticks: Some(3),
+                },
+            ),
+            make_particle_request("bong:sword_qi_slash", [10.0, 64.0, 10.0], 4),
+            make_particle_request("bong:sword_qi_slash", [10.1, 64.0, 10.2], 4),
+        ];
         let out = coalesce_requests(reqs);
         assert_eq!(out.len(), 2, "particles merge, anim passes through");
         // 顺序:particles 先,others 后

@@ -242,6 +242,7 @@ fn handle_consecration_injects(
 }
 
 /// StepAdvance 统一收束：根据当前 step 结果推进，若到 Done → 派发 outcome。
+#[allow(clippy::too_many_arguments)]
 fn handle_step_advance(
     mut ev: EventReader<StepAdvance>,
     registry: Res<BlueprintRegistry>,

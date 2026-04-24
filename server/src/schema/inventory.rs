@@ -188,6 +188,8 @@ pub struct InventorySnapshotV1 {
     pub body_level: f64,
 }
 
+// TODO: Dropped variant 较大（含 InventoryItemViewV1）；boxing 可降 enum 大小但影响 wire schema 兼容性，暂 allow。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InventoryEventV1 {
@@ -317,6 +319,8 @@ impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
     }
 }
 
+// TODO: RawDropped 变体较大；与 InventoryEventV1 同策略暂 allow 以保持反序列化结构简单。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawInventoryEventV1 {

@@ -24,6 +24,7 @@ impl Resource for BotanyEventSpawnRoll {}
 
 /// 订阅 `DeathEvent`：NPC / 玩家死亡时，按概率在所在 zone 生成一株 kong_shou_hen（空兽痕）。
 /// plan §1.2.3 特殊路径：不扣 zone.spirit_qi（植物本就生于灵气极薄之地）。
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_event_triggered_plants_on_death(
     mut commands: Commands,
     mut death_events: EventReader<DeathEvent>,
