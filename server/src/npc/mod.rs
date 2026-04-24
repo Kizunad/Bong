@@ -4,6 +4,7 @@ pub mod hunger;
 pub mod lifecycle;
 pub mod lingtian_pressure;
 pub mod lod;
+pub mod loot;
 pub mod movement;
 pub mod navigator;
 pub mod patrol;
