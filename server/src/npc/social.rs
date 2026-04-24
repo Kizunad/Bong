@@ -263,6 +263,7 @@ mod tests {
             spirit_quality: quality,
             durability,
             freshness: None,
+            mineral_id: None,
         }
     }
 
@@ -331,6 +332,7 @@ mod tests {
             spirit_quality: 0.0,
             durability: 0.0,
             freshness: None,
+            mineral_id: None,
         };
         assert!(estimate_item_price(&weird) >= 1);
     }
