@@ -20,7 +20,7 @@
 | **图形直觉胜过数字** | 用剪影/颜色/位置表达状态，尽量不显示裸数字 | `qi 220/280` 这种精确数值在 HUD 上 |
 | **反馈优先用音效/边缘闪烁** | 「敌袭」「低血」通过屏幕边缘脉动 + 音效传递 | 为每个事件加一个 UI 面板 |
 | **详细数字统一进 InspectScreen（I 键）** | 策略玩家可以随时按 I 看精确值 | 为「看伤口严重度 9.3」在 HUD 上加文字 |
-| **未解锁/未装备一律不渲染** | 不要泄露未解锁内容，不要占空间 | 灰掉的防御姿态图标 |
+| **未解锁/未装备一律不渲染** | 不要泄露未解锁内容，不要占空间 | 灰掉的流派指示器 |
 
 ---
 
@@ -443,21 +443,7 @@ Shake              →  顶层（对位置做微扰）
 | `Shift+Q` | 投掷暗器 | `ThrowAnqiIntent` |
 | `T` | 发动技能（ForgeWeapon / Zhenfa） | `ActivateTechniqueIntent` |
 
-> **反应键 ≠ 姿态切换键**：§7.2 的防御键 `V` 是 **DefenseWindow 内的反应动作**（200ms 内按下完成弹反），有合理默认键。§7.3 的三个键是 **姿态切换**（长效切到截脉/替尸/绝灵模式），属进阶玩法，不预设。
-
-### 7.3 防御姿态切换
-
-**玩家完全自定义**。KeyBinding 系统注册 3 个动作键（`SwitchStanceJiemai` / `SwitchStanceTishi` / `SwitchStanceJueling`），默认**不预设键位**，玩家在 MC 设置 · 控制中自行绑定。
-
-| 动作 | 默认键 | 约束 |
-|---|---|---|
-| 切到截脉 | 未绑定 | 已解锁截脉 |
-| 切到替尸 | 未绑定 | 已解锁替尸 AND `fake_skin.layers > 0` |
-| 切到绝灵 | 未绑定 | 已解锁绝灵 |
-
-理由：防御姿态是进阶玩法，玩家解锁后按习惯绑定；默认不占键位避免与未解锁玩家的其他 mod 冲突。
-
-### 7.4 键位冲突检查清单
+### 7.3 键位冲突检查清单
 
 - F1-F9 占快捷使用栏 → 原 MC 的「帮助 / 截图」等调整 keymap 或移动到其他组合键
 - R 占蓄力 → 与 MC 原生「R 键 = reload（某些 mod）」可能冲突，需在 KeyBinding 优先级内处理
@@ -495,7 +481,7 @@ Shake              →  顶层（对位置做微扰）
 
 - 断线时：HUD 全部清空，显示"连接中..."（MC 原生）
 - 重连时：
-  1. server 首帧推 `CombatHudState` + `PhysicalBodyStore` + `QuickUseSlotStore` + `CastStateStore` + `DefenseStanceStore` + `UnlockedStylesStore` + `UiOpenState` 作为 **hydration payload**（若断线时玩家正在 cast，`CastStateStore.active.started_at` 为 server 时间戳，client 据此续算剩余时间）
+  1. server 首帧推 `CombatHudState` + `PhysicalBodyStore` + `QuickUseSlotStore` + `CastStateStore` + `UnlockedStylesStore` + `UiOpenState` 作为 **hydration payload**（若断线时玩家正在 cast，`CastStateStore.active.started_at` 为 server 时间戳，client 据此续算剩余时间）
   2. client 所有 Store `.replace()` 后 HUD 自然恢复
   3. 事件流不恢复历史条目（新开始累积）
 
@@ -626,7 +612,6 @@ Channel：
 | `QuickUseSlotStore` | F1-F9 配置（[Option<QuickSlotEntry>; 9]） | `bong:combat/quickslot_config` |
 | `CastStateStore` | 当前 cast 状态机状态（Idle / Casting / Complete / Interrupt + slot + progress） | `bong:combat/cast_sync` |
 | `SpellVolumeState` | 本地 radius / velocity_cap / qi_invest（无网络） | — |
-| `DefenseStanceStore` | 当前姿态 + 伪皮层数 + 涡流冷却（仅限已解锁） | `bong:combat/defense_sync` |
 | `UnifiedEventStore` | 合流多 channel 事件条目（带节流/折叠） | 见 §2.3 |
 | `UnlockedStylesStore` | 已解锁流派（用于条件渲染门禁） | `bong:cultivation/unlocks_sync` |
 
@@ -651,7 +636,6 @@ Channel：
 | `ChargeIntent` | 右键按住 | `{ slot }` |
 | `ThrowAnqiIntent` | Shift+Q | `{ target_hint }` |
 | `ActivateTechniqueIntent` | T | `{ technique_id }` |
-| `SwitchDefenseStanceIntent` | 玩家自定义（§7.3） | `{ stance: Jiemai / Tishi / Jueling }` |
 
 ### 11.4 Channel 总览
 
@@ -663,7 +647,6 @@ Channel：
 | `bong:combat/quickslot_bind` | client → server | 事件 |
 | `bong:combat/defense_window` | server → client | 事件（200ms 生命周期） |
 | `bong:combat/jiemai` | client → server | 事件（反应键触发） |
-| `bong:combat/defense_sync` | server → client | 变更时 |
 | `bong:combat/event` | server → client | 节流 8/s |
 | `bong:cultivation/event` | server → client | 节流 3/s |
 | `bong:cultivation/unlocks_sync` | server → client | 变更时（**非事件流**，喂 `UnlockedStylesStore` 做条件渲染门禁） |
@@ -725,7 +708,6 @@ Channel：
 ### C8 · 调参 + QoL
 
 - 阈值可配置（config 文件）
-- 玩家自定义 keybinding（防御姿态三动作键）
 - 事件流隐藏 toggle（§6.4 TODO）
 
 ---
@@ -734,13 +716,13 @@ Channel：
 
 | # | 问题 | 结论 |
 |---|---|---|
-| 1 | 防御姿态切换键 | **玩家完全自定义**，KeyBinding 注册 3 动作键，默认不预设（§7.3） |
-| 2 | 观战 HUD | **无观战功能预期**，不做（§8 已删除观战小节） |
-| 3 | 色盲模式 | 不做 |
-| 4 | HUD 缩放 / 无障碍 | 不做（沿用 MC 原生 GUI scale） |
-| 5 | 事件流隐藏 | **允许**（开关 + 可绑定 toggle 键），v1 TODO 未来写（§6.4） |
-| 6 | 天劫锁定期间 | **允许**打开 InspectScreen（状态展示而非输入锁定） |
-| 7 | cast 期间打开 Screen | **不打断**，cast 继续后台计时（§4.2） |
+| 1 | 观战 HUD | **无观战功能预期**，不做（§8 已删除观战小节） |
+| 2 | 色盲模式 | 不做 |
+| 3 | HUD 缩放 / 无障碍 | 不做（沿用 MC 原生 GUI scale） |
+| 4 | 事件流隐藏 | **允许**（开关 + 可绑定 toggle 键），v1 TODO 未来写（§6.4） |
+| 5 | 天劫锁定期间 | **允许**打开 InspectScreen（状态展示而非输入锁定） |
+| 6 | cast 期间打开 Screen | **不打断**，cast 继续后台计时（§4.2） |
+| 7 | 防御姿态指示器 | **不做**，防御姿态不进入 HUD 范畴（切换靠音效 + §5 边缘短闪反馈） |
 
 ---
 
@@ -753,7 +735,7 @@ Channel：
 - ✓ 事件流实时滚动，流血 tick 正确折叠成 ×N
 - ✓ 死亡时全部 HUD 隐藏，重生后恢复
 - ✓ 断线重连 3 秒内 HUD 完整恢复
-- ✓ 未解锁的防御姿态 / 流派指示器完全不渲染（非灰掉）
+- ✓ 未解锁的流派指示器完全不渲染（非灰掉）
 - ✓ 精确数字仅在 InspectScreen 内可查（HUD 不显示）
 
 ---
