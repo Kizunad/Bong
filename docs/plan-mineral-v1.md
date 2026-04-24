@@ -1,10 +1,31 @@
-# Bong · plan-mineral-v1 · 骨架
+# Bong · plan-mineral-v1
 
 **矿物材料专项**。forge / alchemy 的金属、灵晶、丹砂辅料统一在此。本 plan 承接 `docs/plan-forge-v1.md §3.2` / `§6` 的 placeholder 材料名（`xuan_iron` / `qing_steel`）下沉为正典，供 blueprint 引用。
 
-**世界观锚点**：`worldview.md §四 L217`（凡铁/木石作低品阶基础材料）· `worldview.md §九 L429`（鲸落遗骸可藏固态灵矿）· `worldview.md §七 L492`（挖到极品矿脉触发劫气标记）· `worldview.md §六 L557`（矿脉有限「挖完就没」，硬通货）· `worldview.md §十 L891/L893`（青云残峰 / 血谷的矿脉分布 + 血谷"灵眼"）· `worldview.md §九 L906`（鲸落化石固态灵矿）。
+**世界观锚点**（改用章节/关键词引用，对齐 2026-04-24 §四战力分层插入后的行号稳定性）：
+- `worldview.md §四 距离衰减章` —— 凡铁/木石作低品阶基础材料（"飞 10 格损失 75% 真元"那段）
+- `worldview.md §九 鲸落遗骸` —— "白色坚硬方块，中心包裹固态灵矿"
+- `worldview.md §七 天道劫气` —— 突破 / 挖到极品矿脉触发劫气标记
+- `worldview.md §六 经济层` —— 矿脉有限挖完就没；封灵骨币章；货币硬通货
+- `worldview.md §十 青云残峰 + 血谷` —— zone 表里矿脉分布 + 血谷灵眼
+- `worldview.md §九 鲸落化石` —— "偶现白色巨型化石方块，可能藏有固态灵矿"
+- `worldview.md §三 末法命名原则` —— 禁用上古称呼（"练气筑基金丹元婴"那段）
 
-**交叉引用**：`plan-forge-v1.md §3.2 §6 §7`（blueprint 材料替换）· `plan-alchemy-v1.md`（丹砂/朱砂辅料）· `plan-worldgen-v3.1.md`（矿脉生成接入 LAYER_REGISTRY）· `plan-botany-v1.md`（与草药互补：本 plan 管矿物 / botany 管草药）· `plan-shelflife-v1.md`（灵石衰变 / 矿料挥发机制 — 本 plan 只声明 decay_profile 参数，机制归 shelflife）· `plan-fauna-v1.md`（待立 — 妖兽材料，与本 plan 并列）· `plan-spiritwood-v1.md`（待立 — 灵木材料）。
+**交叉引用**：`plan-forge-v1.md §3.2 §6 §7`（blueprint 材料替换）· `plan-alchemy-v1.md`（丹砂/朱砂辅料）· `plan-worldgen-v3.1.md`（矿脉生成接入 LAYER_REGISTRY）· `plan-botany-v1.md`（与草药互补：本 plan 管矿物 / botany 管草药）· `plan-shelflife-v1.md`（灵石衰变 / 矿料挥发机制 — 本 plan 只声明 decay_profile 参数，机制归 shelflife；2026-04-24 已升 active）· `plan-fauna-v1.md`（待立 — 妖兽材料，与本 plan 并列）· `plan-spiritwood-v1.md`（待立 — 灵木材料）。
+
+---
+
+## §-1 前置依赖实装状态（2026-04-24 audit）
+
+| 依赖 | 状态 | 位置 | 备注 |
+|------|------|------|------|
+| `DecayProfileRegistry` resource | ✅ 已注册 | `server/src/shelflife/registry.rs:17` + `main.rs:80` shelflife::register 已挂 | 2770 行 shelflife 模块完整实装 |
+| `ling_shi_fan_v1` profile 作 test fixture | ✅ test 存在，生产未注册 | `server/src/shelflife/registry.rs:65` | 本 plan M3 时要正式 hardcode 注册四档生产 profile（`ling_shi_fan_v1/zhong_v1/shang_v1/yi_v1`），同样格式 |
+| `Freshness` NBT 在 `InventoryItem` | ✅ | `server/src/schema/inventory.rs:72` `freshness: Option<crate::shelflife::Freshness>` | mineral item 的 NBT 挂点已就位 |
+| `furnace_fantie` 凡铁炉 | ✅ | `server/assets/items/core.toml:19` | §5 forge 钩子的 tier 1 炉已存在 |
+| `xuan_iron` / `qing_steel` / `yi_beast_bone` placeholder | ✅ 仍存在 | `docs/plan-forge-v1.md:215,254,257,357` | 本 plan M4 批量替换为正典名 |
+| `MineralId` / `MineralRegistry` / `MineralOreNode` | ❌ 未实装 | — | 本 plan M3 从零建 |
+| `BlockBreakEvent` 监听 | ❌ 未接入 | Valence 协议侧 | M3 时实装（drop 重写走自定义 spawn item） |
 
 ---
 
@@ -12,10 +33,10 @@
 
 ### 0.1 世界观硬约束
 
-- [ ] **末法命名原则**（worldview §63 "末法修士不配用上古称呼"）：禁用 **玄 / 陨 / 星 / 仙 / 太 / 古** 等上古仙侠词头。优选 **残 / 碎 / 锈 / 杂 / 粗 / 髓 / 朴 / 枯** 等衰败 / 素朴意象。矿物命名须传达"挖到的多半是上古仙门遗落的残渣"而非"自古神金"
-- [ ] **经济位四层金字塔**（worldview §518 锚点）— 三类矿物范畴**互斥**，不重叠：
+- [ ] **末法命名原则**（worldview §三 "末法修士不配用上古称呼"）：禁用 **玄 / 陨 / 星 / 仙 / 太 / 古** 等上古仙侠词头。优选 **残 / 碎 / 锈 / 杂 / 粗 / 髓 / 朴 / 枯** 等衰败 / 素朴意象。矿物命名须传达"挖到的多半是上古仙门遗落的残渣"而非"自古神金"
+- [ ] **经济位四层金字塔**（worldview §六 封灵骨币章 + 经济层锚点）— 三类矿物范畴**互斥**，不重叠：
   1. **骨币**（归 `plan-fauna-v1`）= 异变兽骨 + 阵法锁真元 → **唯一真·货币**（稀缺、可验真、携带真元）
-  2. **矿物筹码** = `1.1 金属系` + `1.2 灵晶系（不含 ling_shi）` + `1.3 炼丹辅料` → 有实用价值的**交易筹码**（worldview §六 L557"交易硬通货"），可物物交换但不是货币 — 相当于把盐/铁条当硬通货的古代低货币化经济
+  2. **矿物筹码** = `1.1 金属系` + `1.2 灵晶系（不含 ling_shi）` + `1.3 炼丹辅料` → 有实用价值的**交易筹码**（worldview §六 矿脉有限章"交易硬通货"），可物物交换但不是货币 — 相当于把盐/铁条当硬通货的古代低货币化经济
   3. **灵石燃料层** = **仅 `ling_shi` 一物**，从矿物筹码中独立出来（见下条逻辑链） — **不是**货币，也**不算**正规筹码
   4. **金银** = 废土（Earth 本位失效）
 - [ ] **灵石逻辑限制链**（对齐"骨币能当货币 ↔ 灵石比骨币更垃圾"的经济逻辑）：
@@ -45,7 +66,7 @@
 
 | 正典名 | 品阶 | 用途 | 世界分布 | 备注 |
 |---|---|---|---|---|
-| `fan_tie`（凡铁） | 1 | 基础兵胎 / 凡铁炉 | 地表至 y=0，青云/血谷外层 | worldview §四 L217 锚点 · 已在 `items/core.toml furnace_fantie` |
+| `fan_tie`（凡铁） | 1 | 基础兵胎 / 凡铁炉 | 地表至 y=0，青云/血谷外层 | worldview §四 距离衰减章 锚点 · 已在 `items/core.toml furnace_fantie` |
 | `cu_tie`（粗铁） | 1 | 劣质护甲 / 锈蚀兵器 | 深岩层 y=-32 至 -64 | 代替原 `jing_tie` — "精铁"偏仙侠，改"粗铁"贴末法 |
 | `za_gang`（杂钢） | 2 | 灵铁炉炉体 / 中阶剑胎 | 青云残峰矿脉 | forge 现用 `qing_steel` placeholder → 改 `za_gang`；末法时代钢含杂质是常态 |
 | `ling_tie`（灵铁） | 2 | 储灵兵胎 / 可注真元法器 | 血谷矿脉 | "灵"字在 worldview 中性可用（见 灵气 / 灵田 / 灵眼） |
@@ -86,7 +107,7 @@
 | `ling_shi_yi`（遗品灵石） | 4 | 500+ | LingShi_T4 (Exp, half_life ≈ 14 days) | 渡劫资源 / 化虚境吸纳 | 上古遗迹，event-only |
 
 **说明**：
-- 同 `ling_shi_*` 物品 ID 的不同实例 `initial_qi` 在区间内随机（worldview §518 不便携称量的实装表达）
+- 同 `ling_shi_*` 物品 ID 的不同实例 `initial_qi` 在区间内随机（worldview §六 封灵骨币章 "不便携称量" 的实装表达）
 - 不同品阶 half_life 不同：高品灵石封印更结实，挥发更慢但仍属 Exponential 路径，永远不可被冻结（区别于骨币）
 
 ---
@@ -95,11 +116,11 @@
 
 ### 2.1 worldgen 锚点
 
-- [ ] **worldgen 固定锚点**：青云残峰 / 血谷 / 鲸落遗骸 的矿脉位置由 `worldgen/blueprint` 写死（worldview §十 L891/L893）
+- [ ] **worldgen 固定锚点**：青云残峰 / 血谷 / 鲸落遗骸 的矿脉位置由 `worldgen/blueprint` 写死（worldview §十 青云残峰 + 血谷 zone 表）
 - [ ] **程序生成脉**：zone 内按 `LAYER_REGISTRY::mineral_density` 随机散布，密度曲线 vs 品阶反比（髓铁 / 残铁 / 枯金 极稀）
-- [ ] **鲸落化石**（worldview §九 L906）：特殊大型 structure，中心"固态灵矿"— 实装映射为 `sui_tie` + `ling_jing` + `yu_sui` + `ling_shi_shang/yi` 富集点；worldgen 生成时挂 AABB tag
+- [ ] **鲸落化石**（worldview §九 鲸落化石章）：特殊大型 structure，中心"固态灵矿"— 实装映射为 `sui_tie` + `ling_jing` + `yu_sui` + `ling_shi_shang/yi` 富集点；worldgen 生成时挂 AABB tag
 - [ ] **矿脉有限性**：每脉初始储量 N 块，挖完 despawn 脉体 / 标记永久耗尽（持久化落地 data/minerals/exhausted.json，归 plan-persistence-v1）
-- [ ] **血谷灵眼不固定**（worldview §十 L893）— 灵眼实体等"灵眼系统"立项（见 `reminder.md §通用`）再挂 `sui_tie` / `ling_jing` 富集点
+- [ ] **血谷灵眼不固定**（worldview §十 血谷 zone 表）— 灵眼实体等"灵眼系统"立项（见 `reminder.md §通用`）再挂 `sui_tie` / `ling_jing` 富集点
 - [ ] **上古遗迹** — `can_tie` / `ku_jin` / `ling_shi_yi` 仅在遗迹 structure 里出现，不走 zone 密度生成
 
 ### 2.2 ⭐ block ↔ item 的 mineral_id 流转
@@ -126,7 +147,7 @@
 
 - [ ] 镐头品阶门槛：fan_tie pickaxe → 品 1，cu_tie → 品 2... 对标 `vanilla pickaxe tier`
 - [ ] **神识感知**：修为 ≥ 凝脉 的玩家右键矿脉方块触发 `MineralProbeIntent` → 返回矿种 / 剩余储量（不扣真元，低冷却）
-- [ ] **极品矿脉触发劫气**（worldview §七 L492）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao` / `ling_shi_shang/yi`）时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
+- [ ] **极品矿脉触发劫气**（worldview §七 天道劫气章）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao` / `ling_shi_shang/yi`）时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
 - [ ] 采矿动作走 `plan-botany-v1` 同款 session 模式（长按 / 进度条）
 - [ ] **灵石衰变接入 `plan-shelflife-v1`**：四档 `ling_shi_*` item NBT 挂 `Freshness { decay_profile: LingShi_Tn }` 中对应一档（见 §1.4 表）；神识感知走 shelflife §4 通用 probe 机制
 
@@ -232,10 +253,10 @@
 - [ ] `can_tie`（残铁）/ `ku_jin`（枯金）只出遗迹的话，遗迹生成节奏如何 — 与 `plan-worldgen-v3.1.md` structure 系统协调
 - [ ] 客户端资源包是否走**自动下载**（Valence `ResourcePackPrompt`）还是手动放入 — 延后到 client mod 发包时决定
 - [ ] CustomModelData 方案：v1 先不碰，v2 看是否要同 block 跨 biome 切贴图
-- [ ] **worldgen 层面：鲸落遗骸 structure 的生成算法**（worldview §九 L906 "白色巨型化石方块"）— 是独立 structure generator 还是借 vanilla ancient_city 变体
+- [ ] **worldgen 层面：鲸落遗骸 structure 的生成算法**（worldview §九 鲸落化石章 "白色巨型化石方块"）— 是独立 structure generator 还是借 vanilla ancient_city 变体
 - [ ] **mineral_id NBT 持久化**：玩家 inventory item 的 mineral_id NBT 存档兼容（旧 vanilla item 视作 mineral_id=None；从 dropped loot 拾取回 inventory 时 mineral_id 正确流转）— 与 `plan-persistence-v1` 协调
 - [ ] **mineral_id 在死亡掉落 / 容器转移 / 拾取的全链路**是否有遗漏（例：玩家死亡 inventory drop 到 dropped loot entity 时 NBT 是否携带）— 需 `plan-inventory-v1` 全链路 audit
 
 ---
 
-> 本 plan 立项目标：取代 forge/alchemy placeholder 材料名 + 奠定 fauna / spiritwood 两份姊妹 plan 的结构模板。草案一经对齐立即迁到 `docs/plan-mineral-v1.md` 转为正式推进文档。
+> 本 plan 立项目标：取代 forge/alchemy placeholder 材料名 + 奠定 fauna / spiritwood 两份姊妹 plan 的结构模板。2026-04-24 audit 完成升 active（`docs/plan-mineral-v1.md`），下一步 `/consume-plan mineral` 按 §8 M0-M6 推进。
