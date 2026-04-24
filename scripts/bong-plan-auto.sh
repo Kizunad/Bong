@@ -25,9 +25,9 @@
 #   BONG_PLAN_TIMEOUT  —— omo run 的超时秒数，默认 7200（2 小时）
 #
 # 运行态产出：
-#   .worktrees/plan-<name>/                    （独立 worktree，gitignored）
-#   .worktrees/plan-<name>/.sisyphus/plans/…   （Prometheus 规整结果）
-#   .worktrees/plan-<name>/.sisyphus/boulder.json （Atlas 状态，支持中断恢复）
+#   .worktree/plan-<name>/                    （独立 worktree，gitignored）
+#   .worktree/plan-<name>/.sisyphus/plans/…   （Prometheus 规整结果）
+#   .worktree/plan-<name>/.sisyphus/boulder.json （Atlas 状态，支持中断恢复）
 #   分支 auto/plan-<name> / GitHub PR           （成功后自动开 PR 并守 CI/review）
 #
 # 退出码：
@@ -55,7 +55,7 @@ fi
 PLAN_NAME="$1"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 PLAN_SRC="$REPO_ROOT/docs/plan-$PLAN_NAME.md"
-WORKTREE_DIR="$REPO_ROOT/.worktrees/plan-$PLAN_NAME"
+WORKTREE_DIR="$REPO_ROOT/.worktree/plan-$PLAN_NAME"
 BRANCH="auto/plan-$PLAN_NAME"
 BASE_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 PROMPT_TEMPLATE="$REPO_ROOT/.opencode/prompts/auto-consume.md"
@@ -193,7 +193,7 @@ fi
 # Worktree 准备（幂等）
 # ──────────────────────────────────────────────────────────────────
 
-mkdir -p "$REPO_ROOT/.worktrees"
+mkdir -p "$REPO_ROOT/.worktree"
 
 if [[ -d "$WORKTREE_DIR" ]]; then
   echo "[info] worktree 已存在，复用续跑：$WORKTREE_DIR"

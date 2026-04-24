@@ -18,7 +18,7 @@
 |---|---|---|
 | **借 omo 的现成编排，不自造 agent** | Prometheus/Metis/Momus/Atlas 已经是完备的 plan→execute 分离架构 | 再造 4 个 `plan-reader/architect/executor/auditor` agent，重复上游能力 |
 | **docs/ 是 source of truth** | 流水线只**读取** `docs/plan-*.md`，运行态全部落 `.sisyphus/` | Prometheus 回写 `docs/`、Atlas 改 `docs/worldview.md` |
-| **worktree 隔离** | 每个 plan 一个 `.worktrees/plan-<name>/` + `auto/plan-<name>` 分支 | 在主工作区直接改，污染正在手写的代码 |
+| **worktree 隔离** | 每个 plan 一个 `.worktree/plan-<name>/` + `auto/plan-<name>` 分支 | 在主工作区直接改，污染正在手写的代码 |
 | **零交互** | `bash scripts/bong-plan-auto.sh <name>` 一条命令跑到 `<promise>DONE</promise>` 或 `BLOCKED` | 中途弹 "需要确认吗？" 打断用户 |
 | **失败即标注，不阻断** | 单 TODO 连续失败 3 轮 → `[BLOCKED: ...]` 标注 + 跳过 | 第一个失败就整条流水线停 |
 | **opencode-native 配置** | 规则在 `AGENTS.md`（吃 `directory-agents-injector`），不用 `.claude/` | 把 opencode 配置塞进 Claude Code 目录 |
@@ -34,8 +34,8 @@
 └─┬────────────────────────────────────────────────────────────────┘
   │
   │ 1. 校验 docs/plan-<name>.md 存在且非骨架/归档
-  │ 2. git worktree add .worktrees/plan-<name> -b auto/plan-<name>
-  │ 3. cp docs/plan-<name>.md  →  .worktrees/.sisyphus/inputs/<name>.md
+  │ 2. git worktree add .worktree/plan-<name> -b auto/plan-<name>
+  │ 3. cp docs/plan-<name>.md  →  .worktree/.sisyphus/inputs/<name>.md
   │ 4. 渲染 .opencode/prompts/auto-consume.md（替换 {{PLAN_NAME}}）
   │ 5. cd worktree && opencode run --prompt-stdin < 渲染后的 prompt
   │                                                          │
@@ -103,7 +103,7 @@ opencode.json                                 # opencode 根配置：plugin=oh-m
 AGENTS.md                                     # agent 行为硬约束（directory-agents-injector 自动注入）
 scripts/bong-plan-auto.sh                     # 全自动宿主入口
 scripts/plan-finish.sh                        # Atlas 调用归档 docs/plan-*.md → finished_plans/
-.gitignore                                    # 追加 .sisyphus/ 和 .worktrees/
+.gitignore                                    # 追加 .sisyphus/ 和 .worktree/
 docs/plan-opencode-workflow-v1.md             # 本文件
 ```
 
@@ -193,7 +193,7 @@ bash scripts/bong-plan-auto.sh HUD-v1
 成功 merge PR 后：
 
 ```bash
-git worktree remove .worktrees/plan-HUD-v1
+git worktree remove .worktree/plan-HUD-v1
 git branch -d auto/plan-HUD-v1
 ```
 

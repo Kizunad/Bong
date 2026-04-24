@@ -52,7 +52,7 @@ import style as style_mod  # noqa: E402
 # CLI Proxy 默认
 CLIPROXY_DEFAULT_BASE = "https://cliproxy.kizunadesu.cc"
 CLIPROXY_DEFAULT_KEY = "kiz"
-CLIPROXY_DEFAULT_MODEL = "gpt-image-1536x1024"
+CLIPROXY_DEFAULT_MODEL = "gpt-image-2"
 # urllib 默认 UA 会被 Cloudflare 1010 拦，必须伪装
 CLIPROXY_FAKE_UA = "curl/8.5.0"
 

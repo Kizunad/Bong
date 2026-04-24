@@ -25,7 +25,7 @@ git fetch origin main
 ## 2. 开 worktree（幂等）
 
 ```bash
-WT=".worktrees/plan-$PLAN"
+WT=".worktree/plan-$PLAN"
 BRANCH="auto/plan-$PLAN"
 
 if [ -d "$WT" ]; then
@@ -146,7 +146,7 @@ merge 成功后：
 
 ```bash
 cd -    # 回主工作区
-git worktree remove ".worktrees/plan-$PLAN"
+git worktree remove ".worktree/plan-$PLAN"
 # 本地分支 gh 已 --delete-branch 清了远程，本地可选：
 git branch -D "auto/plan-$PLAN" 2>/dev/null || true
 ```
