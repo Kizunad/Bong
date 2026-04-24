@@ -1,7 +1,9 @@
 # TSY 撤离点 · plan-tsy-extract-v1
 
 > 搜打撤的**撤** —— 不能原地登出、不能传送、不能用符箓，必须站在**负压突破点**完成撤离仪式。本 plan 落地 `RiftPortal` Component（3 种 kind：主裂缝 / 深层缝 / 塌缩裂口）+ `ExtractProgress` Component + 撤离 tick + 中断规则 + race-out 模式切换。P5 在 P0/P1/P2 + P3/P4（可选）就位后开工。
-> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-zone-v1.md §1.4-§2`（`tsy_entry` tag / 入场传送）· `plan-tsy-lifecycle-v1.md §3-§5`（塌缩事件 / race-out / cleanup）· `plan-tsy-loot-v1.md §4`（秘境内死亡 → 干尸化）· `worldview.md §十六.四 撤离点：负压突破点`（3 种类型 + 撤离规则表）· `worldview.md §十六.一 step 4`（race-out 机制）
+> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1.4-§2`（`tsy_entry` tag / 入场传送 / `RiftPortal.direction` / `TsyPresence.return_to`）· `plan-tsy-lifecycle-v1.md §3-§5`（塌缩事件 / race-out / cleanup）· `plan-tsy-loot-v1.md §4`（秘境内死亡 → 干尸化）· `worldview.md §十六.四 撤离点：负压突破点`（3 种类型 + 撤离规则表）· `worldview.md §十六.一 step 4`（race-out 机制）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面。本 plan 所有"出关传送"已改为发 `DimensionTransferRequest { target: Overworld, target_pos: presence.return_to.pos }` 跨位面传送，而非 `insert(Position(entry_portal_pos))`。`MainWorldRiftAnchor` Resource 讨论（§2.3）被 `TsyPresence.return_to: DimensionAnchor` 原生表达收编，不再需要独立 Resource。§8 Q "不同入口进出坐标" 的最终决定：**用 `TsyPresence.return_to` 记录的进入锚点**（进 A 出 A），不按撤离 portal 的 family anchor 映射。
 
 ---
 
@@ -9,10 +11,10 @@
 
 | 层 | 能力 | 位置 |
 |----|------|------|
-| `Zone` / `ZoneRegistry` | zone 识别 / `find_zone(pos)` | `server/src/world/zone.rs:23-243` |
+| `Zone` / `ZoneRegistry` | zone 识别 / `find_zone(dim, pos)`（架构反转后按位面查） | `server/src/world/zone.rs:23-243` |
 | Zone TSY helpers | `is_tsy()` / `tsy_layer()` / `tsy_family_id()` / `is_tsy_entry()` | P0 plan §1.2 |
-| `TsyPresence` Component | `family_id` / `entered_at_tick` / `entry_portal_pos` | P0 plan §1.3 |
-| **入口传送**（进 TSY） | `tsy_entry` + `portal_rift` tag → 传送到 TSY zone 内 | P0 plan §2 |
+| `TsyPresence` Component | `family_id` / `entered_at_tick` / `return_to: DimensionAnchor` | P0 plan §1.3 |
+| **入口传送**（进 TSY） | 主世界 `rift_portal direction=entry` POI → `DimensionTransferRequest` 跨位面 → TSY dim `_shallow` 中心 | P0 plan §2 + `plan-tsy-dimension-v1 §3` |
 | `apply_entry_filter(inv)` | 入场剥离 `spirit_quality >= 0.3` | P0 plan §2 |
 | `Cultivation.spirit_qi` | 撤离期间继续消耗 | `server/src/cultivation/components.rs` |
 | `CombatState` / `Wounds` | 中断条件的读侧 | `server/src/combat/components.rs` |
@@ -305,9 +307,7 @@ fn handle_extract_completed(
 }
 ```
 
-**主世界锚点**：新增 `MainWorldRiftAnchor` Resource，映射 `family_id → main_world_pos`（TSY 入口在主世界的坐标，出关时回到这里）。由 P0 plan `TsyPresence.entry_portal_pos` 已记录，直接复用。
-
-**修正**：`TsyPresence.entry_portal_pos` 记的是玩家进入 TSY 时的主世界坐标——直接用作 out_pos，避免引入新 Resource。
+**主世界锚点**：~~新增 `MainWorldRiftAnchor` Resource~~（2026-04-24 架构反转后不再需要）。直接读 `TsyPresence.return_to: DimensionAnchor`，它记录了进入 TSY 时的主世界锚点（dimension + pos）。出关 = 发 `DimensionTransferRequest { target: return_to.dimension, target_pos: return_to.pos }` 跨位面传回主世界。
 
 ### 2.4 撤离失败：`handle_extract_failed` system
 
@@ -561,7 +561,7 @@ export const TsyCollapseStartedIpcV1 = Type.Object({
 ### 5.1 对 P0 plan 的依赖
 
 - `TsyPresence` Component：必须有此 Component 才能撤离（NotInTsy 拒）
-- `TsyPresence.entry_portal_pos`：撤离完成后传送到此坐标
+- `TsyPresence.return_to: DimensionAnchor`：撤离完成后发 `DimensionTransferRequest` 跨位面传回此锚点（架构反转前为 `entry_portal_pos: DVec3`）
 - `apply_drain_per_tick`：撤离期间真元继续消耗
 
 ### 5.2 对 P1 plan 的依赖
@@ -615,7 +615,7 @@ export const TsyCollapseStartedIpcV1 = Type.Object({
   - `start_extract_request` 所有 Rejected 路径
   - `tick_extract_progress` 中断条件（移动 / 战斗 / 受击）
   - 真元归零 → `ExtractFailed`
-  - 完成 → 玩家 Transform 等于 `entry_portal_pos`
+  - 完成 → 玩家 `CurrentDimension == Overworld` 且 `Position == presence.return_to.pos`
   - `on_tsy_collapse_started` → 所有 portal current_extract_ticks = 60 + spawn 3-5 CollapseTear
   - `on_tsy_collapse_completed` → portal 全 despawn + 内部玩家 DeathEvent
 - 集成：`cargo test tsy_extract` 通过
@@ -646,7 +646,7 @@ export const TsyCollapseStartedIpcV1 = Type.Object({
 | CollapseTear spawn 在 `blocked_tiles` 或墙里 | 中 | Rejection sampling 最多 20 次；撞 block 就换位置 |
 | 玩家同时满足"站在 portal 旁"和"在战斗"→ start 被拒但 HUD 不提示 | 中 | `ExtractRejectionReason::InCombat` 显式发 IPC；client 显示 rejection 原因 1 秒 |
 | 撤离中玩家被拉拽（e.g. 敌人技能拖拽）→ 位置变化触发中断 | 低 | 设计即预期；玩家要选"无人打扰"的时机开撤离 |
-| `TsyPresence.entry_portal_pos` 如果玩家从**入口 A** 进、想从**入口 B** 出 → 出关坐标是哪个？ | 中 | 决定：**用玩家进 TSY 时记录的 entry_portal_pos**（即 A）；或用撤离 portal 关联的 main world anchor。选后者更自然——独立写一个 `MainWorldRiftAnchor` Resource 按 family_id + rift kind 映射 |
+| 玩家从**入口 A** 进、想从**入口 B** 出 → 出关坐标是哪个？ | 中 | **已决（2026-04-24）**：用 `TsyPresence.return_to` 记录的进入锚点（即 A）。架构反转后 return_to 天生带 dimension + pos 信息，不需要独立 `MainWorldRiftAnchor` Resource。语义上也更合理：你从 A 钻进去，意识就栓在 A 上，从哪个撤离点出都回 A |
 | 塌缩完成时清死玩家 → DeathEvent 发了但 zone 也被 cleanup → `CorpseEmbalmed` 挂不上谁 | 中 | 执行顺序：先 DeathEvent（P1 消费 → 干尸 Component 挂玩家 corpse entity）→ 再 zone cleanup；P1 的 `CorpseEmbalmed` 被带着一起 despawn（符合"随坍缩渊化灰"） |
 | 撤离时真元继续抽 + 如果 Fuya aura 同时生效 → 真元速率 × 1.5 可能撑不到 8 秒 | 低 | 设计即预期；玩家要主动走离 Fuya aura 再开撤离 |
 | `current_extract_ticks = 60` 批量改动时并发 | 低 | `Query<&mut RiftPortal>` 自动串行；无并发问题 |

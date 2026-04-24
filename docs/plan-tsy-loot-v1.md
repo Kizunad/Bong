@@ -1,7 +1,9 @@
 # TSY 物资与秘境死亡 · plan-tsy-loot-v1
 
 > 给 TSY 搭物资层：99 探索者遗物 + 1 上古遗物的分布规则；秘境所得 100% 掉落；干尸化；Fabric 禁用原生 keepInventory；DeathEvent 扩展 attacker 链路。
-> 交叉引用：`plan-tsy-v1.md §2`（横切任务）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `worldview.md §十六.三`（物资 99+1）· `worldview.md §十六.四`（入场/出关）· `worldview.md §十六.六`（死亡结算）· `plan-inventory-v1.md`（DroppedLoot 基础）· `plan-death-lifecycle-v1.md`（§十二 死亡规则）
+> 交叉引用：`plan-tsy-v1.md §2`（横切任务）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `worldview.md §十六.三`（物资 99+1）· `worldview.md §十六.四`（入场/出关）· `worldview.md §十六.六`（死亡结算）· `plan-inventory-v1.md`（DroppedLoot 基础）· `plan-death-lifecycle-v1.md`（§十二 死亡规则）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面。本 plan 的"秘境内死亡"判定仍走 `TsyPresence` Component 存在性（不直接依赖位面信息），不受反转影响；但 `CorpseEmbalmed` 和 dropped loot 挂在 **TSY layer** 下（玩家在 TSY dim 内死亡 → 尸体/掉落物 entity 挂 `DimensionLayers.tsy`，不会漏到主世界）。P2 lifecycle 塌缩 cleanup 时这些 entity 随 zone 一起被清理。
 
 ---
 

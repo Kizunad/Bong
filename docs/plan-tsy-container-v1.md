@@ -1,7 +1,9 @@
 # TSY 容器与搜刮 · plan-tsy-container-v1
 
 > 坍缩渊内的 loot 不是地面散布，而是**被抽干的遗骸 + 保存结构的腔体**构成的容器分层（5 档）。本 plan 落地 `LootContainer` / `SearchProgress` / `ContainerKey` 三大 Component，配合搜刮倒计时、搜刮时真元消耗 1.5× 加速、钥匙单次消耗。P3 在 P0/P1/P2 就位后开工。
-> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `plan-tsy-loot-v1.md §1-§3`（AncientRelicTemplate / DroppedLootEntry.ownerless）· `plan-tsy-lifecycle-v1.md §2`（TsyZoneState / 骨架计数）· `worldview.md §十六.三 容器与搜刮`（含 5 档分层表）· `worldview.md §十六.一`（传说档 = 骨架）
+> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `plan-tsy-loot-v1.md §1-§3`（AncientRelicTemplate / DroppedLootEntry.ownerless）· `plan-tsy-lifecycle-v1.md §2`（TsyZoneState / 骨架计数）· `worldview.md §十六.三 容器与搜刮`（含 5 档分层表）· `worldview.md §十六.一`（传说档 = 骨架）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面。本 plan 所有"zone AABB 内撒点" / `find_zone` 调用均在 **TSY dim 内部坐标系**下工作（不是主世界坐标），且 spawn 出来的 container 实体要挂到 TSY layer（`plan-tsy-dimension-v1 §1 DimensionLayers.tsy`）。`TsyPresence` 字段名 `entry_portal_pos` 已变为 `return_to: DimensionAnchor`（本 plan 不直接读该字段，仅以 Component 存在作 marker 使用）。
 
 ---
 
@@ -16,7 +18,7 @@
 | `ItemRarity::Ancient` | 上古遗物 rarity + 低耐久约束 | P1 plan §1.1（待实装时落地） |
 | `AncientRelicTemplate` | 上古遗物模板池 | P1 plan §2.1（待实装时落地） |
 | `DroppedLootRegistry.ownerless` | 世界自然 loot 容器（非玩家 drop） | P1 plan §3（待实装时落地） |
-| `TsyPresence` | `family_id` / `entered_at_tick` / `entry_portal_pos` | P0 plan §1.3 |
+| `TsyPresence` | `family_id` / `entered_at_tick` / `return_to: DimensionAnchor` | P0 plan §1.3 |
 | Zone TSY helpers | `is_tsy()` / `tsy_layer()` / `tsy_family_id()` | P0 plan §1.2 |
 | `CombatState` / `Wounds` | 中断条件的读侧 | `server/src/combat/components.rs` |
 | `Cultivation.spirit_qi` | 真元池（搜刮时加速抽取的对象） | `server/src/cultivation/components.rs` |

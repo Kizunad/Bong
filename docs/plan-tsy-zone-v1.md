@@ -19,6 +19,12 @@
 
 **本 plan 要新增**：TSY zone 类型识别、负压 tick、裂缝 POI、双向传送、入场过滤器、浅/中/深三层灵压采样、`/tsy-spawn` 调试命令。
 
+**本 plan 不处理的地形 / POI 生成**：TSY zone 的内部地貌（4 起源视觉差异、碎骨堆/阵盘残件/骨架/容器/守灵 anchor 自动分布）由独立 plan `docs/plans-skeleton/plan-tsy-worldgen-v1.md` 承载。本 plan 的 `/tsy-spawn` 调试命令 + `zones.json` 手写 3 subzone 是**骨架级兜底**，worldgen plan 落地后替换为 blueprint → manifest.json 驱动（POI 通道已通，见 `worldgen plan §1`）。
+
+**隐形前置依赖**：本 plan §3.1 假设 `ZoneRegistry` 支持运行时动态 add（`/tsy-spawn` 追加 3 subzone）。现有 `ZoneRegistry::apply_runtime_records()` (`server/src/world/zone.rs:195`) 只支持修改已注册 zone 的 `active_events`/`blocked_tiles`，**不支持 add/remove zone**。本 plan 需补 `ZoneRegistry::register_runtime_zone(zone: Zone) -> Result<()>`（幂等、同名 zone 已存在则拒绝、push 到内部 Vec 末尾）。此能力属于 P0 范围，不外推给 worldgen plan。
+
+**架构前置依赖（2026-04-24 反转）**：本 plan 原 §-1 点 5 / §0 轴心 5 约定"传送是同一 MC world 内的坐标传送"，**已推翻**——`worldview.md §十六 世界层实现注` 明确坍缩渊以**独立位面**实现（类 Nether）。相关基础设施由 `docs/plans-skeleton/plan-tsy-dimension-v1.md` 承载：Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API (`DimensionTransferRequest`)、per-dimension `TerrainProvider`。本 P0 plan 的裂缝/入场/出关系统全部改为消费 dimension plan 提供的跨位面 API，而非自己直 `insert Position`。
+
 ---
 
 ## §0 设计轴心
@@ -27,7 +33,7 @@
 2. **负压机制只读 Zone 现有字段**：`Zone.spirit_qi ∈ [-1.2, -0.3]` 即为 TSY 内部灵压；不新增 `draining_rate` 字段（从 spirit_qi 推导）
 3. **内部层深用多个 subzone 表达**：一个"活坍缩渊"在 zones.json 里是**三个相邻 zone**（`tsy_xxx_shallow` / `_mid` / `_deep`），通过 name 后缀联动。好处是复用 Zone 现有几何判定 + 避免"一个 zone 多个灵压"的特殊逻辑
 4. **入口 POI 走现有 `active_events` 字段**：用 `"portal_rift"` tag 标记该 zone 靠近边缘的传送点；TSY 的入口 zone 同时拥有 `"tsy_entry"` tag
-5. **传送不是跨 dimension，是同一 MC world 内的坐标传送** — MVP 0.1 不碰 Bevy world / MC dimension 层；所有 TSY zone 在主世界里有物理坐标（ZoneRegistry 的 AABB）
+5. **传送是跨位面（Nether 式 dimension 切换）** — TSY 位面是独立 Valence `LayerBundle`，所有 TSY zone 的 AABB 是 **TSY dim 内部坐标**（不是主世界坐标）；裂缝 POI 锚点存在主世界 layer，触发后走 `DimensionTransferRequest` 切到 TSY layer。基础设施由 `plan-tsy-dimension-v1` 承载，本 plan 只消费接口
 6. **入场过滤是入口传送的 on-arrival hook** — 传送完成后扫描玩家 inventory 所有 item，`spirit_quality >= 0.3` 的 item 在入口被"剥离"（set to 0 + spawn 一个 bone/灰烬 item 替代），离场不再恢复
 
 ---
@@ -36,42 +42,49 @@
 
 ### 1.1 Zone 配置扩展（无 struct 改动，仅约定）
 
-TSY 系列 zone 在 `server/zones.json` 里的模板：
+**坐标系注意**：TSY 系列 zone 的 AABB 全部是 **TSY dim 内部坐标**（由 `plan-tsy-dimension-v1` 注册的独立 Valence layer），不占主世界坐标。示例中 XZ 以 (0,0) 为 family 原点起排，由 worldgen blueprint 统一分配。
+
+TSY 系列 zone 在 `server/zones.tsy.json`（独立文件，`plan-tsy-worldgen-v1 §2.1` 决策）里的模板：
 
 ```json
 {
   "name": "tsy_lingxu_01_shallow",
-  "aabb": { "min": [1800, 40, 2800], "max": [1900, 120, 2900] },
+  "dimension": "bong:tsy",
+  "aabb": { "min": [0, 40, 0], "max": [100, 120, 100] },
   "spirit_qi": -0.4,
   "danger_level": 4,
   "active_events": ["tsy_entry", "portal_rift"],
-  "patrol_anchors": [[1850, 80, 2850]],
+  "patrol_anchors": [[50, 80, 50]],
   "blocked_tiles": []
 },
 {
   "name": "tsy_lingxu_01_mid",
-  "aabb": { "min": [1800, 0, 2800], "max": [1900, 40, 2900] },
+  "dimension": "bong:tsy",
+  "aabb": { "min": [0, 0, 0], "max": [100, 40, 100] },
   "spirit_qi": -0.7,
   "danger_level": 5,
   "active_events": [],
-  "patrol_anchors": [[1850, 20, 2850]],
+  "patrol_anchors": [[50, 20, 50]],
   "blocked_tiles": []
 },
 {
   "name": "tsy_lingxu_01_deep",
-  "aabb": { "min": [1800, -40, 2800], "max": [1900, 0, 2900] },
+  "dimension": "bong:tsy",
+  "aabb": { "min": [0, -40, 0], "max": [100, 0, 100] },
   "spirit_qi": -1.1,
   "danger_level": 5,
   "active_events": [],
-  "patrol_anchors": [[1850, -20, 2850]],
+  "patrol_anchors": [[50, -20, 50]],
   "blocked_tiles": []
 }
 ```
 
 **约定**：
+- 新增 `dimension` 字段（`plan-tsy-dimension-v1 §6` Q2 候选 A：单 registry + Zone.dimension gating）；主世界 zone 填 `"minecraft:overworld"`，TSY zone 填 `"bong:tsy"`
 - 三个 subzone **共享 XZ bounds**，Y 轴垂直分层（浅层顶上、深层底下）
-- 玩家在 TSY 内走动时通过 Y 坐标自然跨层，`ZoneRegistry.find_zone(pos)` 返回对应层
+- 玩家在 TSY 内走动时通过 Y 坐标自然跨层，`ZoneRegistry.find_zone(dim, pos)` 按当前位面 + 坐标返回对应层
 - **命名前缀** `tsy_<来源>_<序号>_<层深>`；`<层深>` ∈ `{shallow, mid, deep}`
+- 裂缝入口 POI（`portal_rift` tag）**登记在主世界 zone**，不在 TSY dim 内部；本 subzone 的 `"tsy_entry"` tag 现在表示"该 TSY subzone 是跨位面后的着陆层"，语义比原版略窄
 
 ### 1.2 识别 helper（新增）
 
@@ -124,8 +137,16 @@ pub struct TsyPresence {
     pub entered_at_tick: u64,
     /// 入场时的 inventory 快照 instance_ids —— 用于秘境死亡结算区分"秘境所得" vs "原带物"
     pub entry_inventory_snapshot: Vec<u64>,
-    /// 入口坐标（用于出关传送回对应位置）
-    pub entry_portal_pos: DVec3,
+    /// 出关锚点：回到哪个位面 + 哪个坐标（架构反转后必带位面信息）
+    /// - 通常 = `(DimensionKind::Overworld, 触发裂缝的主世界坐标 + (0,1,0))`
+    /// - 塌缩时若主世界锚点已失效（如对应 RiftPortal 被 despawn），由 P2 lifecycle 决定 fallback（出生点 / 灵龛 / 随机安全点）
+    pub return_to: DimensionAnchor,
+}
+
+/// 位面锚点（`plan-tsy-dimension-v1 §3` 定义）
+pub struct DimensionAnchor {
+    pub dimension: DimensionKind,  // 来自 plan-tsy-dimension-v1
+    pub pos: DVec3,
 }
 ```
 
@@ -148,7 +169,11 @@ export const TsyEnterEventV1 = Type.Object({
   tick: Type.Number(),
   player_id: Type.String(),
   family_id: Type.String(),
-  entry_portal_pos: Type.Array(Type.Number(), { minItems: 3, maxItems: 3 }),
+  // 出关锚点（架构反转后带位面信息）：回到哪个 dim + 哪个坐标
+  return_to: Type.Object({
+    dimension: Type.String(),      // e.g. "minecraft:overworld"
+    pos: Type.Array(Type.Number(), { minItems: 3, maxItems: 3 }),
+  }),
   filtered_items: Type.Array(Type.Object({
     instance_id: Type.Number(),
     template_id: Type.String(),
@@ -267,62 +292,82 @@ FixedUpdate:
 
 ---
 
-## §3 裂缝 POI 与双向传送
+## §3 裂缝 POI 与跨位面传送
 
 ### 3.1 裂缝入口
 
-裂缝 = 主世界的某个坐标，靠近时触发传送进 TSY。
+裂缝 = **主世界** layer 内某个坐标的 `RiftPortal` 实体，靠近时触发**跨位面传送**到 TSY dim 内对应 family 的 `_shallow` 中心。
 
-**MVP 实现**：调试命令 `/tsy-spawn <family_id>` 手动在当前位置放置一个裂缝 + 对应的 TSY 三个 subzone（动态追加到 ZoneRegistry）。正式发布要和 worldgen 对接（`worldgen` Python 脚本生成 POI，此为后续 plan）。
+**MVP 实现**：调试命令 `/tsy-spawn <family_id>` 手动在当前位置（主世界）放置一个裂缝 + 对应的 TSY 三个 subzone（动态追加到 ZoneRegistry TSY dim 分组，依赖新增的 `ZoneRegistry::register_runtime_zone()`，见 §-1 隐形前置依赖）。正式发布走 `plan-tsy-worldgen-v1`：Python 侧 blueprint 分两文件产出——主世界 manifest 含 rift_portal POI（TSY 入口锚点）+ TSY dim manifest 含三层 subzone / loot / npc_anchor；`dev-reload.sh` regen 后 server 启动时两份 manifest 分别 mmap 进对应 `TerrainProvider`（`plan-tsy-dimension-v1 §2`），`/tsy-spawn` 调试命令退化为"强制激活已注册 TSY zone + 跨位面传玩家"。
 
 ### 3.2 Rift POI Component
 
 **位置**：`server/src/world/tsy.rs`
 
 ```rust
-/// 裂缝 POI（附着在世界某个坐标的空气方块或标记实体）
+/// 裂缝 POI：两种实体共用同一 component 定义
+/// - **主世界侧**：附着在主世界 layer 某坐标，玩家触发后跨位面传 → TSY
+/// - **TSY dim 侧**：同 family 的 `_shallow` 中心也放一个，玩家触发后跨位面传回主世界
+/// 两侧实例通过 `direction` 区分
 #[derive(Component, Debug, Clone)]
 pub struct RiftPortal {
     /// 对应 TSY family id（如 "tsy_lingxu_01"）
     pub family_id: String,
-    /// 入口传送目标：对应 family 的 _shallow 层的 center
-    pub entry_destination: DVec3,
+    /// 跨位面传送目标：目标 dim + 目标坐标
+    pub target: DimensionAnchor,
     /// 激活半径（玩家靠近时触发传送）
     pub trigger_radius: f64,  // MVP = 1.5 格
+    /// 方向：Entry（主世界 → TSY）或 Exit（TSY → 主世界）
+    pub direction: PortalDirection,
 }
+
+pub enum PortalDirection { Entry, Exit }
 ```
 
-裂缝本身**不是实体**，是附着在世界坐标的 marker component（用 EntityMap 查找）。MVP 用一个隐形的 armor stand 载体，后续可以换成 particle / 特殊方块。
+裂缝本身**不是方块**，是各位面 layer 内某坐标上的 marker entity（Valence 里是带 `Position` + `RiftPortal` 的 entity，附在对应 layer）。MVP 用隐形 armor stand，后续可换 particle 或自定义特殊方块。
 
 ### 3.3 Entry 传送 System
 
 **位置**：`server/src/world/tsy_portal.rs`，注册到 `FixedUpdate`
 
+**关键变化（架构反转后）**：不再自己 `insert Position`，改为发 `DimensionTransferRequest` event 让 `plan-tsy-dimension-v1 §3` 的 `apply_dimension_transfers` 系统统一处理 layer 切换 + Position 更新 + Respawn packet。
+
 ```rust
 pub fn tsy_entry_portal_system(
     mut commands: Commands,
-    players: Query<(Entity, &Position, &PlayerState, &PlayerInventory), Without<TsyPresence>>,
+    players: Query<(Entity, &Position, &PlayerState, &PlayerInventory, &CurrentDimension), Without<TsyPresence>>,
     portals: Query<(&Position, &RiftPortal)>,
-    zones: Res<ZoneRegistry>,
     tick: Res<ServerTick>,
+    mut dim_transfer: EventWriter<DimensionTransferRequest>,
     mut emit: EventWriter<TsyEnterEmit>,
 ) {
-    for (player_entity, player_pos, state, inv) in &players {
+    for (player_entity, player_pos, state, inv, cur_dim) in &players {
+        // 玩家必须在主世界才能触发 Entry portal
+        if cur_dim.0 != DimensionKind::Overworld { continue; }
+
         for (portal_pos, portal) in &portals {
+            if !matches!(portal.direction, PortalDirection::Entry) { continue; }
             if player_pos.0.distance(portal_pos.0) <= portal.trigger_radius {
                 // Step 1: 入场过滤（见 §4）
                 let filtered = apply_entry_filter(inv);
 
-                // Step 2: attach TsyPresence
+                // Step 2: attach TsyPresence（出关锚点 = 触发点 + 抬 1 格防卡）
                 commands.entity(player_entity).insert(TsyPresence {
                     family_id: portal.family_id.clone(),
                     entered_at_tick: tick.0,
                     entry_inventory_snapshot: inv.all_instance_ids(),
-                    entry_portal_pos: portal_pos.0,
+                    return_to: DimensionAnchor {
+                        dimension: DimensionKind::Overworld,
+                        pos: portal_pos.0 + DVec3::Y,
+                    },
                 });
 
-                // Step 3: 传送到 shallow 层 center
-                commands.entity(player_entity).insert(Position(portal.entry_destination));
+                // Step 3: 发跨位面传送请求（layer 切换 + Position 更新 + Respawn packet 统一处理）
+                dim_transfer.send(DimensionTransferRequest {
+                    entity: player_entity,
+                    target: portal.target.dimension,   // = DimensionKind::Tsy
+                    target_pos: portal.target.pos,     // = TSY dim 内 family 的 _shallow center
+                });
 
                 // Step 4: emit event
                 emit.send(TsyEnterEmit { player_entity, family_id: portal.family_id.clone(), filtered });
@@ -336,31 +381,38 @@ pub fn tsy_entry_portal_system(
 
 ### 3.4 Exit 传送
 
-**设计决策**：出关 = 玩家从 TSY subzone 走出 AABB（例如走到 `_shallow` 的 XZ 边界外）。不需要特殊的"出口方块"——一走出 zone，就传送回入口坐标。
+**设计决策（架构反转后）**：出关 = 玩家**走回 `_shallow` 中心的 Exit portal 实体**（与主世界入口 RiftPortal 双向对应）。不再做"走出 AABB 自动出关"——在独立 TSY 位面里走出 family AABB 要么撞 world border、要么落入无地的死负压区（见 dimension plan Q3），都不是可预期的 UX。
 
 **原因**：
-- 简化 UX（玩家不用找特定出口）
-- 和负压机制对齐：撤退就是往外走，走到 zone 边界自然出关
-- 死坍缩渊（塌缩后，P2 plan）时，zone 被 registry 移除，玩家自动出界 → 自动传送出（但那时真元可能已经被 race-out 抽干，出来就是死）
+- 独立位面没有"走出去 = 出关"的几何基础
+- 改成 Exit portal 实体更符合 MC 原版跨位面心智（nether portal 也是实体触发）
+- 死坍缩渊（P2 lifecycle）时 Exit portal 被 despawn + TSY subzone 被 registry 移除，由 P2 负责把仍在内部的玩家强制弹回主世界（或按 race-out 失败处理）
 
-**实现**：
+**实现**：Exit portal 与 Entry portal 共用 `RiftPortal` component，只是 `direction = PortalDirection::Exit` 且 `target.dimension = Overworld`、`target.pos` 从 `TsyPresence.return_to` 取。
 
 ```rust
 pub fn tsy_exit_portal_system(
     mut commands: Commands,
-    players: Query<(Entity, &Position, &TsyPresence, &PlayerState)>,
-    zones: Res<ZoneRegistry>,
+    players: Query<(Entity, &Position, &TsyPresence, &CurrentDimension)>,
+    portals: Query<(&Position, &RiftPortal)>,
     tick: Res<ServerTick>,
+    mut dim_transfer: EventWriter<DimensionTransferRequest>,
     mut emit: EventWriter<TsyExitEmit>,
 ) {
-    for (entity, pos, presence, state) in &players {
-        let zone = zones.find_zone(pos.0);
-        let in_tsy = zone.map_or(false, |z| z.is_tsy() && z.tsy_family_id().as_deref() == Some(&presence.family_id));
+    for (entity, pos, presence, cur_dim) in &players {
+        if cur_dim.0 != DimensionKind::Tsy { continue; }
 
-        if !in_tsy {
-            // 玩家走出了 TSY subzones（或当前 zone 是别的 TSY，走错了）
-            // 传送回入口坐标
-            commands.entity(entity).insert(Position(presence.entry_portal_pos));
+        for (portal_pos, portal) in &portals {
+            if !matches!(portal.direction, PortalDirection::Exit) { continue; }
+            if portal.family_id != presence.family_id { continue; }
+            if pos.0.distance(portal_pos.0) > portal.trigger_radius { continue; }
+
+            // 走回对应 family 的 Exit portal → 跨位面回主世界锚点
+            dim_transfer.send(DimensionTransferRequest {
+                entity,
+                target: presence.return_to.dimension,
+                target_pos: presence.return_to.pos,
+            });
             commands.entity(entity).remove::<TsyPresence>();
 
             emit.send(TsyExitEmit {
@@ -368,12 +420,13 @@ pub fn tsy_exit_portal_system(
                 family_id: presence.family_id.clone(),
                 duration_ticks: tick.0 - presence.entered_at_tick,
             });
+            break;
         }
     }
 }
 ```
 
-**注**：`in_tsy` 判定考虑了"走到**另一个** TSY"的奇葩场景（两个 TSY zones 紧邻）。本 plan 假设 zone load 时校验 TSY 互不相交（见 §5 测试）。
+**注**：走到**另一个** TSY family 的 Exit portal 要阻止（`portal.family_id != presence.family_id` 那行）。P2 lifecycle 处理塌缩时的强制弹出是独立 system，不走这个 portal 路径。
 
 ---
 
@@ -505,8 +558,9 @@ fn strip_name(template_id: &str, original: &str) -> String {
 加启动时校验：
 
 - [ ] 所有 TSY subzone（`_shallow/_mid/_deep`）必须是三组存在（否则 warn）
-- [ ] TSY zones 之间 AABB 不相交（除了同一 family 的三层在 Y 轴上重叠是正常）
-- [ ] TSY zones 不和非 TSY zone 相交（否则 panic 或 warn，至少 log）
+- [ ] 同一位面内 zone 之间 AABB 不相交（同一 family 的三层共享 XZ + Y 分层是正常例外）
+- [ ] 每个 TSY subzone 的 `zone.dimension == "bong:tsy"`；主世界的 `rift_portal` POI 所在 zone `zone.dimension == "minecraft:overworld"`（跨位面 zone 一致性）
+- [ ] ~~TSY zones 不和非 TSY zone 相交~~（架构反转后自然满足：两类 zone 不在同一位面，不可能相交）
 
 ---
 
@@ -540,7 +594,8 @@ fn strip_name(template_id: &str, original: &str) -> String {
   - [ ] （手动 Give 境界提升到化虚）→ 深层真元几秒归零
 
 - [ ] **C. 出关流**
-  - [ ] 走出 XZ bounds → 被传送回裂缝附近（entry_portal_pos）
+  - [ ] 走回 `_shallow` 中心 Exit portal 半径内 → 跨位面传回主世界 `return_to.pos`（+1 格浮空）
+  - [ ] 跨位面 Respawn packet 发出，客户端场景重载（从 TSY 位面回到 `minecraft:overworld`）
   - [ ] `TsyPresence` component 被移除（/debug 命令显示）
   - [ ] 出关后真元条**不重置**（保持离开时的值；回复靠回到正灵气区静坐或嗑丹药）
 
@@ -567,10 +622,11 @@ fn strip_name(template_id: &str, original: &str) -> String {
 |------|------|------|
 | 非线性指数 `n=1.5` 是否 balance | 高 | 先 hardcode，playtest 后调；预留 const 方便调 |
 | 三个 subzone 共享 XZ 是否造成 `find_zone` 歧义 | 中 | 写一个 "Y 优先"的查询：按 Y 坐标落在哪层；测 § 5 zone load 校验 |
-| MixinPlayerEntityHeldItem 等现有 client mixin 是否影响入场传送 | 低 | 传送完全在 server 端，client mixin 不参与逻辑 |
+| 跨位面传送在 Fabric 客户端有 mixin / HUD 残留 | 中 | 见 `plan-tsy-dimension-v1 §4.2`；active 开工前手动 audit 一遍；MixinPlayerEntityHeldItem 等现有 mixin 初判无影响（传送完全 server 端），但实机复验 |
 | 过滤器漏项（某些 item 字段没清 → 作弊带入） | 中 | 过滤器只看 `spirit_quality`，所有物品统一通过这个字段 gating；新增物品类型时必须 review |
-| 出关传送把玩家送到掉崖 / 卡方块的位置 | 中 | MVP：`entry_portal_pos + [0, 1, 0]` 保证浮空 1 格；后续 check `is_air(pos + offset)` |
+| 出关传送把玩家送到掉崖 / 卡方块的位置 | 中 | MVP：`return_to.pos = 触发点 + (0, 1, 0)` 保证浮空 1 格；后续 check `is_air(pos + offset)` |
 | `ZoneRegistry` 不支持运行时 hot-add | 高 | `/tsy-spawn` 命令需要扩 `ZoneRegistry::add(zone)` + `remove(name)`；原 registry 是启动时 load，目前只有 `load_from_path`；新增 `fn push(&mut self, zone: Zone)` |
+| `plan-tsy-dimension-v1` 未落地前 P0 无法实装 | 高 | 本 plan active 阶段开工必须晚于 dimension plan active；骨架阶段可并行完成（本修订已完成） |
 
 ### 未决设计问题（本 plan 不解决，标记给后续）
 
@@ -582,10 +638,14 @@ fn strip_name(template_id: &str, original: &str) -> String {
 
 ## §8 后续 / 相关
 
+**本 plan 依赖**（必须先落地）：
+
+- `plan-tsy-dimension-v1.md`（基础设施前置）— 提供 `DimensionKind` enum、`DimensionAnchor` struct、`DimensionLayers` resource、`DimensionTransferRequest` event、`TerrainProviders` 多 provider routing、`CurrentDimension` component（玩家所在位面）
+
 **依赖本 plan 完成后才能启动**：
 
 - `plan-tsy-loot-v1.md`（P1）— 依赖 `TsyPresence` 做"秘境内死亡"的条件判定 + `entry_inventory_snapshot` 区分秘境所得
-- `plan-tsy-lifecycle-v1.md`（P2）— 依赖 ZoneRegistry 动态 add/remove + 负压 tick system 的 hook
+- `plan-tsy-lifecycle-v1.md`（P2）— 依赖 ZoneRegistry 动态 add/remove + 负压 tick system 的 hook + dimension plan 的锚点失效同步
 
 **文件清单**（本 plan 新增）：
 
@@ -595,7 +655,8 @@ fn strip_name(template_id: &str, original: &str) -> String {
 - `server/src/world/tsy_filter.rs`（entry filter）
 - `server/src/world/zone.rs`（+ 识别 helpers） — 修改
 - `server/src/world/mod.rs`（注册子模块 + systems） — 修改
-- `server/zones.json`（+ 3 个 sample TSY subzone） — 修改
+- `server/zones.tsy.json`（新文件，3 个 sample TSY subzone，详见 `plan-tsy-worldgen-v1 §2.1` 分文件决策；主世界 `zones.json` 可能同步加 `"dimension"` 字段）— 修改
+- `server/zones.json` — 可能新增 `"dimension"` 字段默认值补注（Q2 候选 A：单 registry + Zone.dimension gating，见 `plan-tsy-dimension-v1 §6`）
 - `agent/packages/schema/src/tsy.ts`（新 schema）
 - `agent/packages/schema/src/index.ts` — 修改（导出）
 - `server/tests/tsy_zone_integration.rs`（新 integration test）
@@ -607,7 +668,9 @@ fn strip_name(template_id: &str, original: &str) -> String {
 - `server/src/combat/events.rs` — `DeathEvent` 扩展归 P1
 - `client/src/main/resources/bong-client.mixins.json` — keepInventory mixin 归 P1
 - `server/src/npc/**` — 道伥 archetype 归 P2
-- `worldgen/**` — worldgen 接入是独立 plan
+- `worldgen/**` + blueprint JSON（`zones.worldview.example.json` + 新增 `zones.tsy.json` 的 autogen 版本） — 归 **`plan-tsy-worldgen-v1`**（skeleton，地形/POI 自动生成 + POI Consumer System）
+- `server/src/world/terrain/raster.rs` POI consumer — 归 `plan-tsy-worldgen-v1`
+- Valence `DimensionTypeRegistry` 注册 / `LayerBundle` setup / `DimensionTransferRequest` 实现 / `TerrainProviders` 多 provider routing — 归 **`plan-tsy-dimension-v1`**（基础设施前置）
 
 ---
 

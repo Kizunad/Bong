@@ -1,7 +1,9 @@
 # TSY 敌对 NPC 分层 · plan-tsy-hostile-v1
 
 > 坍缩渊内 PVE 四档威胁：**道伥**（基础）/ **执念**（精英）/ **秘境守灵**（Boss）/ **负压畸变体**（环境）。本 plan 扩展 `NpcArchetype` + 建四套 big-brain AI tree + 按 TSY 起源分布的 spawn pool + 对应 drop table + `Fuya` 的耗真元光环。P4 在 P2 (lifecycle 已加 `Daoxiang` variant) + P3 (container 提供钥匙消耗对象) 就位后开工。
-> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-zone-v1.md §1`（TSY zone 识别 + `TsyPresence`）· `plan-tsy-loot-v1.md §1-§2`（`ItemRarity::Ancient` + `AncientRelicTemplate`）· `plan-tsy-lifecycle-v1.md §4`（`NpcArchetype::Daoxiang` + `DaoxiangOrigin`）· `plan-tsy-container-v1.md §3`（钥匙 template 约定）· `worldview.md §十六.五 敌对 NPC 分层`（4 档威胁表 + 起源倾向） · `worldview.md §七`（道伥 lore）
+> 交叉引用：`plan-tsy-v1.md §0/§2`（公理 / 横切）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1`（TSY zone 识别 + `TsyPresence`）· `plan-tsy-loot-v1.md §1-§2`（`ItemRarity::Ancient` + `AncientRelicTemplate`）· `plan-tsy-lifecycle-v1.md §4`（`NpcArchetype::Daoxiang` + `DaoxiangOrigin`）· `plan-tsy-container-v1.md §3`（钥匙 template 约定）· `worldview.md §十六.五 敌对 NPC 分层`（4 档威胁表 + 起源倾向） · `worldview.md §七`（道伥 lore）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面。本 plan 所有 NPC（道伥/执念/守灵/畸变体）spawn 在 **TSY layer** 下（挂到 `DimensionLayers.tsy`）；"zone AABB 内分布"全部在 TSY dim 内部坐标下计算。P2 lifecycle 中"道伥喷出主世界" = 跨位面传送到 Overworld layer，已在 P2 plan §6 更新。
 
 ---
 

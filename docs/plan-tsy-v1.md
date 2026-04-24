@@ -3,14 +3,18 @@
 > 把 Bong 的主玩法补齐为「搜打撤」循环——活坍缩渊（TSY）作为世界里的**有限时限副本**，玩家在其中冒真元换遗物。
 > 交叉引用：`worldview.md §十六`（秘境：活坍缩渊）· `worldview.md §二`（坍缩渊）· `worldview.md §十`（搜打撤循环）· `plan-inventory-v1.md §-1`（DroppedLoot）· `plan-death-lifecycle-v1.md §7`（LifeRecord）
 
-本 plan 是**方向性 meta**，不含实现细节。实施由 6 个子 plan 线性推进：
+本 plan 是**方向性 meta**，不含实现细节。实施由 **P-1 + 6 个子 plan** 线性推进：
 
+- `plan-tsy-dimension-v1.md` (**P-1 位面基础设施** — 骨架)（2026-04-24 架构反转新增）— Valence `DimensionType` 注册、TSY `LayerBundle`、跨位面传送 API、per-dimension `TerrainProvider`。**所有其他子 plan 的前置**
 - `plan-tsy-zone-v1.md` (**P0 基础**) — TSY zone type、负压抽真元、裂缝入口、入场过滤
 - `plan-tsy-loot-v1.md` (**P1 物资与死亡**) — 99/1 遗物分布、秘境内死亡 100% 掉落、干尸化、keepInventory mixin
 - `plan-tsy-lifecycle-v1.md` (**P2 塌缩与道伥**) — 遗物骨架、塌缩事件、race-out、道伥生态
 - `plan-tsy-container-v1.md` (**P3 容器与搜刮**) — 5 档容器（干尸/骨架/储物袋/石匣/法阵核心）、搜刮倒计时、钥匙/令牌、搜刮时真元 1.5× 加速
 - `plan-tsy-hostile-v1.md` (**P4 敌对 NPC**) — 4 类敌对 archetype（道伥/执念/秘境守灵/负压畸变体）、AI tree、起源 × 层深 spawn pool、drop table、Fuya 耗真元光环
 - `plan-tsy-extract-v1.md` (**P5 撤离点**) — 3 种 portal（主裂缝/深层缝/塌缩裂口）、撤离倒计时、中断规则、race-out 模式切换、塌缩清场
+- `plan-tsy-worldgen-v1.md` (**骨架** — 独立能力，与 P3/P4/P5 可并行) — 地形 / POI / NPC anchor 自动生成，产出两份 manifest（主世界 + TSY dim）
+
+> **2026-04-24 架构反转备忘**：`worldview.md §十六 世界层实现注` 已锁坍缩渊以**独立位面**实现（类 Nether）。原 P0 `§-1 点 5` "传送是同一 MC world 内的坐标传送" 已被推翻，改由 `plan-tsy-dimension-v1` 承载基础设施，P0 / worldgen / lifecycle / extract 的传送 / 锚点 / find_zone 调用均需带位面信息。各子 plan 顶部有连带修订备忘。
 
 ---
 
