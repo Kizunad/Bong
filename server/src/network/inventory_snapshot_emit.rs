@@ -255,6 +255,10 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         // M3a — 衍生数据由 caller 调 `enrich_with_derived_freshness` 后填；
         // 默认 None 防止未注入 registry 的 caller 漏算。
         freshness_current: None,
+        // plan-mineral-v1 §2.2 — mineral_id 来自 ItemInstance.mineral_id（drop listener 写入）；
+        // 当前 ItemInstance 字段未扩展，统一 None；后续 inventory 侧接入 MineralDropEvent
+        // 时把 ItemInstance.mineral_id 透传到这里。
+        mineral_id: None,
         scroll_kind,
         scroll_skill_id,
         scroll_xp_grant,
