@@ -2,6 +2,7 @@
   "v": 1,
   "type": "skill_snapshot",
   "char_id": 1001,
+  "consumed_scrolls": ["skill_scroll_herbalism_baicao_can"],
   "skills": {
     "herbalism": {
       "lv": 3,

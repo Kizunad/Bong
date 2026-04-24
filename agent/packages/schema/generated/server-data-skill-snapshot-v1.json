@@ -2,19 +2,20 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
-    "v",
     "type",
+    "v",
     "char_id",
-    "skills"
+    "skills",
+    "consumed_scrolls"
   ],
   "properties": {
-    "v": {
-      "const": 1,
-      "type": "number"
-    },
     "type": {
       "const": "skill_snapshot",
       "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
     },
     "char_id": {
       "minimum": 0,
@@ -63,6 +64,13 @@
             }
           }
         }
+      }
+    },
+    "consumed_scrolls": {
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
       }
     }
   }

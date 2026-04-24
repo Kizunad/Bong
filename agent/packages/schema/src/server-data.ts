@@ -20,7 +20,6 @@ import {
 import { Narration } from "./narration.js";
 import {
   SkillCapChangedPayloadV1,
-  SkillEntrySnapshotV1,
   SkillLvUpPayloadV1,
   SkillScrollUsedPayloadV1,
   SkillSnapshotPayloadV1,
@@ -463,10 +462,8 @@ export type ServerDataSkillScrollUsedV1 = Static<
 
 export const ServerDataSkillSnapshotV1 = Type.Object(
   {
-    v: Type.Literal(1),
     type: Type.Literal("skill_snapshot"),
-    char_id: Type.Integer({ minimum: 0 }),
-    skills: Type.Record(Type.String({ minLength: 1 }), SkillEntrySnapshotV1),
+    ...SkillSnapshotPayloadV1.properties,
   },
   { additionalProperties: false },
 );

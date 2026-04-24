@@ -913,6 +913,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
         app.add_systems(
             Update,
             (
