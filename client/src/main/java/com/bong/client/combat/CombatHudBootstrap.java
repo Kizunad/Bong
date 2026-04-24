@@ -102,5 +102,6 @@ public final class CombatHudBootstrap {
         com.bong.client.combat.store.TribulationBroadcastStore.resetForTests();
         com.bong.client.combat.inspect.TechniquesListPanel.resetForTests();
         com.bong.client.combat.inspect.WeaponTreasurePanel.resetForTests();
+        TreasureEquippedStore.resetForTests();
     }
 }

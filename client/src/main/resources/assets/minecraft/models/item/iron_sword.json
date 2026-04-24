@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/placeholder_sword/placeholder_sword.obj",
+  "model": "bong:models/item/iron_sword/iron_sword.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [

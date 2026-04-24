@@ -6,6 +6,7 @@ import {
   CHANNELS,
   type Narration,
   type SkillLvUpPayloadV1,
+  validateNarrationV1Contract,
   validateSkillLvUpPayloadV1Contract,
 } from "@bong/schema";
 
@@ -101,12 +102,17 @@ function parseNarrationContent(content: string, payload: SkillLvUpPayloadV1): Na
     }
 
     const first = parsed as { text: string; style: Narration["style"] };
-    return {
+    const narration: Narration = {
       scope: "player",
       target: narrationTarget(payload),
       text: first.text,
       style: first.style,
     };
+    const validation = validateNarrationV1Contract({
+      v: 1,
+      narrations: [narration],
+    });
+    return validation.ok ? narration : fallbackNarration(payload);
   } catch {
     return fallbackNarration(payload);
   }

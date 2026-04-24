@@ -264,6 +264,24 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeDropWeapon(long instanceId, InvLocation from) {
+        JsonObject obj = envelope("drop_weapon_intent");
+        obj.addProperty("instance_id", instanceId);
+        obj.add("from", from.toJson());
+        return obj.toString();
+    }
+
+    public static String encodeRepairWeapon(long instanceId, int x, int y, int z) {
+        JsonObject obj = envelope("repair_weapon_intent");
+        obj.addProperty("instance_id", instanceId);
+        com.google.gson.JsonArray pos = new com.google.gson.JsonArray();
+        pos.add(x);
+        pos.add(y);
+        pos.add(z);
+        obj.add("station_pos", pos);
+        return obj.toString();
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static String encodeUseQuickSlot(int slot) {

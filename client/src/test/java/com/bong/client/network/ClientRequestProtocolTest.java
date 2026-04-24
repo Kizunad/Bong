@@ -126,6 +126,27 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesDropWeapon() {
+        String json = ClientRequestProtocol.encodeDropWeapon(
+            2002L,
+            new ClientRequestProtocol.EquipLoc("main_hand")
+        );
+        assertEquals(
+            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"}}",
+            json
+        );
+    }
+
+    @Test
+    void encodesRepairWeapon() {
+        String json = ClientRequestProtocol.encodeRepairWeapon(4242L, 1, 64, 2);
+        assertEquals(
+            "{\"type\":\"repair_weapon_intent\",\"v\":1,\"instance_id\":4242,\"station_pos\":[1,64,2]}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(

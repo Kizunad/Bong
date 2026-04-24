@@ -1,5 +1,7 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.EquippedWeapon;
+import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
@@ -20,17 +22,16 @@ public class InspectScreenBootstrapTest {
     @AfterEach
     void resetStore() {
         InventoryStateStore.resetForTests();
+        WeaponEquippedStore.resetForTests();
     }
 
     @Test
-    void disconnectedStateStillAllowsExplicitMockDevScreen() {
+    void disconnectedStateDoesNotOpenInspectScreen() {
         InventoryStateStore.clearOnDisconnect();
 
         InspectScreen screen = InspectScreenBootstrap.createScreenForCurrentState();
 
-        assertNotNull(screen);
-        assertFalse(screen.model().gridItems().isEmpty());
-        assertTrue(screen.model().gridItems().stream().anyMatch(entry -> "spirit_grass".equals(entry.item().itemId())));
+        assertNull(screen);
     }
 
     @Test
@@ -61,6 +62,18 @@ public class InspectScreenBootstrapTest {
 
         assertNotNull(screen);
         assertEquals(authoritative, screen.model());
+    }
+
+    @Test
+    void clearInventorySnapshotAlsoClearsWeaponStore() {
+        WeaponEquippedStore.putOrClear(
+            "main_hand",
+            new EquippedWeapon("main_hand", 1L, "iron_sword", "sword", 200.0f, 200.0f, 0)
+        );
+
+        InspectScreenBootstrap.clearInventorySnapshot();
+
+        assertNull(WeaponEquippedStore.get("main_hand"));
     }
 
     @Test

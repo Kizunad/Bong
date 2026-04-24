@@ -24,6 +24,10 @@ export const EquipSlotV1 = Type.Union([
   Type.Literal("main_hand"),
   Type.Literal("off_hand"),
   Type.Literal("two_hand"),
+  Type.Literal("treasure_belt_0"),
+  Type.Literal("treasure_belt_1"),
+  Type.Literal("treasure_belt_2"),
+  Type.Literal("treasure_belt_3"),
 ]);
 export type EquipSlotV1 = Static<typeof EquipSlotV1>;
 
@@ -125,6 +129,10 @@ const EquippedInventorySnapshotV1 = Type.Object(
     main_hand: NullableInventoryItemViewV1,
     off_hand: NullableInventoryItemViewV1,
     two_hand: NullableInventoryItemViewV1,
+    treasure_belt_0: NullableInventoryItemViewV1,
+    treasure_belt_1: NullableInventoryItemViewV1,
+    treasure_belt_2: NullableInventoryItemViewV1,
+    treasure_belt_3: NullableInventoryItemViewV1,
   },
   { additionalProperties: false },
 );

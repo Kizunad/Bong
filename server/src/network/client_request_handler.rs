@@ -32,7 +32,8 @@ use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::inventory::{
     apply_inventory_move, consume_item_instance_once, inventory_item_by_instance_borrow,
-    InventoryMoveOutcome, PlayerInventory,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance, pickup_dropped_loot_instance,
+    DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
 };
 use crate::inventory::{
     ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
@@ -53,6 +54,7 @@ use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
     current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
+use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::network::send_server_data_payload;
@@ -84,6 +86,12 @@ pub struct CombatRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+}
+
+#[derive(SystemParam)]
+pub struct DroppedLootRequestParams<'w, 's> {
+    pub registry: ResMut<'w, DroppedLootRegistry>,
+    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
 }
 
 /// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
@@ -140,6 +148,7 @@ pub fn handle_client_request_payloads(
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
     mut combat_params: CombatRequestParams,
+    mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
     mut skill_scroll_params: SkillScrollRequestParams,
 ) {
@@ -193,6 +202,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
+            | ClientRequestV1::DropWeaponIntent { v, .. }
+            | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::Jiemai { v }
@@ -397,9 +408,80 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     to,
+                    &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                );
+            }
+            ClientRequestV1::InventoryDiscardItem {
+                instance_id, from, ..
+            } => {
+                handle_inventory_discard(
+                    ev.client,
+                    instance_id,
+                    from,
+                    &mut inventories,
+                    &mut dropped_loot_params.registry,
+                    &mut clients,
+                    &player_states,
+                    &dropped_loot_params.positions,
+                );
+            }
+            ClientRequestV1::DropWeaponIntent {
+                instance_id, from, ..
+            } => {
+                handle_inventory_discard(
+                    ev.client,
+                    instance_id,
+                    from,
+                    &mut inventories,
+                    &mut dropped_loot_params.registry,
+                    &mut clients,
+                    &player_states,
+                    &dropped_loot_params.positions,
+                );
+            }
+            ClientRequestV1::RepairWeaponIntent {
+                instance_id,
+                station_pos,
+                ..
+            } => {
+                handle_repair_weapon(
+                    ev.client,
+                    instance_id,
+                    station_pos,
+                    &combat_params.item_registry,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                );
+            }
+            ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
+                handle_pickup_dropped_item(
+                    ev.client,
+                    instance_id,
+                    &mut inventories,
+                    &mut dropped_loot_params.registry,
+                    &mut clients,
+                    &player_states,
+                    &dropped_loot_params.positions,
+                );
+            }
+            ClientRequestV1::ApplyPill {
+                instance_id,
+                target,
+                ..
+            } => {
+                handle_apply_pill(
+                    ev.client,
+                    instance_id,
+                    target,
+                    &combat_clock,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &mut combat_params,
                 );
             }
             ClientRequestV1::Jiemai { .. } => {
@@ -552,20 +634,6 @@ pub fn handle_client_request_payloads(
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
             }
-            // TODO(inventory-v1 post-merge)：HEAD 分支加的 3 个 inventory-v1 C2S handler
-            // 在本次 merge 里与 main 的 inventory API 重构冲突，先 no-op 避免编译失败。
-            // 需单独 follow-up PR 把 HEAD 版 apply_pill/discard/pickup 的 handler 逻辑
-            // 移植到 main 的 `Query<&mut PlayerInventory>` + `handle_alchemy_take_pill`
-            // 风格，并复用 main 的 `BreakthroughBoost` buff 路径（取代 HEAD 的
-            // `pending_material_bonus` 字段）。client 侧 C2S 已发送，server 侧先静默。
-            ClientRequestV1::InventoryDiscardItem { .. }
-            | ClientRequestV1::PickupDroppedItem { .. }
-            | ClientRequestV1::ApplyPill { .. } => {
-                tracing::warn!(
-                    "[bong][network][inventory] inventory-v1 C2S variant not yet wired post-merge, ignoring (entity={:?})",
-                    ev.client
-                );
-            }
         }
     }
 }
@@ -610,6 +678,15 @@ fn handle_learn_skill_scroll(
             xp_granted: 0,
             was_duplicate: true,
         });
+        if let Ok(inventory) = inventories.get(entity) {
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "skill_scroll_duplicate",
+            );
+        }
         if let Ok((username, mut client)) = clients.get_mut(entity) {
             if let (Ok(skill_set), Ok(cultivation)) = (
                 skill_scroll_params.skill_sets.get(entity),
@@ -705,8 +782,9 @@ mod tests {
 
     use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
     use crate::skill::components::SkillSet;
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
-    use valence::testing::create_mock_client;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     #[derive(Default)]
     struct CapturedBreakthroughRequests(Vec<BreakthroughRequest>);
@@ -782,6 +860,34 @@ mod tests {
         }
     }
 
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn has_inventory_snapshot_payload(helper: &mut MockClientHelper) -> bool {
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) else {
+                continue;
+            };
+            if value.get("type").and_then(|ty| ty.as_str()) == Some("inventory_snapshot") {
+                return true;
+            }
+        }
+        false
+    }
+
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
@@ -791,6 +897,7 @@ mod tests {
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -861,6 +968,7 @@ mod tests {
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -924,6 +1032,7 @@ mod tests {
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -943,7 +1052,7 @@ mod tests {
         app.add_event::<SkillScrollUsed>();
         app.add_systems(Update, handle_client_request_payloads);
 
-        let (client_bundle, _helper) = create_mock_client("Azure");
+        let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut skill_set = SkillSet::default();
         skill_set.consumed_scrolls.insert(ScrollId::new("skill_scroll_herbalism_baicao_can"));
         let entity = app.world_mut().spawn((
@@ -967,9 +1076,14 @@ mod tests {
             });
 
         app.update();
+        flush_all_client_packets(&mut app);
 
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
         assert_eq!(inventory.containers[0].items.len(), 1);
+        assert!(
+            has_inventory_snapshot_payload(&mut helper),
+            "duplicate rejection must resync inventory after optimistic client drop"
+        );
         let xp_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillXpGain>>().drain().collect();
         assert!(xp_events.is_empty());
         let used_events: Vec<_> = app.world_mut().resource_mut::<valence::prelude::Events<SkillScrollUsed>>().drain().collect();
@@ -1262,6 +1376,7 @@ fn handle_inventory_move(
     instance_id: u64,
     from: InventoryLocationV1,
     to: InventoryLocationV1,
+    item_registry: &ItemRegistry,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
@@ -1276,7 +1391,7 @@ fn handle_inventory_move(
         }
     };
 
-    match apply_inventory_move(&mut inventory, instance_id, &from, &to) {
+    match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             tracing::info!(
                 "[bong][network][inventory] moved instance={instance_id} {from:?} -> {to:?} revision={}",
@@ -1371,6 +1486,210 @@ fn resync_snapshot(
             reason,
         );
     }
+}
+
+fn client_position(positions: &Query<&valence::prelude::Position>, entity: Entity) -> [f64; 3] {
+    positions
+        .get(entity)
+        .map(|pos| {
+            let v = pos.get();
+            [v.x, v.y, v.z]
+        })
+        .unwrap_or([0.0, 64.0, 0.0])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_inventory_discard(
+    entity: Entity,
+    instance_id: u64,
+    from: InventoryLocationV1,
+    inventories: &mut Query<&mut PlayerInventory>,
+    dropped_loot_registry: &mut DroppedLootRegistry,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    positions: &Query<&valence::prelude::Position>,
+) {
+    let player_pos = client_position(positions, entity);
+    let mut inventory = match inventories.get_mut(entity) {
+        Ok(inv) => inv,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][inventory] discard entity={entity:?} has no PlayerInventory"
+            );
+            return;
+        }
+    };
+
+    match discard_inventory_item_to_dropped_loot(
+        &mut inventory,
+        dropped_loot_registry,
+        entity,
+        player_pos,
+        instance_id,
+        &from,
+    ) {
+        Ok(outcome) => {
+            tracing::info!(
+                "[bong][network][inventory] discarded instance={instance_id} from {from:?} revision={}",
+                outcome.revision.0
+            );
+            resync_snapshot(entity, &inventory, clients, player_states, "discard_item");
+            if let Ok((_username, mut client)) = clients.get_mut(entity) {
+                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
+            }
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network][inventory] rejected discard entity={entity:?} instance={instance_id}: {reason}"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "discard_rejection",
+            );
+        }
+    }
+}
+
+fn handle_pickup_dropped_item(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    dropped_loot_registry: &mut DroppedLootRegistry,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    positions: &Query<&valence::prelude::Position>,
+) {
+    let player_pos = client_position(positions, entity);
+    let mut inventory = match inventories.get_mut(entity) {
+        Ok(inv) => inv,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][inventory] pickup entity={entity:?} has no PlayerInventory"
+            );
+            return;
+        }
+    };
+
+    match pickup_dropped_loot_instance(
+        &mut inventory,
+        dropped_loot_registry,
+        entity,
+        player_pos,
+        instance_id,
+    ) {
+        Ok(revision) => {
+            tracing::info!(
+                "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
+                revision.0
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "pickup_dropped_item",
+            );
+            if let Ok((_username, mut client)) = clients.get_mut(entity) {
+                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
+            }
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network][inventory] rejected pickup entity={entity:?} instance={instance_id}: {reason}"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "pickup_rejection",
+            );
+        }
+    }
+}
+
+fn handle_repair_weapon(
+    entity: Entity,
+    instance_id: u64,
+    station_pos: [i32; 3],
+    item_registry: &ItemRegistry,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+) {
+    let mut inventory = match inventories.get_mut(entity) {
+        Ok(inv) => inv,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][weapon] repair entity={entity:?} has no PlayerInventory"
+            );
+            return;
+        }
+    };
+
+    match fully_repair_weapon_instance(&mut inventory, item_registry, instance_id) {
+        Ok(update) => {
+            tracing::info!(
+                "[bong][network][weapon] repaired instance={instance_id} durability={} revision={} station_pos=[{},{},{}]",
+                update.durability,
+                update.revision.0,
+                station_pos[0],
+                station_pos[1],
+                station_pos[2]
+            );
+            resync_snapshot(entity, &inventory, clients, player_states, "repair_weapon");
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network][weapon] rejected repair entity={entity:?} instance={instance_id}: {reason}"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                "repair_rejection",
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_apply_pill(
+    entity: Entity,
+    instance_id: u64,
+    _target: crate::schema::client_request::ApplyPillTargetV1,
+    clock: &CombatClock,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    combat_params: &mut CombatRequestParams,
+) {
+    let template_id = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| {
+            crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id)
+        })
+        .map(|item| item.template_id.clone());
+    let Some(template_id) = template_id else {
+        tracing::warn!(
+            "[bong][network][alchemy] apply_pill entity={entity:?} instance={instance_id} missing from inventory"
+        );
+        return;
+    };
+    handle_alchemy_take_pill(
+        entity,
+        &template_id,
+        clock,
+        inventories,
+        clients,
+        player_states,
+        combat_params,
+    );
 }
 
 fn handle_alchemy_turn_page(

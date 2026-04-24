@@ -213,7 +213,7 @@ public class InventoryEventHandlerTest {
     }
 
     @Test
-    void droppedFromHotbarRemovesItemButDoesNotWriteDroppedStoreEntry() {
+    void droppedFromHotbarRemovesItemAndWritesDroppedStoreEntry() {
         InventoryModel baseline = InventoryModel.builder()
             .containers(InventoryModel.DEFAULT_CONTAINERS)
             .hotbar(0, InventoryItem.createFull(
@@ -243,7 +243,10 @@ public class InventoryEventHandlerTest {
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
-        assertNull(DroppedItemStore.get(1001L));
+        DroppedItemStore.Entry dropped = DroppedItemStore.get(1001L);
+        assertEquals("hotbar", dropped.sourceContainerId());
+        assertEquals(0, dropped.sourceRow());
+        assertEquals(0, dropped.sourceCol());
         assertNull(InventoryStateStore.snapshot().hotbar().get(0));
         assertEquals(6L, InventoryStateStore.revision());
     }

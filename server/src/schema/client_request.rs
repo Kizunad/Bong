@@ -110,6 +110,16 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         from: InventoryLocationV1,
     },
+    DropWeaponIntent {
+        v: u8,
+        instance_id: u64,
+        from: InventoryLocationV1,
+    },
+    RepairWeaponIntent {
+        v: u8,
+        instance_id: u64,
+        station_pos: [i32; 3],
+    },
     PickupDroppedItem {
         v: u8,
         instance_id: u64,
@@ -364,6 +374,48 @@ mod tests {
                 );
             }
             other => panic!("expected InventoryDiscardItem, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn drop_weapon_intent_roundtrip() {
+        let json = r#"{"type":"drop_weapon_intent","v":1,"instance_id":1001,"from":{"kind":"equip","slot":"main_hand"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::DropWeaponIntent {
+                v,
+                instance_id,
+                from,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 1001);
+                assert_eq!(
+                    from,
+                    InventoryLocationV1::Equip {
+                        slot: crate::schema::inventory::EquipSlotV1::MainHand,
+                    }
+                );
+            }
+            other => panic!("expected DropWeaponIntent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repair_weapon_intent_roundtrip() {
+        let json =
+            r#"{"type":"repair_weapon_intent","v":1,"instance_id":4242,"station_pos":[1,64,2]}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::RepairWeaponIntent {
+                v,
+                instance_id,
+                station_pos,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 4242);
+                assert_eq!(station_pos, [1, 64, 2]);
+            }
+            other => panic!("expected RepairWeaponIntent, got {other:?}"),
         }
     }
 

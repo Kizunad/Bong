@@ -142,4 +142,41 @@ describe("SkillLvUpNarrationRuntime", () => {
     expect(runtime.stats.llmFailures).toBe(1);
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
+
+  it("falls back when llm narration violates narration contract", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new SkillLvUpNarrationRuntime({
+      llm: makeLlm(
+        JSON.stringify({
+          text: "x".repeat(501),
+          style: "unsupported_style",
+        }),
+      ),
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        char_id: 303,
+        skill: "forging",
+        new_lv: 2,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "player",
+      target: "char:303|skill:forging|lv:2",
+      text: "你于锻造一道又进一层，今至Lv.2，手法稍熟，心中却并无喜色。",
+      style: "narration",
+    });
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
 });

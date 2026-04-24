@@ -99,6 +99,7 @@ public final class VisualEffectState {
         NEAR_DEATH_VIGNETTE("near_death_vignette"),
         PRESSURE_JITTER("pressure_jitter"),
         HIT_PUSHBACK("hit_pushback"),
+        WEAPON_BREAK_FLASH("weapon_break_flash"),
         MEDITATION_INK_WASH("meditation_ink_wash");
 
         private final String wireName;
@@ -126,6 +127,7 @@ public final class VisualEffectState {
                 case "near_death_vignette", "near_death", "low_hp" -> NEAR_DEATH_VIGNETTE;
                 case "pressure_jitter", "pressure", "qi_pressure" -> PRESSURE_JITTER;
                 case "hit_pushback", "pushback", "recoil", "knockback_cam" -> HIT_PUSHBACK;
+                case "weapon_break_flash", "weapon_break", "break_flash" -> WEAPON_BREAK_FLASH;
                 case "meditation_ink_wash", "ink_wash", "sumi_e", "flashback" -> MEDITATION_INK_WASH;
                 default -> NONE;
             };

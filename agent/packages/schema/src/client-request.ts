@@ -149,6 +149,28 @@ export const InventoryDiscardItemRequestV1 = Type.Object(
 );
 export type InventoryDiscardItemRequestV1 = Static<typeof InventoryDiscardItemRequestV1>;
 
+export const DropWeaponIntentRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("drop_weapon_intent"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    from: InventoryLocationV1,
+  },
+  { additionalProperties: false },
+);
+export type DropWeaponIntentRequestV1 = Static<typeof DropWeaponIntentRequestV1>;
+
+export const RepairWeaponIntentRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("repair_weapon_intent"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    station_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+  },
+  { additionalProperties: false },
+);
+export type RepairWeaponIntentRequestV1 = Static<typeof RepairWeaponIntentRequestV1>;
+
 export const BotanyHarvestRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -282,6 +304,8 @@ export const ClientRequestV1 = Type.Union([
   ApplyPillRequestV1,
   PickupDroppedItemRequestV1,
   InventoryDiscardItemRequestV1,
+  DropWeaponIntentRequestV1,
+  RepairWeaponIntentRequestV1,
   BotanyHarvestRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,

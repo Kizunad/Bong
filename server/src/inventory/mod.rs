@@ -26,6 +26,10 @@ pub const EQUIP_SLOT_FEET: &str = "feet";
 pub const EQUIP_SLOT_MAIN_HAND: &str = "main_hand";
 pub const EQUIP_SLOT_OFF_HAND: &str = "off_hand";
 pub const EQUIP_SLOT_TWO_HAND: &str = "two_hand";
+pub const EQUIP_SLOT_TREASURE_BELT_0: &str = "treasure_belt_0";
+pub const EQUIP_SLOT_TREASURE_BELT_1: &str = "treasure_belt_1";
+pub const EQUIP_SLOT_TREASURE_BELT_2: &str = "treasure_belt_2";
+pub const EQUIP_SLOT_TREASURE_BELT_3: &str = "treasure_belt_3";
 
 type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInventory>);
 
@@ -74,6 +78,7 @@ pub enum ItemCategory {
     Pill,
     Herb,
     Weapon,
+    Treasure,
     BoneCoin,
     Misc,
 }
@@ -694,6 +699,7 @@ fn parse_item_category(
         "pill" => Ok(ItemCategory::Pill),
         "herb" => Ok(ItemCategory::Herb),
         "weapon" => Ok(ItemCategory::Weapon),
+        "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
         "misc" => Ok(ItemCategory::Misc),
         other => Err(format!(
@@ -1029,6 +1035,13 @@ pub enum InventoryMoveOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct InventoryDurabilityUpdate {
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub durability: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct InventoryConsumeOutcome {
     pub revision: InventoryRevision,
     pub remaining_stack: u32,
@@ -1089,6 +1102,7 @@ pub struct InventoryDiscardOutcome {
 /// - target collides with a multi-cell item or the occupant footprint differs
 pub fn apply_inventory_move(
     inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
@@ -1101,6 +1115,8 @@ pub fn apply_inventory_move(
 
     let item = clone_item_at(inventory, instance_id)
         .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+
+    validate_move_semantics(registry, inventory, &item, from, to)?;
 
     let displaced = displaced_at_target(inventory, &item, instance_id, to)?;
 
@@ -1151,6 +1167,78 @@ pub fn apply_inventory_move(
     }
 }
 
+pub fn set_item_instance_durability(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+    durability: f64,
+) -> Result<InventoryDurabilityUpdate, String> {
+    if !durability.is_finite() || !(0.0..=1.0).contains(&durability) {
+        return Err(format!(
+            "invalid durability {durability}; expected finite value in [0, 1]"
+        ));
+    }
+
+    let item = inventory_item_by_instance_mut(inventory, instance_id)
+        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+    item.durability = durability;
+    bump_revision(inventory);
+    Ok(InventoryDurabilityUpdate {
+        revision: inventory.revision,
+        instance_id,
+        durability,
+    })
+}
+
+pub fn fully_repair_weapon_instance(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    instance_id: u64,
+) -> Result<InventoryDurabilityUpdate, String> {
+    let item = inventory_item_by_instance_borrow(inventory, instance_id)
+        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+    let template = registry.get(&item.template_id).ok_or_else(|| {
+        format!(
+            "unknown template `{}` for instance {instance_id}",
+            item.template_id
+        )
+    })?;
+    if template.weapon_spec.is_none() {
+        return Err(format!(
+            "instance {instance_id} template `{}` is not a weapon",
+            item.template_id
+        ));
+    }
+    set_item_instance_durability(inventory, instance_id, 1.0)
+}
+
+pub fn move_equipped_item_to_first_container_slot(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+) -> Result<InventoryMoveOutcome, String> {
+    let (slot_key, _slot_wire) = inventory
+        .equipped
+        .iter()
+        .find_map(|(slot, item)| {
+            (item.instance_id == instance_id)
+                .then_some((slot.clone(), equip_slot_wire_from_runtime(slot.as_str())))
+        })
+        .ok_or_else(|| format!("equipped instance {instance_id} not found"))?;
+    let item = inventory
+        .equipped
+        .get(&slot_key)
+        .cloned()
+        .ok_or_else(|| format!("equipped slot `{slot_key}` missing instance {instance_id}"))?;
+    let to = find_first_fit_container_location(inventory, &item)
+        .ok_or_else(|| format!("no free container slot for instance {instance_id}"))?;
+
+    detach_instance(inventory, instance_id);
+    attach_at_location(inventory, item, &to)?;
+    bump_revision(inventory);
+    Ok(InventoryMoveOutcome::Moved {
+        revision: inventory.revision,
+    })
+}
+
 pub fn inventory_item_by_instance(
     inventory: &PlayerInventory,
     instance_id: u64,
@@ -1179,12 +1267,11 @@ pub fn inventory_item_by_instance_borrow(
             return Some(item);
         }
     }
-    for item in inventory.hotbar.iter().flatten() {
-        if item.instance_id == instance_id {
-            return Some(item);
-        }
-    }
-    None
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
 }
 
 pub fn consume_item_instance_once(
@@ -1273,6 +1360,7 @@ pub fn consume_item_instance_once(
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
     mut inventories: Query<&mut PlayerInventory>,
+    registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
@@ -1283,7 +1371,7 @@ pub fn apply_death_drop_on_revive(
         };
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
 
-        let outcome = apply_death_drop_to_inventory(&mut inventory, seed);
+        let outcome = apply_death_drop_to_inventory(&mut inventory, &registry, seed);
 
         if outcome.dropped.is_empty() {
             continue;
@@ -1318,13 +1406,43 @@ pub fn apply_death_drop_on_revive(
 
 pub fn apply_death_drop_to_inventory(
     inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
     seed: u64,
 ) -> DeathDropOutcome {
+    let protected_weapon_ids = inventory
+        .equipped
+        .iter()
+        .filter(|(slot, item)| {
+            matches!(
+                slot.as_str(),
+                EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
+            ) && item.durability >= 0.5
+        })
+        .filter_map(|(_, item)| {
+            registry
+                .get(&item.template_id)
+                .and_then(|template| template.weapon_spec.as_ref().map(|_| item.instance_id))
+        })
+        .collect::<HashSet<_>>();
+
     let mut candidate_ids = Vec::new();
     for container in &inventory.containers {
         for placed in &container.items {
             candidate_ids.push(placed.instance.instance_id);
         }
+    }
+    for (slot, item) in &inventory.equipped {
+        let is_weapon_slot = matches!(
+            slot.as_str(),
+            EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
+        );
+        if is_weapon_slot && protected_weapon_ids.contains(&item.instance_id) {
+            continue;
+        }
+        candidate_ids.push(item.instance_id);
+    }
+    for item in inventory.hotbar.iter().flatten() {
+        candidate_ids.push(item.instance_id);
     }
 
     let drop_count = candidate_ids.len() / 2;
@@ -1355,6 +1473,40 @@ pub fn apply_death_drop_to_inventory(
             }
         }
         container.items = kept;
+    }
+
+    let equipped_to_drop = inventory
+        .equipped
+        .iter()
+        .filter(|(_, item)| selected.contains(&item.instance_id))
+        .map(|(slot, item)| (slot.clone(), item.clone()))
+        .collect::<Vec<_>>();
+    for (slot, item) in equipped_to_drop {
+        inventory.equipped.remove(&slot);
+        dropped.push(DroppedItemRecord {
+            container_id: slot,
+            row: 0,
+            col: 0,
+            instance: item,
+        });
+    }
+
+    for slot_idx in 0..inventory.hotbar.len() {
+        let should_drop = inventory.hotbar[slot_idx]
+            .as_ref()
+            .map(|item| selected.contains(&item.instance_id))
+            .unwrap_or(false);
+        if !should_drop {
+            continue;
+        }
+        if let Some(item) = inventory.hotbar[slot_idx].take() {
+            dropped.push(DroppedItemRecord {
+                container_id: "hotbar".to_string(),
+                row: 0,
+                col: slot_idx as u8,
+                instance: item,
+            });
+        }
     }
 
     if !dropped.is_empty() {
@@ -1712,6 +1864,128 @@ fn validate_attach_fits(
     }
 }
 
+fn validate_move_semantics(
+    registry: &ItemRegistry,
+    inventory: &PlayerInventory,
+    item: &ItemInstance,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    to: &crate::schema::inventory::InventoryLocationV1,
+) -> Result<(), String> {
+    use crate::combat::weapon::WeaponKind;
+    use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+    let template = registry
+        .get(&item.template_id)
+        .ok_or_else(|| format!("unknown item template id `{}`", item.template_id))?;
+    let from_two_hand = matches!(
+        from,
+        InventoryLocationV1::Equip {
+            slot: EquipSlotV1::TwoHand
+        }
+    );
+
+    match to {
+        InventoryLocationV1::Hotbar { .. } if template.weapon_spec.is_some() => Err(format!(
+            "weapon `{}` cannot move to hotbar; weapons must stay in equipped slots",
+            item.template_id
+        )),
+        InventoryLocationV1::Hotbar { .. }
+            if matches!(template.category, ItemCategory::Treasure) =>
+        {
+            Err(format!(
+                "treasure `{}` cannot move to hotbar; treasures must stay in equipped slots",
+                item.template_id
+            ))
+        }
+        InventoryLocationV1::Equip { slot } => match slot {
+            EquipSlotV1::MainHand => {
+                if template.weapon_spec.is_none()
+                    && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
+                {
+                    return Err(format!(
+                        "item `{}` cannot equip to main_hand; expected weapon or hoe",
+                        item.template_id
+                    ));
+                }
+                if template.weapon_spec.is_some()
+                    && inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND)
+                    && !from_two_hand
+                {
+                    return Err(
+                        "cannot equip main_hand while two_hand slot is occupied".to_string()
+                    );
+                }
+                Ok(())
+            }
+            EquipSlotV1::OffHand => {
+                if matches!(template.category, ItemCategory::Treasure) {
+                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
+                        return Err(
+                            "cannot equip off_hand while two_hand slot is occupied".to_string()
+                        );
+                    }
+                    return Ok(());
+                }
+
+                let spec = template.weapon_spec.as_ref().ok_or_else(|| {
+                    format!(
+                        "item `{}` cannot equip to off_hand; expected dagger/fist weapon or treasure",
+                        item.template_id
+                    )
+                })?;
+                if !matches!(spec.weapon_kind, WeaponKind::Dagger | WeaponKind::Fist) {
+                    return Err(format!(
+                        "weapon `{}` cannot equip to off_hand; only dagger/fist are allowed",
+                        item.template_id
+                    ));
+                }
+                if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
+                    return Err("cannot equip off_hand while two_hand slot is occupied".to_string());
+                }
+                Ok(())
+            }
+            EquipSlotV1::TwoHand => {
+                let spec = template.weapon_spec.as_ref().ok_or_else(|| {
+                    format!(
+                        "item `{}` cannot equip to two_hand; expected spear/staff weapon",
+                        item.template_id
+                    )
+                })?;
+                if !matches!(spec.weapon_kind, WeaponKind::Spear | WeaponKind::Staff) {
+                    return Err(format!(
+                        "weapon `{}` cannot equip to two_hand; only spear/staff are allowed",
+                        item.template_id
+                    ));
+                }
+                if inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND) && !from_two_hand {
+                    return Err(
+                        "cannot equip two_hand while main_hand slot is occupied".to_string()
+                    );
+                }
+                if inventory.equipped.contains_key(EQUIP_SLOT_OFF_HAND) && !from_two_hand {
+                    return Err("cannot equip two_hand while off_hand slot is occupied".to_string());
+                }
+                Ok(())
+            }
+            EquipSlotV1::TreasureBelt0
+            | EquipSlotV1::TreasureBelt1
+            | EquipSlotV1::TreasureBelt2
+            | EquipSlotV1::TreasureBelt3 => {
+                if !matches!(template.category, ItemCategory::Treasure) {
+                    return Err(format!(
+                        "item `{}` cannot equip to {}; expected treasure",
+                        item.template_id,
+                        equip_slot_key(slot)
+                    ));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        },
+        _ => Ok(()),
+    }
+}
+
 fn location_holds_instance(
     inventory: &PlayerInventory,
     instance_id: u64,
@@ -1780,6 +2054,31 @@ fn clone_item_at(inventory: &PlayerInventory, instance_id: u64) -> Option<ItemIn
         }
     }
     None
+}
+
+fn inventory_item_by_instance_mut(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+) -> Option<&mut ItemInstance> {
+    for container in &mut inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter_mut()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(&mut placed.instance);
+        }
+    }
+    for item in inventory.equipped.values_mut() {
+        if item.instance_id == instance_id {
+            return Some(item);
+        }
+    }
+    inventory
+        .hotbar
+        .iter_mut()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
 }
 
 fn detach_instance(inventory: &mut PlayerInventory, instance_id: u64) {
@@ -1893,6 +2192,25 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::MainHand => EQUIP_SLOT_MAIN_HAND,
         EquipSlotV1::OffHand => EQUIP_SLOT_OFF_HAND,
         EquipSlotV1::TwoHand => EQUIP_SLOT_TWO_HAND,
+        EquipSlotV1::TreasureBelt0 => EQUIP_SLOT_TREASURE_BELT_0,
+        EquipSlotV1::TreasureBelt1 => EQUIP_SLOT_TREASURE_BELT_1,
+        EquipSlotV1::TreasureBelt2 => EQUIP_SLOT_TREASURE_BELT_2,
+        EquipSlotV1::TreasureBelt3 => EQUIP_SLOT_TREASURE_BELT_3,
+    }
+}
+
+fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSlotV1 {
+    use crate::schema::inventory::EquipSlotV1;
+
+    match slot {
+        EQUIP_SLOT_HEAD => EquipSlotV1::Head,
+        EQUIP_SLOT_CHEST => EquipSlotV1::Chest,
+        EQUIP_SLOT_LEGS => EquipSlotV1::Legs,
+        EQUIP_SLOT_FEET => EquipSlotV1::Feet,
+        EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
+        EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
+        EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
+        _ => EquipSlotV1::MainHand,
     }
 }
 
@@ -2036,6 +2354,10 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         EQUIP_SLOT_MAIN_HAND,
         EQUIP_SLOT_OFF_HAND,
         EQUIP_SLOT_TWO_HAND,
+        EQUIP_SLOT_TREASURE_BELT_0,
+        EQUIP_SLOT_TREASURE_BELT_1,
+        EQUIP_SLOT_TREASURE_BELT_2,
+        EQUIP_SLOT_TREASURE_BELT_3,
     ]
     .contains(&slot);
 
@@ -2043,7 +2365,7 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
@@ -2051,7 +2373,11 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
             EQUIP_SLOT_FEET,
             EQUIP_SLOT_MAIN_HAND,
             EQUIP_SLOT_OFF_HAND,
-            EQUIP_SLOT_TWO_HAND
+            EQUIP_SLOT_TWO_HAND,
+            EQUIP_SLOT_TREASURE_BELT_0,
+            EQUIP_SLOT_TREASURE_BELT_1,
+            EQUIP_SLOT_TREASURE_BELT_2,
+            EQUIP_SLOT_TREASURE_BELT_3
         ))
     }
 }
@@ -2504,8 +2830,8 @@ cols = 4
     fn make_test_inventory_with_one_item() -> PlayerInventory {
         let item = ItemInstance {
             instance_id: 42,
-            template_id: "starter_talisman".to_string(),
-            display_name: "启程护符".to_string(),
+            template_id: "rat_tail".to_string(),
+            display_name: "噬元鼠尾".to_string(),
             grid_w: 1,
             grid_h: 1,
             weight: 0.2,
@@ -2555,9 +2881,11 @@ cols = 4
     #[test]
     fn apply_move_grid_to_hotbar_succeeds_and_bumps_revision() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let outcome = apply_inventory_move(
             &mut inv,
+            &registry,
             42,
             &InventoryLocationV1::Container {
                 container_id: ContainerIdV1::MainPack,
@@ -2581,9 +2909,11 @@ cols = 4
     #[test]
     fn apply_move_rejects_when_from_does_not_match() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let result = apply_inventory_move(
             &mut inv,
+            &registry,
             42,
             // Wrong from cell.
             &InventoryLocationV1::Container {
@@ -2604,6 +2934,7 @@ cols = 4
     #[test]
     fn apply_move_swaps_when_target_occupied_with_same_footprint() {
         use crate::schema::inventory::InventoryLocationV1;
+        let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         // Pre-populate hotbar slot 3 with a 1×1 item.
         inv.hotbar[3] = Some(ItemInstance {
@@ -2623,6 +2954,7 @@ cols = 4
 
         let outcome = apply_inventory_move(
             &mut inv,
+            &registry,
             42,
             &InventoryLocationV1::Container {
                 container_id: crate::schema::inventory::ContainerIdV1::MainPack,
@@ -2651,6 +2983,7 @@ cols = 4
     #[test]
     fn apply_move_rejects_swap_when_footprints_differ() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         // Add a 2×2 occupant at container (2,2).
         inv.containers[0].items.push(PlacedItemState {
@@ -2675,6 +3008,7 @@ cols = 4
         // Try to drop 1×1 (#42) onto the 2×2 anchor — overlap, mismatched footprint → reject.
         let result = apply_inventory_move(
             &mut inv,
+            &registry,
             42,
             &InventoryLocationV1::Container {
                 container_id: ContainerIdV1::MainPack,
@@ -2697,9 +3031,11 @@ cols = 4
     #[test]
     fn apply_move_within_grid_succeeds() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let _ = apply_inventory_move(
             &mut inv,
+            &registry,
             42,
             &InventoryLocationV1::Container {
                 container_id: ContainerIdV1::MainPack,
@@ -2719,6 +3055,208 @@ cols = 4
         assert_eq!(placed.instance.instance_id, 42);
         assert_eq!(placed.row, 2);
         assert_eq!(placed.col, 3);
+    }
+
+    #[test]
+    fn apply_move_allows_weapon_to_main_hand() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "iron_sword".to_string();
+        inv.containers[0].items[0].instance.display_name = "铁剑".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect("weapon should equip to main_hand");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("iron_sword")
+        );
+    }
+
+    #[test]
+    fn apply_move_rejects_weapon_to_hotbar() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "iron_sword".to_string();
+        inv.containers[0].items[0].instance.display_name = "铁剑".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("weapon should be rejected from hotbar");
+
+        assert!(error.contains("cannot move to hotbar"));
+    }
+
+    #[test]
+    fn apply_move_rejects_non_dagger_off_hand_weapon() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "iron_sword".to_string();
+        inv.containers[0].items[0].instance.display_name = "铁剑".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err("sword should be rejected from off_hand");
+
+        assert!(error.contains("only dagger/fist are allowed"));
+    }
+
+    #[test]
+    fn apply_move_rejects_two_hand_when_main_hand_occupied() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_staff".to_string();
+        inv.containers[0].items[0].instance.display_name = "木杖".to_string();
+        inv.containers[0].items[0].instance.grid_h = 3;
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 77,
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::TwoHand,
+            },
+        )
+        .expect_err("two_hand should conflict with occupied main_hand");
+
+        assert!(error.contains("main_hand slot is occupied"));
+    }
+
+    #[test]
+    fn set_item_instance_durability_updates_equipped_item_and_bumps_revision() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 88,
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+            },
+        );
+
+        let update = set_item_instance_durability(&mut inv, 88, 0.25)
+            .expect("durability update should succeed");
+
+        assert_eq!(update.revision, InventoryRevision(8));
+        assert_eq!(inv.equipped[EQUIP_SLOT_MAIN_HAND].durability, 0.25);
+    }
+
+    #[test]
+    fn move_equipped_item_to_first_container_slot_unequips_and_rehomes_item() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items.clear();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 88,
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 0.0,
+                freshness: None,
+            },
+        );
+
+        let outcome = move_equipped_item_to_first_container_slot(&mut inv, 88)
+            .expect("broken weapon should move back to container");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        assert_eq!(inv.containers[0].items.len(), 1);
+        assert_eq!(inv.containers[0].items[0].instance.instance_id, 88);
     }
 
     #[test]
@@ -2754,7 +3292,7 @@ cols = 4
     }
 
     #[test]
-    fn apply_death_drop_to_inventory_removes_half_of_container_items_only() {
+    fn apply_death_drop_to_inventory_removes_half_of_all_carryable_items() {
         let mut inv = make_test_inventory_with_one_item();
         inv.containers[0].items.push(PlacedItemState {
             row: 0,
@@ -2806,13 +3344,14 @@ cols = 4
             },
         );
 
-        let out = apply_death_drop_to_inventory(&mut inv, 777);
+        let out = apply_death_drop_to_inventory(&mut inv, &ItemRegistry::default(), 777);
 
-        assert_eq!(out.dropped.len(), 1);
+        assert_eq!(out.dropped.len(), 2);
         assert_eq!(out.revision, InventoryRevision(8));
-        assert_eq!(inv.containers[0].items.len(), 1);
-        assert!(inv.hotbar[0].is_some());
-        assert!(inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        let remaining_count = inv.containers[0].items.len()
+            + inv.hotbar.iter().flatten().count()
+            + inv.equipped.len();
+        assert_eq!(remaining_count, 2);
     }
 
     #[test]
@@ -2822,6 +3361,7 @@ cols = 4
         let mut app = App::new();
         app.add_event::<PlayerRevived>();
         app.add_event::<DroppedItemEvent>();
+        app.insert_resource(ItemRegistry::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.add_systems(Update, apply_death_drop_on_revive);
 
@@ -2949,6 +3489,115 @@ cols = 4
         assert_eq!(drops.len(), 1);
         assert_eq!(drops[0].instance_id, 42);
         assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+    }
+
+    #[test]
+    fn death_drop_keeps_high_durability_equipped_weapon() {
+        let mut registry = ItemRegistry::default();
+        registry.templates.insert(
+            "iron_sword".to_string(),
+            ItemTemplate {
+                id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                category: ItemCategory::Weapon,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: Some(WeaponSpec {
+                    weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                    base_attack: 8.0,
+                    quality_tier: 0,
+                    durability_max: 200.0,
+                    qi_cost_mul: 1.0,
+                }),
+            },
+        );
+        let mut inv = make_test_inventory_with_one_item();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 9001,
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.0,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 0.75,
+                freshness: None,
+            },
+        );
+
+        let out = apply_death_drop_to_inventory(&mut inv, &registry, 42);
+
+        assert!(out.dropped.iter().all(|d| d.instance.instance_id != 9001));
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|item| item.instance_id),
+            Some(9001)
+        );
+    }
+
+    #[test]
+    fn death_drop_drops_low_durability_equipped_weapon() {
+        let mut registry = ItemRegistry::default();
+        registry.templates.insert(
+            "iron_sword".to_string(),
+            ItemTemplate {
+                id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                category: ItemCategory::Weapon,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: DEFAULT_COOLDOWN_MS,
+                weapon_spec: Some(WeaponSpec {
+                    weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                    base_attack: 8.0,
+                    quality_tier: 0,
+                    durability_max: 200.0,
+                    qi_cost_mul: 1.0,
+                }),
+            },
+        );
+        let mut inv = make_test_inventory_with_one_item();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            ItemInstance {
+                instance_id: 9002,
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_w: 1,
+                grid_h: 2,
+                weight: 1.0,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 0.25,
+                freshness: None,
+            },
+        );
+
+        let out = apply_death_drop_to_inventory(&mut inv, &registry, 42);
+
+        assert!(out.dropped.iter().any(|d| d.instance.instance_id == 9002));
+        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
     }
 
     #[test]

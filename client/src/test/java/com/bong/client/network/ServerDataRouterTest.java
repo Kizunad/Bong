@@ -57,6 +57,7 @@ public class ServerDataRouterTest {
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",
+            "treasure_equipped",
             // plan-lingtian-v1 §4 active session 推送。
             "lingtian_session",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。

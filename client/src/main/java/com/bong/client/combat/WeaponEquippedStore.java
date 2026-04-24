@@ -23,6 +23,11 @@ public final class WeaponEquippedStore {
         return snapshots.get(slot);
     }
 
+    public static EquippedWeapon mainHandRenderWeapon() {
+        EquippedWeapon mainHand = snapshots.get("main_hand");
+        return mainHand != null ? mainHand : snapshots.get("two_hand");
+    }
+
     /** weapon == null 表示该 slot 被清空(卸下 / broken)。 */
     public static void putOrClear(String slot, EquippedWeapon weapon) {
         if (weapon == null) {
@@ -33,6 +38,10 @@ public final class WeaponEquippedStore {
     }
 
     public static void resetForTests() {
+        snapshots.clear();
+    }
+
+    public static void clearOnDisconnect() {
         snapshots.clear();
     }
 }

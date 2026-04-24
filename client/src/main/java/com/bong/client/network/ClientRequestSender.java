@@ -90,6 +90,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }
 
+    public static void sendDropWeapon(long instanceId, ClientRequestProtocol.InvLocation from) {
+        dispatch(ClientRequestProtocol.encodeDropWeapon(instanceId, from));
+    }
+
+    public static void sendRepairWeapon(long instanceId, int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeRepairWeapon(instanceId, x, y, z));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

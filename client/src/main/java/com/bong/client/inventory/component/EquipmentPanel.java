@@ -14,7 +14,7 @@ import java.util.Map;
 
 public class EquipmentPanel {
     private static final int PANEL_WIDTH = 140;
-    private static final int PANEL_HEIGHT = 112;
+    private static final int PANEL_HEIGHT = 140;
     private static final int S = EquipSlotComponent.SLOT_SIZE;
     private static final int CX = PANEL_WIDTH / 2;
 
@@ -36,6 +36,11 @@ public class EquipmentPanel {
         addSlot(EquipSlotType.FEET, PANEL_WIDTH - S - 6, 54);
         // Row 4: Legs
         addSlot(EquipSlotType.LEGS, CX - S / 2, 80);
+        // Row 5: Treasure belt 4 slots
+        addSlot(EquipSlotType.TREASURE_BELT_0, 6, 108);
+        addSlot(EquipSlotType.TREASURE_BELT_1, 38, 108);
+        addSlot(EquipSlotType.TREASURE_BELT_2, 70, 108);
+        addSlot(EquipSlotType.TREASURE_BELT_3, 102, 108);
     }
 
     private void addSlot(EquipSlotType type, int px, int py) {

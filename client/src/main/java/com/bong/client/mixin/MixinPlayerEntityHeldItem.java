@@ -4,6 +4,7 @@ import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
@@ -41,7 +42,7 @@ public abstract class MixinPlayerEntityHeldItem {
 
     @Inject(method = "getMainHandStack", at = @At("RETURN"), cancellable = true)
     private void bong$overrideMainHand(CallbackInfoReturnable<ItemStack> cir) {
-        overrideIfEmpty(cir, "main_hand", true);
+        overrideMainHandIfEmpty(cir);
     }
 
     @Inject(method = "getOffHandStack", at = @At("RETURN"), cancellable = true)
@@ -57,6 +58,7 @@ public abstract class MixinPlayerEntityHeldItem {
         if (!(self instanceof PlayerEntity)) return;
         World world = self.getWorld();
         if (world == null || !world.isClient) return;
+        if (MinecraftClient.getInstance().player != self) return;
 
         EquippedWeapon bong = WeaponEquippedStore.get(slot);
         if (bong == null) return;
@@ -71,6 +73,29 @@ public abstract class MixinPlayerEntityHeldItem {
         } else if (!isMain && offHandOverrideCount++ < 3) {
             LOGGER.info("getOffHandStack #{} override → {} (template={})",
                     offHandOverrideCount, fake.getItem(), bong.templateId());
+        }
+    }
+
+    private void overrideMainHandIfEmpty(CallbackInfoReturnable<ItemStack> cir) {
+        ItemStack real = cir.getReturnValue();
+        if (real != null && !real.isEmpty()) return;
+
+        LivingEntity self = (LivingEntity) (Object) this;
+        if (!(self instanceof PlayerEntity)) return;
+        World world = self.getWorld();
+        if (world == null || !world.isClient) return;
+        if (MinecraftClient.getInstance().player != self) return;
+
+        EquippedWeapon bong = WeaponEquippedStore.mainHandRenderWeapon();
+        if (bong == null) return;
+
+        ItemStack fake = WeaponVanillaIconMap.createStackFor(bong.templateId());
+        if (fake == null) return;
+
+        cir.setReturnValue(fake);
+        if (mainHandOverrideCount++ < 3) {
+            LOGGER.info("getMainHandStack #{} override → {} (template={})",
+                mainHandOverrideCount, fake.getItem(), bong.templateId());
         }
     }
 }

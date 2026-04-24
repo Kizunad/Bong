@@ -1,0 +1,374 @@
+# 搜打撤（坍缩渊）· plan-tsy-v1
+
+> 把 Bong 的主玩法补齐为「搜打撤」循环——活坍缩渊（TSY）作为世界里的**有限时限副本**，玩家在其中冒真元换遗物。
+> 交叉引用：`worldview.md §十六`（秘境：活坍缩渊）· `worldview.md §二`（坍缩渊）· `worldview.md §十`（搜打撤循环）· `plan-inventory-v1.md §-1`（DroppedLoot）· `plan-death-lifecycle-v1.md §7`（LifeRecord）
+
+本 plan 是**方向性 meta**，不含实现细节。实施由 6 个子 plan 线性推进：
+
+- `plan-tsy-zone-v1.md` (**P0 基础**) — TSY zone type、负压抽真元、裂缝入口、入场过滤
+- `plan-tsy-loot-v1.md` (**P1 物资与死亡**) — 99/1 遗物分布、秘境内死亡 100% 掉落、干尸化、keepInventory mixin
+- `plan-tsy-lifecycle-v1.md` (**P2 塌缩与道伥**) — 遗物骨架、塌缩事件、race-out、道伥生态
+- `plan-tsy-container-v1.md` (**P3 容器与搜刮**) — 5 档容器（干尸/骨架/储物袋/石匣/法阵核心）、搜刮倒计时、钥匙/令牌、搜刮时真元 1.5× 加速
+- `plan-tsy-hostile-v1.md` (**P4 敌对 NPC**) — 4 类敌对 archetype（道伥/执念/秘境守灵/负压畸变体）、AI tree、起源 × 层深 spawn pool、drop table、Fuya 耗真元光环
+- `plan-tsy-extract-v1.md` (**P5 撤离点**) — 3 种 portal（主裂缝/深层缝/塌缩裂口）、撤离倒计时、中断规则、race-out 模式切换、塌缩清场
+
+---
+
+## §-1 现状
+
+**已就位**（不在本系列 plan 的重做范围）：
+
+| 层 | 能力 | 位置 |
+|----|------|------|
+| Zone 框架 | name/bounds/spirit_qi/danger_level | `server/src/world/zone.rs:23-31`，`ZoneRegistry` from `zones.json` |
+| Player State | 真元池 + 境界 + karma | `server/src/player/state.rs:27-34` |
+| 库存 | 多容器 + 装备 + 重量 + spirit_quality | `server/src/inventory/mod.rs:192-200`（`PlayerInventory`）、`135-150`（`ItemInstance`） |
+| 掉落物 | `DroppedLootRegistry` + 50% 随机掉落 on revive | `server/src/inventory/mod.rs:1090-1368` |
+| 死亡事件 | `DeathEvent { target, cause, at_tick }` | `server/src/combat/events.rs:82-87` |
+| 死亡惩罚 | 降一阶 + qi=0 + 关脉 + 虚弱 | `server/src/cultivation/death_hooks.rs:45-75` |
+| NPC 框架 | archetype + brain + spawn | `server/src/npc/{brain,faction,lifecycle,spawn,patrol,navigator}.rs` |
+| IPC Schema | CombatRealtimeEventV1（已有 `attacker_id?`）+ CultivationDeathV1 | `agent/packages/schema/src/combat-event.ts:31-46` |
+| 真元条 HUD | 已有 client-side 渲染（plan-combat-ui_impl 完成） | `client/src/main/java/...` |
+
+**已知缺口**（本系列 plan 要解决）：
+
+- 无 TSY zone type / 无负压抽真元机制 / 无入场过滤器 / 无裂缝入口 POI
+- 无 "zone-aware" 死亡结算 — `apply_death_drop_on_revive` 不区分主世界 vs 秘境
+- 无 Fabric keepInventory mixin — MC 原生掉落可能和自研掉落 double-fire
+- `DeathEvent` 无 `attacker_player_id` — 秘境 PVP 掠夺追溯断链
+- 无遗物骨架概念 / 无 zone 生命周期 / 无塌缩事件
+- 无道伥 NPC archetype — 尽管 `worldview.md §七` 已定义
+
+---
+
+## §0 设计轴心（不可违反）
+
+以下公理来自 `worldview.md §十六`，所有子 plan 必须严格遵守。违反 = 世界观断链。
+
+1. **负压即秒表** — 不挂外部 tick 计时器；压力完全来自 `spirit_qi` 被抽取的速率。玩家看着自己的真元条作决定（§十六.二）
+2. **非线性抽取** — 抽取速率与真元池呈非线性关系（`rate ∝ |灵压| × 池^n`，`n ≈ 1.5-2`）。境界越高、池越大，在同一灵压下**绝对**抽得越猛。这保证"深层对低阶友好、对高阶是禁区"的分层悖论（§十六.二）
+3. **入场不限境界** — 任何玩家（含醒灵）都能进裂缝。每个境界自行权衡"甜区"与"死区"（§十六.二）
+4. **入场过滤**：高灵质物品过关口即散失真元 — 修士只能带凡铁、干灵草、退活骨壳、低灵质杂物进秘境（§十六.四）
+5. **99 / 1 loot 分布**：99% 来自**前人遗物**（凡物），1% 是**上古遗物**（高强度 + 低耐久）。每一层都成立这个比例，但 1% 倾向深层（§十六.三）
+6. **上古遗物谁都能用**：不认主、不激活、不因换人而失效；唯一代价是**耐久极低**（一到三五次即碎）。低耐久源于**长期在低/负灵压下被淬炼脆化**（§十六.三）
+7. **秘境内死亡 ≠ 主世界死亡**：
+   - 运数 / 劫数 / 寿元扣除 / 境界降一阶 — 和 §十二 一致
+   - **但秘境所得 100% 掉落**（无论凡物还是上古遗物），**身上原带的非秘境物品仍按 §十二 的 50% 规则**
+   - 遗骸**干尸化**（死状特别）（§十六.六）
+8. **塌缩由玩家行为驱动，非天道定时** — 活坍缩渊塌缩 = 某修士亲手取走最后一件遗物的那一刻。不取走就不塌。这自然产生哄抢压力（§十六.一 生命周期）
+9. **Race-out 机制** — 最后一件被取走 → 负压瞬间加倍 → 还没撤出的所有人（含拿走那件的人）要拼命跑到裂缝口（§十六.一 第 4 步）
+10. **灵龛失效于秘境内** — 龛石封印阵在深负压下被吞噬，秘境内无安全点（§十六.五 / §十一 补丁）
+
+---
+
+## §1 子 plan 依赖图
+
+```
+              ┌─────────────┐
+              │ plan-tsy-v1 │  ← 本 meta（本文件）
+              │ (overview)  │
+              └──────┬──────┘
+                     │
+    ┌────────────────┼────────────────┐
+    ↓                ↓                ↓
+┌─────────┐     ┌─────────┐     ┌──────────────┐
+│ P0 zone │ ──→ │ P1 loot │ ──→ │ P2 lifecycle │   ← 核心闭环（搜打撤骨架）
+└─────────┘     └─────────┘     └──────────────┘
+    │               │                  │
+    │               │                  └── 依赖 zone 的 state machine / loot 的遗物标记
+    │               └── 依赖 zone 的识别能力（"这次死在不在 TSY"）
+    └── 基础设施
+                     │
+    ┌────────────────┼────────────────┐
+    ↓                ↓                ↓
+┌──────────────┐ ┌──────────────┐ ┌─────────────┐
+│ P3 container │ │ P4 hostile   │ │ P5 extract  │   ← 搜打撤玩法层（需要 P0-P2 闭环）
+└──────────────┘ └──────────────┘ └─────────────┘
+    │                │                  │
+    │                │                  └── 监听 P2 塌缩事件 + 传出玩家
+    │                └── drop 接 P1 ownerless + 道伥 archetype 来自 P2
+    └── 读 P2 relics_remaining（发 RelicExtracted 事件给 P2）
+                     │
+                     │  P3/P4/P5 之间也有互相依赖：
+                     │    P4 Fuya aura × P3 search drain（drain multiplier 叠加）
+                     │    P4 NPC drop 钥匙 → P3 容器用
+                     │    P5 忙态互斥 P3 搜刮（互相拒绝启动）
+```
+
+**消费顺序**：P0 → P1 → P2 必须严格顺序（核心闭环）；P3/P4/P5 之间可灵活排序但都必须在 P2 之后。每个子 plan 独立 demoable，不可跳过前置。
+
+| 阶段 | 依赖 | demoable 终态 |
+|------|------|---------------|
+| P0 zone | 无（只依赖现有 Zone 系统） | 手动 `/tsy-spawn` 生成一个 TSY zone；玩家走进裂缝 → 传送进 zone；真元被持续抽；带附灵武器进 → 武器变凡铁；走到边界 → 传送出 |
+| P1 loot | P0 demoable 通过 | 进 TSY 后捡到遗物（先 hardcoded spawn 几件）；死亡 → 秘境所得 100% 掉、原带物 50% 掉；主世界死亡仍是 50%（回归现状） |
+| P2 lifecycle | P0 + P1 | 一个 TSY 注册 5 件遗物；玩家逐个取走；骨架松动日志；取最后一件 → 塌缩事件触发 + 负压加倍；死掉的遗骸过 N 分钟变道伥 |
+| P3 container | P0 + P1 + P2 | `/tsy-spawn` 同时生成容器；玩家按 E 搜刮干尸 4 秒；真元消耗速率从 baseline × 1.5；石匣需石匣匙 → 搜完即消耗 1 把；搜空最后一个 RelicCore → 发 `RelicExtracted` 给 P2 triggering 塌缩 |
+| P4 hostile | P0 + P2（P3 可选） | `/tsy-spawn` 按起源填 NPC：浅层几个道伥、中层道伥+执念、深层道伥+执念+守灵+畸变体；Fuya 光环让玩家 drain × 1.5 叠加；击杀 NPC 掉 drop（道伥 5% 钥匙、守灵必掉钥匙 + 上古遗物） |
+| P5 extract | P0 + P1 + P2（P3/P4 可选但推荐） | `/tsy-spawn` 生成 2-3 个 portal；玩家按 E 启动撤离 → 8 秒倒计时 → 传出；撤离中被击 → 中断归零；真元归零 → 干尸化；P2 塌缩事件 → portal 时长压到 3 秒 + spawn 3-5 临时 CollapseTear；塌缩完成 → 未出 TSY 的玩家化灰 |
+
+---
+
+## §2 横切修改清单（跨多个子 plan）
+
+以下改动在多个子 plan 里都会用到，避免重复定义，集中列在这里由 P0 或 P1 接纳：
+
+### 2.1 `DeathEvent` 扩展 `attacker_player_id`
+
+**位置**：`server/src/combat/events.rs:82-87`
+
+**当前**：
+```rust
+pub struct DeathEvent {
+    pub target: Entity,
+    pub cause: String,
+    pub at_tick: u64,
+}
+```
+
+**目标**：
+```rust
+pub struct DeathEvent {
+    pub target: Entity,
+    pub cause: String,
+    pub attacker: Option<Entity>,           // ← 新增
+    pub attacker_player_id: Option<Uuid>,   // ← 新增（用于 PVP 掠夺链路）
+    pub at_tick: u64,
+}
+```
+
+**接纳方**：**P1 plan-tsy-loot-v1** 承担此改动（因为它第一次真正用 `attacker_player_id`）
+
+**IPC schema 同步**：`agent/packages/schema/src/combat-event.ts` 的 `CombatRealtimeEventV1.attacker_id` 已是 `Optional<string>`，无需改 schema，只需 Rust 端对齐
+
+### 2.2 Fabric `keepInventory` mixin
+
+**位置**：新建 `client/src/main/java/com/bong/client/mixin/MixinDeathScreen.java` 或 `MixinPlayerManager.java`
+
+**原因**：MC 原生 death drop 机制会和 server 端 `apply_death_drop_on_revive` double-fire，导致物品被掉两次/掉错位置
+
+**方案**：
+- 禁用 vanilla `PlayerEntity.dropInventory()`
+- 所有掉落走 server 端 `DroppedLootRegistry`（其 sync 机制已在 `server/src/network/dropped_loot_sync_emit.rs`）
+
+**接纳方**：**P1 plan-tsy-loot-v1**（同 2.1，第一次需要 "禁用原生掉落" 的时机）
+
+**mixins.json 补丁**：`client/src/main/resources/bong-client.mixins.json` 的 `client` array 新增 `"mixin.MixinDeathScreen"` 或 `"mixin.MixinPlayerManager"`
+
+### 2.3 Zone name 约定（不改 Zone 结构）
+
+Zone 用 `name: String` 识别（而非 enum variant），好处是加新 zone 无需改代码只改 zones.json。TSY 的约定：
+
+- **命名 pattern**：`tsy_<来源>_<序号>`，例如：
+  - `tsy_tankuozun_01`（上古大能陨落类）
+  - `tsy_zongmen_lingxu_01`（宗门遗迹类：灵墟宗）
+  - `tsy_zhanchang_beihuang_01`（战场沉淀类：北荒战场）
+- **识别 helper**（P0 plan 提供）：`pub fn is_tsy(zone_name: &str) -> bool { zone_name.starts_with("tsy_") }`
+
+**rationale**：坚持 name 字符串而非加 enum，降低扩展摩擦
+
+### 2.4 TSY 跨 plan 事件（P3 → P2）
+
+**事件**：`RelicExtracted { family_id, at_tick }` / `TsyZoneInitialized { family_id, relic_count }`
+
+**用途**：P3 plan 的 container 搜空一个 RelicCore → 发 `RelicExtracted`，P2 lifecycle `relics_remaining -= 1`；P3 zone 初始化完成 → 发 `TsyZoneInitialized`，P2 lifecycle 设 `relics_remaining` 初值。
+
+**接纳方**：**P3 plan-tsy-container-v1**（producer 在 P3；P2 plan 预先声明 reader，P3 plan 实装时定义 Event struct）
+
+### 2.5 `TsyOrigin` 共享 enum
+
+**位置**：`server/src/world/tsy_origin.rs`
+
+```rust
+pub enum TsyOrigin {
+    DanengLuoluo,      // 大能陨落
+    ZongmenYiji,       // 上古宗门遗迹
+    ZhanchangChendian, // 上古战场沉淀
+    GaoshouShichu,     // 近代高手死处
+}
+
+impl TsyOrigin {
+    pub fn from_zone_name(name: &str) -> Option<Self> { ... }
+}
+```
+
+**用途**：P3 plan 用来查 container spawn multiplier；P4 plan 用来查 NPC spawn pool。
+
+**接纳方**：**P4 plan-tsy-hostile-v1**（P4 需要 enum 做 pattern match；P3 仅需映射表，可 hashmap 兜底；enum 定义集中在 P4）
+
+### 2.6 `PlayerBusyState` 忙态互斥
+
+**问题**：P3 搜刮、P5 撤离都会给玩家挂 Component 表示"正在做耗时事"。任意一个启动前要检查另一个不在进行。
+
+**方案**：共享 enum + query 合并：
+
+```rust
+// 位置：server/src/player/busy.rs（新建）
+
+#[derive(Component, Debug)]
+pub struct BusyMarker {
+    pub kind: BusyKind,
+    pub started_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BusyKind {
+    Searching,   // P3 SearchProgress 挂载同时 insert BusyMarker { Searching }
+    Extracting,  // P5 ExtractProgress 挂载同时 insert BusyMarker { Extracting }
+}
+```
+
+启动前：`query.get(player).is_ok()` → reject。清除前：`commands.remove::<BusyMarker>()`。
+
+**接纳方**：**P5 plan-tsy-extract-v1**（P5 定义 enum；P3 plan 改 `SearchProgress` 实装时同步 insert/remove）
+
+---
+
+## §3 非目标（本系列 plan 不做）
+
+明确不涉及以下内容；它们有独立 plan 或推迟到后续迭代：
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 敌对 NPC（道伥 / 执念 / 守灵 / 畸变体） | **✅ P4 plan-tsy-hostile-v1 覆盖** | 见 P4；spawn pool 按起源，drop 表按 archetype |
+| 容器搜刮机制 | **✅ P3 plan-tsy-container-v1 覆盖** | 5 档容器 + 钥匙 + 搜刮倒计时 |
+| 撤离点机制 | **✅ P5 plan-tsy-extract-v1 覆盖** | 3 种 portal + race-out 切换 |
+| 入口感知 HUD（"靠近时显示负压"） | 独立 plan | UX polish |
+| 上古遗物 inspect 特效（反光逆转、灵纹） | 独立 plan | 视觉 polish |
+| 封灵匣 / 负灵袋 器物合成 | 独立 plan | 保养容器，plan-forge 扩展；非 P3 容器 plan 范围（容器 = 搜刮目标；封灵匣 = 玩家持有器物） |
+| 上古宗门遗迹 **自然生成**（worldgen） | 独立 plan | 本系列用 `/tsy-spawn` 命令手动测试；正式发布要用 worldgen |
+| 天道 agent narration 接入（塌缩 / 撤离 / 守灵死叙事） | 独立 plan | Agent 层扩展，见 `plan-narrative`；P3/P4/P5 都发 IPC schema 等 narration 消费 |
+| 道伥出坍缩渊后在主世界的行为 | 独立 plan / 扩展 `plan-npc-ai` | P2 lifecycle 只负责 "塌缩时挤出到主世界" 的 spawn 事件；主世界行为独立 |
+| Portal 视觉 / 粒子 | client polish plan | 本系列只实装 HUD text + 进度条 |
+| extraction 场次匹配 / MMR | 不做 | Bong 不是赛制游戏 |
+| 秘境组队机制（系统强化） | 不做 | 玩家自行在游戏外约定，系统不强化 |
+| 玩家**伪造道伥**潜入秘境（PVP gimmick） | 不做 | lore 不支持 |
+| 多人同容器 / 同 portal **排队** | 不做 | 互斥 + 先到先得，保持 "抢" 的紧张感 |
+| Zhinian 使用**玩家录像**的招式 | 独立 plan | MVP hardcoded combo；后续接 LifeRecord |
+| Fuya 种族变种（战场蛇 / 古兽 / 妖蝠） | 独立 plan | MVP 所有 Fuya 外观 / stat 相同 |
+
+---
+
+## §4 术语表
+
+统一术语，三个子 plan 必须对齐：
+
+| 术语 | 含义 | 世界观锚点 |
+|------|------|------------|
+| **TSY / 坍缩渊** | 坍缩渊（Tān-Suō-Yuān） | §二 |
+| **活坍缩渊** | 尚可进入的秘境状态 | §十六.一 |
+| **死坍缩渊** | 已塌尽的负压空洞，不可进入 | §二 + §十六.一 |
+| **裂缝** | 活坍缩渊外缘的入口 POI | §十六.一 |
+| **骨架（遗物）** | 构成活坍缩渊结构的上古遗物。取完 → 塌缩 | §十六.一 step 1, §十六.三 |
+| **race-out** | 塌缩触发瞬间剩余玩家撤离的拼命阶段 | §十六.一 step 4 |
+| **干尸** | 秘境内死亡的修士遗骸（血肉被负压抽尽） | §十六.六 |
+| **道伥** | 干尸被负压激活后形成的行走残骸 | §七 + §十六.六 |
+| **上古遗物** | 1% jackpot 类物品（强度高 + 耐久低） | §十六.三 |
+| **探索者遗物** | 99% 来自前人死亡的凡物 | §十六.三 |
+| **封灵匣 / 负灵袋** | 保养容器（玩家持有器物，非搜刮容器）；独立 plan | §十六.四 |
+| **灵质 spirit_quality** | 物品附着的真元浓度 [0.0, 1.0]。入场过滤看此字段 | `inventory/mod.rs:135` 已有 |
+| **容器**（TSY 内） | loot 的唯一载体：干尸 / 骨架 / 储物袋 / 石匣 / 法阵核心 5 档 | §十六.三 容器与搜刮 / P3 plan |
+| **搜刮**（search） | 玩家对容器发起的倒计时交互（3-40 秒）；期间真元抽吸 × 1.5 | §十六.三 / P3 plan |
+| **钥匙 / 令牌** | 石匣匙 / 玉棺纹 / 阵核钤，单次使用即碎 | §十六.三 / P3 plan §3 |
+| **道伥 / 执念 / 秘境守灵 / 负压畸变体** | 4 档 TSY PvE archetype | §十六.五 敌对 NPC / P4 plan |
+| **起源**（TSY origin） | 4 类：大能陨落 / 宗门遗迹 / 战场沉淀 / 近代高手死处 | §十六.一 / P4 plan §1.3 |
+| **耗真元光环**（Fuya aura） | 畸变体被动 AOE，玩家在范围内真元 drain × 1.5 | §十六.五 畸变体行 / P4 plan §3 |
+| **主裂缝 / 深层缝 / 塌缩裂口** | 3 种 RiftPortal：双向 / 单向出 / race-out 临时 | §十六.四 撤离点 / P5 plan §1.1 |
+| **撤离**（extract） | 在 portal 附近按 E 启动的倒计时（3 / 8 / 12 秒）；移动 / 战斗 / 受击即中断 | §十六.四 / P5 plan §2 |
+| **塌缩裂口**（CollapseTear） | race-out 时临时 spawn 的 portal，3 秒撤离时长 | §十六.四 / P5 plan §3 |
+
+---
+
+## §5 依赖对齐与风险
+
+### 上游 plan 的状态依赖
+
+| 上游 plan | 依赖点 | 当前状态 | 风险 |
+|-----------|--------|---------|------|
+| plan-inventory-v1 | `DroppedLootRegistry` + `ItemInstance.spirit_quality` + `apply_death_drop_on_revive` | ✅ 完成 | 低 |
+| plan-combat-no_ui | `DeathEvent` + `Wounds` + `bleed_out` | ✅ 完成，但 DeathEvent 要扩 `attacker` | 中 — 改 schema 要和现有 combat 对齐 |
+| plan-cultivation-v1 | `PlayerState.spirit_qi / realm` + `death_hooks::apply_revive_penalty` | ✅ 完成 | 低 |
+| plan-death-lifecycle-v1 | 运数 / 劫数 / 寿元扣除规则 | ✅ 完成 | 低 |
+| plan-persistence-v1 | SQLite player_core + biography append | ✅ 完成 | 低 |
+| plan-npc-ai-v1 | NpcArchetype + brain + spawn | ✅ 完成 | 中 — lifecycle plan 要新增 `Daoxiang` archetype |
+| plan-ipc-schema-v1 | TypeBox → JSON schema → Rust serde 流水线 | ✅ 完成 | 低 |
+
+### 下游 plan 的潜在影响
+
+| 下游 / 并行 plan | 潜在冲突 | 缓解 |
+|------------------|----------|------|
+| plan-HUD-v1 | 入场/出关可能要 HUD 变化（负压提示） | P0 先不做 HUD，P3 补 |
+| plan-shelflife-v1 | 凡物出关后会自然衰变 | 已有 `ItemInstance.freshness`，loot plan 复用 |
+| plan-tribulation-v1 | "通灵躲天劫入负灵域" 的路径和 TSY 有交集 | lifecycle plan 里说明：通灵可进 TSY 躲劫，但被抽更快 |
+
+---
+
+## §6 总验收（全系列收尾）
+
+三个子 plan 全部 merge 后，端到端验收：
+
+**E2E 场景**（目标 demo）：
+
+1. 玩家 A（引气 3）进入一个有 3 件遗物的 TSY
+2. 浅层（-0.3）能苟 ≈ 10+ 分钟，中层（-0.7）2-3 分钟，深层（-1.0）ok 但紧迫
+3. A 在深层拿到 1 件上古遗物（封灵袋里的残卷）
+4. 玩家 B（固元 5）从裂缝进 → 在浅层埋伏 A
+5. A 出关路上被 B 截杀 → `DeathEvent` 带 `attacker_player_id = B`
+6. A 的干尸留在裂缝附近；秘境所得 100% 在死亡点掉落
+7. A 身上带进的凡铁剑按 50% 规则掉落
+8. B 拾取 A 掉的上古残卷 → 背包一列
+9. B 返回浅层继续等下一个猎物
+10. 玩家 C 进 TSY → 下深层 → 拿走最后一件遗物 → **塌缩触发** → 负压加倍 → C 能不能跑出来看他真元够不够
+11. 塌缩完成 → TSY name 从 `tsy_*_active` 改为 `tsy_*_dead`（或从 registry 剔除），裂缝消失
+12. 15 分钟后，A 的干尸变道伥 → 若在 C 塌缩时被挤出，则出现在主世界；否则留在死坍缩渊 zone 内不再生效
+
+**自动化脚本**（P2 完成后）：`bash scripts/smoke-tsy.sh`
+- 跑一个 headless 脚本模拟上述 E2E
+- 期望输出每一步的事件链（server log + agent log）
+- exit 0 = 全过 / 非 0 = 某环节挂了
+
+---
+
+## §7 命名与版本
+
+- 3 个子 plan 文件：`plan-tsy-zone-v1.md`、`plan-tsy-loot-v1.md`、`plan-tsy-lifecycle-v1.md`
+- 本 meta：`plan-tsy-v1.md`
+- 完成后归档：`docs/finished_plans/plan-tsy-v1.md` + 3 个子 plan（同时归档）
+- v2 的触发条件：P3 后续（浪潮 / HUD / 封灵匣 / worldgen）开始时启动 `plan-tsy-v2.md` 作新 meta
+
+---
+
+## §8 落地节奏建议
+
+```
+week 1: plan-tsy-zone-v1      → /consume-plan tsy-zone      → PR → review → merge
+week 2: plan-tsy-loot-v1      → /consume-plan tsy-loot      → PR → review → merge
+week 3: plan-tsy-lifecycle-v1 → /consume-plan tsy-lifecycle → PR → review → merge
+---  ↑ 核心闭环完成（搜打撤骨架 demoable）  ↓ 玩法层扩展  ---
+week 4: plan-tsy-container-v1 → /consume-plan tsy-container → PR → review → merge
+week 5: plan-tsy-hostile-v1   → /consume-plan tsy-hostile   → PR → review → merge
+week 6: plan-tsy-extract-v1   → /consume-plan tsy-extract   → PR → review → merge
+week 7: smoke-tsy-full.sh + manual E2E + 归档
+```
+
+**关键里程碑**：
+- **M-core**（week 3 结束）：P0+P1+P2 merged → 骨架版搜打撤可 demo（进 TSY + 捡遗物 + 死亡掉 + 塌缩）
+- **M-full**（week 6 结束）：+P3+P4+P5 merged → 完整搜打撤玩法（容器 + NPC + 撤离）
+
+P3/P4/P5 之间可顺序互换或并行开工（看 PR 冲突风险）。实际节奏可能更快，每周一 plan 是保守估计。
+
+---
+
+## §9 风险 / 未决
+
+| 风险 | 级别 | 缓解 |
+|------|------|------|
+| 非线性抽取公式参数化难调平衡 | 高 | P0 用保守参数（`n=1.5`、每 tick 1% 池），真实 playtest 再调 |
+| `DeathEvent.attacker_player_id` 改动破坏 existing tests | 中 | P1 改时同步修所有引用点（`grep -r 'DeathEvent'`）+ 跑完 combat test suite |
+| Fabric mixin 和现有 6 个 mixin 冲突 | 中 | MixinDeathScreen 和现有 Camera/GameRenderer 无重叠 target，低冲突概率 |
+| TSY zone overlapping 导致 "走到边界" 判定错误 | 中 | P0 规定 TSY zone 必须和现有 zone 不相交（load 时校验） |
+| 塌缩时 race-out 的玩家来不及退出 → 卡死 | 中 | lifecycle plan 加 fallback：塌缩完成 + 5 秒还在内部 → force 传送到裂缝外，真元扣尽 |
+| 道伥 archetype 新增后和现有 NPC AI 系统冲突 | 低 | lifecycle plan 做小步走：先复用 `NpcArchetype::Elite` 改 tag，再独立 variant |
+
+---
+
+**下一步**：`/consume-plan tsy-zone` 启动 P0。

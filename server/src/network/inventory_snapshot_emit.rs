@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Added, Client, Entity, Query, Username, With};
+use valence::prelude::{
+    bevy_ecs, Added, Changed, Client, DetectChanges, Entity, Query, Ref, Username, With,
+};
 
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
     EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
-    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
-    SMALL_POUCH_CONTAINER_ID,
+    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1,
+    EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND,
+    FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -31,6 +34,14 @@ type JoinedClientQueryItem<'a> = (
     &'a mut Client,
     &'a Username,
     &'a PlayerInventory,
+    &'a PlayerState,
+);
+
+type ChangedClientQueryItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a Username,
+    Ref<'a, PlayerInventory>,
     &'a PlayerState,
 );
 
@@ -64,6 +75,27 @@ pub fn emit_revive_inventory_resyncs(
             inventory,
             player_state,
             "revive_death_drop_resync",
+        );
+    }
+}
+
+pub fn emit_changed_inventory_snapshots(
+    mut changed_clients: Query<
+        ChangedClientQueryItem<'_>,
+        (With<Client>, Changed<PlayerInventory>),
+    >,
+) {
+    for (entity, mut client, username, inventory, player_state) in &mut changed_clients {
+        if inventory.is_added() {
+            continue;
+        }
+        send_inventory_snapshot_to_client(
+            entity,
+            &mut client,
+            username.0.as_str(),
+            &inventory,
+            player_state,
+            "inventory_changed",
         );
     }
 }
@@ -156,6 +188,10 @@ pub(crate) fn build_inventory_snapshot(
         main_hand: equipped_slot_item(inventory, EQUIP_SLOT_MAIN_HAND),
         off_hand: equipped_slot_item(inventory, EQUIP_SLOT_OFF_HAND),
         two_hand: equipped_slot_item(inventory, EQUIP_SLOT_TWO_HAND),
+        treasure_belt_0: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_0),
+        treasure_belt_1: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_1),
+        treasure_belt_2: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_2),
+        treasure_belt_3: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_3),
     };
 
     let hotbar = inventory
@@ -261,6 +297,7 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
 ///
 /// **None 早返**：freshness 字段缺失 / profile 未在 registry / item.freshness 为 None
 /// 时静默返，不修改 view（防止误覆盖）。
+#[allow(dead_code)]
 pub(crate) fn enrich_with_derived_freshness(
     view: &mut InventoryItemViewV1,
     registry: &crate::shelflife::DecayProfileRegistry,
@@ -314,6 +351,7 @@ mod tests {
             Update,
             (
                 emit_join_inventory_snapshots,
+                emit_changed_inventory_snapshots,
                 crate::network::inventory_event_emit::emit_dropped_item_inventory_events,
             ),
         );
@@ -734,6 +772,62 @@ mod tests {
         assert_eq!(blueprint_view.scroll_kind.as_deref(), Some("blueprint_scroll"));
         assert!(blueprint_view.scroll_skill_id.is_none());
         assert!(blueprint_view.scroll_xp_grant.is_none());
+    }
+
+    #[test]
+    fn changed_inventory_emits_fresh_snapshot() {
+        let mut app = setup_app();
+        let state = PlayerState {
+            realm: "qi_refining_2".to_string(),
+            spirit_qi: 32.0,
+            spirit_qi_max: 100.0,
+            karma: 0.0,
+            experience: 7,
+            inventory_score: 0.0,
+        };
+
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Some(make_inventory(11, true)),
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let initial_payloads = collect_inventory_snapshot_payloads(&mut helper);
+        assert_eq!(
+            initial_payloads.len(),
+            1,
+            "join should emit one initial snapshot"
+        );
+
+        {
+            let mut inventory = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            inventory.revision = InventoryRevision(12);
+            inventory.hotbar[1] = Some(make_item(2010, "ningmai_powder", "凝脉散", 0.2, 1));
+        }
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let changed_payloads = collect_inventory_snapshot_payloads(&mut helper);
+        assert_eq!(
+            changed_payloads.len(),
+            1,
+            "changed inventory should emit one fresh snapshot"
+        );
+        let changed_snapshot = match &changed_payloads[0].payload {
+            ServerDataPayloadV1::InventorySnapshot(snapshot) => snapshot,
+            other => panic!("expected inventory_snapshot payload, got {other:?}"),
+        };
+        assert_eq!(changed_snapshot.revision, 12);
+        assert_eq!(
+            changed_snapshot.hotbar[1]
+                .as_ref()
+                .map(|item| item.item_id.as_str()),
+            Some("ningmai_powder")
+        );
     }
 
     // =========== plan-shelflife-v1 M3a — enrich_with_derived_freshness ===========

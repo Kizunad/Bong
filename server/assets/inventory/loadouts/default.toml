@@ -120,7 +120,7 @@ cols = 4
   stack_count = 2
 
 # ─── 装备 ─────────────────────────────────────────────────────────────────
-# 醒灵期散修:一件破伪灵皮护胸(替尸流入门)+ 一把残破旧铁短刃(自卫)。
+# 醒灵期散修:一件破伪灵皮护胸(替尸流入门)+ 一把半损铁剑(自卫)。
 # durability=0.5 表示已经半损,对应 plan-weapon-v1 §6.1 的 durability_factor=0.75。
 [[equip]]
 slot = "chest"
@@ -129,15 +129,11 @@ durability = 0.7
 
 [[equip]]
 slot = "main_hand"
-template_id = "rusted_blade"
+template_id = "iron_sword"
 durability = 0.5
 
 # ─── 战斗 hotbar 1-9（plan-HUD-v1 §2.2 下层） ───────────────────────────
-# 起手放：左手凝脉散应急 + 右手骨刺自卫
+# 起手只放消耗品，不再把武器放进 hotbar（plan-weapon-v1 §3.2）
 [[hotbar]]
 index = 0
 template_id = "ningmai_powder"
-
-[[hotbar]]
-index = 1
-template_id = "bone_spike"

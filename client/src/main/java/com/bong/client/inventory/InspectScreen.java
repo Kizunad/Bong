@@ -20,9 +20,11 @@ import io.wispforest.owo.ui.core.*;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -106,9 +108,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     enum ActionKind { SELF_USE, MERIDIAN_TARGET }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
+    record WeaponMenuAction(String label, WeaponActionKind kind) {}
+    enum WeaponActionKind { REPAIR, DROP }
+    record WeaponContextMenuState(InventoryItem item, EquipSlotType slotType, int x, int y, List<WeaponMenuAction> actions) {}
 
     private PillContextMenuState pillContextMenu;
     private PendingMeridianUse pendingMeridianUse;
+    private WeaponContextMenuState weaponContextMenu;
 
     private static final int PILL_MENU_WIDTH = 112;
     private static final int PILL_MENU_ROW_HEIGHT = 16;
@@ -1187,6 +1193,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
 
+            if (weaponContextMenu != null) {
+                int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
+                if (actionIdx >= 0) {
+                    triggerWeaponMenuAction(weaponContextMenu.actions().get(actionIdx).kind());
+                } else {
+                    weaponContextMenu = null;
+                }
+                return true;
+            }
+
+            if (activeTab == 0) {
+                var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+                if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
+                    return true;
+                }
+            }
+
             BackpackGridPanel grid = activeGrid();
             if (grid.containsPoint(mouseX, mouseY)) {
                 var pos = grid.screenToGrid(mouseX, mouseY);
@@ -1325,6 +1348,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_Q && activeTab == 0 && !dragState.isDragging()) {
+            var eq = equipPanel.slotAtScreen(mouseX(), mouseY());
+            if (eq != null && eq.item() != null && InventoryEquipRules.isWeapon(eq.item())) {
+                if (dispatchDropWeaponFromEquip(eq.slotType(), eq.item())) {
+                    eq.clearItem();
+                    clearAllHighlights();
+                    return true;
+                }
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
     // ==================== Drag ====================
 
     private void attemptDrop(double mouseX, double mouseY) {
@@ -1374,9 +1412,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (activeTab == 0) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                // Check if hand slot is usable
-                if (!isEquipSlotUsable(eq.slotType())) {
-                    // Can't equip — hand severed
+                if (!isEquipSlotDropValid(dragged, eq.slotType())) {
                     returnDragToSource();
                     clearAllHighlights();
                     return;
@@ -1426,7 +1462,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Hotbar
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-        if (hIdx >= 0 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
+        if (hIdx >= 0 && InventoryEquipRules.canPlaceIntoHotbar(dragged)) {
             if (hotbarItems[hIdx] == null) {
                 hotbarItems[hIdx] = dragged;
                 hotbarSlots[hIdx].setItem(dragged, true);
@@ -1446,7 +1482,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Quick-use bar (F1-F9)
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
-        if (qIdx >= 0 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
+        if (qIdx >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
             InventoryItem old = quickUseItems[qIdx];
             quickUseItems[qIdx] = dragged;
             quickUseSlots[qIdx].setItem(dragged, true);
@@ -1726,7 +1762,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (pos2 != null) { containerGrids[i].place(item, pos2.row(), pos2.col()); return; }
         }
         // 所有容器都满了 — 放快捷栏（仅 1×1）
-        if (item.gridWidth() == 1 && item.gridHeight() == 1) {
+        if (InventoryEquipRules.canPlaceIntoHotbar(item)) {
             for (int i = 0; i < HOTBAR_SLOTS; i++) {
                 if (hotbarItems[i] == null) {
                     hotbarItems[i] = item;
@@ -1763,8 +1799,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (activeTab == 0) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                boolean usable = isEquipSlotUsable(eq.slotType());
-                eq.setHighlightState(usable
+                boolean valid = isEquipSlotDropValid(dragged, eq.slotType());
+                eq.setHighlightState(valid
                     ? GridSlotComponent.HighlightState.VALID
                     : GridSlotComponent.HighlightState.INVALID);
             }
@@ -1784,14 +1820,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0) {
-            boolean valid = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
+            boolean valid = InventoryEquipRules.canPlaceIntoHotbar(dragged);
             hotbarSlots[hIdx].setHighlightState(
                 valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
         }
 
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
         if (qIdx >= 0) {
-            boolean valid = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
+            boolean valid = InventoryEquipRules.canPlaceIntoQuickUse(dragged);
             quickUseSlots[qIdx].setHighlightState(
                 valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
         }
@@ -1898,17 +1934,69 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
+    private boolean isEquipSlotDropValid(InventoryItem item, EquipSlotType targetSlot) {
+        if (!isEquipSlotUsable(targetSlot)) return false;
+        EquipSlotType sourceSlot = dragState.sourceKind() == DragState.SourceKind.EQUIP
+            ? dragState.sourceEquipSlot()
+            : null;
+        return InventoryEquipRules.canEquip(
+            item,
+            targetSlot,
+            sourceSlot,
+            equippedStateForValidation(item, sourceSlot)
+        );
+    }
+
+    private EnumMap<EquipSlotType, InventoryItem> equippedStateForValidation(
+        InventoryItem dragged,
+        EquipSlotType sourceSlot
+    ) {
+        EnumMap<EquipSlotType, InventoryItem> equipped = new EnumMap<>(EquipSlotType.class);
+        for (EquipSlotType type : EquipSlotType.values()) {
+            var slot = equipPanel.slotFor(type);
+            if (slot == null || slot.item() == null || slot.item().isEmpty()) continue;
+            equipped.put(type, slot.item());
+        }
+        if (sourceSlot != null && dragged != null && !dragged.isEmpty()) {
+            equipped.put(sourceSlot, dragged);
+        }
+        return equipped;
+    }
+
     // ==================== Quick operations ====================
 
     private void quickEquipFromGrid(InventoryItem item) {
-        for (EquipSlotType type : EquipSlotType.values()) {
-            var slot = equipPanel.slotFor(type);
-            if (slot != null && slot.item() == null) {
-                activeGrid().remove(item);
-                slot.setItem(item);
-                return;
-            }
+        if (!InventoryEquipRules.isWeapon(item)
+            && !InventoryEquipRules.isHoe(item)
+            && !InventoryEquipRules.isTreasure(item)) {
+            return;
         }
+        var anchor = activeGrid().anchorOf(item);
+        if (anchor == null) return;
+
+        var equipped = equippedStateForValidation(null, null);
+        EquipSlotType targetSlot = InventoryEquipRules.isTreasure(item)
+            ? firstEmptyTreasureBeltSlot(equipped)
+            : InventoryEquipRules.preferredWeaponQuickEquipSlot(
+                item,
+                equipped,
+                this::isEquipSlotUsable
+            );
+        if (targetSlot == null) return;
+
+        activeGrid().remove(item);
+        equipPanel.slotFor(targetSlot).setItem(item);
+        dispatchMoveIntent(
+            item,
+            new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                activeGrid().containerId(),
+                anchor.row(),
+                anchor.col()
+            ),
+            new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                targetSlot.name().toLowerCase()
+            )
+        );
     }
 
     private void quickUnequipToGrid(EquipSlotType slotType, InventoryItem item) {
@@ -1916,7 +2004,32 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (pos != null) {
             equipPanel.slotFor(slotType).clearItem();
             activeGrid().place(item, pos.row(), pos.col());
+            dispatchMoveIntent(
+                item,
+                new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                    slotType.name().toLowerCase()
+                ),
+                new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    activeGrid().containerId(),
+                    pos.row(),
+                    pos.col()
+                )
+            );
         }
+    }
+
+    private EquipSlotType firstEmptyTreasureBeltSlot(EnumMap<EquipSlotType, InventoryItem> equipped) {
+        EquipSlotType[] order = {
+            EquipSlotType.TREASURE_BELT_0,
+            EquipSlotType.TREASURE_BELT_1,
+            EquipSlotType.TREASURE_BELT_2,
+            EquipSlotType.TREASURE_BELT_3
+        };
+        for (EquipSlotType slot : order) {
+            InventoryItem item = equipped.get(slot);
+            if (item == null || item.isEmpty()) return slot;
+        }
+        return null;
     }
 
     private void quickMoveHotbarToGrid(int index) {
@@ -1927,6 +2040,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             hotbarItems[index] = null;
             hotbarSlots[index].clearItem();
             activeGrid().place(item, pos.row(), pos.col());
+            dispatchMoveIntent(
+                item,
+                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(index),
+                new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    activeGrid().containerId(),
+                    pos.row(),
+                    pos.col()
+                )
+            );
         }
     }
 
@@ -1950,6 +2072,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         drawMultiCellItems(context);
         updateTooltipFromHover(mouseX, mouseY);
         drawPillMenuOverlay(context, mouseX, mouseY);
+        drawWeaponMenuOverlay(context, mouseX, mouseY);
         drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
@@ -2046,6 +2169,22 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return row >= 0 && row < pillContextMenu.actions().size() ? row : -1;
     }
 
+    private int weaponMenuHeight() {
+        return weaponContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + weaponContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
+    }
+
+    private int weaponMenuActionIndexAt(double mouseX, double mouseY) {
+        if (weaponContextMenu == null) return -1;
+        int left = weaponContextMenu.x();
+        int top = weaponContextMenu.y();
+        int height = weaponMenuHeight();
+        if (mouseX < left || mouseX >= left + PILL_MENU_WIDTH || mouseY < top || mouseY >= top + height) {
+            return -1;
+        }
+        int row = ((int) mouseY - top - PILL_MENU_PADDING) / PILL_MENU_ROW_HEIGHT;
+        return row >= 0 && row < weaponContextMenu.actions().size() ? row : -1;
+    }
+
     private void drawPillMenuOverlay(DrawContext context, int mouseX, int mouseY) {
         if (pillContextMenu == null) return;
         int left = pillContextMenu.x();
@@ -2069,6 +2208,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             context.drawTextWithShadow(
                 textRenderer,
                 Text.literal(pillContextMenu.actions().get(i).label()),
+                left + 6,
+                rowTop + 4,
+                PILL_MENU_TEXT
+            );
+        }
+        matrices.pop();
+    }
+
+    private void drawWeaponMenuOverlay(DrawContext context, int mouseX, int mouseY) {
+        if (weaponContextMenu == null) return;
+        int left = weaponContextMenu.x();
+        int top = weaponContextMenu.y();
+        int height = weaponMenuHeight();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 450);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BG);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + 1, PILL_MENU_BORDER);
+        context.fill(left, top + height - 1, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        context.fill(left, top, left + 1, top + height, PILL_MENU_BORDER);
+        context.fill(left + PILL_MENU_WIDTH - 1, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        int hovered = weaponMenuActionIndexAt(mouseX, mouseY);
+        var textRenderer = MinecraftClient.getInstance().textRenderer;
+        for (int i = 0; i < weaponContextMenu.actions().size(); i++) {
+            int rowTop = top + PILL_MENU_PADDING + i * PILL_MENU_ROW_HEIGHT;
+            if (i == hovered) {
+                context.fill(left + 1, rowTop, left + PILL_MENU_WIDTH - 1, rowTop + PILL_MENU_ROW_HEIGHT, PILL_MENU_HOVER);
+            }
+            context.drawTextWithShadow(
+                textRenderer,
+                Text.literal(weaponContextMenu.actions().get(i).label()),
                 left + 6,
                 rowTop + 4,
                 PILL_MENU_TEXT
@@ -2126,5 +2296,82 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             PILL_TARGET_HINT
         );
         matrices.pop();
+    }
+
+    private boolean openWeaponContextMenu(EquipSlotType slotType, InventoryItem item, int x, int y) {
+        if (slotType == null || item == null || item.isEmpty() || !InventoryEquipRules.isWeapon(item)) {
+            weaponContextMenu = null;
+            return false;
+        }
+        weaponContextMenu = new WeaponContextMenuState(
+            item,
+            slotType,
+            x,
+            y,
+            List.of(
+                new WeaponMenuAction("修复", WeaponActionKind.REPAIR),
+                new WeaponMenuAction("丢弃", WeaponActionKind.DROP)
+            )
+        );
+        pillContextMenu = null;
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    private void triggerWeaponMenuAction(WeaponActionKind kind) {
+        if (weaponContextMenu == null) return;
+        WeaponContextMenuState menu = weaponContextMenu;
+        weaponContextMenu = null;
+        switch (kind) {
+            case REPAIR -> openRepairScreen(menu.item());
+            case DROP -> {
+                if (dispatchDropWeaponFromEquip(menu.slotType(), menu.item())) {
+                    var slot = equipPanel.slotFor(menu.slotType());
+                    if (slot != null) slot.clearItem();
+                }
+            }
+        }
+    }
+
+    private boolean dispatchDropWeaponFromEquip(EquipSlotType slotType, InventoryItem item) {
+        if (slotType == null || item == null || item.instanceId() == 0L || !InventoryEquipRules.isWeapon(item)) {
+            return false;
+        }
+        com.bong.client.network.ClientRequestSender.sendDropWeapon(
+            item.instanceId(),
+            new com.bong.client.network.ClientRequestProtocol.EquipLoc(slotType.name().toLowerCase())
+        );
+        return true;
+    }
+
+    private void openRepairScreen(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        int sx = 0;
+        int sy = 64;
+        int sz = 0;
+        if (client.player != null) {
+            sx = (int) Math.floor(client.player.getX());
+            sy = (int) Math.floor(client.player.getY());
+            sz = (int) Math.floor(client.player.getZ());
+        }
+        client.setScreen(new com.bong.client.combat.screen.RepairScreen(
+            item.displayName(),
+            (float) item.durability(),
+            item.instanceId(),
+            sx,
+            sy,
+            sz
+        ));
+    }
+
+    private double mouseX() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client.mouse.getX() * width / (double) client.getWindow().getWidth();
+    }
+
+    private double mouseY() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client.mouse.getY() * height / (double) client.getWindow().getHeight();
     }
 }

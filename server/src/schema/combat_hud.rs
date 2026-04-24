@@ -216,6 +216,22 @@ pub struct WeaponBrokenV1 {
     pub template_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TreasureViewV1 {
+    pub instance_id: u64,
+    pub template_id: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TreasureEquippedV1 {
+    pub slot: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub treasure: Option<TreasureViewV1>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +295,21 @@ mod tests {
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: WeaponBrokenV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn treasure_equipped_roundtrip_basic() {
+        let original = TreasureEquippedV1 {
+            slot: "treasure_belt_0".to_string(),
+            treasure: Some(TreasureViewV1 {
+                instance_id: 88,
+                template_id: "starter_talisman".to_string(),
+                display_name: "启程护符".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: TreasureEquippedV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
     }
 
