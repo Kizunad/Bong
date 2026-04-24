@@ -1,17 +1,46 @@
-# Bong · plan-shelflife-v1 · 骨架
+# Bong · plan-shelflife-v1
 
 **通用保质期 / 过期系统**（原 `plan-volatility-v1`，升格扩展）。末法时代一切都在衰败，但**陈化酒**、**老坛丹**等上古封印产物反例 = 时间亦可积淀。本 plan 以**一套 NBT + 一套 lazy eval** 承载三条不同降级路径，供所有"有时间敏感性"的物品（矿物 / 兽产 / 草药 / 丹药 / 食物 / 工艺品）import。
 
-**世界观锚点**：`worldview.md L63`（末法命名 — 一切物品带衰败意象）· `worldview.md §六 L518`（骨币封印真元 — 陈化/冻结的正例）· `worldview.md §六 L557`（矿脉有限 — 消费侧衰败放大稀缺）· `worldview.md §九 L429`（鲸落遗骸 — 时间尺度极长的封印陈化意象）。
+**2026-04-24 升 active 备忘**：代码先行已落地 2770 行（`server/src/shelflife/` 六个文件），M0-M4 完成，M5 消费侧接入 alchemy 会话层，M6-M7 待跨 plan blessing 推进。骨架追认本 plan 为 active。见 §-1 现有代码基线。
+
+**世界观锚点**（改用章节引用，对齐战力分层插入后的行号稳定性）：
+- `worldview.md §三 末法命名` — 一切物品带衰败意象（"末法时代的修士不配用上古称呼"那段）
+- `worldview.md §六 封灵骨币章` — 骨币封印真元 / 陈化冻结的正例
+- `worldview.md §六 矿脉有限章` — 消费侧衰败放大稀缺
+- `worldview.md §九 鲸落遗骸章` — 时间尺度极长的封印陈化意象
 
 **交叉引用**：
-- `plan-mineral-v1.md`（灵石走 Decay 路径）
+- `plan-mineral-v1.md`（灵石走 Decay 路径；2026-04-24 同日升 active）
 - `plan-fauna-v1.md`（待立 — 骨币 Decay + 冻结 / 兽血 Spoil / 内丹混合）
 - `plan-botany-v1.md`（鲜草 Spoil / 阴干 Stepwise Decay / 陈年灵茶可 Age）
-- `plan-alchemy-v1.md`（丹药 Spoil 为主 / 老坛灵丹走 Age）
+- `plan-alchemy-v1.md`（丹药 Spoil 为主 / 老坛灵丹走 Age；`alchemy/session.rs:112` 已引用 `decay_current_qi_factor`）
 - `plan-food-v1.md`（待立 — 食物 Spoil 主流 / 陈酒陈醋 Age）
 - `plan-persistence-v1.md`（lazy freshness 快照兼容）
 - `plan-economy-v1.md`（待立 — 死物/腐败品/陈化品的次级市场经济）
+
+---
+
+## §-1 现有代码基线（2026-04-24 audit）
+
+`server/src/shelflife/` 模块已落地 **2770 行**，六个子文件完整实装；`server/src/main.rs:80` 已调用 `shelflife::register(&mut app)`。
+
+| 子模块 | 行数 | 实装内容 | 对齐骨架章节 |
+|------|------|------|------|
+| `types.rs` | 270 | `DecayTrack`/`DecayProfileId`/`DecayFormula`/`DecayProfile`/`Freshness`/`TrackState`/`ContainerFreshnessBehavior` | §2 + §8 |
+| `compute.rs` | 874 | `compute_current_qi` / `compute_track_state` + 完整测试 | §1 + §6.1 + M0 |
+| `container.rs` | 382 | `container_storage_multiplier` / `enter_container` / `exit_container` | §3 + M2 |
+| `consume.rs` | 453 | `decay_current_qi_factor` / `spoil_check` / `age_peak_check` + `SpoilConsumeWarning` / `AgeBonusRoll` event | §5 + M5 |
+| `probe.rs` | 586 | `FreshnessProbeIntent` / `FreshnessProbeResponse` / `resolve_freshness_probe_intents` + `ProbeDenialReason` | §4 + M4 |
+| `registry.rs` | 152 | `DecayProfileRegistry` resource | §8 + M7 |
+| `mod.rs` | 53 | 模块注册 + `register(&mut App)` | M0 |
+
+**Inventory 层集成**：`server/src/schema/inventory.rs:72` 已扩 `freshness: Option<Freshness>`、line 96 扩 `track_state: TrackState`、`FreshnessDerivedV1` 派生类型，snapshot 层 `network/inventory_snapshot_emit.rs:303-316` 已调用 `compute_current_qi` + `compute_track_state`。
+
+**已知缺口**（M6/M7 剩余工作）：
+1. `DecayProfileRegistry::new()` 默认空 HashMap —— 生产代码从未注册任何 profile（只有 `registry.rs` test 里的 `ling_shi_fan_v1` 作 fixture）。**M7 跨 plan DecayProfile 定稿** 需要：`plan-mineral-v1` 注册四档 `ling_shi_*_v1`、`plan-fauna-v1` 注册 `bone_coin_v1` + `beast_blood_v1` + `beast_meat_v1` 等、`plan-alchemy-v1` 注册常规丹药 + 老坛丹 profile、`plan-food-v1` 注册 `chen_jiu_v1` + `chen_cu_v1` 迁移对、`plan-botany-v1` 注册鲜草 / 阴干 / 陈年灵茶
+2. 消费侧调用点：`alchemy/session.rs:112` 已注释引用 `decay_current_qi_factor`，**实际是否在消费流程中调用**待 alchemy 下一版 verify；`forge` / `cultivation` / `food` 层消费入口暂未接入
+3. **死物 / 腐败 / 过峰 item ID 切换**（§6.3）未实装 —— `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 等 item 变体未注册到 items 表
 
 ---
 
@@ -298,17 +327,17 @@ pub enum DecayFormula {
 
 ## §9 实施节点
 
-- [ ] **M0 — 纯函数层**：`compute_current_qi` + `compute_track_state` 四档公式 + 100% 单元测试（含 PeakAndFall 峰值前后边界 / 死物 / 腐败阈值）
-- [ ] **M1 — Freshness item NBT**：扩展 `plan-inventory-v1` item 字段，持久化兼容（`#[serde(default)]`，旧档 item 视为 `track=Decay, fresh`）
-- [ ] **M2 — 容器行为**：`ContainerFreshnessBehavior` 挂 container；进 / 出事件记 frozen accumulation
-- [ ] **M3 — tooltip + snapshot**：客户端 HUD 分路径档位色 + inventory snapshot 塞当下 qi + track_state
-- [ ] **M4 — 神识感知**：`FreshnessProbeIntent` + 修为阶差 probe 精度
-- [ ] **M5 — 消费侧接入**：
-  - alchemy / forge / 修炼吸收按 §5.1 读当下值（Decay）
-  - 丹药 / 兽血 消费按 §5.2 校验 spoil_threshold（Spoil）
-  - 陈酒陈丹按 §5.3 触发 peak bonus roll（Age）
-- [ ] **M6 — 死物 / 腐败 / 过峰 item 变体**：floor_qi / spoil_threshold / peak 窗口触发 item ID 切换
-- [ ] **M7 — 跨 plan DecayProfile 定稿**：mineral / fauna / botany / alchemy / food 各自在自家 plan 正式 blessing §7 表的参数
+- [x] **M0 — 纯函数层** ✅ `compute.rs` 874 行完整实装，含 PeakAndFall / 死物 / 腐败阈值测试
+- [x] **M1 — Freshness item NBT** ✅ `types.rs::Freshness` + `schema/inventory.rs:72` 集成
+- [x] **M2 — 容器行为** ✅ `container.rs` 全套 + `ContainerFreshnessBehavior` 挂 container
+- [x] **M3 — tooltip + snapshot** ✅ `schema/inventory.rs:86 FreshnessDerivedV1` + `inventory_snapshot_emit.rs:303-316` 已发
+- [x] **M4 — 神识感知** ✅ `probe.rs` `FreshnessProbeIntent` / `Response` / `resolve_freshness_probe_intents`
+- [~] **M5 — 消费侧接入**（部分）：
+  - `consume.rs` 函数层完整（`decay_current_qi_factor` / `spoil_check` / `age_peak_check` + `SpoilConsumeWarning` / `AgeBonusRoll` event）✅
+  - alchemy 已引用 `alchemy/session.rs:112`（注释 + 函数签名），**实际消费调用待 verify**
+  - forge / cultivation / food 未接入 ❌
+- [ ] **M6 — 死物 / 腐败 / 过峰 item 变体**：floor_qi / spoil_threshold / peak 窗口触发 item ID 切换 —— `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 未注册到 items 表
+- [ ] **M7 — 跨 plan DecayProfile 定稿**：`DecayProfileRegistry::new()` 默认空，需要 mineral / fauna / botany / alchemy / food 各自在自家 plan blessing 后 hardcode 注册。当前生产 registry 无任何 profile —— 即使 item 挂了 freshness，查 profile_id 会 miss，UI 回退 None
 
 ---
 
@@ -317,7 +346,7 @@ pub enum DecayFormula {
 - [ ] **半衰期数值正式调参 + 时间换算**：§7 表只是骨架建议，需 M5 联调按实际玩家行为测；同时定义"1 现实日 = N 游戏日"的换算（与 cultivation/agent 时间系统协调）
 - [ ] **陈化物的最佳消费窗口 UX**：Age 路径的"巅峰"提示是硬通知（dialog 中断）还是软提示（HUD 角标）？玩家是否可关闭通知？
 - [x] ~~**DecayProfile spec：Option struct vs enum 分支**~~ — **M0 选 enum 分支**（已在 §2.2 落地）
-- [ ] **骨币续印成本**：worldview §六 L518 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置 / `created_at_tick` 是否归零
+- [ ] **骨币续印成本**：worldview §六 封灵骨币章 续印路径（alchemy/forge/阵法师）— 影响骨币 Linear 衰减速率是否可在续印时重置 / `created_at_tick` 是否归零
 - [ ] **冻结区间记账并发**：玩家同 tick 多次进出容器 — 需要事件合流 + idempotent key（`(item_uuid, tick)` 去重）
 - [ ] **神识感知的阶差粒度**：凡修 / 中修 / 高修 3 档粒度差是否太大？是否按 worldview §一 L68-72 的 6 境界（醒灵 / 引气 / 凝脉 / 固元 / 通灵 / 化虚）逐档细化感知精度
 - [ ] **死物 / 腐败 / 过峰 的次级经济**：死灵石 / 腐骨币 / 败药粉 / 陈醋 是否自成市场（ragpickers / 垃圾收购商 / 腐料炼毒）— 归 `plan-economy-v1`
