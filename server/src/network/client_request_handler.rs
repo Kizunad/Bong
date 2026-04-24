@@ -770,7 +770,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::combat::components::UnlockedStyles;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
@@ -997,6 +997,7 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
+                UnlockedStyles::default(),
             ))
             .id();
         app.world_mut()
@@ -1079,6 +1080,7 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
+                UnlockedStyles::default(),
             ))
             .id();
         app.world_mut()
