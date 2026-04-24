@@ -25,6 +25,10 @@ use crate::npc::lifecycle::{
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::territory::{
+    HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
+    TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
+};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
@@ -427,6 +431,19 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
+/// Beast thinker（plan §2）：
+/// ProtectYoung → Hunt（入侵者）→ 已有近战链 → 领地巡逻 → 兜底 Wander。
+fn beast_npc_thinker() -> ThinkerBuilder {
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(AgeingScorer, RetireAction)
+        .when(ProtectYoungScorer, ProtectYoungAction)
+        .when(TerritoryIntruderScorer, HuntAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(ChaseTargetScorer, ChaseAction)
+        .when(WanderScorer, TerritoryPatrolAction)
+}
+
 /// Spawn a Rogue (散修) NPC. 用 `VillagerEntityBundle` 外观（未来接 GeyserMC skin 再区分）。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
 pub fn spawn_rogue_npc_at(
@@ -535,6 +552,67 @@ pub fn spawn_commoner_npc_at(
     runtime.lifespan = NpcLifespan::new(
         initial_age_ticks.max(0.0),
         NpcArchetype::Commoner.default_max_age_ticks(),
+    );
+
+    commands.entity(entity).insert(runtime);
+
+    entity
+}
+
+/// Spawn a Beast (妖兽) NPC. 用 `ZombieEntityBundle` 视觉占位（未来换真实 entity model）。
+/// `territory` 决定领地中心 + 半径；容量由 `Territory::capacity()` 派生。
+/// `initial_age_ticks` 控制年龄（繁衍出来的幼崽传 0.0）。
+pub fn spawn_beast_npc_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    territory: Territory,
+    initial_age_ticks: f64,
+) -> Entity {
+    let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
+    let entity = commands
+        .spawn((
+            ZombieEntityBundle {
+                kind: EntityKind::ZOMBIE,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            },
+            Transform::from_xyz(
+                spawn_position.x as f32,
+                spawn_position.y as f32,
+                spawn_position.z as f32,
+            ),
+            GlobalTransform::default(),
+            NpcMarker,
+            NpcBlackboard::default(),
+            loadout.clone(),
+            loadout.melee_archetype,
+            loadout.melee_profile(),
+            NpcArchetype::Beast,
+            Navigator::new(),
+            MovementController::new(),
+            loadout.movement_capabilities,
+            MovementCooldowns::default(),
+            NpcPatrol::new(home_zone, territory.center),
+        ))
+        .id();
+
+    commands.entity(entity).insert((
+        Hunger::default(),
+        WanderState::default(),
+        territory,
+        TerritoryPatrolState::default(),
+        HuntState::default(),
+        ProtectYoungState::default(),
+        beast_npc_thinker(),
+    ));
+
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
+    runtime.lifespan = NpcLifespan::new(
+        initial_age_ticks.max(0.0),
+        NpcArchetype::Beast.default_max_age_ticks(),
     );
 
     commands.entity(entity).insert(runtime);
