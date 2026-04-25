@@ -269,17 +269,21 @@ impl ActiveEventsResource {
         });
     }
 
+    /// 推进事件。返回剩余未消耗的 `npc_spawn_budget`（若入参为 `None` 则返回
+    /// `None`）。调用方负责把剩余额度通过 `NpcRegistry::release_spawn_batch`
+    /// 回滚，以避免预留但未消费的配额把 `spawn_paused` 误触发（P2-5）。
+    #[must_use = "leftover budget should be released back to NpcRegistry"]
     pub fn tick(
         &mut self,
         zone_registry: Option<&mut ZoneRegistry>,
         layer_entity: Option<Entity>,
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
-        npc_spawn_budget: Option<usize>,
-    ) {
+        mut npc_spawn_budget: Option<usize>,
+    ) -> Option<usize> {
         let Some(zone_registry) = zone_registry else {
             self.tick_metadata_only(None);
-            return;
+            return npc_spawn_budget;
         };
 
         for event in &mut self.active_events {
@@ -363,6 +367,9 @@ impl ActiveEventsResource {
                             );
                             continue;
                         }
+                        if let Some(budget) = npc_spawn_budget.as_mut() {
+                            *budget = budget.saturating_sub(beast_count);
+                        }
                         for beast_index in 0..beast_count {
                             let spawn_position =
                                 beast_spawn_position_on_zone_edge(&zone, beast_index, beast_count);
@@ -417,6 +424,8 @@ impl ActiveEventsResource {
                 }
             }
         }
+
+        npc_spawn_budget
     }
 
     pub fn contains(&self, zone_name: &str, event_name: &str) -> bool {
@@ -523,13 +532,21 @@ fn tick_active_events(
         None
     };
 
-    active_events.tick(
+    let leftover = active_events.tick(
         zone_registry.as_deref_mut(),
         layer_entity,
         Some(&mut commands),
         Some(player_positions.as_slice()),
         npc_spawn_budget,
     );
+
+    // P2-5: 把 reserve 了但没消费掉（eg. beast_tide 因 missing layer/commands
+    // 提前 continue）的额度归还给 registry，防止 1-tick 暂态 `spawn_paused`。
+    if let (Some(registry), Some(remaining)) = (npc_registry.as_deref_mut(), leftover) {
+        if remaining > 0 {
+            registry.release_spawn_batch(remaining);
+        }
+    }
 }
 
 fn value_to_u64(value: Option<&Value>) -> Option<u64> {
@@ -731,6 +748,7 @@ mod events_tests {
         tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
         EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     };
+    use crate::npc::lifecycle::NpcRegistry;
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
     use crate::schema::agent_command::Command;
@@ -1196,6 +1214,94 @@ mod events_tests {
                         .is_some_and(|flag| flag == &Value::Bool(true))
             ),
             "realm_collapse placeholder should append verifiable recent event"
+        );
+    }
+
+    #[test]
+    fn concurrent_beast_tides_share_npc_registry_budget() {
+        let (mut app, _layer) = setup_events_app();
+        app.insert_resource(NpcRegistry {
+            max_npc_count: 10,
+            resume_npc_count: 8,
+            ..NpcRegistry::default()
+        });
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .zones
+            .push(Zone {
+                name: "forest".to_string(),
+                bounds: (
+                    DVec3::new(100.0, 60.0, 100.0),
+                    DVec3::new(200.0, 80.0, 200.0),
+                ),
+                spirit_qi: 0.5,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: vec![DVec3::new(150.0, 70.0, 150.0)],
+                blocked_tiles: Vec::new(),
+            });
+
+        {
+            let world = app.world_mut();
+            let cmd_spawn =
+                spawn_event_command_with_params("spawn", EVENT_BEAST_TIDE, 6, 0.7, None);
+            let cmd_forest =
+                spawn_event_command_with_params("forest", EVENT_BEAST_TIDE, 6, 0.7, None);
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command(&cmd_spawn, Some(&mut zones)));
+                assert!(events.enqueue_from_spawn_command(&cmd_forest, Some(&mut zones)));
+            });
+        }
+
+        app.update();
+
+        let live = query_npc_entities(app.world_mut()).len();
+        let cap = app.world().resource::<NpcRegistry>().max_npc_count;
+        assert!(
+            live <= cap,
+            "concurrent beast_tides must share the reserved npc budget: live={live} cap={cap}"
+        );
+    }
+
+    #[test]
+    fn beast_tide_releases_leftover_budget_when_no_layer_available() {
+        // P2-5: 当 beast_tide 因 missing layer 提前 continue 时，
+        // 事先 reserve 的 npc 配额必须回流到 NpcRegistry —— 否则
+        // 同 tick 内 `live_npc_count >= resume_npc_count` 可能误触
+        // `spawn_paused=true`，击杀后续 spawn。
+        let mut registry = NpcRegistry::default();
+        let reserved = registry.reserve_spawn_batch(5);
+        assert_eq!(reserved, 5);
+        assert_eq!(registry.live_npc_count, 5);
+
+        let mut zones = ZoneRegistry::fallback();
+        let mut events = ActiveEventsResource::default();
+        let cmd = spawn_event_command_with_params(
+            DEFAULT_SPAWN_ZONE_NAME,
+            EVENT_BEAST_TIDE,
+            6,
+            0.7,
+            None,
+        );
+        assert!(events.enqueue_from_spawn_command(&cmd, Some(&mut zones)));
+
+        // 不传 layer / commands，模拟"事件已 enqueue 但 chunk layer 尚未就位"。
+        let leftover = events.tick(Some(&mut zones), None, None, None, Some(reserved));
+        assert_eq!(
+            leftover,
+            Some(reserved),
+            "tick must return the full reserved budget when spawn could not occur"
+        );
+
+        registry.release_spawn_batch(leftover.unwrap_or(0));
+        assert_eq!(
+            registry.live_npc_count, 0,
+            "leftover budget must be released back to NpcRegistry"
+        );
+        assert!(
+            !registry.spawn_paused,
+            "release must un-pause registry if live_npc_count drops below resume threshold"
         );
     }
 

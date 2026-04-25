@@ -884,6 +884,11 @@ echo "=== [$TASK_ID][$SCRIPT_TAG][3/7] Server startup ==="
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  # e2e 只验 tiandao↔server Redis 闭环 — 100 rogue 种群在 CI 单核上吃完
+  # brain.rs scorer + navigator/movement/lifecycle 的 per-NPC 开销会把 TPS
+  # 从 20 拖到 ~6，tiandao 40×500ms 窗口错过所有 bong:world_state publish。
+  # 在此显式 seed=0，功能验证走单元测试（spawn.rs 覆盖 0/10/100 三档）。
+  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
   cd "$ROOT/server"
   cargo run --release
 ) >"$SERVER_LOG" 2>&1 &

@@ -67,15 +67,17 @@ pub fn close_meridian(m: &mut Meridian) {
 pub fn qi_zero_decay_tick(
     clock: Res<CultivationClock>,
     mut outcomes: EventWriter<RealmRegressed>,
-    mut players: Query<(
+    mut entities: Query<(
         Entity,
         &mut Cultivation,
         &mut MeridianSystem,
-        &mut LifeRecord,
+        // LifeRecord 可选：plan §0 规则平等，NPC 无生平卷但降境数值/事件照常生效。
+        Option<&mut LifeRecord>,
     )>,
 ) {
     let now = clock.tick;
-    for (entity, mut cultivation, mut meridians, mut life) in players.iter_mut() {
+    for (entity, mut cultivation, mut meridians, life) in entities.iter_mut() {
+        let mut life = life;
         let threshold = cultivation.qi_max * ZERO_THRESHOLD_RATIO;
         if cultivation.qi_current <= threshold {
             if cultivation.last_qi_zero_at.is_none() {
@@ -110,11 +112,13 @@ pub fn qi_zero_decay_tick(
                     close_meridian(m);
                     id
                 };
-                life.push(BiographyEntry::MeridianClosed {
-                    id,
-                    tick: now,
-                    reason: "qi_zero_decay".into(),
-                });
+                if let Some(life) = life.as_deref_mut() {
+                    life.push(BiographyEntry::MeridianClosed {
+                        id,
+                        tick: now,
+                        reason: "qi_zero_decay".into(),
+                    });
+                }
             }
             // 重算 qi_max = 10 (基础) + 剩余经脉 capacity 之和（对齐 MeridianOpenTick 打通时 +10）
             cultivation.qi_max = 10.0 + meridians.sum_capacity();
@@ -182,5 +186,49 @@ mod tests {
         // tier / flow_rate 保留
         assert_eq!(m.rate_tier, 2);
         assert_eq!(m.flow_rate, 3.0);
+    }
+
+    /// plan §0 "NPC 与玩家规则平等"：NPC 无 LifeRecord 也必须走降境。
+    #[test]
+    fn qi_zero_decay_tick_regresses_npc_without_life_record() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: DECAY_TRIGGER_TICKS + 10,
+        });
+        app.add_event::<RealmRegressed>();
+        app.add_systems(Update, qi_zero_decay_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        meridians.get_mut(MeridianId::LargeIntestine).opened = true;
+        let cultivation = Cultivation {
+            realm: Realm::Condense, // 需降到 Induce
+            qi_current: 0.0,
+            qi_max: 100.0,
+            last_qi_zero_at: Some(1),
+            ..Cultivation::default()
+        };
+
+        let npc = app.world_mut().spawn((cultivation, meridians)).id();
+
+        app.update();
+
+        let cult = app.world().get::<Cultivation>(npc).unwrap();
+        assert_eq!(
+            cult.realm,
+            Realm::Induce,
+            "NPC should regress one realm even without LifeRecord"
+        );
+        let events: Vec<_> = app
+            .world()
+            .resource::<bevy_ecs::event::Events<RealmRegressed>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].from, Realm::Condense);
+        assert_eq!(events[0].to, Realm::Induce);
     }
 }

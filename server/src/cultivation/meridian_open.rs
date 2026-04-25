@@ -110,19 +110,21 @@ pub fn meridian_open_tick(
     topo: Res<MeridianTopology>,
     clock: Res<CultivationClock>,
     zones: Option<Res<ZoneRegistry>>,
-    mut players: Query<(
+    mut entities: Query<(
         &Position,
         &MeridianTarget,
         &mut Cultivation,
         &mut MeridianSystem,
-        &mut LifeRecord,
+        // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
+        // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
+        Option<&mut LifeRecord>,
     )>,
 ) {
     let Some(zones) = zones else {
         return;
     };
     let now = clock.tick;
-    for (pos, target, mut cultivation, mut meridians, mut life) in players.iter_mut() {
+    for (pos, target, mut cultivation, mut meridians, life) in entities.iter_mut() {
         let zone_qi = zones.find_zone(pos.0).map(|z| z.spirit_qi).unwrap_or(0.0);
         let adj = is_target_adjacent(&topo, &meridians, target.0);
         if let Ok((_delta, just_opened)) = advance_open_progress_at(
@@ -134,12 +136,14 @@ pub fn meridian_open_tick(
             now,
         ) {
             if just_opened {
-                life.push(BiographyEntry::MeridianOpened {
-                    id: target.0,
-                    tick: now,
-                });
-                if life.spirit_root_first.is_none() {
-                    life.spirit_root_first = Some(target.0);
+                if let Some(mut life) = life {
+                    life.push(BiographyEntry::MeridianOpened {
+                        id: target.0,
+                        tick: now,
+                    });
+                    if life.spirit_root_first.is_none() {
+                        life.spirit_root_first = Some(target.0);
+                    }
                 }
             }
         }
