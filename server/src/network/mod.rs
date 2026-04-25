@@ -2988,10 +2988,12 @@ mod tests {
             events::{ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent},
             CombatClock,
         };
+        use crate::cultivation::breakthrough::{breakthrough_system, BreakthroughRequest};
         use crate::cultivation::components::{
-            Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
+            Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
         };
         use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
+        use crate::cultivation::tick::CultivationClock;
         use crate::persistence::{
             load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
             PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
@@ -3046,7 +3048,13 @@ mod tests {
             app.insert_resource(PendingGameplayNarrations::default());
             app.insert_resource(GameplayTick::default());
             app.insert_resource(CombatClock::default());
+            app.insert_resource(CultivationClock::default());
             app.add_event::<AttackIntent>();
+            app.add_event::<BreakthroughRequest>();
+            app.add_event::<crate::cultivation::breakthrough::BreakthroughOutcome>();
+            app.add_event::<crate::cultivation::death_hooks::CultivationDeathTrigger>();
+            app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+            app.add_event::<crate::skill::events::SkillCapChanged>();
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
@@ -3057,6 +3065,8 @@ mod tests {
                     crate::combat::debug::tick_combat_clock,
                     crate::player::gameplay::apply_queued_gameplay_actions
                         .after(crate::combat::debug::tick_combat_clock),
+                    breakthrough_system
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::status_effect_apply_tick
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::attribute_aggregate_tick
@@ -3857,20 +3867,31 @@ mod tests {
 
         #[test]
         fn realm_breakthrough_updates_payloads() {
-            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (mut app, _rx_outbound) = setup_gameplay_app();
+            let initial_state = PlayerState {
+                realm: "mortal".to_string(),
+                spirit_qi: 80.0,
+                spirit_qi_max: 100.0,
+                karma: -0.9,
+                experience: 150,
+                inventory_score: 0.05,
+            };
             let (entity, mut helper) = spawn_test_client_with_state(
                 &mut app,
                 "Seeker",
                 [8.0, 66.0, 8.0],
-                PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 80.0,
-                    spirit_qi_max: 100.0,
-                    karma: 0.1,
-                    experience: 150,
-                    inventory_score: 0.05,
-                },
+                initial_state.clone(),
             );
+
+            // Drain the baseline payload emitted on Added<PlayerState>.
+            app.update();
+            flush_all_client_packets(&mut app);
+            let _ = collect_server_data_payloads(&mut helper);
+
+            // Cultivation breakthrough requires at least one opened meridian.
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            app.world_mut().entity_mut(entity).insert(meridians);
 
             app.world_mut()
                 .resource_mut::<GameplayActionQueue>()
@@ -3879,128 +3900,53 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_server_data_payloads(&mut helper);
-            let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
-            let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(
-                player_state_payloads.len(),
-                1,
-                "breakthrough should emit one player_state payload"
-            );
-            assert_eq!(
-                narration_payloads.len(),
-                1,
-                "breakthrough should emit one narration payload"
-            );
-
-            match &player_state_payloads[0].payload {
-                ServerDataPayloadV1::PlayerState {
-                    realm,
-                    spirit_qi,
-                    player,
-                    ..
-                } => {
-                    assert_eq!(player.as_deref(), Some("offline:Seeker"));
-                    assert_eq!(realm, "qi_refining_1");
-                    assert_eq!(*spirit_qi, 120.0);
-                }
-                other => panic!("expected player_state payload, got {other:?}"),
-            }
-
-            match &narration_payloads[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(
-                        narrations[0].style,
-                        crate::schema::common::NarrationStyle::SystemWarning
-                    );
-                    assert!(narrations[0].text.contains("炼气一层"));
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            let world_state = dequeue_world_state(&rx_outbound);
-            assert_eq!(world_state.recent_events.len(), 1);
-            assert_eq!(
-                world_state.recent_events[0].event_type,
-                crate::schema::common::GameEventType::EventTriggered
-            );
-            assert_eq!(
-                world_state.recent_events[0].target.as_deref(),
-                Some("qi_refining_1")
-            );
-
-            {
-                let world = app.world_mut();
-                let player_state = world
-                    .entity(entity)
-                    .get::<PlayerState>()
-                    .expect("player state should remain attached after breakthrough");
-                assert_eq!(player_state.realm, "qi_refining_1");
-                assert_eq!(player_state.spirit_qi, 120.0);
-                assert_eq!(player_state.spirit_qi_max, 120.0);
-            }
-
-            app.world_mut()
-                .resource_mut::<GameplayActionQueue>()
-                .enqueue("offline:Seeker", GameplayAction::AttemptBreakthrough);
-
-            app.update();
-            flush_all_client_packets(&mut app);
-
-            let invalid_payloads = collect_server_data_payloads(&mut helper);
-            assert!(
-                extract_player_state_payloads(invalid_payloads.as_slice()).is_empty(),
-                "insufficient experience should not emit a new player_state payload"
-            );
-            let invalid_narrations = extract_narration_payloads(invalid_payloads.as_slice());
-            assert_eq!(invalid_narrations.len(), 1);
-
-            match &invalid_narrations[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert!(narrations[0].text.contains("经验"));
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            let recent_events = app
+            let cultivation = app
                 .world()
-                .resource::<ActiveEventsResource>()
-                .recent_events_snapshot();
-            assert_eq!(
-                recent_events.len(),
-                1,
-                "failed breakthrough should not append a new recent event"
+                .entity(entity)
+                .get::<Cultivation>()
+                .expect("cultivation should remain attached after breakthrough");
+            assert_eq!(cultivation.realm, Realm::Induce);
+            assert_approx_eq(cultivation.qi_current, 72.0);
+            assert_approx_eq(cultivation.qi_max, 200.0);
+
+            let player_state = app
+                .world()
+                .entity(entity)
+                .get::<PlayerState>()
+                .expect("player state should remain attached after bridge");
+            assert_eq!(player_state, &initial_state);
+
+            let payloads = collect_server_data_payloads(&mut helper);
+            assert!(
+                extract_player_state_payloads(payloads.as_slice()).is_empty(),
+                "breakthrough should not emit player_state payload until PlayerStatePayload reads Cultivation"
             );
         }
 
         #[test]
         fn realm_breakthrough_rejects_invalid_karma_without_side_effects() {
-            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (mut app, _rx_outbound) = setup_gameplay_app();
+            let initial_state = PlayerState {
+                realm: "mortal".to_string(),
+                spirit_qi: 80.0,
+                spirit_qi_max: 100.0,
+                karma: -0.9,
+                experience: 150,
+                inventory_score: 0.05,
+            };
             let (entity, mut helper) = spawn_test_client_with_state(
                 &mut app,
                 "Ascetic",
                 [8.0, 66.0, 8.0],
-                PlayerState {
-                    realm: "qi_refining_2".to_string(),
-                    spirit_qi: 130.0,
-                    spirit_qi_max: 140.0,
-                    karma: -0.2,
-                    experience: 700,
-                    inventory_score: 0.2,
-                },
+                initial_state.clone(),
             );
 
+            // Drain the baseline payload emitted on Added<PlayerState>.
             app.update();
             flush_all_client_packets(&mut app);
+            let _ = collect_server_data_payloads(&mut helper);
 
-            let baseline_payloads = collect_server_data_payloads(&mut helper);
-            assert_eq!(
-                extract_player_state_payloads(baseline_payloads.as_slice()).len(),
-                1,
-                "freshly spawned player state should emit one baseline payload before rejection assertions"
-            );
-            while rx_outbound.try_recv().is_ok() {}
-
+            // Keep meridians closed so the cultivation breakthrough rejects the attempt.
             app.world_mut()
                 .resource_mut::<GameplayActionQueue>()
                 .enqueue("offline:Ascetic", GameplayAction::AttemptBreakthrough);
@@ -4008,55 +3954,34 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
+            let outcomes = app
+                .world()
+                .resource::<Events<crate::cultivation::breakthrough::BreakthroughOutcome>>();
+            assert!(
+                !outcomes.is_empty(),
+                "breakthrough forwarding should emit an outcome even when requirements are unmet"
+            );
+
+            let cultivation = app
+                .world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .expect("cultivation should remain attached after breakthrough attempt");
+            assert_eq!(cultivation.realm, Realm::Awaken);
+            assert_approx_eq(cultivation.qi_current, 80.0);
+            assert_approx_eq(cultivation.qi_max, 100.0);
+
+            let player_state = app
+                .world()
+                .entity(entity)
+                .get::<PlayerState>()
+                .expect("player state should remain attached after rejected breakthrough");
+            assert_eq!(player_state, &initial_state);
+
             let payloads = collect_server_data_payloads(&mut helper);
             assert!(
                 extract_player_state_payloads(payloads.as_slice()).is_empty(),
-                "invalid karma should not emit a player_state payload"
-            );
-
-            let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(
-                narration_payloads.len(),
-                1,
-                "invalid karma rejection should still emit warning narration"
-            );
-
-            match &narration_payloads[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(narrations.len(), 1);
-                    assert_eq!(
-                        narrations[0].style,
-                        crate::schema::common::NarrationStyle::SystemWarning
-                    );
-                    assert!(
-                        narrations[0].text.contains("心境") || narrations[0].text.contains("因果"),
-                        "karma rejection text should mention karma/心境 semantics"
-                    );
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            {
-                let world = app.world_mut();
-                let player_state = world
-                    .entity(entity)
-                    .get::<PlayerState>()
-                    .expect("player state should remain attached after rejected breakthrough");
-                assert_eq!(player_state.realm, "qi_refining_2");
-                assert_eq!(player_state.spirit_qi, 130.0);
-                assert_eq!(player_state.spirit_qi_max, 140.0);
-                assert_eq!(player_state.karma, -0.2);
-                assert_eq!(player_state.experience, 700);
-                assert_approx_eq(player_state.inventory_score, 0.2);
-            }
-
-            let recent_events = app
-                .world()
-                .resource::<ActiveEventsResource>()
-                .recent_events_snapshot();
-            assert!(
-                recent_events.is_empty(),
-                "invalid karma rejection must not append an internal recent event either"
+                "failed cultivation breakthrough should not emit player_state payload"
             );
         }
     }

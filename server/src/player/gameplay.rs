@@ -17,6 +17,7 @@ use crate::combat::{
     debug::enqueue_debug_attack_intent,
     events::{AttackIntent, FIST_REACH},
 };
+use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
@@ -27,6 +28,7 @@ const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
 const GATHER_EXPERIENCE_REWARD: u64 = 90;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
+#[allow(dead_code)]
 const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
     BreakthroughRule {
         current_realm: "mortal",
@@ -145,6 +147,7 @@ impl GameplayTick {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 struct BreakthroughRule {
     current_realm: &'static str,
     next_realm: &'static str,
@@ -182,6 +185,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
     mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
     mut attack_intents: EventWriter<AttackIntent>,
+    mut breakthrough_requests: EventWriter<BreakthroughRequest>,
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
@@ -193,14 +197,18 @@ pub(crate) fn apply_queued_gameplay_actions(
             let read_players = player_sets.p0();
             read_players
                 .iter()
-                .find_map(|(entity, username, position, player_state)| {
+                .find_map(|(entity, username, position, _player_state)| {
                     player_matches_request(request.player.as_str(), username.0.as_str()).then(
                         || {
                             let validation = match &request.action {
-                                GameplayAction::Combat(_) => Ok(None),
-                                GameplayAction::Gather(_) => Ok(None),
+                                GameplayAction::Combat(_) => {
+                                    Ok::<Option<&'static BreakthroughRule>, String>(None)
+                                }
+                                GameplayAction::Gather(_) => {
+                                    Ok::<Option<&'static BreakthroughRule>, String>(None)
+                                }
                                 GameplayAction::AttemptBreakthrough => {
-                                    validate_breakthrough(player_state).map(Some)
+                                    Ok::<Option<&'static BreakthroughRule>, String>(None)
                                 }
                             };
 
@@ -233,7 +241,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                 rejection,
                 NarrationStyle::SystemWarning,
             ),
-            Ok(rule) => {
+            Ok(_rule) => {
                 let event_tick = gameplay_tick.tick;
 
                 match request.action {
@@ -263,20 +271,12 @@ pub(crate) fn apply_queued_gameplay_actions(
                         )
                     }
                     GameplayAction::AttemptBreakthrough => {
-                        let mut mutable_players = player_sets.p1();
-                        let mut player_state = mutable_players.get_mut(player_entity).expect(
-                            "validated gameplay target should still have mutable PlayerState",
-                        );
-
-                        apply_breakthrough_action(
-                            canonical_player.as_str(),
-                            zone_name.as_str(),
-                            event_tick,
-                            rule.expect("breakthrough action should carry a rule after validation"),
-                            &mut player_state,
-                            active_events.as_deref_mut(),
-                            &mut pending_narrations,
-                        )
+                        // Single source of truth: cultivation system consumes the breakthrough request.
+                        // Validation and outcomes are handled in `cultivation::breakthrough_system`.
+                        breakthrough_requests.send(BreakthroughRequest {
+                            entity: player_entity,
+                            material_bonus: 0.0,
+                        });
                     }
                 }
             }
@@ -369,6 +369,7 @@ fn apply_gather_action(
     );
 }
 
+#[allow(dead_code)]
 fn apply_breakthrough_action(
     canonical_player: &str,
     zone_name: &str,
@@ -415,6 +416,7 @@ fn apply_breakthrough_action(
     );
 }
 
+#[allow(dead_code)]
 fn validate_breakthrough(player_state: &PlayerState) -> Result<&'static BreakthroughRule, String> {
     let Some(rule) = breakthrough_rule(player_state.realm.as_str()) else {
         return Err(format!(
@@ -470,6 +472,7 @@ fn player_matches_request(requested_player: &str, username: &str) -> bool {
         || requested_player.eq_ignore_ascii_case(canonical_player_id(username).as_str())
 }
 
+#[allow(dead_code)]
 fn breakthrough_rule(current_realm: &str) -> Option<&'static BreakthroughRule> {
     let current_realm = current_realm.trim();
     BREAKTHROUGH_RULES
@@ -477,6 +480,7 @@ fn breakthrough_rule(current_realm: &str) -> Option<&'static BreakthroughRule> {
         .find(|rule| rule.current_realm.eq_ignore_ascii_case(current_realm))
 }
 
+#[allow(dead_code)]
 fn realm_display_name(realm: &str) -> &'static str {
     match realm.trim().to_ascii_lowercase().as_str() {
         "mortal" => "凡体",
@@ -524,6 +528,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CapturedAttackIntents::default());
         app.add_event::<AttackIntent>();
+        app.add_event::<BreakthroughRequest>();
         app.add_systems(
             Update,
             (
