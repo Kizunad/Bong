@@ -1,3 +1,4 @@
+pub mod dimension;
 pub mod events;
 pub mod terrain;
 pub mod zone;
@@ -64,6 +65,7 @@ struct AnvilBootstrapConfig {
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering world setup systems");
+    dimension::register(app);
     zone::register(app);
     events::register(app);
     terrain::register(app);
