@@ -18,6 +18,7 @@ use crate::combat::{
     events::{AttackIntent, FIST_REACH},
 };
 use crate::cultivation::breakthrough::BreakthroughRequest;
+use crate::cultivation::components::Cultivation;
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
@@ -25,7 +26,6 @@ use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
-const GATHER_EXPERIENCE_REWARD: u64 = 90;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
 
@@ -121,7 +121,7 @@ impl GameplayTick {
 
 type GameplayPlayerSetReadItem<'a> = (Entity, &'a Username, &'a Position);
 type GameplayPlayerSetReadFilter = With<Client>;
-type GameplayPlayerSetWriteItem<'a> = &'a mut PlayerState;
+type GameplayPlayerSetWriteItem<'a> = (&'a mut PlayerState, &'a mut Cultivation);
 type GameplayPlayerSetWriteFilter = With<Client>;
 type GameplayPlayerSetParams<'w, 's> = (
     Query<'w, 's, GameplayPlayerSetReadItem<'w>, GameplayPlayerSetReadFilter>,
@@ -191,9 +191,9 @@ pub(crate) fn apply_queued_gameplay_actions(
             }
             GameplayAction::Gather(action) => {
                 let mut mutable_players = player_sets.p1();
-                let mut player_state = mutable_players
+                let (mut player_state, mut cultivation) = mutable_players
                     .get_mut(player_entity)
-                    .expect("gameplay target should still have mutable PlayerState");
+                    .expect("gameplay target should still have mutable PlayerState + Cultivation");
 
                 apply_gather_action(
                     canonical_player.as_str(),
@@ -203,6 +203,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                     event_tick,
                     &action,
                     &mut player_state,
+                    &mut cultivation,
                     harvest_sessions.as_deref_mut(),
                     active_events.as_deref_mut(),
                     &mut pending_narrations,
@@ -249,6 +250,7 @@ fn apply_gather_action(
     event_tick: u64,
     action: &GatherAction,
     player_state: &mut PlayerState,
+    cultivation: &mut Cultivation,
     harvest_sessions: Option<&mut HarvestSessionStore>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
@@ -270,11 +272,8 @@ fn apply_gather_action(
         }
     }
 
-    player_state.spirit_qi =
-        (player_state.spirit_qi + GATHER_SPIRIT_QI_REWARD).clamp(0.0, player_state.spirit_qi_max);
-    player_state.experience = player_state
-        .experience
-        .saturating_add(GATHER_EXPERIENCE_REWARD);
+    cultivation.qi_current =
+        (cultivation.qi_current + GATHER_SPIRIT_QI_REWARD).clamp(0.0, cultivation.qi_max.max(1.0));
     player_state.inventory_score =
         (player_state.inventory_score + GATHER_INVENTORY_REWARD).clamp(0.0, 1.0);
     player_state.karma = (player_state.karma + GATHER_KARMA_REWARD).clamp(-1.0, 1.0);
@@ -289,10 +288,6 @@ fn apply_gather_action(
             details: Some(HashMap::from([
                 ("action".to_string(), json!("gather")),
                 ("resource".to_string(), json!(resource_name)),
-                (
-                    "experience_gain".to_string(),
-                    json!(GATHER_EXPERIENCE_REWARD),
-                ),
                 ("inventory_gain".to_string(), json!(GATHER_INVENTORY_REWARD)),
             ])),
         });
@@ -374,18 +369,22 @@ mod tests {
         );
 
         let initial_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 70.0,
-            spirit_qi_max: 100.0,
             karma: 0.05,
-            experience: 200,
             inventory_score: 0.10,
         };
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
         let entity = app
             .world_mut()
-            .spawn((client_bundle, initial_state.clone()))
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    qi_current: 70.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                initial_state.clone(),
+            ))
             .id();
 
         app.world_mut()

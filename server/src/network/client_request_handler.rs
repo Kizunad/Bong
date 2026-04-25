@@ -739,6 +739,7 @@ fn handle_learn_skill_scroll(
                 username.0.as_str(),
                 inventory,
                 player_state,
+                &Cultivation::default(),
                 "skill_scroll_consumed",
             );
         }
@@ -1458,6 +1459,7 @@ fn resync_snapshot(
             username.0.as_str(),
             inventory,
             player_state,
+            &Cultivation::default(),
             reason,
         );
     }

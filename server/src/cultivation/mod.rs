@@ -85,7 +85,9 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
-use crate::persistence::{load_active_tribulation, PersistenceSettings};
+use crate::persistence::{
+    load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
+};
 use crate::player::state::canonical_player_id;
 use crate::player::state::PlayerState;
 use crate::skill::events::SkillCapChanged;
@@ -167,15 +169,84 @@ fn attach_cultivation_to_joined_clients(
     joined_clients: Query<(Entity, &Username, Option<&PlayerState>), CultivationAttachFilter>,
 ) {
     for (entity, username, player_state) in &joined_clients {
-        let mut cultivation = Cultivation::default();
-        if let Some(player_state) = player_state {
-            cultivation.qi_current = player_state.spirit_qi;
-            cultivation.qi_max = player_state.spirit_qi_max.max(1.0);
-            if let Some(restored_realm) =
-                cultivation_realm_from_player_state(player_state.realm.as_str())
-            {
-                cultivation.realm = restored_realm;
+        let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+                None
             }
+        };
+
+        let mut cultivation = Cultivation::default();
+        let mut meridians = MeridianSystem::default();
+        let mut qi_color = QiColor::default();
+        let mut karma = Karma::default();
+        let mut practice_log = PracticeLog::default();
+        let mut contamination = Contamination::default();
+        let mut life_record = LifeRecord::new(canonical_player_id(username.0.as_str()));
+        let mut insight_quota = InsightQuota::default();
+        let mut unlocked_perceptions = UnlockedPerceptions::default();
+        let mut insight_modifiers = InsightModifiers::new();
+
+        if let Some(persisted_bundle) = persisted_bundle.as_ref() {
+            // Best-effort hydration; schema is versioned and may evolve.
+            if let Some(value) = persisted_bundle.get("cultivation") {
+                if let Ok(decoded) = serde_json::from_value::<Cultivation>(value.clone()) {
+                    cultivation = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("meridians") {
+                if let Ok(decoded) = serde_json::from_value::<MeridianSystem>(value.clone()) {
+                    meridians = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("qi_color") {
+                if let Ok(decoded) = serde_json::from_value::<QiColor>(value.clone()) {
+                    qi_color = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("karma") {
+                if let Ok(decoded) = serde_json::from_value::<Karma>(value.clone()) {
+                    karma = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("practice_log") {
+                if let Ok(decoded) = serde_json::from_value::<PracticeLog>(value.clone()) {
+                    practice_log = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("contamination") {
+                if let Ok(decoded) = serde_json::from_value::<Contamination>(value.clone()) {
+                    contamination = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("life_record") {
+                if let Ok(decoded) = serde_json::from_value::<LifeRecord>(value.clone()) {
+                    life_record = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("insight_quota") {
+                if let Ok(decoded) = serde_json::from_value::<InsightQuota>(value.clone()) {
+                    insight_quota = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("unlocked_perceptions") {
+                if let Ok(decoded) = serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
+                    unlocked_perceptions = decoded;
+                }
+            }
+            if let Some(value) = persisted_bundle.get("insight_modifiers") {
+                if let Ok(decoded) = serde_json::from_value::<InsightModifiers>(value.clone()) {
+                    insight_modifiers = decoded;
+                }
+            }
+        } else if let Some(_player_state) = player_state {
+            // Legacy fallback: PlayerState no longer carries realm/qi in this plan.
+            // Keep Cultivation defaults until an explicit migration path exists.
         }
 
         let canonical_id = canonical_player_id(username.0.as_str());
@@ -204,30 +275,20 @@ fn attach_cultivation_to_joined_clients(
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
-            MeridianSystem::default(),
-            QiColor::default(),
-            Karma::default(),
-            PracticeLog::default(),
-            Contamination::default(),
-            LifeRecord::new(canonical_id.clone()),
-            InsightQuota::default(),
-            UnlockedPerceptions::default(),
-            InsightModifiers::new(),
+            meridians,
+            qi_color,
+            karma,
+            practice_log,
+            contamination,
+            life_record,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
         ));
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
         }
         tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
-    }
-}
-
-fn cultivation_realm_from_player_state(realm: &str) -> Option<Realm> {
-    match realm {
-        "mortal" => Some(Realm::Awaken),
-        "qi_refining_1" => Some(Realm::Induce),
-        "qi_refining_2" => Some(Realm::Condense),
-        "qi_refining_3" | "foundation_establishment_1" => Some(Realm::Spirit),
-        _ => None,
     }
 }
 
@@ -324,11 +385,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 88.0,
-                    spirit_qi_max: 120.0,
                     karma: 0.0,
-                    experience: 3000,
                     inventory_score: 0.0,
                 },
             ))
@@ -391,11 +448,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 120.0,
-                    spirit_qi_max: 160.0,
                     karma: 0.0,
-                    experience: 4800,
                     inventory_score: 0.0,
                 },
             ))
@@ -461,11 +514,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 120.0,
-                    spirit_qi_max: 160.0,
                     karma: 0.0,
-                    experience: 4800,
                     inventory_score: 0.0,
                 },
                 Lifecycle {

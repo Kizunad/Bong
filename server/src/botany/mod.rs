@@ -102,6 +102,7 @@ fn validate_botany_inventory_primitives_on_startup(
 type BotanyInventoryEmitQueryItem<'a> = (
     &'a mut valence::prelude::Client,
     &'a crate::player::state::PlayerState,
+    &'a crate::cultivation::components::Cultivation,
     &'a PlayerInventory,
 );
 
@@ -118,12 +119,13 @@ fn emit_botany_inventory_snapshots(
     }
 
     for target in pending {
-        let Ok((mut client, player_state, inventory)) = clients.get_mut(target.client_entity)
+        let Ok((mut client, player_state, cultivation, inventory)) =
+            clients.get_mut(target.client_entity)
         else {
             continue;
         };
 
-        let snapshot = build_inventory_snapshot(inventory, player_state);
+        let snapshot = build_inventory_snapshot(inventory, player_state, cultivation);
         let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {

@@ -61,7 +61,8 @@ use crate::schema::common::{
     CommandType, EventKind, NarrationScope, NarrationStyle, NpcStateKind, PlayerTrend,
 };
 use crate::schema::cultivation::{
-    CultivationSnapshotV1, LifeRecordSnapshotV1, SkillMilestoneSnapshotV1,
+    realm_from_string, realm_to_string, CultivationSnapshotV1, LifeRecordSnapshotV1,
+    SkillMilestoneSnapshotV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{
@@ -71,6 +72,9 @@ use crate::schema::world_state::{
 use crate::skill::components::SkillId;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+#[cfg(test)]
+use crate::cultivation::components::Realm;
 
 #[cfg(test)]
 use crate::persistence::{load_agent_decisions, load_agent_eras};
@@ -336,7 +340,16 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 fn publish_world_state_to_redis(
     redis: Res<RedisBridgeResource>,
     mut timer: valence::prelude::ResMut<WorldStateTimer>,
-    clients: Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: Option<Res<ZoneRegistry>>,
     active_events: Option<Res<ActiveEventsResource>>,
     faction_store: Option<Res<FactionStore>>,
@@ -422,7 +435,16 @@ fn collect_cultivation_snapshots(
 fn build_world_state_snapshot(
     ts: u64,
     tick: u64,
-    clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: &Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: Option<&ZoneRegistry>,
     active_events: Option<&ActiveEventsResource>,
     faction_store: Option<&FactionStore>,
@@ -463,9 +485,10 @@ fn build_world_state_snapshot(
 #[allow(dead_code)]
 pub(crate) fn build_player_state_payload(
     player_state: &PlayerState,
+    cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload(None, zone.into());
+    let payload = player_state.server_payload(cultivation, None, zone.into());
     serialize_server_data_payload(&payload)
 }
 
@@ -490,21 +513,21 @@ where
         .into_iter()
         .map(|(name, _uuid, position, player_state)| {
             let zone_name = zone_name_for_position(zone_registry, position);
-            let (realm, composite_power, breakdown) = player_state
+            let (composite_power, breakdown) = player_state
                 .map(|state| {
-                    let normalized = state.normalized();
+                    // Test helper only has PlayerState; use default cultivation for scoring.
+                    let cultivation = Cultivation::default();
                     (
-                        normalized.realm.clone(),
-                        normalized.composite_power(),
-                        normalized.power_breakdown(),
+                        state.normalized().composite_power(&cultivation),
+                        state.normalized().power_breakdown(&cultivation),
                     )
                 })
                 .unwrap_or_else(|| {
                     let default_state = PlayerState::default();
+                    let cultivation = Cultivation::default();
                     (
-                        default_state.realm.clone(),
-                        default_state.composite_power(),
-                        default_state.power_breakdown(),
+                        default_state.normalized().composite_power(&cultivation),
+                        default_state.normalized().power_breakdown(&cultivation),
                     )
                 });
 
@@ -513,7 +536,7 @@ where
             PlayerProfile {
                 uuid: canonical_player_id(name),
                 name: name.to_string(),
-                realm,
+                realm: crate::schema::cultivation::realm_to_string(Realm::Awaken).to_string(),
                 composite_power,
                 breakdown,
                 trend: PlayerTrend::Stable,
@@ -561,8 +584,18 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_player_snapshots(
-    clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: &Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: &ZoneRegistry,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
 ) -> (
@@ -575,27 +608,49 @@ fn collect_player_snapshots(
 
     let mut players = clients
         .iter()
-        .map(|(entity, position, username, player_state)| {
+        .map(|(entity, position, username, player_state, cultivation)| {
             let name = username.0.clone();
             let zone_name = zone_name_for_position(zone_registry, position.get());
             let canonical_id = canonical_player_id(&name);
-            let (realm, composite_power, breakdown) = player_state
-                .map(|state| {
-                    let normalized = state.normalized();
-                    (
-                        normalized.realm.clone(),
-                        normalized.composite_power(),
-                        normalized.power_breakdown(),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    let default_state = PlayerState::default();
-                    (
-                        default_state.realm.clone(),
-                        default_state.composite_power(),
-                        default_state.power_breakdown(),
-                    )
-                });
+            let state = player_state.cloned().unwrap_or_default();
+
+            // For player list summary, prefer live Cultivation on the entity when
+            // available (tests attach it directly). Fall back to periodic
+            // cultivation snapshots, then to defaults.
+
+            // Player list summary uses the best cultivation snapshot we have at
+            // the time of building WorldState. Fall back to default cultivation.
+            let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
+                (
+                    realm_to_string(cultivation.realm).to_string(),
+                    state.composite_power(cultivation),
+                    state.power_breakdown(cultivation),
+                )
+            } else {
+                cultivation_by_entity
+                    .get(&entity)
+                    .map(|(cultivation_snapshot, _)| {
+                        let cultivation = Cultivation {
+                            realm: realm_from_string(cultivation_snapshot.realm.as_str()),
+                            qi_current: cultivation_snapshot.qi_current,
+                            qi_max: cultivation_snapshot.qi_max,
+                            ..Cultivation::default()
+                        };
+                        (
+                            cultivation_snapshot.realm.clone(),
+                            state.composite_power(&cultivation),
+                            state.power_breakdown(&cultivation),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let cultivation = Cultivation::default();
+                        (
+                            realm_to_string(cultivation.realm).to_string(),
+                            state.composite_power(&cultivation),
+                            state.power_breakdown(&cultivation),
+                        )
+                    })
+            };
 
             player_ids_by_entity.insert(entity, canonical_id.clone());
             *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
@@ -843,9 +898,18 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a Username,
     &'a Position,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
-type PlayerStateEmitQueryFilter = (With<Client>, Or<(Added<PlayerState>, Changed<PlayerState>)>);
+type PlayerStateEmitQueryFilter = (
+    With<Client>,
+    Or<(
+        Added<PlayerState>,
+        Changed<PlayerState>,
+        Added<Cultivation>,
+        Changed<Cultivation>,
+    )>,
+);
 
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
@@ -853,10 +917,13 @@ fn emit_player_state_payloads(
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
-    for (entity, mut client, username, position, player_state) in &mut clients {
+    for (entity, mut client, username, position, player_state, cultivation) in &mut clients {
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let payload =
-            player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+        let payload = player_state.server_payload(
+            cultivation,
+            Some(canonical_player_id(username.0.as_str())),
+            zone_name,
+        );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(payload) => payload,
@@ -1887,16 +1954,18 @@ mod tests {
             let (mut app, rx_outbound) = setup_publish_app(true);
             let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
 
-            app.world_mut()
-                .entity_mut(player_entity)
-                .insert(PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 78.0,
-                    spirit_qi_max: 100.0,
+            app.world_mut().entity_mut(player_entity).insert((
+                PlayerState {
                     karma: 0.2,
-                    experience: 1_200,
                     inventory_score: 0.4,
-                });
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             let state = publish_once(&mut app, &rx_outbound);
             let player = state
@@ -1905,7 +1974,7 @@ mod tests {
                 .find(|player| player.name == "Azure")
                 .expect("Azure should be present in the world snapshot");
 
-            assert_eq!(player.realm, "qi_refining_3");
+            assert_eq!(player.realm, "Condense");
             assert_eq!(player.zone, DEFAULT_SPAWN_ZONE_NAME);
             assert!(
                 player.composite_power > 0.0,
@@ -2603,10 +2672,7 @@ mod tests {
         fn emit_player_state_payloads_periodically_without_change(
             zone_registry: Option<Res<ZoneRegistry>>,
             mut tick_counter: valence::prelude::Local<u64>,
-            mut clients: Query<
-                (Entity, &mut Client, &Username, &Position, &PlayerState),
-                With<Client>,
-            >,
+            mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
         ) {
             *tick_counter += 1;
             if !tick_counter.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
@@ -2615,10 +2681,14 @@ mod tests {
 
             let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
-            for (entity, mut client, username, position, player_state) in &mut clients {
+            for (entity, mut client, username, position, player_state, cultivation) in &mut clients
+            {
                 let zone_name = zone_name_for_position(&zone_registry, position.get());
-                let payload = player_state
-                    .server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+                let payload = player_state.server_payload(
+                    cultivation,
+                    Some(canonical_player_id(username.0.as_str())),
+                    zone_name,
+                );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {
                     Ok(payload) => payload,
@@ -2695,14 +2765,18 @@ mod tests {
             let (entity, mut helper) =
                 spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
 
-            app.world_mut().entity_mut(entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.2,
-                experience: 1_200,
-                inventory_score: 0.4,
-            });
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.2,
+                    inventory_score: 0.4,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -2723,7 +2797,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(player.as_deref(), Some("offline:Azure"));
-                    assert_eq!(realm, "qi_refining_3");
+                    assert_eq!(realm, "Condense");
                     assert_eq!(*spirit_qi, 78.0);
                     assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
                 }
@@ -2731,11 +2805,11 @@ mod tests {
             }
 
             {
-                let mut query = app.world_mut().query::<&mut PlayerState>();
-                let mut player_state = query
+                let mut query = app.world_mut().query::<&mut Cultivation>();
+                let mut cultivation = query
                     .get_mut(app.world_mut(), entity)
-                    .expect("test client PlayerState should be mutable");
-                player_state.spirit_qi = 81.0;
+                    .expect("test client Cultivation should be mutable");
+                cultivation.qi_current = 81.0;
             }
 
             app.update();
@@ -2764,24 +2838,30 @@ mod tests {
             let (_bob_entity, mut bob_helper) =
                 spawn_test_client_with_helper(&mut app, "Bob", [20.0, 66.0, 20.0]);
 
-            app.world_mut()
-                .entity_mut(azure_entity)
-                .insert(PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 78.0,
-                    spirit_qi_max: 100.0,
+            app.world_mut().entity_mut(azure_entity).insert((
+                PlayerState {
                     karma: 0.2,
-                    experience: 1_200,
                     inventory_score: 0.4,
-                });
-            app.world_mut().entity_mut(_bob_entity).insert(PlayerState {
-                realm: "mortal".to_string(),
-                spirit_qi: 0.0,
-                spirit_qi_max: 100.0,
-                karma: 0.0,
-                experience: 0,
-                inventory_score: 0.0,
-            });
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
+            app.world_mut().entity_mut(_bob_entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -2789,11 +2869,11 @@ mod tests {
             let _ = collect_player_state_payloads(&mut bob_helper);
 
             {
-                let mut query = app.world_mut().query::<&mut PlayerState>();
-                let mut azure_state = query
+                let mut query = app.world_mut().query::<&mut Cultivation>();
+                let mut azure_cultivation = query
                     .get_mut(app.world_mut(), azure_entity)
-                    .expect("azure state should be mutable");
-                azure_state.spirit_qi = 81.0;
+                    .expect("azure cultivation should be mutable");
+                azure_cultivation.qi_current = 81.0;
             }
 
             app.update();
@@ -2824,14 +2904,18 @@ mod tests {
 
             let (entity, mut helper) =
                 spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
-            app.world_mut().entity_mut(entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.0,
-                experience: 0,
-                inventory_score: 0.0,
-            });
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -3091,6 +3175,7 @@ mod tests {
             username: &str,
             position: [f64; 3],
             player_state: PlayerState,
+            cultivation: Cultivation,
         ) -> (Entity, MockClientHelper) {
             let (mut client_bundle, helper) = create_mock_client(username);
             client_bundle.player.position = Position::new(position);
@@ -3098,11 +3183,7 @@ mod tests {
                 .world_mut()
                 .spawn((
                     client_bundle,
-                    Cultivation {
-                        qi_current: player_state.spirit_qi,
-                        qi_max: player_state.spirit_qi_max,
-                        ..Cultivation::default()
-                    },
+                    cultivation,
                     player_state,
                     Wounds::default(),
                     Stamina::default(),
@@ -3187,12 +3268,14 @@ mod tests {
                 "Azure",
                 [8.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 50.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.1,
-                    experience: 120,
                     inventory_score: 0.2,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
             app.world_mut().entity_mut(entity).insert(LifeRecord {
@@ -3667,12 +3750,14 @@ mod tests {
                 "Azure",
                 [8.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 70.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.05,
-                    experience: 200,
                     inventory_score: 0.10,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 70.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
             let (target, _target_helper) = spawn_test_client_with_state(
@@ -3680,12 +3765,14 @@ mod tests {
                 "Crimson",
                 [9.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 65.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 80,
                     inventory_score: 0.05,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 65.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
 
@@ -3773,8 +3860,12 @@ mod tests {
                 .get::<PlayerState>()
                 .expect("attacker player state should remain attached");
             assert_eq!(
-                attacker_state.spirit_qi, 70.0,
-                "attacker PlayerState should not be fake-mutated"
+                attacker_state,
+                &PlayerState {
+                    karma: 0.05,
+                    inventory_score: 0.10,
+                },
+                "attacker PlayerState should not be mutated by combat"
             );
             let attacker_cultivation = app
                 .world()
@@ -3792,12 +3883,14 @@ mod tests {
                 "Gatherer",
                 [8.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 20.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 10,
                     inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 20.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
 
@@ -3860,10 +3953,14 @@ mod tests {
                     .entity(entity)
                     .get::<PlayerState>()
                     .expect("player state should remain attached after gathering");
-                assert_eq!(player_state.spirit_qi, 34.0);
-                assert_eq!(player_state.experience, 100);
                 assert_approx_eq(player_state.inventory_score, 0.12);
                 assert_approx_eq(player_state.karma, 0.06);
+
+                let cultivation = world
+                    .entity(entity)
+                    .get::<Cultivation>()
+                    .expect("cultivation should remain attached after gathering");
+                assert_approx_eq(cultivation.qi_current, 34.0);
             }
         }
 
@@ -3871,11 +3968,7 @@ mod tests {
         fn realm_breakthrough_updates_payloads() {
             let (mut app, _rx_outbound) = setup_gameplay_app();
             let initial_state = PlayerState {
-                realm: "mortal".to_string(),
-                spirit_qi: 80.0,
-                spirit_qi_max: 100.0,
                 karma: -0.9,
-                experience: 150,
                 inventory_score: 0.05,
             };
             let (entity, mut helper) = spawn_test_client_with_state(
@@ -3883,9 +3976,15 @@ mod tests {
                 "Seeker",
                 [8.0, 66.0, 8.0],
                 initial_state.clone(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
             );
 
-            // Drain the baseline payload emitted on Added<PlayerState>.
+            // Drain the baseline payload emitted on initial attach.
             app.update();
             flush_all_client_packets(&mut app);
             let _ = collect_server_data_payloads(&mut helper);
@@ -3929,11 +4028,7 @@ mod tests {
         fn realm_breakthrough_rejects_invalid_karma_without_side_effects() {
             let (mut app, _rx_outbound) = setup_gameplay_app();
             let initial_state = PlayerState {
-                realm: "mortal".to_string(),
-                spirit_qi: 80.0,
-                spirit_qi_max: 100.0,
                 karma: -0.9,
-                experience: 150,
                 inventory_score: 0.05,
             };
             let (entity, mut helper) = spawn_test_client_with_state(
@@ -3941,9 +4036,15 @@ mod tests {
                 "Ascetic",
                 [8.0, 66.0, 8.0],
                 initial_state.clone(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
             );
 
-            // Drain the baseline payload emitted on Added<PlayerState>.
+            // Drain the baseline payload emitted on initial attach.
             app.update();
             flush_all_client_packets(&mut app);
             let _ = collect_server_data_payloads(&mut helper);

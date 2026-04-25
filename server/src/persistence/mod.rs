@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 12;
+const CURRENT_USER_VERSION: i32 = 13;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -296,6 +296,14 @@ pub struct ActiveTribulationRecord {
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlayerCultivationRecord {
+    pub username: String,
+    pub cultivation_json: String,
+    pub schema_version: i32,
+    pub last_updated_wall: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1020,6 +1028,43 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             PRAGMA user_version = 12;
             ",
         )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 13 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_cultivation (
+                username TEXT PRIMARY KEY,
+                cultivation_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+
+        // SQLite might already have a pruned player_core schema (e.g. older
+        // dev databases). Drop columns only when they exist.
+        let player_core_columns: Vec<String> = {
+            let mut stmt = transaction.prepare("PRAGMA table_info(player_core)")?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns
+        };
+        for legacy_col in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
+            if player_core_columns.iter().any(|name| name == legacy_col) {
+                transaction.execute(
+                    &format!("ALTER TABLE player_core DROP COLUMN {legacy_col}"),
+                    [],
+                )?;
+            }
+        }
+
+        transaction.execute_batch("PRAGMA user_version = 13;")?;
         transaction.commit()?;
     }
 
@@ -2718,6 +2763,91 @@ fn load_agent_eras_from_connection(connection: &Connection) -> io::Result<Vec<Ag
         records.push(row.map_err(io::Error::other)?);
     }
     Ok(records)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
+pub fn persist_player_cultivation_bundle(
+    settings: &PersistenceSettings,
+    username: &str,
+    cultivation: &crate::cultivation::components::Cultivation,
+    meridians: &crate::cultivation::components::MeridianSystem,
+    qi_color: &crate::cultivation::components::QiColor,
+    karma: &crate::cultivation::components::Karma,
+    contamination: &crate::cultivation::components::Contamination,
+    life_record: &crate::cultivation::life_record::LifeRecord,
+    practice_log: &crate::cultivation::color::PracticeLog,
+    insight_quota: &crate::cultivation::insight::InsightQuota,
+    unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
+    insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let bundle = serde_json::json!({
+        "v": 1,
+        "cultivation": cultivation,
+        "meridians": meridians,
+        "qi_color": qi_color,
+        "karma": karma,
+        "contamination": contamination,
+        "life_record": life_record,
+        "practice_log": practice_log,
+        "insight_quota": insight_quota,
+        "unlocked_perceptions": unlocked_perceptions,
+        "insight_modifiers": insight_modifiers,
+    });
+    let cultivation_json = serde_json::to_string(&bundle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "
+            INSERT INTO player_cultivation (
+                username,
+                cultivation_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                cultivation_json = excluded.cultivation_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                cultivation_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_player_cultivation_bundle(
+    settings: &PersistenceSettings,
+    username: &str,
+) -> io::Result<Option<serde_json::Value>> {
+    let connection = open_persistence_connection(settings)?;
+    let row: Option<String> = connection
+        .query_row(
+            "
+            SELECT cultivation_json
+            FROM player_cultivation
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some(json) = row else {
+        return Ok(None);
+    };
+    let decoded = serde_json::from_str(&json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Some(decoded))
 }
 
 fn load_agent_decisions_from_connection(
@@ -5816,11 +5946,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -5848,11 +5974,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedPlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 25.0 + index as f64,
-                        spirit_qi_max: 160.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 3_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -5953,14 +6075,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed load");
-            assert_eq!(spirit_qi, 25.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -5982,11 +6103,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -6015,11 +6132,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedNpcPlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 35.0 + index as f64,
-                        spirit_qi_max: 180.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 5_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -6147,14 +6260,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedNpcPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed npc load");
-            assert_eq!(spirit_qi, 35.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -6176,11 +6288,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -6210,11 +6318,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedZonePlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 45.0 + index as f64,
-                        spirit_qi_max: 200.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 7_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -6370,14 +6474,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedZonePlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed zone load");
-            assert_eq!(spirit_qi, 45.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -6412,11 +6515,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let batch_count = 3usize;
@@ -6454,11 +6553,7 @@ mod persistence_tests {
                     std::thread::spawn(move || {
                         let username = format!("BatchPlayer{index}");
                         let updated_state = PlayerState {
-                            realm: "qi_refining_3".to_string(),
-                            spirit_qi: 10.0 * batch as f64 + index as f64,
-                            spirit_qi_max: 220.0,
                             karma: (0.1 * batch as f64).clamp(-1.0, 1.0),
-                            experience: 10_000 + (batch as u64 * 100) + index as u64,
                             inventory_score: (0.01 * ((batch * 10 + index) as f64)).clamp(0.0, 1.0),
                         };
 
@@ -6625,14 +6720,13 @@ mod persistence_tests {
         let final_batch = batch_count - 1;
         for index in 0..player_writer_count {
             let username = format!("BatchPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after multi-batch load");
-            assert_eq!(spirit_qi, 10.0 * final_batch as f64 + index as f64);
             assert_eq!(karma, (0.1 * final_batch as f64).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
