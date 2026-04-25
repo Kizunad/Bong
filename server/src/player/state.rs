@@ -12,6 +12,7 @@ use crate::persistence::DEFAULT_DATABASE_PATH;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::PlayerPowerBreakdown;
 use crate::skill::components::SkillSet;
+use crate::world::dimension::DimensionKind;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
@@ -56,6 +57,7 @@ struct PlayerUiPrefs {
 pub struct LoadedPlayerSlices {
     pub state: PlayerState,
     pub position: [f64; 3],
+    pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
     pub skill_set: SkillSet,
 }
@@ -67,6 +69,8 @@ pub struct PlayerExportBundle {
     pub current_char_id: String,
     pub state: PlayerState,
     pub position: [f64; 3],
+    #[serde(default)]
+    pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
     pub skill_set: SkillSet,
     pub ui_prefs: serde_json::Value,
@@ -271,22 +275,23 @@ pub fn load_player_slices(
             return LoadedPlayerSlices {
                 state,
                 position: crate::player::spawn_position(),
+                last_dimension: DimensionKind::default(),
                 inventory: None,
                 skill_set: SkillSet::default(),
             };
         }
     };
 
-    let position = match load_player_position_from_sqlite(&connection, username) {
-        Ok(Some(position)) => position,
-        Ok(None) => crate::player::spawn_position(),
+    let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
+        Ok(Some((pos, dim))) => (pos, dim),
+        Ok(None) => (crate::player::spawn_position(), DimensionKind::default()),
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted position for `{}` from sqlite {}: {error}; using spawn position",
+                "[bong][player] failed to load persisted position/dimension for `{}` from sqlite {}: {error}; using spawn defaults",
                 username,
                 persistence.db_path().display()
             );
-            crate::player::spawn_position()
+            (crate::player::spawn_position(), DimensionKind::default())
         }
     };
     let inventory = match load_player_inventory_from_sqlite(&connection, username) {
@@ -315,6 +320,7 @@ pub fn load_player_slices(
     LoadedPlayerSlices {
         state,
         position,
+        last_dimension,
         inventory,
         skill_set,
     }
@@ -330,6 +336,7 @@ pub fn save_player_state(
         username,
         state,
         crate::player::spawn_position(),
+        DimensionKind::default(),
         None,
         &SkillSet::default(),
     )
@@ -340,6 +347,7 @@ pub fn save_player_slices(
     username: &str,
     state: &PlayerState,
     position: [f64; 3],
+    last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
     skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
@@ -349,6 +357,7 @@ pub fn save_player_slices(
         username,
         state,
         position,
+        last_dimension,
         inventory,
         skill_set,
     )?;
@@ -369,9 +378,10 @@ pub fn save_player_slow_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
     position: [f64; 3],
+    last_dimension: DimensionKind,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_slow_slice_in_sqlite(&mut connection, username, position)?;
+    persist_player_slow_slice_in_sqlite(&mut connection, username, position, last_dimension)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -434,6 +444,7 @@ pub fn export_player_bundle(
         current_char_id,
         state: loaded.state,
         position: loaded.position,
+        last_dimension: loaded.last_dimension,
         inventory: loaded.inventory,
         skill_set: loaded.skill_set,
         ui_prefs,
@@ -514,13 +525,15 @@ pub fn import_player_bundle(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -529,6 +542,7 @@ pub fn import_player_bundle(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(bundle.last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -656,24 +670,35 @@ fn load_player_state_from_sqlite(
     ))
 }
 
-fn load_player_position_from_sqlite(
+fn load_player_slow_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<Option<[f64; 3]>> {
-    let row: Option<(f64, f64, f64)> = connection
+) -> io::Result<Option<([f64; 3], DimensionKind)>> {
+    let row: Option<(f64, f64, f64, String)> = connection
         .query_row(
             "
-            SELECT pos_x, pos_y, pos_z
+            SELECT pos_x, pos_y, pos_z, last_dimension
             FROM player_slow
             WHERE username = ?1
             ",
             params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    Ok(row.map(|(pos_x, pos_y, pos_z)| [pos_x, pos_y, pos_z]))
+    let Some((pos_x, pos_y, pos_z, dimension_text)) = row else {
+        return Ok(None);
+    };
+
+    let last_dimension = dimension_kind_from_sql(&dimension_text).unwrap_or_else(|error| {
+        tracing::warn!(
+            "[bong][player] unknown last_dimension `{dimension_text}` for `{username}`: {error}; defaulting to overworld"
+        );
+        DimensionKind::default()
+    });
+
+    Ok(Some(([pos_x, pos_y, pos_z], last_dimension)))
 }
 
 fn load_player_inventory_from_sqlite(
@@ -766,6 +791,7 @@ fn persist_player_core_slice_in_sqlite(
             username,
             state,
             crate::player::spawn_position(),
+            DimensionKind::default(),
             None,
             &SkillSet::default(),
         )?;
@@ -778,6 +804,7 @@ fn persist_player_slow_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
     position: [f64; 3],
+    last_dimension: DimensionKind,
 ) -> io::Result<()> {
     let [pos_x, pos_y, pos_z] = position;
     let last_updated_wall = current_unix_seconds();
@@ -791,13 +818,15 @@ fn persist_player_slow_slice_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -806,6 +835,7 @@ fn persist_player_slow_slice_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -880,6 +910,7 @@ fn persist_player_progression_slice_in_sqlite(
             username,
             state,
             crate::player::spawn_position(),
+            DimensionKind::default(),
             None,
             &SkillSet::default(),
         )?;
@@ -961,6 +992,7 @@ fn persist_player_slices_in_sqlite(
     username: &str,
     state: &PlayerState,
     position: [f64; 3],
+    last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
     skill_set: &SkillSet,
 ) -> io::Result<()> {
@@ -1037,13 +1069,15 @@ fn persist_player_slices_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -1052,6 +1086,7 @@ fn persist_player_slices_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -1148,15 +1183,17 @@ fn insert_default_player_slice_rows(
             pos_x,
             pos_y,
             pos_z,
+            last_dimension,
             schema_version,
             last_updated_wall
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ",
         params![
             username,
             pos_x,
             pos_y,
             pos_z,
+            dimension_kind_to_sql(DimensionKind::default()),
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -1233,6 +1270,7 @@ fn migrate_legacy_player_json_to_sqlite(
         username,
         &state,
         crate::player::spawn_position(),
+        DimensionKind::default(),
         None,
         &SkillSet::default(),
     )?;
@@ -1260,6 +1298,24 @@ fn serialize_skill_set_json(skill_set: &SkillSet) -> io::Result<String> {
 
 fn experience_to_sql(experience: u64) -> io::Result<i64> {
     i64::try_from(experience).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn dimension_kind_to_sql(kind: DimensionKind) -> &'static str {
+    match kind {
+        DimensionKind::Overworld => "overworld",
+        DimensionKind::Tsy => "tsy",
+    }
+}
+
+fn dimension_kind_from_sql(value: &str) -> io::Result<DimensionKind> {
+    match value {
+        "overworld" => Ok(DimensionKind::Overworld),
+        "tsy" => Ok(DimensionKind::Tsy),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown dimension kind `{other}`"),
+        )),
+    }
 }
 
 fn current_unix_seconds() -> i64 {
@@ -1438,6 +1494,7 @@ mod player_state_tests {
             "Azure",
             &exported_state,
             [64.0, 80.0, -12.0],
+            DimensionKind::Tsy,
             None,
             &SkillSet::default(),
         )
@@ -1486,11 +1543,11 @@ mod player_state_tests {
                 },
             )
             .expect("player_core payload should exist after import");
-        let (pos_x, pos_y, pos_z): (f64, f64, f64) = connection
+        let (pos_x, pos_y, pos_z, last_dimension_text): (f64, f64, f64, String) = connection
             .query_row(
-                "SELECT pos_x, pos_y, pos_z FROM player_slow WHERE username = ?1",
+                "SELECT pos_x, pos_y, pos_z, last_dimension FROM player_slow WHERE username = ?1",
                 params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("player_slow row should exist after import");
         let inventory_json: String = connection
@@ -1517,6 +1574,8 @@ mod player_state_tests {
         assert_eq!(experience, 2_400);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
+        assert_eq!(last_dimension_text, "tsy");
+        assert_eq!(bundle.last_dimension, DimensionKind::Tsy);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1548,6 +1607,7 @@ mod player_state_tests {
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
+            last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({
@@ -1617,6 +1677,7 @@ mod player_state_tests {
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
+            last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({

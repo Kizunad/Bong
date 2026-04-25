@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 12;
+const CURRENT_USER_VERSION: i32 = 13;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1020,6 +1020,28 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             PRAGMA user_version = 12;
             ",
         )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 13 {
+        let transaction = connection.transaction()?;
+        let has_column: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('player_slow') WHERE name = 'last_dimension'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_column == 0 {
+            transaction.execute_batch(
+                "
+                ALTER TABLE player_slow
+                ADD COLUMN last_dimension TEXT NOT NULL DEFAULT 'overworld'
+                CHECK (last_dimension IN ('overworld', 'tsy'));
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 13;")?;
         transaction.commit()?;
     }
 
