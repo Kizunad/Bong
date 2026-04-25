@@ -90,7 +90,7 @@ fn attach_combat_bundle_to_joined_npcs(
 pub fn register(app: &mut App) {
     tracing::info!("[bong][combat] registering combat skeleton systems");
 
-    // plan-armor-v1 §1.1：启动期加载护甲 profile（instance_id -> ArmorProfile）。
+    // plan-armor-v1 §1.1：启动期加载护甲 profile 蓝图（template_id -> ArmorProfile）。
     // 失败不 panic: 允许空 registry（未配置护甲数据时不会有减免）。
     let armor_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(armor::DEFAULT_ARMOR_PROFILES_DIR);
     let armor_registry = armor::ArmorProfileRegistry::load_dir(armor_dir).unwrap_or_else(|e| {

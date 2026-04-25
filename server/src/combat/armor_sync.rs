@@ -30,11 +30,11 @@ pub fn sync_armor_to_derived_attrs(
             let Some(item) = inv.equipped.get(slot) else {
                 continue;
             };
-            let Some(ap) = armor_profiles.get(item.instance_id) else {
+            let Some(ap) = armor_profiles.get(item.template_id.as_str()) else {
                 continue;
             };
 
-            let effective_mul = ap.effective_multiplier();
+            let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
             for body in &ap.body_coverage {
                 for (kind, mitigation) in &ap.kind_mitigation {
                     let m = (mitigation * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
@@ -84,12 +84,11 @@ mod tests {
     fn sync_sets_defense_profile_for_equipped_armor() {
         let mut app = App::new();
         app.insert_resource(ArmorProfileRegistry::from_map(HashMap::from([(
-            42,
+            "fake_spirit_hide".to_string(),
             ArmorProfile {
                 slot: EquipSlotV1::Chest,
                 body_coverage: vec![BodyPart::Chest, BodyPart::Abdomen],
                 kind_mitigation: HashMap::from([(WoundKind::Cut, 0.25)]),
-                durability_cur: 10,
                 durability_max: 10,
                 broken_multiplier: 0.3,
             },
@@ -134,6 +133,59 @@ mod tests {
                 .defense_profile
                 .get(&(BodyPart::Abdomen, WoundKind::Cut)),
             Some(&0.25)
+        );
+    }
+
+    #[test]
+    fn sync_applies_broken_multiplier_when_item_durability_zero() {
+        let mut app = App::new();
+        app.insert_resource(ArmorProfileRegistry::from_map(HashMap::from([(
+            "fake_spirit_hide".to_string(),
+            ArmorProfile {
+                slot: EquipSlotV1::Chest,
+                body_coverage: vec![BodyPart::Chest],
+                kind_mitigation: HashMap::from([(WoundKind::Cut, 0.5)]),
+                durability_max: 10,
+                broken_multiplier: 0.3,
+            },
+        )])));
+        app.add_systems(Update, sync_armor_to_derived_attrs);
+
+        let mut item = make_item(7);
+        item.durability = 0.0;
+        let mut equipped = HashMap::new();
+        equipped.insert(EQUIP_SLOT_CHEST.to_string(), item);
+        let entity = app
+            .world_mut()
+            .spawn((
+                PlayerInventory {
+                    revision: InventoryRevision(0),
+                    containers: vec![],
+                    equipped,
+                    hotbar: Default::default(),
+                    bone_coins: 0,
+                    max_weight: 45.0,
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        // Changed<PlayerInventory> 需要一次 mutation 才触发。
+        {
+            let world = app.world_mut();
+            let mut entity_mut = world.entity_mut(entity);
+            let mut inv = entity_mut.get_mut::<PlayerInventory>().unwrap();
+            inv.revision = InventoryRevision(inv.revision.0.saturating_add(1));
+        }
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // 0.5 mitigation × 0.3 broken_multiplier
+        assert_eq!(
+            attrs
+                .defense_profile
+                .get(&(BodyPart::Chest, WoundKind::Cut)),
+            Some(&0.15)
         );
     }
 }

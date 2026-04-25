@@ -1,5 +1,5 @@
 {
-  "instance_id": 1,
+  "template_id": "fake_spirit_hide",
   "profile": {
     "slot": "chest",
     "body_coverage": ["chest", "abdomen"],
@@ -10,8 +10,7 @@
       "burn": 0.10,
       "concussion": 0.15
     },
-    "durability_cur": 10,
-    "durability_max": 10,
+    "durability_max": 100,
     "broken_multiplier": 0.3
   }
 }
