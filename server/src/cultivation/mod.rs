@@ -74,7 +74,7 @@ use self::insight_flow::{
 };
 use self::karma::karma_decay_tick;
 use self::life_record::LifeRecord;
-use self::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
+use self::lifespan::{lifespan_aging_tick, DeathRegistry, LifespanCapTable, LifespanComponent};
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::overload_detection_tick;
@@ -122,6 +122,7 @@ pub fn register(app: &mut App) {
                 .after(crate::player::attach_player_state_to_joined_clients),
             // 核心 tick：回气/扣 zone → 打通 → 事务
             qi_regen_and_zone_drain_tick,
+            lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
             breakthrough_system.after(meridian_open_tick),
             forging_system.after(breakthrough_system),
@@ -160,13 +161,19 @@ pub fn register(app: &mut App) {
 }
 
 type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
+type CultivationAttachQueryItem<'a> = (
+    Entity,
+    &'a Username,
+    Option<&'a PlayerState>,
+    Option<&'a LifespanComponent>,
+);
 
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
-    joined_clients: Query<(Entity, &Username, Option<&PlayerState>), CultivationAttachFilter>,
+    joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state) in &joined_clients {
+    for (entity, username, player_state, restored_lifespan) in &joined_clients {
         let mut cultivation = Cultivation::default();
         if let Some(player_state) = player_state {
             cultivation.qi_current = player_state.spirit_qi;
@@ -200,7 +207,7 @@ fn attach_cultivation_to_joined_clients(
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
         }
-        let lifespan = LifespanComponent::new(LifespanCapTable::for_player_state_realm(
+        let default_lifespan = LifespanComponent::new(LifespanCapTable::for_player_state_realm(
             player_state.map(|state| state.realm.as_str()),
             cultivation.realm,
         ));
@@ -215,11 +222,13 @@ fn attach_cultivation_to_joined_clients(
             Contamination::default(),
             LifeRecord::new(canonical_id.clone()),
             DeathRegistry::new(canonical_id.clone()),
-            lifespan,
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),
         ));
+        if restored_lifespan.is_none() {
+            entity_commands.insert(default_lifespan);
+        }
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
         }
@@ -311,6 +320,45 @@ mod tests {
             .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+    }
+
+    #[test]
+    fn joined_clients_keep_restored_lifespan_component() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let restored_lifespan = LifespanComponent {
+            born_at_tick: 120,
+            years_lived: 42.0,
+            cap_by_realm: LifespanCapTable::SPIRIT,
+            offline_pause_tick: Some(30),
+        };
+        let (client_bundle, _helper) = create_mock_client("Persisted");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    realm: "mortal".to_string(),
+                    spirit_qi: 0.0,
+                    spirit_qi_max: 10.0,
+                    karma: 0.0,
+                    experience: 0,
+                    inventory_score: 0.0,
+                },
+                restored_lifespan.clone(),
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should keep a LifespanComponent");
+
+        assert_eq!(lifespan, &restored_lifespan);
     }
 
     #[test]
@@ -502,7 +550,10 @@ mod tests {
                     fortune_remaining: 1,
                     last_death_tick: None,
                     last_revive_tick: None,
+                    spawn_anchor: None,
                     near_death_deadline_tick: None,
+                    awaiting_decision: None,
+                    revival_decision_deadline_tick: None,
                     weakened_until_tick: None,
                     state: crate::combat::components::LifecycleState::Alive,
                 },

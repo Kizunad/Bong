@@ -12,14 +12,19 @@ use valence::prelude::{
     SystemSet, Update, Username, Without,
 };
 
+#[cfg(test)]
+mod tests;
+
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::canonical_player_id;
+use crate::player::state::{
+    canonical_player_id, load_player_shrine_anchor_slice, PlayerStatePersistence,
+};
 
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
-    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DebugCombatCommand,
-    DefenseIntent,
+    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DeathInsightRequested,
+    DebugCombatCommand, DefenseIntent, RevivalActionIntent,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
@@ -46,8 +51,14 @@ fn attach_combat_bundle_to_joined_clients(
         JoinedClientsWithoutCombatBundle<'_>,
         JoinedClientsWithoutCombatBundleFilter,
     >,
+    player_persistence: Option<valence::prelude::Res<PlayerStatePersistence>>,
 ) {
     for (entity, username) in &joined_clients {
+        let spawn_anchor = player_persistence.as_deref().and_then(|persistence| {
+            load_player_shrine_anchor_slice(persistence, username.0.as_str())
+                .ok()
+                .flatten()
+        });
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
@@ -56,6 +67,7 @@ fn attach_combat_bundle_to_joined_clients(
             DerivedAttrs::default(),
             Lifecycle {
                 character_id: canonical_player_id(username.0.as_str()),
+                spawn_anchor,
                 ..Default::default()
             },
         ));
@@ -93,6 +105,8 @@ pub fn register(app: &mut App) {
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
+    app.add_event::<DeathInsightRequested>();
+    app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
 
     app.configure_sets(
@@ -129,6 +143,12 @@ pub fn register(app: &mut App) {
             lifecycle::near_death_tick
                 .in_set(CombatSystemSet::Resolve)
                 .after(lifecycle::death_arbiter_tick),
+            lifecycle::handle_revival_action_intents
+                .in_set(CombatSystemSet::Resolve)
+                .after(lifecycle::near_death_tick),
+            lifecycle::auto_confirm_revival_decisions
+                .in_set(CombatSystemSet::Resolve)
+                .after(lifecycle::handle_revival_action_intents),
             debug::drain_combat_events_for_debug
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),

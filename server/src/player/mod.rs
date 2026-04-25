@@ -4,10 +4,11 @@ pub mod state;
 
 use self::state::{
     load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_progression_slice, save_player_slices, save_player_slow_slice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_lifespan_slice, save_player_progression_slice, save_player_slices,
+    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::combat::components::TICKS_PER_SECOND;
+use crate::cultivation::lifespan::LifespanComponent;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
@@ -23,6 +24,7 @@ const WELCOME_MESSAGE: &str =
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS: u64 = 90 * TICKS_PER_SECOND;
+const LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -38,6 +40,13 @@ type JoinedClientsWithoutStateQueryItem<'a> = (Entity, &'a Username);
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
 type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
+type PersistedPlayerQueryItem<'a> = (
+    &'a Username,
+    &'a PlayerState,
+    &'a Position,
+    Option<&'a PlayerInventory>,
+    Option<&'a LifespanComponent>,
+);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
@@ -54,9 +63,10 @@ pub fn register(app: &mut App) {
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
             autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
+            autosave_player_lifespan_slices.after(autosave_player_progression_slices),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(autosave_player_progression_slices),
+                .after(autosave_player_lifespan_slices),
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
@@ -125,14 +135,18 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let realm = persisted.state.realm.clone();
         let composite_power = persisted.state.composite_power();
         let restored_inventory = persisted.inventory.is_some();
+        let restored_lifespan = persisted.lifespan.is_some();
         let mut entity_commands = commands.entity(entity);
 
         entity_commands.insert((persisted.state, Position::new(persisted.position)));
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
+        if let Some(lifespan) = persisted.lifespan {
+            entity_commands.insert(lifespan);
+        }
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3}, restored_inventory={restored_inventory})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan})",
             username.0,
             realm,
         );
@@ -167,10 +181,10 @@ fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     mut disconnected_clients: RemovedComponents<Client>,
-    persisted_players: Query<(&Username, &PlayerState, &Position, Option<&PlayerInventory>)>,
+    persisted_players: Query<PersistedPlayerQueryItem<'_>>,
 ) {
     for entity in disconnected_clients.read() {
-        if let Ok((username, player_state, position, player_inventory)) =
+        if let Ok((username, player_state, position, player_inventory, lifespan)) =
             persisted_players.get(entity)
         {
             match save_player_slices(
@@ -179,6 +193,7 @@ fn despawn_disconnected_clients(
                 player_state,
                 position_to_array(position),
                 player_inventory,
+                lifespan,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -206,19 +221,20 @@ fn despawn_disconnected_clients(
 fn flush_connected_players_on_shutdown(
     persistence: Res<PlayerStatePersistence>,
     mut app_exit: EventReader<AppExit>,
-    players: Query<(&Username, &PlayerState, &Position, Option<&PlayerInventory>), With<Client>>,
+    players: Query<PersistedPlayerQueryItem<'_>, With<Client>>,
 ) {
     if app_exit.read().next().is_none() {
         return;
     }
 
-    for (username, player_state, position, player_inventory) in &players {
+    for (username, player_state, position, player_inventory, lifespan) in &players {
         match save_player_slices(
             &persistence,
             username.0.as_str(),
             player_state,
             position_to_array(position),
             player_inventory,
+            lifespan,
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -318,6 +334,35 @@ fn autosave_player_progression_slices(
 
     tracing::info!(
         "[bong][player] flushed {saved_count} progression player slice(s) after {PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS} ticks"
+    );
+}
+
+fn autosave_player_lifespan_slices(
+    persistence: Res<PlayerStatePersistence>,
+    timer: Res<PlayerStateAutosaveTimer>,
+    players: Query<(&Username, &LifespanComponent), With<Client>>,
+) {
+    if !timer
+        .ticks
+        .is_multiple_of(LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+
+    let mut saved_count = 0usize;
+
+    for (username, lifespan) in &players {
+        match save_player_lifespan_slice(&persistence, username.0.as_str(), lifespan) {
+            Ok(_) => saved_count += 1,
+            Err(error) => tracing::warn!(
+                "[bong][player] 60s lifespan flush failed for `{}`: {error}",
+                username.0,
+            ),
+        }
+    }
+
+    tracing::info!(
+        "[bong][player] flushed {saved_count} lifespan slice(s) after {LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS} ticks"
     );
 }
 

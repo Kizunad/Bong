@@ -1,4 +1,4 @@
-use valence::prelude::{Added, Client, Entity, Query, Username, With};
+use valence::prelude::{Added, Client, DetectChanges, Entity, Query, Username, With};
 
 use crate::inventory::{dropped_loot_snapshot, DroppedLootEntry, DroppedLootRegistry};
 use crate::network::agent_bridge::{
@@ -16,7 +16,7 @@ pub fn send_dropped_loot_sync_to_client(
     client: &mut Client,
     registry: &DroppedLootRegistry,
 ) {
-    let drops = dropped_loot_snapshot(registry, entity)
+    let drops = dropped_loot_snapshot(registry)
         .into_iter()
         .map(to_wire_entry)
         .collect::<Vec<_>>();
@@ -43,6 +43,21 @@ pub fn emit_join_dropped_loot_syncs(
     registry: valence::prelude::Res<DroppedLootRegistry>,
     mut clients: Query<JoinedDropSyncClient<'_>, JoinedDropSyncClientFilter>,
 ) {
+    for (entity, _username, mut client) in &mut clients {
+        send_dropped_loot_sync_to_client(entity, &mut client, &registry);
+    }
+}
+
+/// Dropped loot is world-visible. Whenever the registry changes, push a fresh
+/// snapshot to all connected clients.
+pub fn emit_changed_dropped_loot_syncs(
+    registry: valence::prelude::Res<DroppedLootRegistry>,
+    mut clients: Query<JoinedDropSyncClient<'_>, With<Client>>,
+) {
+    if !registry.is_changed() {
+        return;
+    }
+
     for (entity, _username, mut client) in &mut clients {
         send_dropped_loot_sync_to_client(entity, &mut client, &registry);
     }

@@ -12,6 +12,7 @@ use super::RedisBridgeResource;
 use crate::combat::components::{BodyPart, WoundKind};
 use crate::combat::events::{DebugCombatCommand, DebugCombatCommandKind};
 use crate::npc::scenario::{PendingScenario, ScenarioType};
+use crate::player::state::{save_player_shrine_anchor_slice, PlayerStatePersistence};
 use crate::player::{
     gameplay::{CombatAction, GameplayAction, GameplayActionQueue, GatherAction},
     state::canonical_player_id,
@@ -19,6 +20,7 @@ use crate::player::{
 use crate::schema::chat_message::ChatMessageV1;
 use crate::world::terrain::TerrainProvider;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+// 用于 !shrine dev 命令：通过 DebugCombatCommand 写入 Lifecycle.spawn_anchor。
 
 // chat_collector 当前同时承载普通聊天收集与开发期快捷命令（如 `!spawn`/`!gm`），
 // 并保持现有函数签名与 clippy allow，以保证现有调试流程和消息路径行为稳定。
@@ -47,6 +49,7 @@ pub fn collect_player_chat(
     mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
     mut pending_scenario: Option<valence::prelude::ResMut<PendingScenario>>,
     mut debug_combat_tx: EventWriter<DebugCombatCommand>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
 ) {
     rate_limit.per_player_count.clear();
 
@@ -80,6 +83,7 @@ pub fn collect_player_chat(
             &mut rate_limit,
             pending_scenario.as_deref_mut(),
             &mut debug_combat_tx,
+            player_persistence.as_deref(),
         ) else {
             continue;
         };
@@ -123,6 +127,7 @@ fn classify_player_message(
     rate_limit: &mut ChatCollectorRateLimit,
     pending_scenario: Option<&mut PendingScenario>,
     debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
+    player_persistence: Option<&PlayerStatePersistence>,
 ) -> Option<CollectedPlayerMessage> {
     let too_long = is_oversize_message(message);
     let over_budget = exceeds_rate_budget(player_entity, rate_limit);
@@ -142,6 +147,7 @@ fn classify_player_message(
         terrain,
         pending_scenario,
         debug_combat_tx,
+        player_persistence,
     ) {
         return None;
     }
@@ -210,6 +216,7 @@ fn try_handle_dev_command(
     terrain: Option<&TerrainProvider>,
     pending_scenario: Option<&mut PendingScenario>,
     debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
+    player_persistence: Option<&PlayerStatePersistence>,
 ) -> bool {
     let trimmed = message.trim();
     if !trimmed.starts_with('!') {
@@ -227,6 +234,62 @@ fn try_handle_dev_command(
     };
 
     match command {
+        "!shrine" => {
+            let Some(sub) = tokens.next() else {
+                client.send_chat_message("Usage: !shrine <set|clear>");
+                return true;
+            };
+            match sub {
+                "set" => {
+                    // 仅 dev/MVP：把当前坐标写入 Lifecycle.spawn_anchor。
+                    // 灵龛揭露/失效/保护圈等社交语义由 plan-social-v1 承接。
+                    debug_combat_tx.send(DebugCombatCommand {
+                        target: player_entity,
+                        kind: DebugCombatCommandKind::SetSpawnAnchor(Some([
+                            player_pos.x,
+                            player_pos.y,
+                            player_pos.z,
+                        ])),
+                    });
+
+                    if let Some(persistence) = player_persistence {
+                        if let Err(error) = save_player_shrine_anchor_slice(
+                            persistence,
+                            _username.0.as_str(),
+                            Some([player_pos.x, player_pos.y, player_pos.z]),
+                        ) {
+                            tracing::warn!(
+                                "[bong][network] failed to persist shrine anchor for `{}`: {error}",
+                                _username.0
+                            );
+                        }
+                    }
+                    client.send_chat_message("Shrine anchor set to your current position.");
+                }
+                "clear" => {
+                    debug_combat_tx.send(DebugCombatCommand {
+                        target: player_entity,
+                        kind: DebugCombatCommandKind::SetSpawnAnchor(None),
+                    });
+
+                    if let Some(persistence) = player_persistence {
+                        if let Err(error) =
+                            save_player_shrine_anchor_slice(persistence, _username.0.as_str(), None)
+                        {
+                            tracing::warn!(
+                                "[bong][network] failed to clear shrine anchor for `{}`: {error}",
+                                _username.0
+                            );
+                        }
+                    }
+                    client.send_chat_message("Shrine anchor cleared.");
+                }
+                _ => {
+                    client.send_chat_message("Usage: !shrine <set|clear>");
+                }
+            }
+            true
+        }
         "!spawn" => {
             position.set(crate::player::spawn_position());
             client.send_chat_message("Teleported to spawn.");
@@ -472,10 +535,13 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: DVec3) -> Stri
 mod chat_collector_tests {
     use super::*;
     use crate::network::RedisBridgeResource;
+    use crate::persistence::bootstrap_sqlite;
     use crate::player::gameplay::{
         CombatAction, GameplayAction, GameplayActionQueue, GatherAction, QueuedGameplayAction,
     };
+    use crate::player::state::PlayerStatePersistence;
     use crossbeam_channel::unbounded;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Position, Update};
     use valence::testing::create_mock_client;
 
@@ -494,6 +560,19 @@ mod chat_collector_tests {
         });
         app.insert_resource(ChatCollectorRateLimit::default());
         app.insert_resource(GameplayActionQueue::default());
+        let db_path = std::env::temp_dir().join(format!(
+            "bong-chat-collector-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ));
+        bootstrap_sqlite(&db_path, "chat-collector-test").expect("sqlite bootstrap should succeed");
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            std::env::temp_dir(),
+            &db_path,
+        ));
 
         if with_zone_registry {
             app.insert_resource(ZoneRegistry::fallback());
@@ -680,9 +759,13 @@ mod chat_collector_tests {
         let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
 
         send_chat_event(&mut app, alice, "!wound add chest 0.7", 1);
-        send_chat_event(&mut app, alice, "!health set 25", 2);
-        send_chat_event(&mut app, alice, "!stamina set 10", 3);
+        send_chat_event(&mut app, alice, "!shrine set", 2);
+        send_chat_event(&mut app, alice, "!health set 25", 3);
+        app.update();
 
+        // ChatCollector has a per-tick budget of 3 messages; send the remaining command
+        // in the next update so the debug event isn't rate-limited away.
+        send_chat_event(&mut app, alice, "!stamina set 10", 4);
         app.update();
 
         let events = app
@@ -690,7 +773,7 @@ mod chat_collector_tests {
             .resource::<valence::prelude::Events<DebugCombatCommand>>();
         let mut reader = events.get_reader();
         let collected: Vec<_> = reader.read(events).cloned().collect();
-        assert_eq!(collected.len(), 3);
+        assert_eq!(collected.len(), 4);
 
         match &collected[0].kind {
             DebugCombatCommandKind::AddWound {
@@ -705,10 +788,27 @@ mod chat_collector_tests {
             other => panic!("expected AddWound, got {other:?}"),
         }
         match &collected[1].kind {
+            DebugCombatCommandKind::SetSpawnAnchor(anchor) => {
+                assert!(anchor.is_some(), "expected shrine anchor to be set");
+
+                // Persist side effect: `!shrine set` should also write to sqlite.
+                let persistence = app.world().resource::<PlayerStatePersistence>();
+                let stored =
+                    crate::player::state::load_player_shrine_anchor_slice(persistence, "Alice")
+                        .expect("loading shrine anchor should succeed");
+                assert_eq!(
+                    stored,
+                    Some([8.0, 66.0, 8.0]),
+                    "expected persisted shrine anchor to match player position"
+                );
+            }
+            other => panic!("expected SetSpawnAnchor, got {other:?}"),
+        }
+        match &collected[2].kind {
             DebugCombatCommandKind::SetHealth(n) => assert!((n - 25.0).abs() < 1e-6),
             other => panic!("expected SetHealth, got {other:?}"),
         }
-        match &collected[2].kind {
+        match &collected[3].kind {
             DebugCombatCommandKind::SetStamina(n) => assert!((n - 10.0).abs() < 1e-6),
             other => panic!("expected SetStamina, got {other:?}"),
         }

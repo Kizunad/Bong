@@ -16,7 +16,7 @@ use valence::prelude::{
 
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::Cultivation;
-use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 11;
+const CURRENT_USER_VERSION: i32 = 13;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -148,6 +148,11 @@ pub struct DeceasedSnapshot {
     pub died_at_tick: u64,
     pub lifecycle: Lifecycle,
     pub life_record: LifeRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeathInsightEventPayload {
+    death_insight: DeathInsightRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1005,6 +1010,47 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 12 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_lifespan (
+                username TEXT PRIMARY KEY,
+                born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 12;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 13 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_shrine (
+                username TEXT PRIMARY KEY,
+                anchor_x REAL NOT NULL,
+                anchor_y REAL NOT NULL,
+                anchor_z REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 13;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1534,6 +1580,52 @@ pub fn persist_revival_transition(
         &transaction,
         life_record.character_id.as_str(),
         entry,
+        wall_clock,
+    )?;
+
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn persist_lifespan_event(
+    settings: &PersistenceSettings,
+    char_id: &str,
+    event: &LifespanEventRecord,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    append_lifespan_event(&transaction, char_id, event, wall_clock)?;
+
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn persist_life_record_death_insight(
+    settings: &PersistenceSettings,
+    life_record: &LifeRecord,
+) -> io::Result<()> {
+    let Some(death_insight) = life_record.death_insights.last() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "life_record must contain at least one death insight before persistence",
+        ));
+    };
+
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    upsert_life_record(&transaction, life_record, wall_clock)?;
+    append_death_insight_event(
+        &transaction,
+        life_record.character_id.as_str(),
+        death_insight,
+        wall_clock,
+    )?;
+    update_deceased_snapshot_life_record(
+        &transaction,
+        life_record.character_id.as_str(),
+        life_record,
         wall_clock,
     )?;
 
@@ -3294,6 +3386,50 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
     }
 }
 
+fn append_death_insight_event(
+    transaction: &rusqlite::Transaction<'_>,
+    char_id: &str,
+    death_insight: &DeathInsightRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let payload_json = serde_json::to_string(&DeathInsightEventPayload {
+        death_insight: death_insight.clone(),
+    })
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let event_id = format!(
+        "{}:death_insight:{}:{}",
+        char_id, death_insight.tick, wall_clock
+    );
+
+    transaction
+        .execute(
+            "
+            INSERT OR IGNORE INTO life_events (
+                event_id,
+                char_id,
+                event_type,
+                payload_json,
+                payload_version,
+                game_tick,
+                wall_clock,
+                schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ",
+            params![
+                event_id,
+                char_id,
+                "death_insight",
+                payload_json,
+                EVENT_PAYLOAD_VERSION,
+                tick_to_sql(death_insight.tick)?,
+                wall_clock,
+                EVENT_SCHEMA_VERSION
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn biography_tick(entry: &BiographyEntry) -> u64 {
     match entry {
         BiographyEntry::BreakthroughStarted { tick, .. }
@@ -3498,6 +3634,44 @@ fn upsert_deceased_snapshot(
                 EVENT_SCHEMA_VERSION,
                 wall_clock
             ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn update_deceased_snapshot_life_record(
+    transaction: &rusqlite::Transaction<'_>,
+    char_id: &str,
+    life_record: &LifeRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let Some(existing_snapshot_json) = transaction
+        .query_row(
+            "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+            params![char_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?
+    else {
+        return Ok(());
+    };
+
+    let mut snapshot: DeceasedSnapshot = serde_json::from_str(existing_snapshot_json.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    snapshot.life_record = life_record.clone();
+    let snapshot_json = serde_json::to_string_pretty(&snapshot)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    transaction
+        .execute(
+            "
+            UPDATE deceased_snapshots
+            SET snapshot_json = ?2,
+                last_updated_wall = ?3
+            WHERE char_id = ?1
+            ",
+            params![char_id, snapshot_json, wall_clock],
         )
         .map_err(io::Error::other)?;
     Ok(())
@@ -4405,6 +4579,85 @@ mod persistence_tests {
                 .optional()
                 .expect("sqlite_master query should succeed");
             assert_eq!(exists.as_deref(), Some(table_name));
+        }
+    }
+
+    #[test]
+    fn task12_migration_creates_player_lifespan_table() {
+        let db_path = database_path("task12-player-lifespan");
+        bootstrap_sqlite(&db_path, "task12-player-lifespan").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_lifespan'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master player_lifespan query should succeed");
+        assert_eq!(exists.as_deref(), Some("player_lifespan"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_lifespan)")
+            .expect("player_lifespan table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_lifespan table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_lifespan columns should collect");
+        for column in [
+            "username",
+            "born_at_tick",
+            "years_lived",
+            "cap_by_realm",
+            "offline_pause_wall",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_lifespan should include {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn task13_migration_creates_player_shrine_table() {
+        let db_path = database_path("task13-player-shrine");
+        bootstrap_sqlite(&db_path, "task13-player-shrine").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_shrine'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master player_shrine query should succeed");
+        assert_eq!(exists.as_deref(), Some("player_shrine"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_shrine)")
+            .expect("player_shrine table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_shrine columns should collect");
+        for column in [
+            "username",
+            "anchor_x",
+            "anchor_y",
+            "anchor_z",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_shrine should include {column}"
+            );
         }
     }
 
@@ -5322,6 +5575,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             spirit_root_first: None,
         };
         let lifecycle = Lifecycle {
@@ -5330,7 +5584,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5407,6 +5664,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             spirit_root_first: None,
         };
         let first_lifecycle = Lifecycle {
@@ -5415,7 +5673,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5430,6 +5691,7 @@ mod persistence_tests {
                 tick: 99,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             spirit_root_first: None,
         };
         let second_lifecycle = Lifecycle {
@@ -5438,7 +5700,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(99),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5501,6 +5766,7 @@ mod persistence_tests {
                     tick: died_at_tick as u64,
                 }],
                 insights_taken: Vec::new(),
+                death_insights: Vec::new(),
                 spirit_root_first: None,
             };
             let lifecycle = Lifecycle {
@@ -5509,7 +5775,10 @@ mod persistence_tests {
                 fortune_remaining: 0,
                 last_death_tick: Some(died_at_tick as u64),
                 last_revive_tick: None,
+                spawn_anchor: None,
                 near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
                 weakened_until_tick: None,
                 state: crate::combat::components::LifecycleState::Terminated,
             };
@@ -5558,6 +5827,7 @@ mod persistence_tests {
                 },
             ],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             spirit_root_first: None,
         }
     }
@@ -5596,7 +5866,10 @@ mod persistence_tests {
                 fortune_remaining: 2,
                 last_death_tick: Some(55),
                 last_revive_tick: Some(66),
+                spawn_anchor: None,
                 near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
                 weakened_until_tick: None,
                 state: LifecycleState::Alive,
             },
@@ -5641,6 +5914,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -5649,7 +5923,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -5782,6 +6059,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -5790,7 +6068,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -5949,6 +6230,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -5957,7 +6239,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -6143,6 +6428,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         spirit_root_first: None,
                     };
                     let lifecycle = Lifecycle {
@@ -6151,7 +6437,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -6389,6 +6678,7 @@ mod persistence_tests {
                                 tick,
                             }],
                             insights_taken: Vec::new(),
+                            death_insights: Vec::new(),
                             spirit_root_first: None,
                         };
                         let lifecycle = Lifecycle {
@@ -6397,7 +6687,10 @@ mod persistence_tests {
                             fortune_remaining: 1,
                             last_death_tick: Some(tick),
                             last_revive_tick: Some(tick.saturating_sub(1)),
+                            spawn_anchor: None,
                             near_death_deadline_tick: Some(tick + 30),
+                            awaiting_decision: None,
+                            revival_decision_deadline_tick: None,
                             weakened_until_tick: Some(tick + 5),
                             state: LifecycleState::NearDeath,
                         };

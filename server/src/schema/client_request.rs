@@ -152,6 +152,15 @@ pub enum ClientRequestV1 {
         v: u8,
         stance: String,
     },
+    CombatReincarnate {
+        v: u8,
+    },
+    CombatTerminate {
+        v: u8,
+    },
+    CombatCreateNewCharacter {
+        v: u8,
+    },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
     /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
@@ -333,6 +342,30 @@ mod tests {
             }
             other => panic!("expected ApplyPill, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn combat_reincarnate_roundtrip() {
+        let json = r#"{"type":"combat_reincarnate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatReincarnate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_terminate_roundtrip() {
+        let json = r#"{"type":"combat_terminate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatTerminate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_create_new_character_roundtrip() {
+        let json = r#"{"type":"combat_create_new_character","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CombatCreateNewCharacter { v: 1 }
+        ));
     }
 
     #[test]

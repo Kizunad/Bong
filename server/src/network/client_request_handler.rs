@@ -23,7 +23,10 @@ use crate::alchemy::{
 use crate::combat::components::{
     Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
 };
-use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
+use crate::combat::events::{
+    ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
+    StatusEffectKind,
+};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::forging::ForgeRequest;
@@ -52,11 +55,12 @@ use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
     current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
+// dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
-use crate::player::state::{canonical_player_id, PlayerState};
+use crate::player::state::canonical_player_id;
+use crate::player::state::PlayerState;
 use crate::schema::client_request::ClientRequestV1;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
@@ -108,6 +112,16 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
 }
 
+#[derive(SystemParam)]
+pub struct ClientRequestDispatchParams<'w> {
+    pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
+    pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
+    pub forge_tx: EventWriter<'w, ForgeRequest>,
+    pub insight_tx: EventWriter<'w, InsightChosen>,
+    pub defense_tx: EventWriter<'w, DefenseIntent>,
+    pub revival_tx: EventWriter<'w, RevivalActionIntent>,
+}
+
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
@@ -117,11 +131,7 @@ const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
-    mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
-    mut breakthrough_tx: EventWriter<BreakthroughRequest>,
-    mut forge_tx: EventWriter<ForgeRequest>,
-    mut insight_tx: EventWriter<InsightChosen>,
-    mut defense_tx: EventWriter<DefenseIntent>,
+    mut dispatch: ClientRequestDispatchParams,
     combat_clock: Res<CombatClock>,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
@@ -190,6 +200,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
             | ClientRequestV1::SwitchDefenseStance { v, .. }
+            | ClientRequestV1::CombatReincarnate { v }
+            | ClientRequestV1::CombatTerminate { v }
+            | ClientRequestV1::CombatCreateNewCharacter { v }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
@@ -222,7 +235,7 @@ pub fn handle_client_request_payloads(
                 // material_bonus 的实际来源是玩家身上 StatusEffects 里的
                 // BreakthroughBoost buff（由 AlchemyTakePill 吃丹挂上），
                 // 在 breakthrough_system 内聚合消费。client 请求本身不传额外 bonus。
-                breakthrough_tx.send(BreakthroughRequest {
+                dispatch.breakthrough_tx.send(BreakthroughRequest {
                     entity: ev.client,
                     material_bonus: 0.0,
                 });
@@ -238,7 +251,7 @@ pub fn handle_client_request_payloads(
                     trigger_id,
                     choice_idx
                 );
-                insight_tx.send(InsightChosen {
+                dispatch.insight_tx.send(InsightChosen {
                     entity: ev.client,
                     trigger_id,
                     choice_idx: choice_idx.map(|n| n as usize),
@@ -251,7 +264,7 @@ pub fn handle_client_request_payloads(
                     meridian,
                     axis
                 );
-                forge_tx.send(ForgeRequest {
+                dispatch.forge_tx.send(ForgeRequest {
                     entity: ev.client,
                     meridian,
                     axis,
@@ -260,7 +273,7 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::BotanyHarvestRequest {
                 session_id, mode, ..
             } => {
-                let Some(queue) = gameplay_queue.as_deref_mut() else {
+                let Some(queue) = dispatch.gameplay_queue.as_deref_mut() else {
                     tracing::warn!(
                         "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
                     );
@@ -316,7 +329,7 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::AlchemyOpenFurnace { furnace_id, .. } => {
                 // 当前 MVP:每玩家一个虚拟炉,furnace_id 仅作日志记录;触发一次完整 snapshot 重推。
                 if let Ok((username, mut client)) = clients.get_mut(ev.client) {
-                    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+                    let player_id = canonical_player_id(username.0.as_str());
                     if let Ok(learned) = alchemy_params.learned.get(ev.client) {
                         alchemy_snapshot_emit::send_recipe_book_from_learned(
                             &mut client,
@@ -460,7 +473,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     combat_clock.tick
                 );
-                defense_tx.send(DefenseIntent {
+                dispatch.defense_tx.send(DefenseIntent {
                     defender: ev.client,
                     issued_at_tick: combat_clock.tick,
                 });
@@ -492,6 +505,27 @@ pub fn handle_client_request_payloads(
                     &mut combat_params.defense_stance_q,
                     &combat_params.unlocked_q,
                 );
+            }
+            ClientRequestV1::CombatReincarnate { .. } => {
+                dispatch.revival_tx.send(RevivalActionIntent {
+                    entity: ev.client,
+                    action: RevivalActionKind::Reincarnate,
+                    issued_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CombatTerminate { .. } => {
+                dispatch.revival_tx.send(RevivalActionIntent {
+                    entity: ev.client,
+                    action: RevivalActionKind::Terminate,
+                    issued_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CombatCreateNewCharacter { .. } => {
+                dispatch.revival_tx.send(RevivalActionIntent {
+                    entity: ev.client,
+                    action: RevivalActionKind::CreateNewCharacter,
+                    issued_at_tick: combat_clock.tick,
+                });
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
@@ -668,6 +702,7 @@ mod tests {
         app.add_event::<ForgeRequest>();
         app.add_event::<InsightChosen>();
         app.add_event::<DefenseIntent>();
+        app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<StartTillRequest>();
@@ -1167,9 +1202,7 @@ fn handle_inventory_discard(
                 outcome.revision.0
             );
             resync_snapshot(entity, &inventory, clients, player_states, "discard_item");
-            if let Ok((_username, mut client)) = clients.get_mut(entity) {
-                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
-            }
+            // Dropped loot sync is broadcast by dropped_loot_sync_emit.
         }
         Err(reason) => {
             tracing::warn!(
@@ -1209,7 +1242,6 @@ fn handle_pickup_dropped_item(
     match pickup_dropped_loot_instance(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
     ) {
@@ -1225,9 +1257,7 @@ fn handle_pickup_dropped_item(
                 player_states,
                 "pickup_dropped_item",
             );
-            if let Ok((_username, mut client)) = clients.get_mut(entity) {
-                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
-            }
+            // Dropped loot sync is broadcast by dropped_loot_sync_emit.
         }
         Err(reason) => {
             tracing::warn!(
@@ -1335,7 +1365,7 @@ fn handle_alchemy_turn_page(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     if let Ok(mut learned) = learned_q.get_mut(entity) {
         if !learned.ids.is_empty() {
             for _ in 0..delta.unsigned_abs() {
@@ -1374,7 +1404,7 @@ fn handle_alchemy_learn(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     if registry.get(&recipe_id).is_none() {
         tracing::warn!(
             "[bong][network][alchemy] learn unknown recipe `{recipe_id}` from `{player_id}`"
@@ -1404,7 +1434,7 @@ fn handle_alchemy_intervention(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     let Ok(mut furnace) = furnaces.get_mut(entity) else {
         return;
     };

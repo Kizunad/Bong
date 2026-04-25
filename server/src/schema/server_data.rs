@@ -19,6 +19,16 @@ pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifespanPreviewV1 {
+    pub years_lived: f64,
+    pub cap_by_realm: u32,
+    pub remaining_years: f64,
+    pub death_penalty_years: u32,
+    pub tick_rate_multiplier: f64,
+    pub is_wind_candle: bool,
+}
+
 #[derive(Debug)]
 pub enum ServerDataBuildError {
     Json(serde_json::Error),
@@ -58,6 +68,8 @@ pub enum ServerDataType {
     WeaponBroken,
     TreasureEquipped,
     LingtianSession,
+    DeathScreen,
+    TerminateScreen,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +123,7 @@ pub enum ServerDataPayloadV1 {
         cracks_count: Vec<u8>,
         /// 整个实体的污染总量（所有 `Contamination.entries.amount` 求和）。
         contamination_total: f64,
+        lifespan: Option<LifespanPreviewV1>,
     },
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(InventoryEventV1),
@@ -153,6 +166,21 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +234,8 @@ enum ServerDataPayloadWireV1 {
         open_progress: Vec<f64>,
         cracks_count: Vec<u8>,
         contamination_total: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
     },
     InventorySnapshot {
         #[serde(flatten)]
@@ -313,6 +343,21 @@ enum ServerDataPayloadWireV1 {
     LingtianSession {
         #[serde(flatten)]
         lingtian_session: LingtianSessionDataV1,
+    },
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
     },
 }
 
@@ -492,6 +537,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
             } => Ok(Self::CultivationDetail {
                 realm,
                 opened,
@@ -501,6 +547,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
             }),
             ServerDataPayloadWireV1::InventorySnapshot { snapshot } => {
                 Ok(Self::InventorySnapshot(snapshot))
@@ -585,6 +632,34 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
+            ServerDataPayloadWireV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+            } => Ok(Self::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+            }),
+            ServerDataPayloadWireV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Ok(Self::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            }),
         }
     }
 }
@@ -653,6 +728,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 opened: opened.clone(),
@@ -662,6 +738,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress: open_progress.clone(),
                 cracks_count: cracks_count.clone(),
                 contamination_total: *contamination_total,
+                lifespan: lifespan.clone(),
             },
             ServerDataPayloadV1::InventorySnapshot(snapshot) => Self::InventorySnapshot {
                 snapshot: snapshot.clone(),
@@ -753,6 +830,34 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
+            },
+            ServerDataPayloadV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+            } => Self::DeathScreen {
+                visible: *visible,
+                cause: cause.clone(),
+                luck_remaining: *luck_remaining,
+                final_words: final_words.clone(),
+                countdown_until_ms: *countdown_until_ms,
+                can_reincarnate: *can_reincarnate,
+                can_terminate: *can_terminate,
+            },
+            ServerDataPayloadV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Self::TerminateScreen {
+                visible: *visible,
+                final_words: final_words.clone(),
+                epilogue: epilogue.clone(),
+                archetype_suggestion: archetype_suggestion.clone(),
             },
         }
     }
@@ -870,6 +975,8 @@ impl ServerDataPayloadV1 {
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
+            Self::DeathScreen { .. } => ServerDataType::DeathScreen,
+            Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
         }
     }
 }
@@ -952,6 +1059,14 @@ mod tests {
             open_progress: vec![1.0; 20],
             cracks_count: vec![0; 20],
             contamination_total: 0.0,
+            lifespan: Some(LifespanPreviewV1 {
+                years_lived: 42.0,
+                cap_by_realm: 200,
+                remaining_years: 158.0,
+                death_penalty_years: 10,
+                tick_rate_multiplier: 1.0,
+                is_wind_candle: false,
+            }),
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -964,11 +1079,15 @@ mod tests {
         let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
         match back.payload {
             ServerDataPayloadV1::CultivationDetail {
-                opened, flow_rate, ..
+                opened,
+                flow_rate,
+                lifespan,
+                ..
             } => {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
+                assert_eq!(lifespan.unwrap().death_penalty_years, 10);
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }

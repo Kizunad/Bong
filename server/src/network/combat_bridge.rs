@@ -6,7 +6,7 @@ use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use super::WORLD_STATE_PUBLISH_INTERVAL_TICKS;
 use crate::combat::components::Lifecycle;
-use crate::combat::events::{CombatEvent, DeathEvent};
+use crate::combat::events::{CombatEvent, DeathEvent, DeathInsightRequested};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
@@ -124,6 +124,17 @@ pub fn publish_combat_summary_on_interval(
         world_state_timer.as_ref(),
         WORLD_STATE_PUBLISH_INTERVAL_TICKS,
     );
+}
+
+pub fn publish_death_insight_requests(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<DeathInsightRequested>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::DeathInsight(ev.payload.clone()));
+    }
 }
 
 fn publish_combat_summary_from_parts(
@@ -258,7 +269,48 @@ mod tests {
         app.insert_resource(crate::network::WorldStateTimer::default());
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<DeathInsightRequested>();
         (app, rx_outbound)
+    }
+
+    #[test]
+    fn publishes_death_insight_requests_to_redis_outbound() {
+        let (mut app, rx_outbound) = setup_app();
+        app.add_systems(Update, publish_death_insight_requests);
+
+        app.world_mut().send_event(DeathInsightRequested {
+            payload: crate::schema::death_insight::DeathInsightRequestV1 {
+                v: 1,
+                request_id: "death_insight:offline:Azure:84000:3".to_string(),
+                character_id: "offline:Azure".to_string(),
+                at_tick: 84_000,
+                cause: "bleed_out".to_string(),
+                category: crate::schema::death_insight::DeathInsightCategoryV1::Combat,
+                realm: Some("Awaken".to_string()),
+                player_realm: Some("mortal".to_string()),
+                zone_kind: crate::schema::death_insight::DeathInsightZoneKindV1::Ordinary,
+                death_count: 3,
+                rebirth_chance: Some(0.8),
+                lifespan_remaining_years: Some(70.0),
+                recent_biography: vec!["t84000:near_death:bleed_out".to_string()],
+                position: None,
+                context: serde_json::json!({"will_terminate": false}),
+            },
+        });
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("death insight outbound should be published");
+        match outbound {
+            RedisOutbound::DeathInsight(payload) => {
+                assert_eq!(payload.v, 1);
+                assert_eq!(payload.character_id, "offline:Azure");
+                assert_eq!(payload.cause, "bleed_out");
+            }
+            other => panic!("expected DeathInsight outbound, got {other:?}"),
+        }
     }
 
     #[test]

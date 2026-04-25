@@ -2639,11 +2639,12 @@ mod tests {
         let dropped_registry = app.world().resource::<DroppedLootRegistry>();
         let dropped = dropped_registry
             .by_owner
-            .get(&attacker)
+            .values()
+            .flatten()
+            .find(|entry| entry.instance_id == 42)
             .expect("broken weapon should be registered as dropped loot");
-        assert_eq!(dropped.len(), 1);
-        assert_eq!(dropped[0].instance_id, 42);
-        assert_eq!(dropped[0].item.durability, 0.0);
+        assert_eq!(dropped.instance_id, 42);
+        assert_eq!(dropped.item.durability, 0.0);
     }
 
     #[test]

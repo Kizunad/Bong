@@ -248,6 +248,7 @@ mod tests {
                         tick: 42,
                     }],
                     insights_taken: Vec::new(),
+                    death_insights: Vec::new(),
                     spirit_root_first: None,
                 },
             ))

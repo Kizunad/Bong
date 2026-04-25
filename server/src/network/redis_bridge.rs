@@ -9,7 +9,8 @@ use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_BOTANY_ECOLOGY,
     CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH,
-    CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_DEATH_INSIGHT, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT,
+    CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -17,6 +18,7 @@ use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
 };
+use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::world_state::WorldStateV1;
 
@@ -46,6 +48,7 @@ pub enum RedisOutbound {
     ForgeEvent(ForgeEventV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
+    DeathInsight(DeathInsightRequestV1),
     BotanyEcology(BotanyEcologySnapshotV1),
 }
 
@@ -321,6 +324,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_INSIGHT_REQUEST,
+                payload,
+            })
+        }
+        RedisOutbound::DeathInsight(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize DeathInsightRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_DEATH_INSIGHT,
                 payload,
             })
         }
@@ -855,7 +869,7 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
     let object = expect_object(value, context.as_str())?;
     validate_known_keys(
         object,
-        &["scope", "target", "text", "style"],
+        &["scope", "target", "text", "style", "kind"],
         context.as_str(),
     )?;
 
@@ -896,6 +910,19 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
         return Err(ValidationError::new(format!(
             "{context}.style has unsupported value `{style}`"
         )));
+    }
+
+    if let Some(kind) = object.get("kind") {
+        let Some(kind) = kind.as_str() else {
+            return Err(ValidationError::new(format!(
+                "{context}.kind must be a string when present"
+            )));
+        };
+        if kind != "death_insight" {
+            return Err(ValidationError::new(format!(
+                "{context}.kind has unsupported value `{kind}`"
+            )));
+        }
     }
 
     Ok(())
@@ -979,6 +1006,9 @@ mod redis_bridge_tests {
     use super::*;
     use crate::schema::combat_event::{
         CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
+    };
+    use crate::schema::death_insight::{
+        DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
     use tokio::task;
 
@@ -1072,6 +1102,41 @@ mod redis_bridge_tests {
         .expect("death payload should serialize");
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_death_insight_on_correct_channel() {
+        let command =
+            prepare_outbound_command(RedisOutbound::DeathInsight(DeathInsightRequestV1 {
+                v: 1,
+                request_id: "death_insight:offline:Azure:84000:3".to_string(),
+                character_id: "offline:Azure".to_string(),
+                at_tick: 84_000,
+                cause: "cultivation:NaturalAging".to_string(),
+                category: DeathInsightCategoryV1::Natural,
+                realm: Some("Condense".to_string()),
+                player_realm: Some("qi_refining_6".to_string()),
+                zone_kind: DeathInsightZoneKindV1::Ordinary,
+                death_count: 3,
+                rebirth_chance: None,
+                lifespan_remaining_years: Some(0.0),
+                recent_biography: vec!["t83980:near_death:cultivation:NaturalAging".to_string()],
+                position: None,
+                context: serde_json::json!({"will_terminate": true}),
+            }))
+            .expect("death insight payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_DEATH_INSIGHT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["character_id"], "offline:Azure");
+                assert_eq!(v["category"], "natural");
+                assert_eq!(v["zone_kind"], "ordinary");
+            }
             other => panic!("expected publish, got {other:?}"),
         }
     }

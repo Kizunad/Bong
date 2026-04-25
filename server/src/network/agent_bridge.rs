@@ -62,6 +62,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::LingtianSession => "lingtian_session",
+        ServerDataType::DeathScreen => "death_screen",
+        ServerDataType::TerminateScreen => "terminate_screen",
     }
 }
 
@@ -359,6 +361,7 @@ mod server_data_tests {
                         target: None,
                         text: "血谷上空乌云翻涌，一道紫雷正在酝酿。".to_string(),
                         style: NarrationStyle::SystemWarning,
+                        kind: None,
                     }],
                 }),
                 json!({

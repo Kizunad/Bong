@@ -1,30 +1,66 @@
-use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, ResMut, Username};
+
+use crate::alchemy::LearnedRecipes;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::death_hooks::{
-    apply_revive_penalty, CultivationDeathTrigger, PlayerRevived, PlayerTerminated,
+    apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
+    PlayerTerminated,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::lifespan::{
+    calculate_rebirth_chance, tribulation_rebirth_chance, DeathRegistry, LifespanCapTable,
+    LifespanComponent, RebirthChanceInput, ZoneDeathKind,
+};
+use crate::cultivation::{
+    color::PracticeLog,
+    components::{Karma, QiColor},
+};
+use crate::inventory::{
+    instantiate_inventory_from_loadout, DeathDropAnchor, DefaultLoadout,
+    InventoryInstanceIdAllocator, PlayerInventory,
+};
+use crate::network::agent_bridge::{
+    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+};
+use crate::network::send_server_data_payload;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::persistence::{
     persist_near_death_transition, persist_revival_transition, persist_termination_transition,
     LifespanEventRecord, PersistenceSettings,
 };
+use crate::player::state::{
+    rotate_current_character_id, save_player_shrine_anchor_slice, save_player_slices, PlayerState,
+    PlayerStatePersistence,
+};
+use crate::schema::cultivation::realm_to_string;
+use crate::schema::death_insight::{
+    DeathInsightCategoryV1, DeathInsightPositionV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
+};
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::skill::components::SkillSet;
+use crate::world::zone::ZoneRegistry;
 
 use super::components::{
-    CombatState, Lifecycle, LifecycleState, Stamina, StaminaState, Wounds, ATTACK_STAMINA_COST,
-    BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION,
-    REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
+    CombatState, DefenseStance, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings,
+    RevivalDecision, Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds,
+    ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
+    NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION,
+    STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
-use super::events::{CombatEvent, DeathEvent};
+use super::events::{
+    CombatEvent, DeathEvent, DeathInsightRequested, RevivalActionIntent, RevivalActionKind,
+};
 
 const COMBAT_DRAIN_PER_SEC: f32 = 5.0;
 const JOG_DRAIN_PER_SEC: f32 = 2.0;
 const SPRINT_DRAIN_PER_SEC: f32 = 10.0;
 const EXHAUSTED_RECOVER_RATIO: f32 = 0.5;
 const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
+const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
 
 type NearDeathQueryItem<'a> = (
     Entity,
@@ -39,6 +75,10 @@ type DeathArbiterQueryItem<'a> = (
     Option<&'a mut Wounds>,
     Option<&'a mut LifeRecord>,
     Option<&'a Cultivation>,
+    Option<&'a PlayerState>,
+    Option<&'a mut DeathRegistry>,
+    Option<&'a mut LifespanComponent>,
+    Option<&'a Position>,
 );
 
 type NearDeathPersistenceQueryItem<'a> = (
@@ -47,6 +87,13 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a mut MeridianSystem>,
     Option<&'a mut Contamination>,
     Option<&'a mut LifeRecord>,
+    Option<&'a mut DeathRegistry>,
+    Option<&'a mut LifespanComponent>,
+    Option<&'a mut PlayerState>,
+    Option<&'a mut Position>,
+    Option<&'a Username>,
+    Option<&'a mut PlayerInventory>,
+    Option<&'a mut SkillSet>,
 );
 
 pub fn sync_combat_state_from_events(
@@ -188,19 +235,41 @@ pub fn combat_state_tick(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn death_arbiter_tick(
     clock: Res<CombatClock>,
     persistence: Res<PersistenceSettings>,
+    zones: Option<Res<ZoneRegistry>>,
+    mut commands: valence::prelude::Commands,
     mut death_events: EventReader<DeathEvent>,
     mut cultivation_deaths: EventReader<CultivationDeathTrigger>,
+    mut death_insights: EventWriter<DeathInsightRequested>,
+    mut terminated: EventWriter<PlayerTerminated>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
     mut lifecycle_q: Query<DeathArbiterQueryItem<'_>>,
 ) {
     for event in death_events.read() {
-        let Ok((mut lifecycle, wounds, life_record, cultivation)) =
-            lifecycle_q.get_mut(event.target)
+        let Ok((
+            mut lifecycle,
+            wounds,
+            life_record,
+            cultivation,
+            player_state,
+            mut death_registry,
+            mut lifespan,
+            position,
+        )) = lifecycle_q.get_mut(event.target)
         else {
             continue;
         };
+
+        // Worldview §十二：死亡掉落应落在死亡点。
+        if let Some(position) = position {
+            let p = position.get();
+            commands.entity(event.target).insert(DeathDropAnchor {
+                pos: [p.x, p.y, p.z],
+            });
+        }
         if matches!(
             lifecycle.state,
             LifecycleState::NearDeath | LifecycleState::Terminated
@@ -208,6 +277,48 @@ pub fn death_arbiter_tick(
             continue;
         }
         let now_tick = event.at_tick.max(clock.tick);
+        let death_zone = death_zone_from_context(event.cause.as_str(), position, zones.as_deref());
+        if let Some(registry) = death_registry.as_deref_mut() {
+            registry.record_death(now_tick, death_zone);
+        }
+        let lifespan_exhausted =
+            apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
+        let insight_payload = build_death_insight_request(DeathInsightBuildInput {
+            lifecycle: &lifecycle,
+            life_record: life_record.as_deref(),
+            cultivation,
+            player_state,
+            death_registry: death_registry.as_deref(),
+            lifespan: lifespan.as_deref(),
+            position,
+            at_tick: now_tick,
+            cause: event.cause.as_str(),
+            category: DeathInsightCategoryV1::Combat,
+            zone_kind: death_zone,
+            rebirth_chance: None,
+            will_terminate: lifespan_exhausted,
+        });
+
+        if lifespan_exhausted {
+            let terminated_now = terminate_lifecycle(
+                event.target,
+                &mut lifecycle,
+                life_record,
+                &persistence,
+                now_tick,
+                &mut terminated,
+                position,
+                &mut vfx_events,
+                "natural_end",
+            );
+            if terminated_now {
+                death_insights.send(DeathInsightRequested {
+                    payload: insight_payload,
+                });
+            }
+            continue;
+        }
+
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
                 cause: event.cause.clone(),
@@ -233,35 +344,100 @@ pub fn death_arbiter_tick(
             }
         }
         enter_near_death(&mut lifecycle, wounds, now_tick);
+        death_insights.send(DeathInsightRequested {
+            payload: insight_payload,
+        });
     }
 
     for event in cultivation_deaths.read() {
-        let Ok((mut lifecycle, wounds, life_record, cultivation)) =
-            lifecycle_q.get_mut(event.entity)
+        let Ok((
+            mut lifecycle,
+            wounds,
+            life_record,
+            cultivation,
+            player_state,
+            mut death_registry,
+            mut lifespan,
+            position,
+        )) = lifecycle_q.get_mut(event.entity)
         else {
             continue;
         };
+
+        // Worldview §十二：死亡掉落应落在死亡点。
+        if let Some(position) = position {
+            let p = position.get();
+            commands.entity(event.entity).insert(DeathDropAnchor {
+                pos: [p.x, p.y, p.z],
+            });
+        }
         if matches!(
             lifecycle.state,
             LifecycleState::NearDeath | LifecycleState::Terminated
         ) {
             continue;
         }
+        let death_zone = match event.cause {
+            CultivationDeathCause::NegativeZoneDrain => ZoneDeathKind::Negative,
+            _ => death_zone_from_context(
+                &format!("cultivation:{:?}", event.cause),
+                position,
+                zones.as_deref(),
+            ),
+        };
+        if let Some(registry) = death_registry.as_deref_mut() {
+            registry.record_death(clock.tick, death_zone);
+        }
+        let lifespan_exhausted =
+            apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
+        let cause = format!("cultivation:{:?}", event.cause);
+        let category = death_insight_category_from_cultivation_cause(event.cause);
+        let insight_payload = build_death_insight_request(DeathInsightBuildInput {
+            lifecycle: &lifecycle,
+            life_record: life_record.as_deref(),
+            cultivation,
+            player_state,
+            death_registry: death_registry.as_deref(),
+            lifespan: lifespan.as_deref(),
+            position,
+            at_tick: clock.tick,
+            cause: cause.as_str(),
+            category,
+            zone_kind: death_zone,
+            rebirth_chance: None,
+            will_terminate: lifespan_exhausted,
+        });
+
+        if lifespan_exhausted {
+            let terminated_now = terminate_lifecycle(
+                event.entity,
+                &mut lifecycle,
+                life_record,
+                &persistence,
+                clock.tick,
+                &mut terminated,
+                position,
+                &mut vfx_events,
+                "natural_end",
+            );
+            if terminated_now {
+                death_insights.send(DeathInsightRequested {
+                    payload: insight_payload,
+                });
+            }
+            continue;
+        }
+
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
-                cause: format!("cultivation:{:?}", event.cause),
+                cause: cause.clone(),
                 tick: clock.tick,
             });
-            let cause = format!("cultivation:{:?}", event.cause);
             let mut staged_lifecycle = lifecycle.clone();
             staged_lifecycle.enter_near_death(clock.tick);
             let lifespan_event =
-                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str()).filter(
-                    |_| {
-                        event.cause
-                    != crate::cultivation::death_hooks::CultivationDeathCause::TribulationFailure
-                    },
-                );
+                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
+                    .filter(|_| event.cause != CultivationDeathCause::TribulationFailure);
             if let Err(error) = persist_near_death_transition(
                 &persistence,
                 &staged_lifecycle,
@@ -278,16 +454,21 @@ pub fn death_arbiter_tick(
             }
         }
         enter_near_death(&mut lifecycle, wounds, clock.tick);
+        death_insights.send(DeathInsightRequested {
+            payload: insight_payload,
+        });
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn near_death_tick(
     clock: Res<CombatClock>,
     persistence: Res<PersistenceSettings>,
-    mut revived: EventWriter<PlayerRevived>,
+    zones: Option<Res<ZoneRegistry>>,
+    _revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
-    positions: Query<&Position>,
+    mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for (
@@ -296,6 +477,13 @@ pub fn near_death_tick(
         meridians,
         contam,
         life_record,
+        death_registry,
+        lifespan,
+        player_state,
+        position,
+        _username,
+        _inventory,
+        _skill_set,
     ) in &mut lifecycle_q
     {
         if lifecycle
@@ -325,129 +513,217 @@ pub fn near_death_tick(
             continue;
         }
 
-        if lifecycle.fortune_remaining > 0 {
-            let mut staged_lifecycle = lifecycle.clone();
-            staged_lifecycle.fortune_remaining =
-                staged_lifecycle.fortune_remaining.saturating_sub(1);
-            staged_lifecycle.revive(clock.tick);
-
-            let mut staged_cultivation = cultivation
-                .as_ref()
-                .map(|cultivation| (**cultivation).clone());
-            let mut staged_meridians = meridians.as_ref().map(|meridians| (**meridians).clone());
-            let mut staged_contam = contam.as_ref().map(|contam| (**contam).clone());
-            let mut staged_life_record = life_record
-                .as_ref()
-                .map(|life_record| (**life_record).clone());
-
-            if let (
-                Some(staged_cultivation),
-                Some(staged_meridians),
-                Some(staged_contam),
-                Some(staged_life_record),
-            ) = (
-                staged_cultivation.as_mut(),
-                staged_meridians.as_mut(),
-                staged_contam.as_mut(),
-                staged_life_record.as_mut(),
+        let Some(decision) = determine_revival_decision(
+            &lifecycle,
+            death_registry.as_deref(),
+            eventual_cause(life_record.as_deref()).as_str(),
+            lifespan.as_deref(),
+            player_state.as_deref(),
+            position.as_deref(),
+            zones.as_deref(),
+            clock.tick,
+        ) else {
+            if terminate_lifecycle(
+                entity,
+                &mut lifecycle,
+                life_record,
+                &persistence,
+                clock.tick,
+                &mut terminated,
+                position.as_deref(),
+                &mut vfx_events,
+                "natural_end",
             ) {
-                let prior_realm = staged_cultivation.realm;
-                apply_revive_penalty(staged_cultivation, staged_meridians, staged_contam);
-                staged_life_record.push(BiographyEntry::Rebirth {
-                    prior_realm,
-                    new_realm: staged_cultivation.realm,
-                    tick: clock.tick,
-                });
-                if let Err(error) = persist_revival_transition(&persistence, staged_life_record) {
-                    tracing::warn!(
-                        "[bong][persistence] failed to persist revival transition for {}: {error}",
-                        staged_life_record.character_id
-                    );
-                    continue;
-                }
+                hide_death_screen(&mut clients, entity);
             }
-
-            lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
-            lifecycle.revive(clock.tick);
-            if let (Some(mut cultivation), Some(staged_cultivation)) =
-                (cultivation, staged_cultivation)
-            {
-                *cultivation = staged_cultivation;
-            }
-            if let (Some(mut meridians), Some(staged_meridians)) = (meridians, staged_meridians) {
-                *meridians = staged_meridians;
-            }
-            if let (Some(mut contam), Some(staged_contam)) = (contam, staged_contam) {
-                *contam = staged_contam;
-            }
-            if let (Some(mut life_record), Some(staged_life_record)) =
-                (life_record, staged_life_record)
-            {
-                *life_record = staged_life_record;
-            }
-
-            if let Some(mut wounds) = wounds {
-                let recovered = (wounds.health_max * REVIVE_HEALTH_FRACTION).max(1.0);
-                wounds.health_current = wounds.health_current.max(recovered);
-            }
-            if let Some(mut stamina) = stamina {
-                stamina.current = stamina.current.max(stamina.max * EXHAUSTED_EXIT_FRACTION);
-                if matches!(
-                    stamina.state,
-                    StaminaState::Combat | StaminaState::Exhausted
-                ) {
-                    stamina.state = StaminaState::Idle;
-                }
-            }
-            if let Some(mut combat_state) = combat_state {
-                combat_state.incoming_window = None;
-                combat_state.refresh_combat_window(clock.tick);
-            }
-
-            revived.send(PlayerRevived { entity });
-            continue;
-        }
-
-        let Some(mut life_record) = life_record else {
-            lifecycle.terminate(clock.tick);
-            terminated.send(PlayerTerminated { entity });
             continue;
         };
-        life_record.push(BiographyEntry::Terminated {
-            cause: "fortune_exhausted".to_string(),
-            tick: clock.tick,
-        });
-        let mut staged_lifecycle = lifecycle.clone();
-        staged_lifecycle.terminate(clock.tick);
-        if let Err(error) =
-            persist_termination_transition(&persistence, &staged_lifecycle, &life_record)
-        {
-            tracing::warn!(
-                "[bong][persistence] failed to persist terminated snapshot for {}: {error}",
-                life_record.character_id
-            );
-            let _ = life_record.biography.pop();
+
+        let decision_deadline_tick = clock.tick.saturating_add(REVIVAL_CONFIRM_WINDOW_TICKS);
+        lifecycle.await_revival_decision(decision, decision_deadline_tick);
+        emit_death_screen(
+            &mut clients,
+            entity,
+            &eventual_cause(life_record.as_deref()),
+            decision,
+            clock.tick,
+            decision_deadline_tick,
+        );
+        hide_terminate_screen(&mut clients, entity);
+
+        let _ = (
+            cultivation,
+            meridians,
+            contam,
+            death_registry,
+            stamina,
+            combat_state,
+            lifespan,
+            wounds,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_revival_action_intents(
+    clock: Res<CombatClock>,
+    persistence: Res<PersistenceSettings>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    default_loadout: Option<Res<DefaultLoadout>>,
+    mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut intents: EventReader<RevivalActionIntent>,
+    mut revived: EventWriter<PlayerRevived>,
+    mut terminated: EventWriter<PlayerTerminated>,
+    mut commands: valence::prelude::Commands,
+    mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
+    mut clients: Query<&mut valence::prelude::Client>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for intent in intents.read() {
+        let Ok((
+            (entity, mut lifecycle, wounds, stamina, combat_state),
+            cultivation,
+            meridians,
+            contam,
+            life_record,
+            death_registry,
+            lifespan,
+            player_state,
+            position,
+            username,
+            inventory,
+            skill_set,
+        )) = lifecycle_q.get_mut(intent.entity)
+        else {
+            continue;
+        };
+
+        match intent.action {
+            RevivalActionKind::Reincarnate => {
+                if lifecycle.state != LifecycleState::AwaitingRevival {
+                    continue;
+                }
+                let Some(decision) = lifecycle.awaiting_decision else {
+                    continue;
+                };
+
+                let survived = matches!(decision, RevivalDecision::Fortune { .. })
+                    || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance));
+
+                if survived {
+                    if revive_lifecycle(
+                        entity,
+                        clock.tick,
+                        &persistence,
+                        &mut lifecycle,
+                        cultivation,
+                        meridians,
+                        contam,
+                        life_record,
+                        wounds,
+                        stamina,
+                        combat_state,
+                        player_state,
+                        position,
+                        &mut revived,
+                    ) {
+                        hide_death_screen(&mut clients, entity);
+                        hide_terminate_screen(&mut clients, entity);
+                    }
+                } else if terminate_lifecycle(
+                    entity,
+                    &mut lifecycle,
+                    life_record,
+                    &persistence,
+                    clock.tick,
+                    &mut terminated,
+                    position.as_deref(),
+                    &mut vfx_events,
+                    "tribulation_failed",
+                ) {
+                    emit_terminate_screen(
+                        &mut clients,
+                        entity,
+                        "终焉之言未竟。",
+                        "劫数已定，形神俱散。",
+                        "凡人",
+                    );
+                    hide_death_screen(&mut clients, entity);
+                }
+            }
+            RevivalActionKind::Terminate => {
+                if terminate_lifecycle(
+                    entity,
+                    &mut lifecycle,
+                    life_record,
+                    &persistence,
+                    intent.issued_at_tick,
+                    &mut terminated,
+                    position.as_deref(),
+                    &mut vfx_events,
+                    "voluntary_retire",
+                ) {
+                    emit_terminate_screen(
+                        &mut clients,
+                        entity,
+                        "此身止于此。",
+                        "你选择了归隐与终结。",
+                        "凡人",
+                    );
+                    hide_death_screen(&mut clients, entity);
+                }
+            }
+            RevivalActionKind::CreateNewCharacter => {
+                if lifecycle.state != LifecycleState::Terminated {
+                    continue;
+                }
+                reset_for_new_character(
+                    entity,
+                    &mut commands,
+                    clock.tick,
+                    &mut lifecycle,
+                    life_record,
+                    death_registry,
+                    lifespan,
+                    player_state,
+                    position,
+                    wounds,
+                    stamina,
+                    combat_state,
+                    username,
+                    inventory,
+                    skill_set,
+                    player_persistence.as_deref(),
+                    default_loadout.as_deref(),
+                    inventory_allocator.as_deref_mut(),
+                );
+                hide_death_screen(&mut clients, entity);
+                hide_terminate_screen(&mut clients, entity);
+            }
+        }
+    }
+}
+
+pub fn auto_confirm_revival_decisions(
+    clock: Res<CombatClock>,
+    mut revival_tx: EventWriter<RevivalActionIntent>,
+    lifecycle_q: Query<(Entity, &Lifecycle)>,
+) {
+    for (entity, lifecycle) in &lifecycle_q {
+        if lifecycle.state != LifecycleState::AwaitingRevival {
             continue;
         }
-        lifecycle.terminate(clock.tick);
-        terminated.send(PlayerTerminated { entity });
-
-        // plan-particle-system-v1 §4.4：终结时发 `death_soul_dissipate` 魂散。
-        if let Ok(pos) = positions.get(entity) {
-            let p = pos.get();
-            vfx_events.send(VfxEventRequest::new(
-                p,
-                VfxEventPayloadV1::SpawnParticle {
-                    event_id: "bong:death_soul_dissipate".to_string(),
-                    origin: [p.x, p.y, p.z],
-                    direction: None,
-                    color: Some("#CFEFFF".to_string()),
-                    strength: Some(0.9),
-                    count: Some(20),
-                    duration_ticks: Some(40),
-                },
-            ));
+        let Some(deadline_tick) = lifecycle.revival_decision_deadline_tick else {
+            continue;
+        };
+        if clock.tick < deadline_tick {
+            continue;
         }
+        revival_tx.send(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: clock.tick,
+        });
     }
 }
 
@@ -466,6 +742,628 @@ fn death_penalty_lifespan_event(
         delta_years,
         source: source.to_string(),
     })
+}
+
+struct DeathInsightBuildInput<'a> {
+    lifecycle: &'a Lifecycle,
+    life_record: Option<&'a LifeRecord>,
+    cultivation: Option<&'a Cultivation>,
+    player_state: Option<&'a PlayerState>,
+    death_registry: Option<&'a DeathRegistry>,
+    lifespan: Option<&'a LifespanComponent>,
+    position: Option<&'a Position>,
+    at_tick: u64,
+    cause: &'a str,
+    category: DeathInsightCategoryV1,
+    zone_kind: ZoneDeathKind,
+    rebirth_chance: Option<f64>,
+    will_terminate: bool,
+}
+
+fn build_death_insight_request(input: DeathInsightBuildInput<'_>) -> DeathInsightRequestV1 {
+    let death_count = input
+        .death_registry
+        .map_or(input.lifecycle.death_count, |registry| registry.death_count)
+        .max(1);
+    let character_id = input
+        .life_record
+        .map(|record| record.character_id.clone())
+        .unwrap_or_else(|| input.lifecycle.character_id.clone());
+    let recent_biography = input
+        .life_record
+        .map(|record| {
+            record
+                .recent_summary(DEATH_INSIGHT_RECENT_BIO_N)
+                .iter()
+                .map(|entry| format!("{entry:?}"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let position = input.position.map(|position| {
+        let p = position.get();
+        DeathInsightPositionV1 {
+            x: p.x,
+            y: p.y,
+            z: p.z,
+        }
+    });
+
+    DeathInsightRequestV1 {
+        v: 1,
+        request_id: format!(
+            "death_insight:{}:{}:{}",
+            character_id, input.at_tick, death_count
+        ),
+        character_id,
+        at_tick: input.at_tick,
+        cause: input.cause.to_string(),
+        category: input.category,
+        realm: input
+            .cultivation
+            .map(|cultivation| realm_to_string(cultivation.realm).to_string()),
+        player_realm: input.player_state.map(|state| state.realm.clone()),
+        zone_kind: map_death_insight_zone_kind(input.zone_kind),
+        death_count,
+        rebirth_chance: input.rebirth_chance,
+        lifespan_remaining_years: input.lifespan.map(LifespanComponent::remaining_years),
+        recent_biography,
+        position,
+        context: serde_json::json!({
+            "will_terminate": input.will_terminate,
+            "fortune_remaining": input.lifecycle.fortune_remaining,
+            "lifecycle_state": format!("{:?}", input.lifecycle.state),
+        }),
+    }
+}
+
+fn death_insight_category_from_cultivation_cause(
+    cause: CultivationDeathCause,
+) -> DeathInsightCategoryV1 {
+    match cause {
+        CultivationDeathCause::NaturalAging => DeathInsightCategoryV1::Natural,
+        CultivationDeathCause::TribulationFailure => DeathInsightCategoryV1::Tribulation,
+        CultivationDeathCause::BreakthroughBackfire
+        | CultivationDeathCause::MeridianCollapse
+        | CultivationDeathCause::NegativeZoneDrain
+        | CultivationDeathCause::ContaminationOverflow => DeathInsightCategoryV1::Cultivation,
+    }
+}
+
+fn map_death_insight_zone_kind(zone_kind: ZoneDeathKind) -> DeathInsightZoneKindV1 {
+    match zone_kind {
+        ZoneDeathKind::Ordinary => DeathInsightZoneKindV1::Ordinary,
+        ZoneDeathKind::Death => DeathInsightZoneKindV1::Death,
+        ZoneDeathKind::Negative => DeathInsightZoneKindV1::Negative,
+    }
+}
+
+fn apply_death_lifespan_penalty(
+    cultivation: Option<&Cultivation>,
+    lifespan: Option<&mut LifespanComponent>,
+    player_state: Option<&PlayerState>,
+) -> bool {
+    let Some(lifespan) = lifespan else {
+        return false;
+    };
+    let cap = match (player_state, cultivation) {
+        (Some(player_state), Some(cultivation)) => LifespanCapTable::for_player_state_realm(
+            Some(player_state.realm.as_str()),
+            cultivation.realm,
+        ),
+        (Some(player_state), None) => LifespanCapTable::for_player_state_realm(
+            Some(player_state.realm.as_str()),
+            Realm::Awaken,
+        ),
+        (None, Some(cultivation)) => LifespanCapTable::for_realm(cultivation.realm),
+        (None, None) => LifespanCapTable::MORTAL,
+    };
+    lifespan.apply_cap(cap);
+    lifespan.years_lived += LifespanCapTable::death_penalty_years_for_cap(cap) as f64;
+    lifespan.remaining_years() <= f64::EPSILON
+}
+
+#[allow(clippy::too_many_arguments)]
+fn determine_revival_decision(
+    lifecycle: &Lifecycle,
+    death_registry: Option<&DeathRegistry>,
+    cause: &str,
+    lifespan: Option<&LifespanComponent>,
+    player_state: Option<&PlayerState>,
+    position: Option<&Position>,
+    zones: Option<&ZoneRegistry>,
+    now_tick: u64,
+) -> Option<RevivalDecision> {
+    if lifespan.is_some_and(|lifespan| lifespan.remaining_years() <= f64::EPSILON) {
+        return None;
+    }
+
+    let registry = death_registry
+        .cloned()
+        .unwrap_or_else(|| DeathRegistry::new(lifecycle.character_id.clone()));
+    let death_zone = registry
+        .last_death_zone
+        .or_else(|| Some(death_zone_from_context(cause, position, zones)))
+        .unwrap_or(ZoneDeathKind::Ordinary);
+    let result = calculate_rebirth_chance(&RebirthChanceInput {
+        registry,
+        at_tick: now_tick,
+        death_zone,
+        karma: player_state.map_or(0.0, |state| state.karma),
+        // plan-death-lifecycle-v1 §2：拥有"灵龛归属"可满足运数期保底条件。
+        // MVP：以 Lifecycle.spawn_anchor 是否存在作为归属判定（社交侧揭露/失效规则后续接入）。
+        has_shrine: lifecycle.spawn_anchor.is_some(),
+        includes_current_death: death_registry.is_some(),
+    });
+
+    if lifecycle.fortune_remaining == 0 && result.guaranteed {
+        return Some(RevivalDecision::Tribulation {
+            chance: tribulation_rebirth_chance(result.death_number),
+        });
+    }
+
+    if result.guaranteed {
+        return Some(RevivalDecision::Fortune {
+            chance: result.chance,
+        });
+    }
+
+    if result.chance <= 0.0 {
+        None
+    } else {
+        Some(RevivalDecision::Tribulation {
+            chance: result.chance,
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn revive_lifecycle(
+    entity: Entity,
+    now_tick: u64,
+    persistence: &PersistenceSettings,
+    lifecycle: &mut Lifecycle,
+    cultivation: Option<valence::prelude::Mut<'_, Cultivation>>,
+    meridians: Option<valence::prelude::Mut<'_, MeridianSystem>>,
+    contam: Option<valence::prelude::Mut<'_, Contamination>>,
+    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    wounds: Option<valence::prelude::Mut<'_, Wounds>>,
+    stamina: Option<valence::prelude::Mut<'_, Stamina>>,
+    combat_state: Option<valence::prelude::Mut<'_, CombatState>>,
+    player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
+    position: Option<valence::prelude::Mut<'_, Position>>,
+    revived: &mut EventWriter<PlayerRevived>,
+) -> bool {
+    let mut staged_lifecycle = lifecycle.clone();
+    if matches!(
+        lifecycle.awaiting_decision,
+        Some(RevivalDecision::Fortune { .. })
+    ) {
+        staged_lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining.saturating_sub(1);
+    }
+    staged_lifecycle.revive(now_tick);
+
+    let mut staged_cultivation = cultivation.as_ref().map(|value| (**value).clone());
+    let mut staged_meridians = meridians.as_ref().map(|value| (**value).clone());
+    let mut staged_contam = contam.as_ref().map(|value| (**value).clone());
+    let mut staged_life_record = life_record.as_ref().map(|value| (**value).clone());
+
+    if let (
+        Some(staged_cultivation),
+        Some(staged_meridians),
+        Some(staged_contam),
+        Some(staged_life_record),
+    ) = (
+        staged_cultivation.as_mut(),
+        staged_meridians.as_mut(),
+        staged_contam.as_mut(),
+        staged_life_record.as_mut(),
+    ) {
+        let prior_realm = staged_cultivation.realm;
+        apply_revive_penalty(staged_cultivation, staged_meridians, staged_contam);
+        staged_life_record.push(BiographyEntry::Rebirth {
+            prior_realm,
+            new_realm: staged_cultivation.realm,
+            tick: now_tick,
+        });
+        if let Err(error) = persist_revival_transition(persistence, staged_life_record) {
+            tracing::warn!(
+                "[bong][persistence] failed to persist revival transition for {}: {error}",
+                staged_life_record.character_id
+            );
+            return false;
+        }
+    }
+
+    lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
+    lifecycle.revive(now_tick);
+    if let (Some(mut cultivation), Some(staged_cultivation)) = (cultivation, staged_cultivation) {
+        *cultivation = staged_cultivation;
+    }
+    if let (Some(mut meridians), Some(staged_meridians)) = (meridians, staged_meridians) {
+        *meridians = staged_meridians;
+    }
+    if let (Some(mut contam), Some(staged_contam)) = (contam, staged_contam) {
+        *contam = staged_contam;
+    }
+    if let (Some(mut life_record), Some(staged_life_record)) = (life_record, staged_life_record) {
+        *life_record = staged_life_record;
+    }
+
+    if let Some(mut wounds) = wounds {
+        wounds.entries.clear();
+        wounds.health_current = (wounds.health_max * REVIVE_HEALTH_FRACTION).max(1.0);
+    }
+    if let Some(mut stamina) = stamina {
+        stamina.current = stamina.max;
+        stamina.state = StaminaState::Idle;
+    }
+    if let Some(mut combat_state) = combat_state {
+        combat_state.incoming_window = None;
+        combat_state.in_combat_until_tick = None;
+        combat_state.last_attack_at_tick = None;
+    }
+    if let Some(mut player_state) = player_state {
+        player_state.spirit_qi = 0.0;
+    }
+    if let Some(mut position) = position {
+        // worldview §十二：重生位置优先灵龛（如有）> 世界出生点。
+        position.set(
+            lifecycle
+                .spawn_anchor
+                .unwrap_or_else(crate::player::spawn_position),
+        );
+    }
+
+    revived.send(PlayerRevived { entity });
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn terminate_lifecycle(
+    entity: Entity,
+    lifecycle: &mut Lifecycle,
+    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    persistence: &PersistenceSettings,
+    now_tick: u64,
+    terminated: &mut EventWriter<PlayerTerminated>,
+    position: Option<&Position>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    cause: &str,
+) -> bool {
+    let Some(mut life_record) = life_record else {
+        lifecycle.terminate(now_tick);
+        terminated.send(PlayerTerminated { entity });
+        return true;
+    };
+    life_record.push(BiographyEntry::Terminated {
+        cause: cause.to_string(),
+        tick: now_tick,
+    });
+    let mut staged_lifecycle = lifecycle.clone();
+    staged_lifecycle.terminate(now_tick);
+    if let Err(error) = persist_termination_transition(persistence, &staged_lifecycle, &life_record)
+    {
+        tracing::warn!(
+            "[bong][persistence] failed to persist terminated snapshot for {}: {error}",
+            life_record.character_id
+        );
+        let _ = life_record.biography.pop();
+        return false;
+    }
+    lifecycle.terminate(now_tick);
+    terminated.send(PlayerTerminated { entity });
+
+    if let Some(pos) = position {
+        let p = pos.get();
+        vfx_events.send(VfxEventRequest::new(
+            p,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:death_soul_dissipate".to_string(),
+                origin: [p.x, p.y, p.z],
+                direction: None,
+                color: Some("#CFEFFF".to_string()),
+                strength: Some(0.9),
+                count: Some(20),
+                duration_ticks: Some(40),
+            },
+        ));
+    }
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reset_for_new_character(
+    entity: Entity,
+    commands: &mut valence::prelude::Commands,
+    now_tick: u64,
+    lifecycle: &mut Lifecycle,
+    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    death_registry: Option<valence::prelude::Mut<'_, DeathRegistry>>,
+    lifespan: Option<valence::prelude::Mut<'_, LifespanComponent>>,
+    player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
+    position: Option<valence::prelude::Mut<'_, Position>>,
+    wounds: Option<valence::prelude::Mut<'_, Wounds>>,
+    stamina: Option<valence::prelude::Mut<'_, Stamina>>,
+    combat_state: Option<valence::prelude::Mut<'_, CombatState>>,
+    username: Option<&Username>,
+    inventory: Option<valence::prelude::Mut<'_, PlayerInventory>>,
+    skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
+    player_persistence: Option<&PlayerStatePersistence>,
+    default_loadout: Option<&DefaultLoadout>,
+    inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
+) {
+    if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
+        if let Ok(next_char_id) =
+            rotate_current_character_id(player_persistence, username.0.as_str())
+        {
+            tracing::info!(
+                "[bong][combat] rotated current_char_id for `{}` to {next_char_id}",
+                username.0
+            );
+        }
+
+        // 新角色与前角色无机制关联；灵龛归属同样不继承。
+        if let Err(error) =
+            save_player_shrine_anchor_slice(player_persistence, username.0.as_str(), None)
+        {
+            tracing::warn!(
+                "[bong][combat] failed to clear persisted shrine anchor for `{}`: {error}",
+                username.0
+            );
+        }
+    }
+
+    lifecycle.death_count = 0;
+    lifecycle.fortune_remaining = 3;
+    lifecycle.last_death_tick = None;
+    lifecycle.last_revive_tick = Some(now_tick);
+    // 新角色与前角色无机制关联；灵龛归属同样不继承。
+    lifecycle.spawn_anchor = None;
+    lifecycle.near_death_deadline_tick = None;
+    lifecycle.awaiting_decision = None;
+    lifecycle.revival_decision_deadline_tick = None;
+    lifecycle.weakened_until_tick = None;
+    lifecycle.state = LifecycleState::Alive;
+
+    if let Some(mut life_record) = life_record {
+        *life_record = LifeRecord::new(lifecycle.character_id.clone());
+    }
+
+    let default_player_state = PlayerState::default();
+    let spawn_position = crate::player::spawn_position();
+    let fresh_lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+
+    if let Some(mut death_registry) = death_registry {
+        *death_registry = DeathRegistry::new(lifecycle.character_id.clone());
+    }
+    if let Some(mut lifespan) = lifespan {
+        *lifespan = fresh_lifespan.clone();
+    } else {
+        commands.entity(entity).insert(fresh_lifespan.clone());
+    }
+    if let Some(mut player_state) = player_state {
+        *player_state = default_player_state.clone();
+    }
+    if let Some(mut position) = position {
+        position.set(spawn_position);
+    }
+    let mut persisted_inventory = None;
+    if let (Some(default_loadout), Some(inventory_allocator)) =
+        (default_loadout, inventory_allocator)
+    {
+        let new_inventory =
+            instantiate_inventory_from_loadout(&default_loadout.0, inventory_allocator)
+                .expect("default loadout should instantiate");
+        if let Some(mut inventory) = inventory {
+            *inventory = new_inventory.clone();
+        } else {
+            commands.entity(entity).insert(new_inventory.clone());
+        }
+        persisted_inventory = Some(new_inventory);
+    }
+    if let Some(mut wounds) = wounds {
+        *wounds = Wounds::default();
+    }
+    if let Some(mut stamina) = stamina {
+        *stamina = Stamina::default();
+    }
+    if let Some(mut combat_state) = combat_state {
+        *combat_state = CombatState::default();
+    }
+    if let Some(mut skill_set) = skill_set {
+        *skill_set = SkillSet::default();
+    } else {
+        commands.entity(entity).insert(SkillSet::default());
+    }
+
+    let mut learned_recipes = LearnedRecipes::default();
+    learned_recipes.learn("kai_mai_pill_v0".into());
+    commands.entity(entity).insert((
+        Cultivation::default(),
+        MeridianSystem::default(),
+        QiColor::default(),
+        Karma::default(),
+        PracticeLog::default(),
+        Contamination::default(),
+        crate::cultivation::insight::InsightQuota::default(),
+        crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+        crate::cultivation::insight_apply::InsightModifiers::new(),
+        StatusEffects::default(),
+        DerivedAttrs::default(),
+        QuickSlotBindings::default(),
+        UnlockedStyles::default(),
+        DefenseStance::default(),
+        learned_recipes,
+    ));
+    commands
+        .entity(entity)
+        .remove::<crate::combat::components::Casting>()
+        .remove::<crate::cultivation::insight_flow::PendingInsightOffer>()
+        .remove::<crate::cultivation::tribulation::TribulationState>()
+        .remove::<crate::inventory::OverloadedMarker>();
+
+    if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
+        if let Err(error) = save_player_slices(
+            player_persistence,
+            username.0.as_str(),
+            &default_player_state,
+            spawn_position,
+            persisted_inventory.as_ref(),
+            Some(&fresh_lifespan),
+        ) {
+            tracing::warn!(
+                "[bong][combat] failed to persist fresh character slices for `{}`: {error}",
+                username.0
+            );
+        }
+    }
+}
+
+fn detect_zone_kind(
+    position: Option<&Position>,
+    zones: Option<&ZoneRegistry>,
+) -> Option<ZoneDeathKind> {
+    let position = position?;
+    let zone = zones?.find_zone(position.get())?;
+    if zone.spirit_qi < -0.2 {
+        Some(ZoneDeathKind::Negative)
+    } else {
+        Some(ZoneDeathKind::Ordinary)
+    }
+}
+
+fn death_zone_from_context(
+    cause: &str,
+    position: Option<&Position>,
+    zones: Option<&ZoneRegistry>,
+) -> ZoneDeathKind {
+    let cause_lower = cause.to_ascii_lowercase();
+    if cause_lower.contains("negative") {
+        return ZoneDeathKind::Negative;
+    }
+    if cause_lower.contains("death") {
+        return ZoneDeathKind::Death;
+    }
+    detect_zone_kind(position, zones).unwrap_or(ZoneDeathKind::Ordinary)
+}
+
+fn roll_rebirth(now_tick: u64, entity: Entity, chance: f64) -> bool {
+    if chance >= 1.0 {
+        return true;
+    }
+    let seed = now_tick ^ ((entity.index() as u64) << 32) ^ entity.generation() as u64;
+    let mixed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+    let sample = ((mixed >> 11) as f64) / ((1u64 << 53) as f64);
+    sample < chance
+}
+
+fn eventual_cause(life_record: Option<&LifeRecord>) -> String {
+    match life_record.and_then(|record| record.biography.last()) {
+        Some(BiographyEntry::NearDeath { cause, .. }) => cause.clone(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn current_unix_millis() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis().min(u128::from(u64::MAX)) as u64,
+        Err(_) => 0,
+    }
+}
+
+fn decision_deadline_ms(decision_deadline_tick: u64, now_tick: u64) -> u64 {
+    let remaining_ticks = decision_deadline_tick.saturating_sub(now_tick);
+    current_unix_millis().saturating_add(remaining_ticks.saturating_mul(50))
+}
+
+fn emit_death_screen(
+    clients: &mut Query<&mut valence::prelude::Client>,
+    entity: Entity,
+    cause: &str,
+    decision: RevivalDecision,
+    now_tick: u64,
+    decision_deadline_tick: u64,
+) {
+    send_payload(
+        clients,
+        entity,
+        ServerDataV1::new(ServerDataPayloadV1::DeathScreen {
+            visible: true,
+            cause: cause.to_string(),
+            luck_remaining: decision.chance_shown(),
+            final_words: vec!["尘归尘，劫未尽。".to_string()],
+            countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
+            can_reincarnate: decision.can_reincarnate(),
+            can_terminate: decision.can_terminate(),
+        }),
+    );
+}
+
+fn emit_terminate_screen(
+    clients: &mut Query<&mut valence::prelude::Client>,
+    entity: Entity,
+    final_words: &str,
+    epilogue: &str,
+    archetype_suggestion: &str,
+) {
+    send_payload(
+        clients,
+        entity,
+        ServerDataV1::new(ServerDataPayloadV1::TerminateScreen {
+            visible: true,
+            final_words: final_words.to_string(),
+            epilogue: epilogue.to_string(),
+            archetype_suggestion: archetype_suggestion.to_string(),
+        }),
+    );
+}
+
+fn hide_death_screen(clients: &mut Query<&mut valence::prelude::Client>, entity: Entity) {
+    send_payload(
+        clients,
+        entity,
+        ServerDataV1::new(ServerDataPayloadV1::DeathScreen {
+            visible: false,
+            cause: String::new(),
+            luck_remaining: 0.0,
+            final_words: Vec::new(),
+            countdown_until_ms: 0,
+            can_reincarnate: false,
+            can_terminate: false,
+        }),
+    );
+}
+
+fn hide_terminate_screen(clients: &mut Query<&mut valence::prelude::Client>, entity: Entity) {
+    send_payload(
+        clients,
+        entity,
+        ServerDataV1::new(ServerDataPayloadV1::TerminateScreen {
+            visible: false,
+            final_words: String::new(),
+            epilogue: String::new(),
+            archetype_suggestion: String::new(),
+        }),
+    );
+}
+
+fn send_payload(
+    clients: &mut Query<&mut valence::prelude::Client>,
+    entity: Entity,
+    payload: ServerDataV1,
+) {
+    let payload_type = payload_type_label(payload.payload_type());
+    let Ok(payload_bytes) = serialize_server_data_payload(&payload) else {
+        return;
+    };
+    if let Ok(mut client) = clients.get_mut(entity) {
+        send_server_data_payload(&mut client, payload_bytes.as_slice());
+        tracing::info!(
+            "[bong][network] sent {} {} payload to client entity {entity:?}",
+            SERVER_DATA_CHANNEL,
+            payload_type
+        );
+    }
 }
 
 fn death_penalty_years(realm: Realm) -> i32 {
@@ -500,21 +1398,24 @@ mod tests {
     use super::*;
 
     use crate::combat::components::{
-        BodyPart, DefenseWindow, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS,
-        JIEMAI_DEFENSE_WINDOW_MS, REVIVE_WEAKENED_TICKS,
+        BodyPart, DefenseWindow, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS, JIEMAI_DEFENSE_WINDOW_MS,
     };
-    use crate::combat::events::DefenseIntent;
+    use crate::combat::events::{DefenseIntent, RevivalActionIntent, RevivalActionKind};
     use crate::cultivation::death_hooks::CultivationDeathCause;
     use crate::cultivation::life_record::LifeRecord;
     use crate::cultivation::tick::CultivationClock;
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
         bootstrap_sqlite, DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
     };
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use rusqlite::{params, Connection};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, IntoSystemConfigs, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     fn spawn_actor(
         app: &mut App,
@@ -531,6 +1432,56 @@ mod tests {
                 lifecycle,
             ))
             .id()
+    }
+
+    fn spawn_client_actor(
+        app: &mut App,
+        username: &str,
+        wounds: Wounds,
+        stamina: Stamina,
+        lifecycle: Lifecycle,
+    ) -> (Entity, MockClientHelper) {
+        let (mut client_bundle, helper) = create_mock_client(username);
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                wounds,
+                stamina,
+                CombatState::default(),
+                LifeRecord::new(crate::player::state::canonical_player_id(username)),
+                lifecycle,
+            ))
+            .id();
+        (entity, helper)
+    }
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut valence::prelude::Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            payloads.push(
+                serde_json::from_slice(packet.data.0 .0)
+                    .expect("server_data payload should decode"),
+            );
+        }
+        payloads
     }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
@@ -745,26 +1696,30 @@ mod tests {
     }
 
     #[test]
-    fn death_arbiter_timeout_revives_when_fortune_remains() {
+    fn death_arbiter_timeout_enters_awaiting_revival_when_fortune_remains() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("revive-existing");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
                 death_arbiter_tick,
                 near_death_tick.after(death_arbiter_tick),
+                handle_revival_action_intents.after(near_death_tick),
             ),
         );
 
-        let entity = spawn_actor(
+        let (entity, mut helper) = spawn_client_actor(
             &mut app,
+            "Azure",
             Wounds {
                 health_current: 0.0,
                 health_max: 30.0,
@@ -788,35 +1743,51 @@ mod tests {
             let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
             assert_eq!(lifecycle.state, LifecycleState::NearDeath);
             assert_eq!(lifecycle.death_count, 1);
+            let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+            let mut insight_reader = insight_events.get_reader();
+            let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+            assert_eq!(insights.len(), 1);
+            assert_eq!(insights[0].payload.character_id, "offline:Azure");
+            assert_eq!(insights[0].payload.cause, "test");
+            assert_eq!(insights[0].payload.category, DeathInsightCategoryV1::Combat);
         }
 
         app.world_mut().resource_mut::<CombatClock>().tick = 701;
         app.update();
+        flush_client_packets(&mut app);
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
         let revived_events = app.world().resource::<Events<PlayerRevived>>();
-        assert_eq!(lifecycle.state, LifecycleState::Alive);
-        assert_eq!(lifecycle.fortune_remaining, 0);
-        assert_eq!(lifecycle.last_revive_tick, Some(701));
-        assert_eq!(
-            lifecycle.weakened_until_tick,
-            Some(701 + REVIVE_WEAKENED_TICKS)
-        );
-        assert!(wounds.health_current >= 6.0);
-        assert_eq!(revived_events.len(), 1);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
+        assert!(matches!(
+            lifecycle.awaiting_decision,
+            Some(RevivalDecision::Fortune { chance }) if (chance - 1.0).abs() < 1e-9
+        ));
+        assert_eq!(revived_events.len(), 0);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(payloads.iter().any(|payload| matches!(
+            payload.payload,
+            ServerDataPayloadV1::DeathScreen {
+                visible: true,
+                can_reincarnate: true,
+                can_terminate: true,
+                ..
+            }
+        )));
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn cultivation_death_without_fortune_terminates_after_deadline() {
+    fn cultivation_death_without_fortune_enters_awaiting_revival_after_deadline() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("terminate-existing");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 40 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
@@ -850,8 +1821,12 @@ mod tests {
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
         let terminated_events = app.world().resource::<Events<PlayerTerminated>>();
-        assert_eq!(lifecycle.state, LifecycleState::Terminated);
-        assert_eq!(terminated_events.len(), 1);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
+        assert!(matches!(
+            lifecycle.awaiting_decision,
+            Some(RevivalDecision::Tribulation { chance }) if (chance - 0.80).abs() < 1e-9
+        ));
+        assert_eq!(terminated_events.len(), 0);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -864,6 +1839,9 @@ mod tests {
         app.insert_resource(settings.clone());
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
 
         let entity = spawn_actor(
@@ -899,6 +1877,13 @@ mod tests {
         assert_eq!(lifecycle.state, LifecycleState::NearDeath);
         assert_eq!(lifecycle.near_death_deadline_tick, first_deadline);
         assert_eq!(lifecycle.death_count, 1);
+        let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+        let mut insight_reader = insight_events.get_reader();
+        let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].payload.character_id, "unassigned:life_record");
+        assert_eq!(insights[0].payload.cause, "first");
+        assert_eq!(insights[0].payload.category, DeathInsightCategoryV1::Combat);
 
         let connection = Connection::open(settings.db_path()).expect("db should open");
         let life_event_count: i64 = connection
@@ -914,6 +1899,78 @@ mod tests {
     }
 
     #[test]
+    fn natural_aging_death_emits_natural_death_insight_request() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("natural-aging-insight");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 440 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Ancestor".to_string(),
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Ancestor"),
+                DeathRegistry {
+                    char_id: "offline:Ancestor".to_string(),
+                    death_count: 4,
+                    last_death_tick: Some(300),
+                    last_death_zone: Some(ZoneDeathKind::Ordinary),
+                },
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 349.0,
+                    cap_by_realm: LifespanCapTable::CONDENSE,
+                    offline_pause_tick: None,
+                },
+                Position::new([9.0, 80.0, -3.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::NaturalAging,
+            context: serde_json::json!({"source": "lifespan_tick"}),
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+        let mut insight_reader = insight_events.get_reader();
+        let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+        assert_eq!(insights.len(), 1);
+        let payload = &insights[0].payload;
+        assert_eq!(payload.v, 1);
+        assert_eq!(payload.character_id, "offline:Ancestor");
+        assert_eq!(payload.cause, "cultivation:NaturalAging");
+        assert_eq!(payload.category, DeathInsightCategoryV1::Natural);
+        assert_eq!(payload.realm.as_deref(), Some("Condense"));
+        assert_eq!(payload.death_count, 5);
+        assert_eq!(payload.lifespan_remaining_years, Some(0.0));
+        assert_eq!(payload.zone_kind, DeathInsightZoneKindV1::Ordinary);
+        assert_eq!(payload.context["will_terminate"], true);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn life_events_are_append_only_and_atomic_with_state_updates() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("append-only-atomic");
@@ -922,14 +1979,17 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 691 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
                 death_arbiter_tick,
                 near_death_tick.after(death_arbiter_tick),
+                handle_revival_action_intents.after(near_death_tick),
                 crate::cultivation::death_hooks::on_player_revived.after(near_death_tick),
                 crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
             ),
@@ -1002,6 +2062,12 @@ mod tests {
 
         app.world_mut().resource_mut::<CombatClock>().tick = 691;
         app.update();
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 691,
+        });
+        app.update();
 
         let life_event_types: Vec<String> = connection
             .prepare(
@@ -1046,21 +2112,24 @@ mod tests {
     }
 
     #[test]
-    fn deceased_snapshot_export_writes_public_json() {
+    fn deceased_snapshot_export_writes_public_json_after_termination_confirmation() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("deceased-public-json");
         app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 40 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
             (
                 death_arbiter_tick,
                 near_death_tick.after(death_arbiter_tick),
+                handle_revival_action_intents.after(near_death_tick),
                 crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
             ),
         );
@@ -1088,6 +2157,12 @@ mod tests {
         app.update();
         app.world_mut().resource_mut::<CombatClock>().tick = 641;
         app.update();
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Terminate,
+            issued_at_tick: 641,
+        });
+        app.update();
 
         let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
         let index_path = settings.deceased_public_dir().join("_index.json");
@@ -1110,6 +2185,366 @@ mod tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_new_character_rehydrates_default_character_state_and_persists_slices() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("create-new-character");
+        let data_dir = root.join("data");
+        app.insert_resource(settings.clone());
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            &data_dir,
+            settings.db_path(),
+        ));
+        app.insert_resource(CombatClock { tick: 800 });
+
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let username = Username("Azure".to_string());
+        let _ = save_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            &PlayerState {
+                realm: "qi_refining_3".to_string(),
+                spirit_qi: 77.0,
+                spirit_qi_max: 120.0,
+                karma: 0.4,
+                experience: 2_500,
+                inventory_score: 0.8,
+            },
+            [99.0, 64.0, 99.0],
+            None,
+            None,
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: vec![Wound {
+                        location: BodyPart::Chest,
+                        kind: WoundKind::Cut,
+                        severity: 0.9,
+                        bleeding_per_sec: 2.0,
+                        created_at_tick: 1,
+                        inflicted_by: Some("offline:Enemy".to_string()),
+                    }],
+                },
+                Stamina {
+                    current: 1.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    last_drain_tick: Some(12),
+                    state: StaminaState::Exhausted,
+                },
+                CombatState {
+                    in_combat_until_tick: Some(900),
+                    last_attack_at_tick: Some(700),
+                    incoming_window: Some(DefenseWindow {
+                        opened_at_tick: 700,
+                        duration_ms: 100,
+                    }),
+                },
+                Lifecycle {
+                    character_id: "offline:Ancestor".to_string(),
+                    state: LifecycleState::Terminated,
+                    death_count: 9,
+                    fortune_remaining: 0,
+                    last_death_tick: Some(799),
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Ancestor"),
+                DeathRegistry {
+                    char_id: "offline:Ancestor".to_string(),
+                    death_count: 9,
+                    last_death_tick: Some(799),
+                    last_death_zone: Some(ZoneDeathKind::Death),
+                },
+                LifespanComponent {
+                    born_at_tick: 10,
+                    years_lived: 79.0,
+                    cap_by_realm: 80,
+                    offline_pause_tick: Some(700),
+                },
+                PlayerState {
+                    realm: "qi_refining_3".to_string(),
+                    spirit_qi: 50.0,
+                    spirit_qi_max: 120.0,
+                    karma: 0.4,
+                    experience: 9_999,
+                    inventory_score: 0.8,
+                },
+                Position::new([99.0, 64.0, 99.0]),
+                username.clone(),
+                SkillSet::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        let lifecycle = entity_ref
+            .get::<Lifecycle>()
+            .expect("lifecycle should remain attached");
+        let death_registry = entity_ref
+            .get::<DeathRegistry>()
+            .expect("death registry should be reset for new character");
+        let lifespan = entity_ref
+            .get::<LifespanComponent>()
+            .expect("lifespan should be reset for new character");
+        let player_state = entity_ref
+            .get::<PlayerState>()
+            .expect("player state should remain attached");
+        let position = entity_ref
+            .get::<Position>()
+            .expect("position should remain attached");
+        let cultivation = entity_ref
+            .get::<Cultivation>()
+            .expect("cultivation should be reattached for new character");
+        let meridians = entity_ref
+            .get::<MeridianSystem>()
+            .expect("meridians should be reattached for new character");
+        let learned = entity_ref
+            .get::<LearnedRecipes>()
+            .expect("learned recipes should be reattached for new character");
+        let inventory = entity_ref
+            .get::<PlayerInventory>()
+            .expect("inventory should be reinitialized for new character");
+
+        assert_eq!(lifecycle.state, LifecycleState::Alive);
+        assert_eq!(lifecycle.death_count, 0);
+        assert_eq!(lifecycle.fortune_remaining, 3);
+        assert_eq!(death_registry.death_count, 0);
+        assert_eq!(death_registry.char_id, lifecycle.character_id);
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+        assert_eq!(lifespan.years_lived, 0.0);
+        assert_eq!(player_state, &PlayerState::default());
+        assert_eq!(
+            position.get(),
+            Position::new(crate::player::spawn_position()).get()
+        );
+        assert_eq!(cultivation.realm, Realm::Awaken);
+        assert_eq!(cultivation.qi_current, 0.0);
+        assert_eq!(cultivation.qi_max, 10.0);
+        assert_eq!(meridians.opened_count(), 0);
+        assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
+        assert!(inventory.revision.0 >= 1);
+
+        let persisted = crate::player::state::load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+        );
+        assert_eq!(persisted.state, PlayerState::default());
+        assert_eq!(persisted.position, crate::player::spawn_position());
+        assert!(persisted.inventory.is_some());
+        assert_eq!(
+            persisted.lifespan.expect("fresh lifespan should persist"),
+            LifespanComponent::new(LifespanCapTable::MORTAL),
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shrine_anchor_allows_fortune_stage_under_recent_death_and_high_karma() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("shrine-fortune-stage");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+            ),
+        );
+
+        let player_state = PlayerState {
+            realm: "mortal".to_string(),
+            spirit_qi: 0.0,
+            spirit_qi_max: 100.0,
+            karma: 0.9,
+            experience: 0,
+            inventory_score: 0.0,
+        };
+
+        let wounds = Wounds {
+            health_current: 0.0,
+            health_max: 30.0,
+            entries: Vec::new(),
+        };
+
+        let without_shrine = app
+            .world_mut()
+            .spawn((
+                wounds.clone(),
+                Stamina::default(),
+                CombatState::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                Lifecycle {
+                    fortune_remaining: 1,
+                    spawn_anchor: None,
+                    ..Default::default()
+                },
+                DeathRegistry::new("offline:NoShrine"),
+                player_state.clone(),
+            ))
+            .id();
+
+        let with_shrine = app
+            .world_mut()
+            .spawn((
+                wounds,
+                Stamina::default(),
+                CombatState::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                Lifecycle {
+                    fortune_remaining: 1,
+                    spawn_anchor: Some([11.0, 22.0, 33.0]),
+                    ..Default::default()
+                },
+                DeathRegistry::new("offline:WithShrine"),
+                player_state,
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: without_shrine,
+            cause: "test".to_string(),
+            at_tick: 100,
+        });
+        app.world_mut().send_event(DeathEvent {
+            target: with_shrine,
+            cause: "test".to_string(),
+            at_tick: 100,
+        });
+        app.update();
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 701;
+        app.update();
+
+        let lifecycle_without_shrine = app
+            .world()
+            .entity(without_shrine)
+            .get::<Lifecycle>()
+            .expect("lifecycle should exist");
+        assert!(matches!(
+            lifecycle_without_shrine.awaiting_decision,
+            Some(RevivalDecision::Tribulation { chance }) if (chance - 0.80).abs() < 1e-9
+        ));
+
+        let lifecycle_with_shrine = app
+            .world()
+            .entity(with_shrine)
+            .get::<Lifecycle>()
+            .expect("lifecycle should exist");
+        assert!(matches!(
+            lifecycle_with_shrine.awaiting_decision,
+            Some(RevivalDecision::Fortune { chance }) if (chance - 1.0).abs() < 1e-9
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reincarnate_places_player_at_shrine_anchor_or_world_spawn() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("revive-spawn-anchor");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let shrine_anchor = [123.0, 45.0, -67.0];
+
+        let with_shrine = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some(shrine_anchor),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let without_shrine = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: None,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity: with_shrine,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 42,
+        });
+        app.world_mut().send_event(RevivalActionIntent {
+            entity: without_shrine,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 42,
+        });
+        app.update();
+
+        let with_shrine_pos = app
+            .world()
+            .entity(with_shrine)
+            .get::<Position>()
+            .expect("position should exist")
+            .get();
+        assert_eq!(with_shrine_pos, Position::new(shrine_anchor).get());
+
+        let without_shrine_pos = app
+            .world()
+            .entity(without_shrine)
+            .get::<Position>()
+            .expect("position should exist")
+            .get();
+        assert_eq!(
+            without_shrine_pos,
+            Position::new(crate::player::spawn_position()).get()
+        );
 
         let _ = fs::remove_dir_all(root);
     }

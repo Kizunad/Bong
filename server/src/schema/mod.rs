@@ -14,6 +14,7 @@ pub mod combat_event;
 pub mod combat_hud;
 pub mod common;
 pub mod cultivation;
+pub mod death_insight;
 pub mod inventory;
 pub mod lingtian;
 pub mod narration;

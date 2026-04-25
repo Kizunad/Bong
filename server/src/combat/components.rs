@@ -12,6 +12,7 @@ pub const TICKS_PER_SECOND: u64 = 20;
 pub const ATTACK_STAMINA_COST: f32 = 3.0;
 pub const IN_COMBAT_WINDOW_TICKS: u64 = 15 * TICKS_PER_SECOND;
 pub const NEAR_DEATH_WINDOW_TICKS: u64 = 30 * TICKS_PER_SECOND;
+pub const REVIVAL_CONFIRM_WINDOW_TICKS: u64 = 60 * TICKS_PER_SECOND;
 pub const REVIVE_WEAKENED_TICKS: u64 = 180 * TICKS_PER_SECOND;
 pub const BLEED_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const STAMINA_TICK_INTERVAL_TICKS: u64 = 4;
@@ -165,6 +166,28 @@ pub enum LifecycleState {
     Terminated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RevivalDecision {
+    Fortune { chance: f64 },
+    Tribulation { chance: f64 },
+}
+
+impl RevivalDecision {
+    pub fn chance_shown(self) -> f64 {
+        match self {
+            Self::Fortune { chance } | Self::Tribulation { chance } => chance,
+        }
+    }
+
+    pub fn can_reincarnate(self) -> bool {
+        true
+    }
+
+    pub fn can_terminate(self) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct Lifecycle {
     pub character_id: String,
@@ -172,8 +195,17 @@ pub struct Lifecycle {
     pub fortune_remaining: u8,
     pub last_death_tick: Option<u64>,
     pub last_revive_tick: Option<u64>,
+    /// 玩家灵龛坐标（如有）。
+    ///
+    /// 仅用于重生点选择与“拥有灵龛归属”判定；灵龛保护/揭露等社交语义由 plan-social-v1 承接。
+    #[serde(default)]
+    pub spawn_anchor: Option<[f64; 3]>,
     #[serde(default)]
     pub near_death_deadline_tick: Option<u64>,
+    #[serde(default)]
+    pub awaiting_decision: Option<RevivalDecision>,
+    #[serde(default)]
+    pub revival_decision_deadline_tick: Option<u64>,
     pub weakened_until_tick: Option<u64>,
     pub state: LifecycleState,
 }
@@ -186,7 +218,10 @@ impl Default for Lifecycle {
             fortune_remaining: DEFAULT_FORTUNE_REMAINING,
             last_death_tick: None,
             last_revive_tick: None,
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: LifecycleState::Alive,
         }
@@ -208,13 +243,24 @@ impl Lifecycle {
     pub fn revive(&mut self, now_tick: u64) {
         self.last_revive_tick = Some(now_tick);
         self.near_death_deadline_tick = None;
+        self.awaiting_decision = None;
+        self.revival_decision_deadline_tick = None;
         self.weakened_until_tick = Some(now_tick.saturating_add(REVIVE_WEAKENED_TICKS));
         self.state = LifecycleState::Alive;
+    }
+
+    pub fn await_revival_decision(&mut self, decision: RevivalDecision, deadline_tick: u64) {
+        self.near_death_deadline_tick = None;
+        self.awaiting_decision = Some(decision);
+        self.revival_decision_deadline_tick = Some(deadline_tick);
+        self.state = LifecycleState::AwaitingRevival;
     }
 
     pub fn terminate(&mut self, now_tick: u64) {
         self.last_death_tick = Some(now_tick);
         self.near_death_deadline_tick = None;
+        self.awaiting_decision = None;
+        self.revival_decision_deadline_tick = None;
         self.state = LifecycleState::Terminated;
     }
 }

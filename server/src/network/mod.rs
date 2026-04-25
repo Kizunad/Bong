@@ -41,6 +41,7 @@ use valence::prelude::{
     IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
+use crate::combat::components::Lifecycle;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::life_record::LifeRecord;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
@@ -49,15 +50,16 @@ use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
-    world_model_snapshot_to_mirror_fields, AgentWorldModelCommandRecord,
-    AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord, AgentWorldModelSnapshotRecord,
-    PersistenceSettings, WORLD_MODEL_STATE_KEY,
+    persist_life_record_death_insight, world_model_snapshot_to_mirror_fields,
+    AgentWorldModelCommandRecord, AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord,
+    AgentWorldModelSnapshotRecord, PersistenceSettings, WORLD_MODEL_STATE_KEY,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
 use crate::schema::common::{
-    CommandType, EventKind, NarrationScope, NarrationStyle, NpcStateKind, PlayerTrend,
+    CommandType, EventKind, NarrationKind, NarrationScope, NarrationStyle, NpcStateKind,
+    PlayerTrend,
 };
 use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -81,6 +83,13 @@ const DEFAULT_PLAYER_RECENT_DEATHS: u32 = 0;
 const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
 const NARRATION_DEDUPE_CAPACITY: usize = 512;
 const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
+
+type ClientLifeRecordQueryItem<'a> = (
+    Option<&'a Username>,
+    Option<&'a Lifecycle>,
+    &'a mut LifeRecord,
+);
+type ClientLifeRecordQueryFilter = With<Client>;
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -232,6 +241,8 @@ pub fn register(app: &mut App) {
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
                 .after(crate::combat::resolve::resolve_attack_intents),
+            combat_bridge::publish_death_insight_requests
+                .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
         ),
     );
@@ -242,12 +253,15 @@ pub fn register(app: &mut App) {
             cultivation_bridge::publish_forge_events,
             cultivation_bridge::publish_cultivation_death_events,
             cultivation_bridge::publish_insight_requests,
-            client_request_handler::handle_client_request_payloads,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
         ),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::handle_client_request_payloads,
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(
@@ -268,6 +282,7 @@ pub fn register(app: &mut App) {
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
+            dropped_loot_sync_emit::emit_changed_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
             unlocks_sync_emit::emit_unlocks_sync_payloads,
             // After resolve so we read freshly-emitted CombatEvents the same tick.
@@ -985,6 +1000,7 @@ fn process_redis_inbound(
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
+    mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
@@ -1026,6 +1042,8 @@ fn process_redis_inbound(
                     &mut clients,
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
+                    &mut life_records,
+                    persistence_settings.as_deref(),
                     narr.narrations.as_slice(),
                 );
             }
@@ -1360,6 +1378,8 @@ fn process_agent_narrations_with_dedupe(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
+    life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    persistence_settings: Option<&PersistenceSettings>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
@@ -1373,18 +1393,99 @@ fn process_agent_narrations_with_dedupe(
             continue;
         }
 
+        archive_death_insight_narration(life_records, persistence_settings, narration);
         process_single_narration(clients, zone_registry, narration);
     }
 }
 
 fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
     format!(
-        "scope={:?}|target={}|style={:?}|text={}",
+        "scope={:?}|target={}|style={:?}|kind={:?}|text={}",
         narration.scope,
         narration.target.as_deref().unwrap_or_default(),
         narration.style,
+        narration.kind,
         narration.text
     )
+}
+
+fn archive_death_insight_narration(
+    life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    persistence_settings: Option<&PersistenceSettings>,
+    narration: &crate::schema::narration::Narration,
+) {
+    if narration.kind != Some(NarrationKind::DeathInsight)
+        || narration.scope != NarrationScope::Player
+    {
+        return;
+    }
+
+    let Some(target) = narration.target.as_deref() else {
+        return;
+    };
+    let Some((_, _, mut life_record)) =
+        life_records
+            .iter_mut()
+            .find(|(username, lifecycle, record)| {
+                death_insight_target_matches_life_record(target, *username, *lifecycle, record)
+            })
+    else {
+        tracing::debug!(
+            "[bong][network] death insight narration target {target:?} matched no active LifeRecord"
+        );
+        return;
+    };
+
+    life_record.push_death_insight(
+        narration.text.clone(),
+        narration_style_to_wire_value(&narration.style),
+    );
+
+    if let Some(settings) = persistence_settings {
+        if let Err(error) = persist_life_record_death_insight(settings, &life_record) {
+            tracing::warn!(
+                "[bong][network] failed to persist death insight for {}: {error}",
+                life_record.character_id
+            );
+        }
+    }
+}
+
+fn death_insight_target_matches_life_record(
+    target: &str,
+    username: Option<&Username>,
+    lifecycle: Option<&Lifecycle>,
+    life_record: &LifeRecord,
+) -> bool {
+    normalize_life_record_target(target).is_some_and(|target_key| {
+        normalize_life_record_target(life_record.character_id.as_str()).as_deref()
+            == Some(target_key.as_str())
+            || lifecycle
+                .and_then(|lifecycle| normalize_life_record_target(lifecycle.character_id.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+            || username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .and_then(|canonical| normalize_life_record_target(canonical.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+            || username
+                .and_then(|username| normalize_life_record_target(username.0.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+    })
+}
+
+fn normalize_life_record_target(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let stripped = trimmed.strip_prefix("offline:").unwrap_or(trimmed).trim();
+    if stripped.is_empty() {
+        return None;
+    }
+    Some(stripped.to_ascii_lowercase())
 }
 
 fn process_single_narration(
@@ -2038,6 +2139,7 @@ mod tests {
                     target: None,
                     text: "天地震荡，灵气翻涌。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2095,6 +2197,7 @@ mod tests {
                     target: Some("blood_valley".to_string()),
                     text: "血谷雷云聚集。".to_string(),
                     style: NarrationStyle::SystemWarning,
+                    kind: None,
                 },
             );
 
@@ -2136,6 +2239,7 @@ mod tests {
                     target: Some("Steve".to_string()),
                     text: "第一段单人叙事。".to_string(),
                     style: NarrationStyle::Perception,
+                    kind: None,
                 },
             );
 
@@ -2168,6 +2272,7 @@ mod tests {
                     target: Some("offline:Steve".to_string()),
                     text: "第二段单人叙事。".to_string(),
                     style: NarrationStyle::Perception,
+                    kind: None,
                 },
             );
 
@@ -2209,6 +2314,7 @@ mod tests {
                     target: Some("offline:Ghost".to_string()),
                     text: "不存在目标，不应泄露。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2249,6 +2355,7 @@ mod tests {
                 target: None,
                 text: "重复叙事只应投递一次。".to_string(),
                 style: NarrationStyle::Narration,
+                kind: None,
             };
 
             enqueue_single_narration(&tx_inbound, narration.clone());
