@@ -21,7 +21,7 @@ use valence::prelude::{
 
 use crate::world::dimension::{DimensionLayers, OverworldLayer};
 
-pub use raster::{raster_dir_from_manifest_path, TerrainProvider};
+pub use raster::{raster_dir_from_manifest_path, TerrainProvider, TerrainProviders};
 
 const WORLD_HEIGHT: u32 = 512;
 pub const MIN_Y: i32 = -64;
@@ -105,21 +105,26 @@ pub fn spawn_raster_world(
 
     let layer = valence::prelude::LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
     let entity = commands.spawn((layer, OverworldLayer)).id();
-    commands.insert_resource(provider);
+    // Wrap the loaded provider in `TerrainProviders` so consumers can route by `DimensionKind`.
+    // `tsy` stays `None` until `plan-tsy-worldgen-v1` ships the TSY manifest.
+    commands.insert_resource(TerrainProviders {
+        overworld: provider,
+        tsy: None,
+    });
     entity
 }
 
 fn generate_chunks_around_players(
     mut layers: Query<&mut ChunkLayer>,
     clients: Query<(View, &VisibleChunkLayer), With<Client>>,
-    terrain: Option<Res<TerrainProvider>>,
+    providers: Option<Res<TerrainProviders>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
 ) {
-    let Some(terrain) = terrain else {
+    let Some(providers) = providers else {
         return;
     };
-    let terrain = terrain.into_inner();
+    let terrain = &providers.overworld;
     let generated = generated.as_mut();
 
     // For now we only generate raster-backed chunks for the overworld layer.
@@ -145,11 +150,11 @@ fn generate_chunks_around_players(
 
 fn remove_unviewed_chunks(
     mut layers: Query<&mut ChunkLayer>,
-    terrain: Option<Res<TerrainProvider>>,
+    providers: Option<Res<TerrainProviders>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
 ) {
-    if terrain.is_none() {
+    if providers.is_none() {
         return;
     }
     let Some(dimension_layers) = dimension_layers else {

@@ -17,7 +17,7 @@ use crate::player::{
     state::canonical_player_id,
 };
 use crate::schema::chat_message::ChatMessageV1;
-use crate::world::terrain::TerrainProvider;
+use crate::world::terrain::{TerrainProvider, TerrainProviders};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 // chat_collector 当前同时承载普通聊天收集与开发期快捷命令（如 `!spawn`/`!gm`），
@@ -37,7 +37,7 @@ impl Resource for ChatCollectorRateLimit {}
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    terrain: Option<Res<TerrainProvider>>,
+    providers: Option<Res<TerrainProviders>>,
     mut player_sets: ParamSet<(
         Query<(&Username, &Position), With<Client>>,
         Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
@@ -76,7 +76,7 @@ pub fn collect_player_chat(
             player_info,
             &mut player_sets.p1(),
             &zone_registry,
-            terrain.as_deref(),
+            providers.as_deref().map(|p| &p.overworld),
             &mut rate_limit,
             pending_scenario.as_deref_mut(),
             &mut debug_combat_tx,
