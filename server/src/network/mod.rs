@@ -460,6 +460,7 @@ fn build_world_state_snapshot(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn build_player_state_payload(
     player_state: &PlayerState,
     zone: impl Into<String>,
@@ -469,6 +470,7 @@ pub(crate) fn build_player_state_payload(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn collect_players_for_world_state<'a, I>(
     clients: I,
     zone_registry: &ZoneRegistry,

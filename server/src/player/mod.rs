@@ -1,11 +1,10 @@
 pub mod gameplay;
-mod progression;
 pub mod state;
 
 use self::state::{
     load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_progression_slice, save_player_skill_slice, save_player_slices,
-    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_skill_slice, save_player_slices, save_player_slow_slice, PlayerState,
+    PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
@@ -23,7 +22,6 @@ const WELCOME_MESSAGE: &str =
     "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
-const PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS: u64 = 90 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -56,8 +54,7 @@ pub fn register(app: &mut App) {
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
-            autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
-            flush_changed_player_skills.after(autosave_player_progression_slices),
+            flush_changed_player_skills.after(autosave_player_slow_and_ui_slices),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_skills),
@@ -318,35 +315,6 @@ fn autosave_player_slow_and_ui_slices(
     );
 }
 
-fn autosave_player_progression_slices(
-    persistence: Res<PlayerStatePersistence>,
-    timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &PlayerState), With<Client>>,
-) {
-    if !timer
-        .ticks
-        .is_multiple_of(PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS)
-    {
-        return;
-    }
-
-    let mut saved_count = 0usize;
-
-    for (username, player_state) in &players {
-        match save_player_progression_slice(&persistence, username.0.as_str(), player_state) {
-            Ok(_) => saved_count += 1,
-            Err(error) => tracing::warn!(
-                "[bong][player] 90s progression flush failed for `{}`: {error}",
-                username.0,
-            ),
-        }
-    }
-
-    tracing::info!(
-        "[bong][player] flushed {saved_count} progression player slice(s) after {PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS} ticks"
-    );
-}
-
 fn flush_changed_player_inventories(
     persistence: Res<PlayerStatePersistence>,
     players: Query<ChangedInventoryClientsQueryItem<'_>, ChangedInventoryClientsQueryFilter>,
@@ -559,8 +527,7 @@ mod tests {
                 tick_player_persistence_timer,
                 autosave_player_core_slices.after(tick_player_persistence_timer),
                 autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
-                autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
-                flush_changed_player_inventories.after(autosave_player_progression_slices),
+                flush_changed_player_inventories.after(autosave_player_slow_and_ui_slices),
             ),
         );
 
@@ -617,24 +584,6 @@ mod tests {
             (pos_x_after_slow, pos_y_after_slow, pos_z_after_slow),
             (42.0, 77.0, -3.5)
         );
-
-        app.world_mut()
-            .resource_mut::<PlayerStateAutosaveTimer>()
-            .ticks = PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS - 1;
-        app.update();
-
-        let (
-            realm_after_progression,
-            _,
-            spirit_qi_max_after_progression,
-            _,
-            experience_after_progression,
-            _,
-        ) = read_core_snapshot(&db_path);
-
-        assert_eq!(realm_after_progression, "qi_refining_3");
-        assert_eq!(spirit_qi_max_after_progression, 100.0);
-        assert_eq!(experience_after_progression, 1_200);
 
         let _ = fs::remove_dir_all(&data_dir);
     }

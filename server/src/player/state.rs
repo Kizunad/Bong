@@ -375,16 +375,6 @@ pub fn save_player_slow_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
-pub fn save_player_progression_slice(
-    persistence: &PlayerStatePersistence,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<PathBuf> {
-    let mut connection = open_player_connection(persistence)?;
-    persist_player_progression_slice_in_sqlite(&mut connection, username, state)?;
-    Ok(persistence.db_path().to_path_buf())
-}
-
 pub fn save_player_inventory_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -840,50 +830,6 @@ fn persist_player_slow_slice_in_sqlite(
             params![username, PLAYER_ROW_SCHEMA_VERSION, last_updated_wall],
         )
         .map_err(io::Error::other)?;
-
-    Ok(())
-}
-
-fn persist_player_progression_slice_in_sqlite(
-    connection: &mut Connection,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<()> {
-    let normalized = state.normalized();
-    let experience = experience_to_sql(normalized.experience)?;
-    let last_updated_wall = current_unix_seconds();
-    let updated = connection
-        .execute(
-            "
-            UPDATE player_core
-            SET realm = ?2,
-                spirit_qi_max = ?3,
-                experience = ?4,
-                schema_version = ?5,
-                last_updated_wall = ?6
-            WHERE username = ?1
-            ",
-            params![
-                username,
-                normalized.realm,
-                normalized.spirit_qi_max,
-                experience,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-
-    if updated == 0 {
-        persist_player_slices_in_sqlite(
-            connection,
-            username,
-            state,
-            crate::player::spawn_position(),
-            None,
-            &SkillSet::default(),
-        )?;
-    }
 
     Ok(())
 }
