@@ -117,6 +117,10 @@
                     "type": "string"
                   }
                 ]
+              },
+              "kind": {
+                "const": "death_insight",
+                "type": "string"
               }
             }
           }
@@ -411,6 +415,43 @@
         "contamination_total": {
           "minimum": 0,
           "type": "number"
+        },
+        "lifespan": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "years_lived",
+            "cap_by_realm",
+            "remaining_years",
+            "death_penalty_years",
+            "tick_rate_multiplier",
+            "is_wind_candle"
+          ],
+          "properties": {
+            "years_lived": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "cap_by_realm": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "remaining_years": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "death_penalty_years": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tick_rate_multiplier": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "is_wind_candle": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },
@@ -4861,6 +4902,92 @@
           }
         },
         "metabolism_note": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "visible",
+        "cause",
+        "luck_remaining",
+        "final_words",
+        "countdown_until_ms",
+        "can_reincarnate",
+        "can_terminate"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "death_screen",
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "cause": {
+          "type": "string"
+        },
+        "luck_remaining": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "final_words": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "countdown_until_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "can_reincarnate": {
+          "type": "boolean"
+        },
+        "can_terminate": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "visible",
+        "final_words",
+        "epilogue",
+        "archetype_suggestion"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "terminate_screen",
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "final_words": {
+          "type": "string"
+        },
+        "epilogue": {
+          "type": "string"
+        },
+        "archetype_suggestion": {
           "type": "string"
         }
       }

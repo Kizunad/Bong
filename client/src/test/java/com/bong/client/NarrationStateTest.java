@@ -27,7 +27,7 @@ public class NarrationStateTest {
     public void typedNarrationPayloadRoutesIntoNarrationState() {
         BongServerPayload.NarrationPayload payload = new BongServerPayload.NarrationPayload(
                 1,
-                List.of(new BongServerPayload.Narration("broadcast", "天道震怒，血谷上空劫云翻涌。", "system_warning"))
+                List.of(new BongServerPayload.Narration("broadcast", "天道震怒，血谷上空劫云翻涌。", "system_warning", null))
         );
 
         assertTrue(BongServerPayloadRouter.route(null, payload));
@@ -45,7 +45,8 @@ public class NarrationStateTest {
         BongServerPayload.Narration narration = new BongServerPayload.Narration(
                 "broadcast",
                 "雷劫将至，速避高处。",
-                "system_warning"
+                "system_warning",
+                null
         );
 
         NarrationState.NarrationSnapshot snapshot = NarrationState.recordNarration(narration, 1_000L, chatEvents::add);
@@ -68,7 +69,8 @@ public class NarrationStateTest {
         BongServerPayload.Narration narration = new BongServerPayload.Narration(
                 "broadcast",
                 "天地新纪已开，万宗共听敕令。",
-                "era_decree"
+                "era_decree",
+                null
         );
 
         NarrationState.NarrationSnapshot snapshot = NarrationState.recordNarration(narration, 2_000L, ignored -> {
@@ -90,7 +92,8 @@ public class NarrationStateTest {
         BongServerPayload.Narration narration = new BongServerPayload.Narration(
                 "broadcast",
                 "山风拂过，古木间响起细碎回音。",
-                "narration"
+                "narration",
+                null
         );
 
         NarrationState.NarrationSnapshot snapshot = NarrationState.recordNarration(narration, 3_000L, chatEvents::add);

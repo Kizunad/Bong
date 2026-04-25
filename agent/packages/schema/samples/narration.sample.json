@@ -10,7 +10,8 @@
       "scope": "player",
       "target": "offline:Steve",
       "text": "你感到一股凌厉的杀意从天而降，浑身汗毛直竖。",
-      "style": "perception"
+      "style": "perception",
+      "kind": "death_insight"
     }
   ]
 }

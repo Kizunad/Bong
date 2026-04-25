@@ -14,7 +14,7 @@ public final class DeathStateStore {
     public record State(
         boolean visible,
         String cause,              // "dao_heart_shatter" / "pk" / "tribulation" / ...
-        float luckRemaining,       // 运数 0..1
+        float luckRemaining,       // 重生概率 0..1
         List<String> finalWords,   // 遗念
         long countdownUntilMs,     // revive deadline
         boolean canReincarnate,

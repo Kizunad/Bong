@@ -74,6 +74,9 @@
     },
     "has_shrine": {
       "type": "boolean"
+    },
+    "includes_current_death": {
+      "type": "boolean"
     }
   }
 }

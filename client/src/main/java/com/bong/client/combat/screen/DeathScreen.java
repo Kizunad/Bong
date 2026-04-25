@@ -10,7 +10,7 @@ import net.minecraft.text.Text;
 import java.util.List;
 
 /**
- * Full-screen death overlay (plan §U3 / §2.3). Shows 运数 / 遗念 / 60s
+ * Full-screen death overlay (plan §U3 / §2.3). Shows 重生概率 / 遗念 / 60s
  * countdown + 重生/终结 buttons.
  *
  * <p>Authoritative state comes from {@link DeathStateStore}; when the server
@@ -45,13 +45,13 @@ public final class DeathScreen extends Screen {
         if (state.canReincarnate()) {
             this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("\u91cd\u751f"),
-                b -> ClientRequestSender.send("combat.reincarnate", null)
+                b -> ClientRequestSender.send("combat_reincarnate", null)
             ).dimensions(centerX - 110, y, 100, 20).build());
         }
         if (state.canTerminate()) {
             this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("\u7ec8\u7ed3"),
-                b -> ClientRequestSender.send("combat.terminate", null)
+                b -> ClientRequestSender.send("combat_terminate", null)
             ).dimensions(centerX + 10, y, 100, 20).build());
         }
     }
@@ -85,7 +85,7 @@ public final class DeathScreen extends Screen {
         }
         context.drawCenteredTextWithShadow(
             this.textRenderer,
-            "\u8fd0\u6570: " + Math.round(state.luckRemaining() * 100) + "%",
+            "\u91cd\u751f\u6982\u7387: " + Math.round(state.luckRemaining() * 100) + "%",
             width / 2, luckBarY - 12, TEXT_COLOR
         );
 

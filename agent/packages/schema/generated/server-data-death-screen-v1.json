@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "visible",
+    "cause",
+    "luck_remaining",
+    "final_words",
+    "countdown_until_ms",
+    "can_reincarnate",
+    "can_terminate"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "death_screen",
+      "type": "string"
+    },
+    "visible": {
+      "type": "boolean"
+    },
+    "cause": {
+      "type": "string"
+    },
+    "luck_remaining": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "final_words": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "countdown_until_ms": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "can_reincarnate": {
+      "type": "boolean"
+    },
+    "can_terminate": {
+      "type": "boolean"
+    }
+  }
+}

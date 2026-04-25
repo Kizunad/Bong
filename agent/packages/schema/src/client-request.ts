@@ -182,6 +182,33 @@ export const BotanyHarvestRequestV1 = Type.Object(
 );
 export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
 
+export const CombatReincarnateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_reincarnate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatReincarnateRequestV1 = Static<typeof CombatReincarnateRequestV1>;
+
+export const CombatTerminateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_terminate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatTerminateRequestV1 = Static<typeof CombatTerminateRequestV1>;
+
+export const CombatCreateNewCharacterRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_create_new_character"),
+  },
+  { additionalProperties: false },
+);
+export type CombatCreateNewCharacterRequestV1 = Static<typeof CombatCreateNewCharacterRequestV1>;
+
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
 export const AlchemyOpenFurnaceRequestV1 = Type.Object(
@@ -297,6 +324,9 @@ export const ClientRequestV1 = Type.Union([
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,
   BotanyHarvestRequestV1,
+  CombatReincarnateRequestV1,
+  CombatTerminateRequestV1,
+  CombatCreateNewCharacterRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

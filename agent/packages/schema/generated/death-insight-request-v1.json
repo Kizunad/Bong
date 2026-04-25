@@ -1,0 +1,160 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "request_id",
+    "character_id",
+    "at_tick",
+    "cause",
+    "category",
+    "zone_kind",
+    "death_count",
+    "recent_biography",
+    "context"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "request_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "character_id": {
+      "minLength": 1,
+      "maxLength": 160,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cause": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "category": {
+      "description": "遗念请求分类：战斗、修炼、老死、劫数",
+      "anyOf": [
+        {
+          "const": "combat",
+          "type": "string"
+        },
+        {
+          "const": "cultivation",
+          "type": "string"
+        },
+        {
+          "const": "natural",
+          "type": "string"
+        },
+        {
+          "const": "tribulation",
+          "type": "string"
+        }
+      ]
+    },
+    "realm": {
+      "description": "6 境界",
+      "anyOf": [
+        {
+          "const": "Awaken",
+          "type": "string"
+        },
+        {
+          "const": "Induce",
+          "type": "string"
+        },
+        {
+          "const": "Condense",
+          "type": "string"
+        },
+        {
+          "const": "Solidify",
+          "type": "string"
+        },
+        {
+          "const": "Spirit",
+          "type": "string"
+        },
+        {
+          "const": "Void",
+          "type": "string"
+        }
+      ]
+    },
+    "player_realm": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "zone_kind": {
+      "description": "死亡地点域标签",
+      "anyOf": [
+        {
+          "const": "ordinary",
+          "type": "string"
+        },
+        {
+          "const": "death",
+          "type": "string"
+        },
+        {
+          "const": "negative",
+          "type": "string"
+        }
+      ]
+    },
+    "death_count": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "rebirth_chance": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "lifespan_remaining_years": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "recent_biography": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "maxLength": 500,
+        "type": "string"
+      }
+    },
+    "position": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {}
+      }
+    }
+  }
+}

@@ -47,6 +47,7 @@ export const RebirthChanceInputV1 = Type.Object(
     death_zone: ZoneDeathKind,
     karma: Type.Number(),
     has_shrine: Type.Boolean(),
+    includes_current_death: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

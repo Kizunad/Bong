@@ -32,6 +32,9 @@ import {
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
   BotanyHarvestRequestV1,
+  CombatCreateNewCharacterRequestV1,
+  CombatReincarnateRequestV1,
+  CombatTerminateRequestV1,
   BreakthroughRequestV1,
   ClientRequestV1,
   ForgeRequestV1,
@@ -40,6 +43,7 @@ import {
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
   DeathRegistryV1,
   LifespanCapByRealmV1,
@@ -60,6 +64,8 @@ import {
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemySessionV1,
+  ServerDataDeathScreenV1,
+  ServerDataTerminateScreenV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanySkillV1,
   ServerDataV1,
@@ -91,6 +97,7 @@ export const SCHEMA_REGISTRY = {
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
+  deathInsightRequestV1: DeathInsightRequestV1,
   deathRegistryV1: DeathRegistryV1,
   lifespanCapByRealmV1: LifespanCapByRealmV1,
   lifespanComponentV1: LifespanComponentV1,
@@ -105,8 +112,13 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
+  clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
+  clientRequestCombatTerminateV1: CombatTerminateRequestV1,
+  clientRequestCombatCreateNewCharacterV1: CombatCreateNewCharacterRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  serverDataDeathScreenV1: ServerDataDeathScreenV1,
+  serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -155,6 +167,7 @@ export const GENERATED_SCHEMA_FILES = {
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
+  "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
   "lifespan-cap-by-realm-v1.json": SCHEMA_REGISTRY.lifespanCapByRealmV1,
   "lifespan-component-v1.json": SCHEMA_REGISTRY.lifespanComponentV1,
@@ -172,10 +185,18 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
+  "client-request-combat-reincarnate-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatReincarnateV1,
+  "client-request-combat-terminate-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatTerminateV1,
+  "client-request-combat-create-new-character-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatCreateNewCharacterV1,
   "server-data-botany-harvest-progress-v1.json":
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
   "server-data-botany-skill-v1.json":
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
+  "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)

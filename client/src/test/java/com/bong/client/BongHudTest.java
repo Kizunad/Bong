@@ -47,7 +47,7 @@ public class BongHudTest {
     @Test
     public void toastStateRendersCenteredOverlay() {
         NarrationState.recordNarration(
-                new BongServerPayload.Narration("broadcast", "雷劫将至，速避高处。", "system_warning"),
+                new BongServerPayload.Narration("broadcast", "雷劫将至，速避高处。", "system_warning", null),
                 1_000L,
                 ignored -> {
                 }

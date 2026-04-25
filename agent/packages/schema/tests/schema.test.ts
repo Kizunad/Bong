@@ -9,6 +9,7 @@ import {
 } from "../src/agent-command.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
   INTENSITY_MAX,
@@ -247,6 +248,12 @@ describe("sample files pass schema validation", () => {
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("death-insight-request.sample.json", () => {
+    const data = loadSample("death-insight-request.sample.json");
+    const result = validate(DeathInsightRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import Redis from "ioredis";
 import type { Command, Narration } from "@bong/schema";
+import { DeathInsightRuntime } from "./death-insight-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
@@ -107,11 +108,18 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey,
     model: options.model,
   });
+  const deathInsightCleanup = await startDeathInsightRuntime({
+    redisUrl: config.redisUrl,
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    model: options.model,
+  });
 
   try {
     await runRuntime(config);
   } finally {
     await insightCleanup();
+    await deathInsightCleanup();
   }
 }
 
@@ -152,6 +160,44 @@ async function startInsightRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] insight runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startDeathInsightRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DeathInsightRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof DeathInsightRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new DeathInsightRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] death insight runtime online"))
+    .catch((error) => console.warn("[tiandao] death insight runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] death insight runtime disconnect error:", error);
     }
   };
 }

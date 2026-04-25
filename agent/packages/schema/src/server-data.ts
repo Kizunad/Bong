@@ -56,6 +56,18 @@ const CultivationCracksArrayV1 = Type.Array(
   },
 );
 
+const LifespanPreviewV1 = Type.Object(
+  {
+    years_lived: Type.Number({ minimum: 0 }),
+    cap_by_realm: Type.Integer({ minimum: 1 }),
+    remaining_years: Type.Number({ minimum: 0 }),
+    death_penalty_years: Type.Integer({ minimum: 0 }),
+    tick_rate_multiplier: Type.Number({ minimum: 0 }),
+    is_wind_candle: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -76,6 +88,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("alchemy_outcome_resolved"),
   Type.Literal("alchemy_recipe_book"),
   Type.Literal("alchemy_contamination"),
+  Type.Literal("death_screen"),
+  Type.Literal("terminate_screen"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -174,6 +188,7 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     open_progress: Type.Optional(CultivationProgressArrayV1),
     cracks_count: Type.Optional(CultivationCracksArrayV1),
     contamination_total: Type.Number({ minimum: 0 }),
+    lifespan: Type.Optional(LifespanPreviewV1),
   },
   { additionalProperties: false },
 );
@@ -406,6 +421,35 @@ export type ServerDataAlchemyContaminationV1 = Static<
   typeof ServerDataAlchemyContaminationV1
 >;
 
+export const ServerDataDeathScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("death_screen"),
+    visible: Type.Boolean(),
+    cause: Type.String(),
+    luck_remaining: Type.Number({ minimum: 0, maximum: 1 }),
+    final_words: Type.Array(Type.String()),
+    countdown_until_ms: Type.Integer({ minimum: 0 }),
+    can_reincarnate: Type.Boolean(),
+    can_terminate: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDeathScreenV1 = Static<typeof ServerDataDeathScreenV1>;
+
+export const ServerDataTerminateScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("terminate_screen"),
+    visible: Type.Boolean(),
+    final_words: Type.String(),
+    epilogue: Type.String(),
+    archetype_suggestion: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTerminateScreenV1 = Static<typeof ServerDataTerminateScreenV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -426,5 +470,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemyContaminationV1,
+  ServerDataDeathScreenV1,
+  ServerDataTerminateScreenV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

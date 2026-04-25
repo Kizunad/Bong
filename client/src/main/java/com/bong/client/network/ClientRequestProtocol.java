@@ -104,6 +104,18 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeCombatReincarnate() {
+        return envelope("combat_reincarnate").toString();
+    }
+
+    public static String encodeCombatTerminate() {
+        return envelope("combat_terminate").toString();
+    }
+
+    public static String encodeCombatCreateNewCharacter() {
+        return envelope("combat_create_new_character").toString();
+    }
+
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static String encodeAlchemyOpenFurnace(String furnaceId) {
