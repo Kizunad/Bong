@@ -139,7 +139,7 @@ public class BongNetworkHandlerPayloadFixtureTest {
         BongServerPayload.PlayerStatePayload payload = assertInstanceOf(BongServerPayload.PlayerStatePayload.class, result.payload);
         assertEquals(1, payload.v());
         assertEquals("player_state", payload.type());
-        assertEquals("qi_refining_3", payload.playerState().realm());
+        assertEquals("Induce", payload.playerState().realm());
         assertEquals(78d, payload.playerState().spiritQi());
         assertEquals(100d, payload.playerState().spiritQiMax());
         assertEquals(-0.2d, payload.playerState().karma());
@@ -149,7 +149,7 @@ public class BongNetworkHandlerPayloadFixtureTest {
 
         PlayerStateState.PlayerStateSnapshot snapshot = PlayerStateState.getCurrentPlayerState();
         assertNotNull(snapshot);
-        assertEquals("qi_refining_3", snapshot.realmKey());
+        assertEquals("Induce", snapshot.realmKey());
         assertEquals("blood_valley", snapshot.zoneKey());
     }
 

@@ -23,14 +23,14 @@ public class PlayerStateHandlerTest {
     public void typedPlayerStatePayloadRoutesIntoLocalState() {
         BongServerPayload.PlayerStatePayload payload = new BongServerPayload.PlayerStatePayload(
                 1,
-                new BongServerPayload.PlayerState("qi_refining_3", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley")
+                new BongServerPayload.PlayerState("Induce", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley")
         );
 
         assertTrue(BongServerPayloadRouter.route(null, payload));
 
         PlayerStateState.PlayerStateSnapshot snapshot = PlayerStateState.getCurrentPlayerState();
         assertNotNull(snapshot);
-        assertEquals("qi_refining_3", snapshot.realmKey());
+        assertEquals("Induce", snapshot.realmKey());
         assertEquals(78.0d, snapshot.spiritQi());
         assertEquals(100.0d, snapshot.spiritQiMax());
         assertEquals(-0.2d, snapshot.karma());
@@ -43,7 +43,7 @@ public class PlayerStateHandlerTest {
         BongServerPayload.PlayerStatePayload payload = new BongServerPayload.PlayerStatePayload(
                 1,
                 new BongServerPayload.PlayerState(
-                        "foundation_2",
+                        "Spirit",
                         120.0d,
                         -4.0d,
                         9.0d,
@@ -56,7 +56,7 @@ public class PlayerStateHandlerTest {
 
         PlayerStateState.PlayerStateSnapshot snapshot = PlayerStateState.getCurrentPlayerState();
         assertNotNull(snapshot);
-        assertEquals("foundation_2", snapshot.realmKey());
+        assertEquals("Spirit", snapshot.realmKey());
         assertEquals(1.0d, snapshot.spiritQi());
         assertEquals(1.0d, snapshot.spiritQiMax());
         assertEquals(1.0d, snapshot.karma());
