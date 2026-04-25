@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    App, ChunkLayer, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayer,
-    EntityLayerId, Position, Query, ResMut, Resource, Update, Username, With,
+    App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Position, Query,
+    ResMut, Resource, Update, Username, With,
 };
 
 use super::zone::ZoneRegistry;
@@ -501,7 +501,7 @@ fn tick_active_events(
     mut active_events: ResMut<ActiveEventsResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     players: Query<(&Username, &Position), With<Client>>,
 ) {
     let layer_entity = layers.iter().next();
@@ -795,6 +795,9 @@ mod events_tests {
         let scenario = ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
+        app.world_mut()
+            .entity_mut(layer)
+            .insert(crate::world::dimension::OverworldLayer);
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
         app.add_systems(Update, tick_active_events);
@@ -860,7 +863,10 @@ mod events_tests {
             let world = app.world();
             let zone = world
                 .resource::<ZoneRegistry>()
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should exist");
             assert!(zone
                 .active_events
@@ -918,7 +924,10 @@ mod events_tests {
             let world = app.world();
             let zone = world
                 .resource::<ZoneRegistry>()
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should exist");
             assert!(
                 !zone
@@ -1018,7 +1027,10 @@ mod events_tests {
             let world = app.world();
             let zone = world
                 .resource::<ZoneRegistry>()
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should exist");
             assert!(zone
                 .active_events
@@ -1097,7 +1109,10 @@ mod events_tests {
             let world = app.world_mut();
             let zone = world
                 .resource::<ZoneRegistry>()
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should exist");
             assert!(
                 !zone
@@ -1139,7 +1154,10 @@ mod events_tests {
         let events = world.resource::<ActiveEventsResource>();
         let zone = world
             .resource::<ZoneRegistry>()
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should exist");
 
         assert_eq!(
@@ -1164,7 +1182,10 @@ mod events_tests {
         let events = world.resource::<ActiveEventsResource>();
         let zone = world
             .resource::<ZoneRegistry>()
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should exist");
 
         assert!(
@@ -1230,6 +1251,7 @@ mod events_tests {
             .zones
             .push(Zone {
                 name: "forest".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     DVec3::new(100.0, 60.0, 100.0),
                     DVec3::new(200.0, 80.0, 200.0),

@@ -155,19 +155,11 @@ pub fn register(_app: &mut App) {
     // 单独 PR 再接入。测试走局部 add_systems 不依赖 register。
 }
 
-type GuardianRelicSelfQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static Position, &'static GuardianDuty),
-    (With<NpcMarker>, With<EntityKind>),
->;
+type GuardianRelicSelfQuery<'w, 's> =
+    Query<'w, 's, (&'static Position, &'static GuardianDuty), (With<NpcMarker>, With<EntityKind>)>;
 
-type NpcPosArchQuery<'w, 's> = Query<
-    'w,
-    's,
-    (Entity, &'static Position, &'static NpcArchetype),
-    With<NpcMarker>,
->;
+type NpcPosArchQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Position, &'static NpcArchetype), With<NpcMarker>>;
 
 type PlayerPositionQuery<'w, 's> = Query<'w, 's, &'static Position, With<ClientMarker>>;
 
@@ -181,9 +173,7 @@ fn guardian_duty_scorer_system(
         let value = if let Ok(duty) = self_q.get(*actor) {
             let has_player = players.iter().any(|p| duty.contains(p.get()));
             let has_intruder_npc = npcs.iter().any(|(ent, p, arch)| {
-                ent != *actor
-                    && *arch != NpcArchetype::GuardianRelic
-                    && duty.contains(p.get())
+                ent != *actor && *arch != NpcArchetype::GuardianRelic && duty.contains(p.get())
             });
             if has_player || has_intruder_npc {
                 1.0
@@ -197,12 +187,8 @@ fn guardian_duty_scorer_system(
     }
 }
 
-type TrialSelfQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static Position, &'static GuardianDuty, &'static TrialEval),
-    With<NpcMarker>,
->;
+type TrialSelfQuery<'w, 's> =
+    Query<'w, 's, (&'static Position, &'static GuardianDuty, &'static TrialEval), With<NpcMarker>>;
 
 type PlayerCultQuery<'w, 's> =
     Query<'w, 's, (&'static Position, &'static Cultivation), With<ClientMarker>>;
@@ -430,7 +416,11 @@ mod tests {
             .spawn((
                 NpcMarker,
                 NpcArchetype::GuardianRelic,
-                Position::new([duty.alarm_center.x, duty.alarm_center.y, duty.alarm_center.z]),
+                Position::new([
+                    duty.alarm_center.x,
+                    duty.alarm_center.y,
+                    duty.alarm_center.z,
+                ]),
                 NpcMeleeProfile::fist(),
                 Navigator::new(),
                 GuardState::default(),
@@ -664,7 +654,9 @@ mod tests {
             .id();
         app.update(); // Requested → Executing
         app.update(); // Executing + 攻击
-        let events = app.world().resource::<valence::prelude::Events<AttackIntent>>();
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<AttackIntent>>();
         let mut reader = events.get_reader();
         let fired: Vec<_> = reader.read(events).cloned().collect();
         assert!(!fired.is_empty(), "在 melee 距离应发 AttackIntent");
@@ -684,7 +676,7 @@ mod tests {
             .spawn((Actor(guardian), GuardAction, ActionState::Requested))
             .id();
         app.update(); // Requested → Executing
-        // 把 guardian 扯远到超出 GUARD_ENGAGE_MAX_DISTANCE
+                      // 把 guardian 扯远到超出 GUARD_ENGAGE_MAX_DISTANCE
         {
             let mut pos = app.world_mut().get_mut::<Position>(guardian).unwrap();
             pos.set([100.0, 64.0, 100.0]);
@@ -713,10 +705,9 @@ mod tests {
             &mut app,
             GuardianDuty::new("r", DVec3::new(0.0, 64.0, 0.0)).with_radius(10.0),
         );
-        app.world_mut().entity_mut(guardian).insert((
-            TrialEval::new("trial.basic"),
-            TrialState::default(),
-        ));
+        app.world_mut()
+            .entity_mut(guardian)
+            .insert((TrialEval::new("trial.basic"), TrialState::default()));
         let action = app
             .world_mut()
             .spawn((Actor(guardian), TrialAction, ActionState::Requested))

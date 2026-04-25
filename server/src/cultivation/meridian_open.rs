@@ -125,7 +125,10 @@ pub fn meridian_open_tick(
     };
     let now = clock.tick;
     for (pos, target, mut cultivation, mut meridians, life) in entities.iter_mut() {
-        let zone_qi = zones.find_zone(pos.0).map(|z| z.spirit_qi).unwrap_or(0.0);
+        let zone_qi = zones
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .map(|z| z.spirit_qi)
+            .unwrap_or(0.0);
         let adj = is_target_adjacent(&topo, &meridians, target.0);
         if let Ok((_delta, just_opened)) = advance_open_progress_at(
             &mut cultivation,

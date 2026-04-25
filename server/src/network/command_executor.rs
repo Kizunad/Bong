@@ -1169,7 +1169,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
 
         assert_eq!(spawn_zone.spirit_qi, -1.0);
@@ -1192,7 +1195,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
 
         assert_eq!(spawn_zone.spirit_qi, 1.0);
@@ -1223,7 +1229,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
 
         assert_eq!(spawn_zone.spirit_qi, -1.0);
@@ -1249,7 +1258,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
 
         assert_eq!(spawn_zone.spirit_qi, -1.0);
@@ -1279,7 +1291,10 @@ mod command_executor_tests {
         {
             let zone_registry = app.world().resource::<ZoneRegistry>();
             let spawn_zone = zone_registry
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should still exist");
             let expected = 0.9 - (MAX_COMMANDS_PER_TICK as f64 * 0.01);
             assert!((spawn_zone.spirit_qi - expected).abs() < 1e-9);
@@ -1295,7 +1310,10 @@ mod command_executor_tests {
         {
             let zone_registry = app.world().resource::<ZoneRegistry>();
             let spawn_zone = zone_registry
-                .find_zone(DVec3::new(8.0, 66.0, 8.0))
+                .find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    DVec3::new(8.0, 66.0, 8.0),
+                )
                 .expect("spawn zone should still exist");
             let expected = 0.9 - ((MAX_COMMANDS_PER_TICK + 1) as f64 * 0.01);
             assert!((spawn_zone.spirit_qi - expected).abs() < 1e-9);
@@ -1446,7 +1464,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
 
         assert_eq!(spawn_zone.spirit_qi, 0.9);
@@ -1500,7 +1521,10 @@ mod command_executor_tests {
 
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let spawn_zone = zone_registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("spawn zone should still exist");
         assert!((spawn_zone.spirit_qi - 0.8).abs() < 1e-9);
     }

@@ -2414,6 +2414,7 @@ mod tests {
     fn wander_target_stays_inside_home_zone_bounds() {
         let zone = Zone {
             name: "test".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(20.0, 80.0, 20.0)),
             spirit_qi: 0.0,
             danger_level: 0,
@@ -3582,5 +3583,4 @@ mod tests {
             }
         }
     }
-
 }

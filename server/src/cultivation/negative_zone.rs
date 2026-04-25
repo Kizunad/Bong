@@ -33,7 +33,7 @@ pub fn negative_zone_siphon_tick(
     };
     for (entity, pos, mut cultivation) in players.iter_mut() {
         let zone_name = zones
-            .find_zone(pos.0)
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
             .map(|z| (z.name.clone(), z.spirit_qi));
         let Some((zone_name, zone_qi)) = zone_name else {
             continue;

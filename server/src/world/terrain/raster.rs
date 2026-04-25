@@ -118,6 +118,38 @@ pub struct TerrainProvider {
 
 impl Resource for TerrainProvider {}
 
+/// Per-dimension `TerrainProvider` map (plan-tsy-dimension-v1 §2.2).
+///
+/// Inserted alongside the legacy `TerrainProvider` resource so existing
+/// overworld-only consumers keep compiling. New / TSY-aware consumers should
+/// take `Option<Res<TerrainProviders>>` and route via `DimensionKind`.
+///
+/// `tsy` is `Option` while `plan-tsy-worldgen-v1` is still pre-active and the
+/// TSY raster manifest is not yet produced; once worldgen lands the field
+/// becomes mandatory (§6 contract).
+pub struct TerrainProviders {
+    pub overworld: TerrainProvider,
+    pub tsy: Option<TerrainProvider>,
+}
+
+impl Resource for TerrainProviders {}
+
+impl TerrainProviders {
+    /// Look up the provider for the given dimension. Returns `None` for TSY
+    /// when no TSY manifest is loaded (transitional state until worldgen plan
+    /// ships).
+    pub fn for_dimension(
+        &self,
+        kind: crate::world::dimension::DimensionKind,
+    ) -> Option<&TerrainProvider> {
+        use crate::world::dimension::DimensionKind;
+        match kind {
+            DimensionKind::Overworld => Some(&self.overworld),
+            DimensionKind::Tsy => self.tsy.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct TileFields {
     height: Mmap,

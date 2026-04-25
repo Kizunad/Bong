@@ -430,7 +430,10 @@ fn mission_queue_scorer_system(
     for (Actor(actor), mut score) in &mut scorers {
         let value = match members.get(*actor) {
             Ok(m) => {
-                let pending = m.mission_queue.pending_count().min(MISSION_QUEUE_SCORER_CAP);
+                let pending = m
+                    .mission_queue
+                    .pending_count()
+                    .min(MISSION_QUEUE_SCORER_CAP);
                 (pending as f32 / MISSION_QUEUE_SCORER_CAP as f32).clamp(0.0, 1.0)
             }
             Err(_) => 0.0,
@@ -443,7 +446,11 @@ fn mission_queue_scorer_system(
 /// 队首任务 → Success。真实剧本由 plan-quest-v1 替换。
 fn mission_execute_action_system(
     mut members: Query<
-        (&mut FactionMembership, &mut Navigator, &mut MissionExecuteState),
+        (
+            &mut FactionMembership,
+            &mut Navigator,
+            &mut MissionExecuteState,
+        ),
         With<NpcMarker>,
     >,
     mut actions: Query<(&Actor, &mut ActionState), With<MissionExecuteAction>>,

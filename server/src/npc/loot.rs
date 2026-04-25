@@ -254,7 +254,8 @@ mod tests {
         for s in 0..100u64 {
             let out = roll_loot(&table, s);
             assert!(
-                out.iter().any(|r| r.template_id == "item.relic.engraved_plaque"),
+                out.iter()
+                    .any(|r| r.template_id == "item.relic.engraved_plaque"),
                 "chance=1.0 的条目每次都必中"
             );
         }

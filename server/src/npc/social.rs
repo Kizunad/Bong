@@ -74,17 +74,17 @@ pub fn register(_app: &mut App) {
     // 单独 PR 再接入。测试走局部 add_systems 不依赖 register。
 }
 
-type SocializeNpcQuery<'w, 's> = Query<
-    'w,
-    's,
-    (Entity, &'static Position, &'static FactionMembership),
-    With<NpcMarker>,
->;
+type SocializeNpcQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Position, &'static FactionMembership), With<NpcMarker>>;
 
 type SocializeSelfQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static Position, &'static FactionMembership, Option<&'static DuelTarget>),
+    (
+        &'static Position,
+        &'static FactionMembership,
+        Option<&'static DuelTarget>,
+    ),
     With<NpcMarker>,
 >;
 
@@ -496,10 +496,7 @@ mod tests {
         let mut app = App::new();
         app.add_systems(PreUpdate, faction_duel_scorer_system);
         let dummy = app.world_mut().spawn(NpcMarker).id();
-        let npc = app
-            .world_mut()
-            .spawn((NpcMarker, DuelTarget(dummy)))
-            .id();
+        let npc = app.world_mut().spawn((NpcMarker, DuelTarget(dummy))).id();
         let scorer = app
             .world_mut()
             .spawn((Actor(npc), Score::default(), FactionDuelScorer))
@@ -628,5 +625,4 @@ mod tests {
         app.update();
         assert!(app.world().get::<Navigator>(npc).unwrap().is_idle());
     }
-
 }

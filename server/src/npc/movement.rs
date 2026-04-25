@@ -368,7 +368,7 @@ fn movement_ability_tick_system(
         ),
         With<NpcMarker>,
     >,
-    layers: Query<&ChunkLayer>,
+    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     game_tick: Res<GameTick>,
 ) {
     let layer = layers.get_single().ok();

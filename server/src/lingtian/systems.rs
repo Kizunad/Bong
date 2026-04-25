@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, BlockState, ChunkLayer, Commands, Entity, EventReader, EventWriter, Query, Res,
-    ResMut, Resource,
+    ResMut, Resource, With,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
@@ -557,7 +557,7 @@ pub fn apply_completed_sessions(
     mut zone_qi: ResMut<ZoneQiAccount>,
     clock: Res<LingtianClock>,
     mut writers: CompletionEventWriters,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -1126,7 +1126,7 @@ pub fn lingtian_growth_tick(
     mut zone_qi: ResMut<ZoneQiAccount>,
     registry: Res<PlantKindRegistry>,
     mut plots: Query<&mut LingtianPlot>,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     if !accumulator.step() {
         return;
