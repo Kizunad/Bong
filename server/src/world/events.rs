@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    App, ChunkLayer, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayer,
-    EntityLayerId, Position, Query, ResMut, Resource, Update, Username, With,
+    App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Position, Query,
+    ResMut, Resource, Update, Username, With,
 };
 
 use super::zone::ZoneRegistry;
@@ -501,7 +501,7 @@ fn tick_active_events(
     mut active_events: ResMut<ActiveEventsResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     players: Query<(&Username, &Position), With<Client>>,
 ) {
     let layer_entity = layers.iter().next();
@@ -795,6 +795,9 @@ mod events_tests {
         let scenario = ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
+        app.world_mut()
+            .entity_mut(layer)
+            .insert(crate::world::dimension::OverworldLayer);
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
         app.add_systems(Update, tick_active_events);

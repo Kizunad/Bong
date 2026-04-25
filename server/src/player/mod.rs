@@ -10,12 +10,13 @@ use self::state::{
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::skill::components::SkillSet;
+use crate::world::dimension::DimensionLayers;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
-    Added, App, AppExit, Changed, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId,
-    EventReader, GameMode, IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res,
-    ResMut, Update, Username, VisibleChunkLayer, VisibleEntityLayers, With, Without,
+    Added, App, AppExit, Changed, Client, Commands, Entity, EntityLayerId, EventReader, GameMode,
+    IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
+    VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
@@ -81,9 +82,15 @@ pub fn initial_game_mode() -> GameMode {
 
 fn init_clients(
     mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    dimension_layers: Option<Res<DimensionLayers>>,
 ) {
-    let layer = layers.single();
+    // Players always spawn into the overworld; cross-dim transfers happen later via
+    // `apply_dimension_transfers`. `DimensionLayers` is missing only in tests that
+    // do not bootstrap the world plugin — fall through silently in that case.
+    let Some(dimension_layers) = dimension_layers else {
+        return;
+    };
+    let layer = dimension_layers.overworld;
 
     for (
         entity,

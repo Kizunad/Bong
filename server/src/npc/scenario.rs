@@ -2,8 +2,8 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, ChunkLayer, Commands, Component, DVec3, Despawned, Entity, EntityKind,
-    EntityLayer, EntityLayerId, Position, Query, ResMut, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityKind, EntityLayerId,
+    Position, Query, ResMut, Resource, Update, With,
 };
 
 use crate::npc::brain::{
@@ -74,7 +74,7 @@ pub fn register(app: &mut App) {
 fn process_pending_scenarios(
     mut commands: Commands,
     mut pending: ResMut<PendingScenario>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     scenario_npcs: Query<Entity, With<ScenarioNpc>>,
 ) {
     let Some((scenario, player_pos)) = pending.request.take() else {
@@ -243,6 +243,7 @@ mod tests {
     fn scenario_spawned_npcs_include_shared_combat_target_components() {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.insert_resource(PendingScenario {
             request: Some((ScenarioType::Duel, DVec3::new(8.0, 66.0, 8.0))),
         });
@@ -307,6 +308,7 @@ mod tests {
     fn duel_scenario_assigns_distinct_melee_profiles() {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.insert_resource(PendingScenario {
             request: Some((ScenarioType::Duel, DVec3::new(8.0, 66.0, 8.0))),
         });

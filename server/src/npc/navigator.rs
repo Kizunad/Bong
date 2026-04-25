@@ -259,7 +259,7 @@ pub fn navigator_tick_system(
         With<NpcMarker>,
     >,
     terrain: Option<Res<TerrainProvider>>,
-    layers: Query<&ChunkLayer>,
+    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     let layer = layers.get_single().ok();
 

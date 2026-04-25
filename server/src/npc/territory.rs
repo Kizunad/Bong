@@ -76,7 +76,9 @@ impl Territory {
     }
 
     pub fn capacity(&self) -> u32 {
-        (self.radius / TERRITORY_RADIUS_PER_CAPACITY).round().max(1.0) as u32
+        (self.radius / TERRITORY_RADIUS_PER_CAPACITY)
+            .round()
+            .max(1.0) as u32
     }
 
     pub fn contains(&self, pos: DVec3) -> bool {
@@ -202,7 +204,12 @@ pub fn register(app: &mut App) {
 type BeastMarkerQuery<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static NpcArchetype, &'static NpcLifespan, Option<&'static NpcYoung>),
+    (
+        Entity,
+        &'static NpcArchetype,
+        &'static NpcLifespan,
+        Option<&'static NpcYoung>,
+    ),
     (With<NpcMarker>, Without<Despawned>),
 >;
 
@@ -244,12 +251,8 @@ type AdultBeastQuery<'w, 's> = Query<
     ),
 >;
 
-type YoungCountQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static Position,
-    (With<NpcMarker>, With<NpcYoung>, Without<Despawned>),
->;
+type YoungCountQuery<'w, 's> =
+    Query<'w, 's, &'static Position, (With<NpcMarker>, With<NpcYoung>, Without<Despawned>)>;
 
 /// 每 `REPRODUCTION_TICK_INTERVAL` tick 跑一次：领地内找饱腹成体 → 若领地
 /// 内幼崽 < capacity 则 spawn 幼崽在中心；若满员则 spawn 在领地外
@@ -279,7 +282,8 @@ fn beast_reproduction_tick_system(
     let mut young_positions: Vec<DVec3> = young.iter().map(|p| p.get()).collect();
 
     // 按领地聚合，计算每个领地内的幼崽数 + 成体数
-    let mut per_territory: HashMap<i64, (Territory, String, u32, u32, Vec<Entity>)> = HashMap::new();
+    let mut per_territory: HashMap<i64, (Territory, String, u32, u32, Vec<Entity>)> =
+        HashMap::new();
     for (entity, pos, hunger, _lifespan, territory, patrol) in &adults {
         let Some(t) = territory else { continue };
         // 只统计该 entity 真是 Beast 的
@@ -305,10 +309,7 @@ fn beast_reproduction_tick_system(
 
     // 幼崽按领地归档：任一领地 contains 幼崽位置就 count
     for (_key, (t, _home, ref mut young_count, _adults, _fed)) in per_territory.iter_mut() {
-        *young_count = young_positions
-            .iter()
-            .filter(|p| t.contains(**p))
-            .count() as u32;
+        *young_count = young_positions.iter().filter(|p| t.contains(**p)).count() as u32;
     }
 
     for (_, (t, home, young_count, _adults, fed_adults)) in per_territory.iter() {
@@ -383,12 +384,8 @@ fn emigrate_fallback_direction(actor: Entity) -> DVec3 {
 // Beast 行为（Scorer / Action）实现
 // -------------------------------------------------------------------------
 
-type TerritoryOwnerQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static Position, &'static Territory),
-    (With<NpcMarker>, Without<Despawned>),
->;
+type TerritoryOwnerQuery<'w, 's> =
+    Query<'w, 's, (&'static Position, &'static Territory), (With<NpcMarker>, Without<Despawned>)>;
 
 type PlayerPositionQuery<'w, 's> = Query<'w, 's, &'static Position, With<ClientMarker>>;
 
@@ -409,9 +406,7 @@ fn territory_intruder_scorer_system(
         let value = if let Ok((_, territory)) = beasts.get(*actor) {
             let has_player = players.iter().any(|p| territory.contains(p.get()));
             let has_hostile_npc = npcs.iter().any(|(ent, p, arch)| {
-                ent != *actor
-                    && *arch != NpcArchetype::Beast
-                    && territory.contains(p.get())
+                ent != *actor && *arch != NpcArchetype::Beast && territory.contains(p.get())
             });
             if has_player || has_hostile_npc {
                 1.0
@@ -467,8 +462,7 @@ pub(crate) fn territory_patrol_target(
         .wrapping_add((game_tick as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
     let angle = ((seed >> 16) % 3600) as f64 / 3600.0 * std::f64::consts::TAU;
     let r_frac = PATROL_MIN_RADIUS_FRAC
-        + ((seed >> 32) % 1000) as f64 / 1000.0
-            * (PATROL_MAX_RADIUS_FRAC - PATROL_MIN_RADIUS_FRAC);
+        + ((seed >> 32) % 1000) as f64 / 1000.0 * (PATROL_MAX_RADIUS_FRAC - PATROL_MIN_RADIUS_FRAC);
     let radius = territory.radius * r_frac;
     DVec3::new(
         territory.center.x + angle.cos() * radius,
@@ -803,7 +797,10 @@ mod tests {
         let t = Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0);
         assert!(t.contains(DVec3::new(5.0, 64.0, 5.0)));
         assert!(t.contains(DVec3::new(10.0, 10.0, 0.0)), "y 不参与判定");
-        assert!(!t.contains(DVec3::new(8.0, 64.0, 8.0)), "边界外 xz 距离 11.3");
+        assert!(
+            !t.contains(DVec3::new(8.0, 64.0, 8.0)),
+            "边界外 xz 距离 11.3"
+        );
     }
 
     #[test]
@@ -883,13 +880,7 @@ mod tests {
     fn reproduction_fires_when_adult_fed_and_territory_empty() {
         let mut app = build_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 30.0);
-        let _adult = spawn_adult_beast(
-            &mut app,
-            DVec3::new(0.0, 64.0, 0.0),
-            0.5,
-            0.9,
-            territory,
-        );
+        let _adult = spawn_adult_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), 0.5, 0.9, territory);
 
         tick_to_interval(&mut app);
 
@@ -924,15 +915,8 @@ mod tests {
     fn reproduction_emigrates_when_territory_full() {
         let mut app = build_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0); // capacity=1
-        let _adult = spawn_adult_beast(
-            &mut app,
-            DVec3::new(0.0, 64.0, 0.0),
-            0.5,
-            0.95,
-            territory,
-        );
-        let _existing_young =
-            spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
+        let _adult = spawn_adult_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), 0.5, 0.95, territory);
+        let _existing_young = spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
 
         tick_to_interval(&mut app);
 
@@ -956,16 +940,9 @@ mod tests {
         // 而不是硬编码 +X —— 否则多个相邻领地的 overflow 会全部撞到同一条线。
         let mut app = build_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0); // capacity=1
-        // 成体位于中心正 +Z 方向；领地满员（1 幼崽占位）。
-        let _adult = spawn_adult_beast(
-            &mut app,
-            DVec3::new(0.0, 64.0, 5.0),
-            0.5,
-            0.95,
-            territory,
-        );
-        let _existing_young =
-            spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
+                                                                          // 成体位于中心正 +Z 方向；领地满员（1 幼崽占位）。
+        let _adult = spawn_adult_beast(&mut app, DVec3::new(0.0, 64.0, 5.0), 0.5, 0.95, territory);
+        let _existing_young = spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
 
         tick_to_interval(&mut app);
 
@@ -977,7 +954,10 @@ mod tests {
         let dx = req.position.x - territory.center.x;
         let dz = req.position.z - territory.center.z;
         assert!(dz > 0.0, "成体在 +Z，迁出方向也应偏 +Z（实际 dz={dz:.2}）");
-        assert!(dx.abs() < 1e-6, "成体只偏 Z 轴，dx 应 ≈ 0（实际 dx={dx:.2}）");
+        assert!(
+            dx.abs() < 1e-6,
+            "成体只偏 Z 轴，dx 应 ≈ 0（实际 dx={dx:.2}）"
+        );
     }
 
     #[test]
@@ -988,13 +968,7 @@ mod tests {
         app.world_mut().resource_mut::<NpcRegistry>().max_npc_count = 100;
 
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 30.0);
-        let _adult = spawn_adult_beast(
-            &mut app,
-            DVec3::new(0.0, 64.0, 0.0),
-            0.5,
-            0.95,
-            territory,
-        );
+        let _adult = spawn_adult_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), 0.5, 0.95, territory);
 
         tick_to_interval(&mut app);
         let events = app.world().resource::<Events<NpcReproductionRequest>>();
@@ -1005,13 +979,7 @@ mod tests {
     fn reproduction_only_fires_on_interval_boundary() {
         let mut app = build_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 30.0);
-        let _adult = spawn_adult_beast(
-            &mut app,
-            DVec3::new(0.0, 64.0, 0.0),
-            0.5,
-            0.95,
-            territory,
-        );
+        let _adult = spawn_adult_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), 0.5, 0.95, territory);
 
         // 前 N-1 tick 不应发事件
         for _ in 0..REPRODUCTION_TICK_INTERVAL - 1 {
@@ -1030,8 +998,7 @@ mod tests {
         // 成体站在领地内，但不是 adult（young 不算繁衍来源）。
         let mut app = build_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 30.0);
-        let _only_young =
-            spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
+        let _only_young = spawn_young_beast(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
 
         tick_to_interval(&mut app);
         let events = app.world().resource::<Events<NpcReproductionRequest>>();
@@ -1122,10 +1089,7 @@ mod tests {
         );
         let _player = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                Position::new([5.0, 64.0, 5.0]),
-            ))
+            .spawn((ClientMarker, Position::new([5.0, 64.0, 5.0])))
             .id();
         let scorer = app
             .world_mut()

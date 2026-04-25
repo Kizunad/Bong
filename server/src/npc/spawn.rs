@@ -3,9 +3,8 @@ use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::villager::VillagerEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, ChunkLayer, Commands, Component, DVec3, Entity, EntityKind, EntityLayer,
-    EntityLayerId, EventReader, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut,
-    Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
+    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -272,7 +271,7 @@ fn seed_initial_rogue_population_on_startup(
     config: Option<Res<RoguePopulationSeedConfig>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     mut already_seeded: valence::prelude::Local<bool>,
 ) {
     if *already_seeded {
@@ -373,7 +372,7 @@ fn process_npc_reproduction_requests(
     mut commands: Commands,
     mut requests: EventReader<NpcReproductionRequest>,
     mut registry: Option<ResMut<NpcRegistry>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
 ) {
     let Some(layer) = layers.iter().next() else {
         // If no layer yet, drain events so they don't pile up across frames.
@@ -460,9 +459,12 @@ fn startup_npc_thinker() -> ThinkerBuilder {
 
 fn spawn_single_zombie_npc_on_startup(
     mut commands: Commands,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    dimension_layers: Option<Res<crate::world::dimension::DimensionLayers>>,
 ) {
-    let layer = layers.single();
+    let Some(dimension_layers) = dimension_layers else {
+        return;
+    };
+    let layer = dimension_layers.overworld;
     let npc_entity = spawn_single_zombie_npc(&mut commands, layer);
 
     tracing::info!(
@@ -1320,6 +1322,7 @@ mod tests {
     fn seed_splits_100_rogues_80_20_across_zones() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
 
         let mut zones = ZoneRegistry::fallback();
         // fallback gives us "spawn" @ qi=0.3; override to match prod-style mix.
@@ -1408,6 +1411,7 @@ mod tests {
     fn seed_falls_back_to_other_zones_when_no_resource_qualifies() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         let mut zones = ZoneRegistry::fallback();
         zones.zones[0].spirit_qi = 0.1; // 强制 < 0.4 门槛，使其归入 "other"
         app.insert_resource(zones);
@@ -1438,6 +1442,7 @@ mod tests {
     fn reproduction_processor_spawns_commoner_from_event_and_decrements_registry() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
@@ -1473,6 +1478,7 @@ mod tests {
     fn reproduction_processor_dispatches_beast_request_with_territory_hint() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);

@@ -8,9 +8,11 @@ use std::path::PathBuf;
 
 use valence::anvil::AnvilLevel;
 use valence::prelude::{
-    ident, App, BiomeRegistry, BlockState, Commands, DimensionTypeRegistry, LayerBundle, Res,
-    ResMut, Server, Startup, UnloadedChunk,
+    ident, App, BiomeRegistry, BlockState, Commands, DimensionTypeRegistry, Entity, LayerBundle,
+    Res, ResMut, Server, Startup, UnloadedChunk,
 };
+
+use self::dimension::{DimensionLayers, OverworldLayer, TsyLayer};
 
 const TEST_AREA_CHUNKS: i32 = 16;
 const CHUNK_WIDTH: i32 = 16;
@@ -73,23 +75,23 @@ pub fn register(app: &mut App) {
 }
 
 fn setup_world(
-    commands: Commands,
+    mut commands: Commands,
     server: Res<Server>,
-    dimensions: ResMut<DimensionTypeRegistry>,
+    mut dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
 ) {
-    match select_world_bootstrap() {
+    let overworld = match select_world_bootstrap() {
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
-            spawn_fallback_flat_world(commands, server, dimensions, biomes);
+            spawn_fallback_flat_world(&mut commands, &server, &dimensions, &biomes)
         }
         WorldBootstrap::TerrainRaster(config) => {
             tracing::info!(
                 "[bong][world] selected terrain raster bootstrap from {}",
                 config.manifest_path.display()
             );
-            terrain::spawn_raster_world(commands, server, dimensions, biomes, config);
+            terrain::spawn_raster_world(&mut commands, &server, &mut dimensions, &biomes, config)
         }
         WorldBootstrap::AnvilIfPresent(anvil) => {
             tracing::info!(
@@ -97,9 +99,23 @@ fn setup_world(
                 anvil.world_path.display(),
                 anvil.region_dir.display()
             );
-            spawn_anvil_world(commands, server, dimensions, biomes, anvil);
+            spawn_anvil_world(&mut commands, &server, &dimensions, &biomes, anvil)
         }
-    }
+    };
+
+    let tsy = spawn_tsy_layer(&mut commands, &server, &dimensions, &biomes);
+    tracing::info!("[bong][world] spawned tsy dimension layer (empty, awaits worldgen)");
+    commands.insert_resource(DimensionLayers { overworld, tsy });
+}
+
+fn spawn_tsy_layer(
+    commands: &mut Commands,
+    server: &Server,
+    dimensions: &DimensionTypeRegistry,
+    biomes: &BiomeRegistry,
+) -> Entity {
+    let layer = LayerBundle::new(ident!("bong:tsy"), dimensions, biomes, server);
+    commands.spawn((layer, TsyLayer)).id()
 }
 
 fn select_world_bootstrap() -> WorldBootstrap {
@@ -358,32 +374,32 @@ fn log_fallback_flat_selection(reason: &FallbackFlatReason) {
 }
 
 fn spawn_anvil_world(
-    mut commands: Commands,
-    server: Res<Server>,
-    dimensions: ResMut<DimensionTypeRegistry>,
-    biomes: Res<BiomeRegistry>,
+    commands: &mut Commands,
+    server: &Server,
+    dimensions: &DimensionTypeRegistry,
+    biomes: &BiomeRegistry,
     anvil: AnvilBootstrapConfig,
-) {
+) -> Entity {
     tracing::info!(
         "[bong][world] creating overworld layer backed by Anvil terrain at {}",
         anvil.world_path.display()
     );
 
-    let layer = LayerBundle::new(ident!("overworld"), &dimensions, &biomes, &server);
-    let anvil_level = AnvilLevel::new(&anvil.world_path, &biomes);
+    let layer = LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
+    let anvil_level = AnvilLevel::new(&anvil.world_path, biomes);
 
-    commands.spawn((layer, anvil_level));
+    commands.spawn((layer, anvil_level, OverworldLayer)).id()
 }
 
 fn spawn_fallback_flat_world(
-    mut commands: Commands,
-    server: Res<Server>,
-    dimensions: ResMut<DimensionTypeRegistry>,
-    biomes: Res<BiomeRegistry>,
-) {
+    commands: &mut Commands,
+    server: &Server,
+    dimensions: &DimensionTypeRegistry,
+    biomes: &BiomeRegistry,
+) -> Entity {
     tracing::info!("[bong][world] creating overworld test area (16x16 chunks)");
 
-    let mut layer = LayerBundle::new(ident!("overworld"), &dimensions, &biomes, &server);
+    let mut layer = LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
 
     for chunk_z in 0..TEST_AREA_CHUNKS {
         for chunk_x in 0..TEST_AREA_CHUNKS {
@@ -404,7 +420,7 @@ fn spawn_fallback_flat_world(
         }
     }
 
-    commands.spawn(layer);
+    commands.spawn((layer, OverworldLayer)).id()
 }
 
 #[cfg(test)]
