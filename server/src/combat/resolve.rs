@@ -4,6 +4,7 @@ use valence::prelude::{
     ResMut, Username, With,
 };
 
+use crate::combat::armor::ARMOR_MITIGATION_CAP;
 use crate::combat::status::has_active_status;
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::CombatClock;
@@ -36,6 +37,21 @@ use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
+
+fn apply_armor_mitigation(wound: &mut Wound, derived: &DerivedAttrs, contam: &mut f64) -> bool {
+    let Some(&m) = derived.defense_profile.get(&(wound.location, wound.kind)) else {
+        return false;
+    };
+    if m <= 0.0 {
+        return false;
+    }
+
+    let m = m.clamp(0.0, ARMOR_MITIGATION_CAP);
+    wound.severity *= 1.0 - m;
+    wound.bleeding_per_sec *= 1.0 - m;
+    *contam *= 1.0 - f64::from(m);
+    true
+}
 
 const DEBUG_ATTACK_STAMINA_COST: f32 = 12.0;
 const DEBUG_ATTACK_CONTAMINATION_FACTOR: f64 = 0.25;
@@ -335,48 +351,13 @@ pub fn resolve_attack_intents(
             }
         }
 
-        wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
-        wounds.entries.push(Wound {
-            location: hit_probe.body_part,
-            kind: intent.wound_kind,
-            severity: damage,
-            bleeding_per_sec: damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul,
-            created_at_tick: clock.tick,
-            inflicted_by: Some(attacker_id.clone()),
-        });
-        let wound_bleeding = damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul;
+        let mut emitted_contam_delta = f64::from(damage)
+            * DEBUG_ATTACK_CONTAMINATION_FACTOR
+            * f64::from(contam_multiplier)
+            * wound_profile.contam_mul;
+        let mut jiemai_success = false;
 
-        if wound_bleeding > 0.0 {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Bleeding,
-                magnitude: wound_bleeding,
-                duration_ticks: u64::MAX,
-                issued_at_tick: clock.tick,
-            });
-        }
-
-        if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
-            && damage >= LEG_SLOWED_SEVERITY_THRESHOLD
-        {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Slowed,
-                magnitude: 0.4,
-                duration_ticks: LEG_SLOWED_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
-        }
-
-        if hit_probe.body_part == BodyPart::Head && damage >= HEAD_STUN_SEVERITY_THRESHOLD {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Stunned,
-                magnitude: 1.0,
-                duration_ticks: HEAD_STUN_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
-        }
+        // 先写入 stamina 与污染，再做截脉与护甲减免。
 
         stamina.current =
             (stamina.current - DEBUG_ATTACK_STAMINA_COST * decay).clamp(0.0, stamina.max);
@@ -388,20 +369,11 @@ pub fn resolve_attack_intents(
         };
 
         contamination.entries.push(ContamSource {
-            amount: f64::from(damage)
-                * DEBUG_ATTACK_CONTAMINATION_FACTOR
-                * f64::from(contam_multiplier)
-                * wound_profile.contam_mul,
+            amount: emitted_contam_delta,
             color: ColorKind::Mellow,
             attacker_id: Some(attacker_id.clone()),
             introduced_at: clock.tick,
         });
-
-        let mut emitted_contam_delta = f64::from(damage)
-            * DEBUG_ATTACK_CONTAMINATION_FACTOR
-            * f64::from(contam_multiplier)
-            * wound_profile.contam_mul;
-        let mut jiemai_success = false;
 
         if let (Some(mut combat_state), Some(mut defender_cultivation)) =
             (combat_state, defender_cultivation)
@@ -437,10 +409,67 @@ pub fn resolve_attack_intents(
             combat_state.incoming_window = None;
         }
 
+        let mut wound = Wound {
+            location: hit_probe.body_part,
+            kind: intent.wound_kind,
+            severity: damage,
+            bleeding_per_sec: damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul,
+            created_at_tick: clock.tick,
+            inflicted_by: Some(attacker_id.clone()),
+        };
+
+        // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
+        // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
+        if let Some(attrs) = defender_attrs {
+            let _ = apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            // 同步污染 source 的最后一条（本次命中刚 push）。
+            if let Some(last_contam) = contamination.entries.last_mut() {
+                last_contam.amount = emitted_contam_delta;
+            }
+        }
+
+        wounds.health_current =
+            (wounds.health_current - wound.severity).clamp(0.0, wounds.health_max);
+        let wound_bleeding = wound.bleeding_per_sec;
+        let wound_severity = wound.severity;
+        wounds.entries.push(wound);
+
+        if wound_bleeding > 0.0 {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Bleeding,
+                magnitude: wound_bleeding,
+                duration_ticks: u64::MAX,
+                issued_at_tick: clock.tick,
+            });
+        }
+
+        if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
+            && wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD
+        {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Slowed,
+                magnitude: 0.4,
+                duration_ticks: LEG_SLOWED_DURATION_TICKS,
+                issued_at_tick: clock.tick,
+            });
+        }
+
+        if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Stunned,
+                magnitude: 1.0,
+                duration_ticks: HEAD_STUN_DURATION_TICKS,
+                issued_at_tick: clock.tick,
+            });
+        }
+
         if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
             primary_meridian.throughput_current += qi_invest * f64::from(decay);
             primary_meridian.cracks.push(MeridianCrack {
-                severity: f64::from(damage) * 0.02 * wound_profile.crack_mul,
+                severity: f64::from(wound_severity) * 0.02 * wound_profile.crack_mul,
                 healing_progress: 0.0,
                 cause: CrackCause::Attack,
                 created_at: clock.tick,
@@ -452,7 +481,7 @@ pub fn resolve_attack_intents(
                 attacker_id: attacker_id.clone(),
                 body_part: format!("{:?}", hit_probe.body_part),
                 wound_kind: format!("{:?}", intent.wound_kind),
-                damage,
+                damage: wound_severity,
                 tick: clock.tick,
             });
         }
@@ -469,7 +498,7 @@ pub fn resolve_attack_intents(
             target_id,
             hit_probe.body_part,
             intent.wound_kind,
-            damage,
+            wound_severity,
             hit_qi,
             jiemai_success,
             decay
@@ -481,7 +510,7 @@ pub fn resolve_attack_intents(
             resolved_at_tick: clock.tick,
             body_part: hit_probe.body_part,
             wound_kind: intent.wound_kind,
-            damage,
+            damage: wound_severity,
             contam_delta: emitted_contam_delta,
             description,
         });
@@ -503,7 +532,7 @@ pub fn resolve_attack_intents(
                         "wound_kind".to_string(),
                         json!(format!("{:?}", intent.wound_kind)),
                     ),
-                    ("damage".to_string(), json!(damage)),
+                    ("damage".to_string(), json!(wound_severity)),
                     ("contam_delta".to_string(), json!(emitted_contam_delta)),
                     ("qi_invest".to_string(), json!(intent.qi_invest)),
                     ("hit_qi".to_string(), json!(hit_qi)),
