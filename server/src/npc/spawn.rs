@@ -1258,6 +1258,7 @@ mod tests {
     fn mk_zone(name: &str, spirit_qi: f64, center: [f64; 3]) -> Zone {
         Zone {
             name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 DVec3::new(center[0] - 200.0, -64.0, center[2] - 200.0),
                 DVec3::new(center[0] + 200.0, 320.0, center[2] + 200.0),

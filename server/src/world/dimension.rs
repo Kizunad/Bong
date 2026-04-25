@@ -2,6 +2,7 @@
 //!
 //! See `docs/plan-tsy-dimension-v1.md` §1 for the design rationale.
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, ident, App, Component, DimensionType, DimensionTypeRegistry, Entity, PreStartup,
     ResMut, Resource,
@@ -13,8 +14,8 @@ use valence::registry::dimension_type::{DimensionEffects, MonsterSpawnLightLevel
 pub const TSY_DIMENSION_IDENT: &str = "bong:tsy";
 
 /// Logical dimension a player or NPC is currently inhabiting.
-#[allow(dead_code)] // `Tsy` variant referenced only in tests until cross-dim transfer lands.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Resource, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum DimensionKind {
     Overworld,
     Tsy,

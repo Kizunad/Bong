@@ -460,7 +460,7 @@ fn zone_name_for_position(
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }

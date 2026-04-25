@@ -60,7 +60,10 @@ pub fn qi_regen_and_zone_drain_tick(
 
     for (pos, meridians, mut cultivation) in players.iter_mut() {
         // 通过 pos 找到 zone 的 name（不持可变借用）
-        let Some(zone_name) = zones.find_zone(pos.0).map(|z| z.name.clone()) else {
+        let Some(zone_name) = zones
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .map(|z| z.name.clone())
+        else {
             continue;
         };
         let Some(zone) = zones.find_zone_mut(&zone_name) else {

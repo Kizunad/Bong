@@ -463,7 +463,7 @@ fn is_oversize_message(message: &str) -> bool {
 
 fn zone_name_for_position(zone_registry: &ZoneRegistry, position: DVec3) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }

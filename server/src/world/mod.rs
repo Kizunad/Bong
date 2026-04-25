@@ -444,7 +444,10 @@ mod tests {
     fn fallback_spawn_zone_exists() {
         let registry = ZoneRegistry::fallback();
         let spawn_zone = registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("fallback registry should always contain the spawn zone");
 
         assert_eq!(spawn_zone.name, DEFAULT_SPAWN_ZONE_NAME);
@@ -458,7 +461,10 @@ mod tests {
         let missing_path = missing_zones_path();
         let registry = ZoneRegistry::load_from_path(&missing_path);
         let spawn_zone = registry
-            .find_zone(DVec3::new(8.0, 66.0, 8.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(8.0, 66.0, 8.0),
+            )
             .expect("missing zones.json should fall back to the spawn zone");
 
         assert_eq!(registry.zones.len(), 1);

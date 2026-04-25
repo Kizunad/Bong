@@ -114,7 +114,10 @@ fn resolve_patrol_zone(
             return zone.clone();
         }
 
-        if let Some(zone) = zone_registry.find_zone(current_position) {
+        if let Some(zone) = zone_registry.find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            current_position,
+        ) {
             if !patrol.warned_missing_zone {
                 tracing::warn!(
                     "[bong][npc] patrol home zone `{}` missing; re-homing NPC patrol to zone `{}`",
@@ -175,6 +178,7 @@ mod patrol_tests {
     fn small_zone() -> Zone {
         Zone {
             name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(80.0, 320.0, 80.0)),
             spirit_qi: 0.9,
             danger_level: 0,

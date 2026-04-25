@@ -4862,6 +4862,7 @@ mod persistence_tests {
         let zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.42,
                 danger_level: 3,
@@ -5029,6 +5030,7 @@ mod persistence_tests {
         let zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.31,
                 danger_level: 2,
@@ -5072,6 +5074,7 @@ mod persistence_tests {
         let existing_zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: -0.55,
                 danger_level: 5,
@@ -5258,6 +5261,7 @@ mod persistence_tests {
         let persisted = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: -0.15,
                 danger_level: 4,
@@ -5290,6 +5294,7 @@ mod persistence_tests {
         app.insert_resource(crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.25,
                 danger_level: 1,
@@ -6293,6 +6298,7 @@ mod persistence_tests {
                     let registry = crate::world::zone::ZoneRegistry {
                         zones: vec![crate::world::zone::Zone {
                             name: format!("mixed_zone_{index}"),
+                            dimension: crate::world::dimension::DimensionKind::Overworld,
                             bounds: crate::world::zone::default_spawn_bounds(),
                             spirit_qi: 0.1 + index as f64,
                             danger_level: 1 + index as u8,
@@ -6541,6 +6547,7 @@ mod persistence_tests {
                         let registry = crate::world::zone::ZoneRegistry {
                             zones: vec![crate::world::zone::Zone {
                                 name: format!("mixed_zone_{batch}_{index}"),
+                                dimension: crate::world::dimension::DimensionKind::Overworld,
                                 bounds: crate::world::zone::default_spawn_bounds(),
                                 spirit_qi: 0.1 + batch as f64 + index as f64,
                                 danger_level: 1 + batch as u8 + index as u8,
