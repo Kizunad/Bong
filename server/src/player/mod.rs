@@ -10,7 +10,7 @@ use self::state::{
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::skill::components::SkillSet;
-use crate::world::dimension::DimensionLayers;
+use crate::world::dimension::{CurrentDimension, DimensionLayers};
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
@@ -81,6 +81,7 @@ pub fn initial_game_mode() -> GameMode {
 }
 
 fn init_clients(
+    mut commands: Commands,
     mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
     dimension_layers: Option<Res<DimensionLayers>>,
 ) {
@@ -110,6 +111,7 @@ fn init_clients(
             &mut position,
             &mut game_mode,
         );
+        commands.entity(entity).insert(CurrentDimension::default());
 
         client.send_chat_message(welcome_message());
 
