@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Component, DVec3, Despawned, Entity, Position, Query, Res, ResMut, Resource,
-    With, Without,
+    bevy_ecs, App, Component, DVec3, Despawned, Entity, IntoSystemConfigs, Position, PreUpdate,
+    Query, Res, ResMut, Resource, With, Without,
 };
 
 use crate::npc::spawn::NpcMarker;
@@ -55,17 +55,21 @@ impl Default for NpcLodConfig {
 pub struct NpcLodTick(pub u32);
 
 pub fn register(app: &mut App) {
-    // LOD ECS 系统 `tick_lod_counter` + `update_npc_lod_tier_system` 暂不挂 add_systems。
+    // LOD gate：接入 brain.rs 3 个核心 scorer（player_proximity / hunger / wander）
+    // 的 Dormant skip。seed 100 rogue 在 test area 无玩家连接时全部分类为 Dormant，
+    // scorer early return → CI e2e 无玩家路径上 TPS 不塌。
     //
-    // 背景：brain.rs 的 LOD gate（consumer 侧）在 `ccfbb458` 为解 e2e CI TPS 回归
-    // 已撤回；此时保留 tier 写入系统是"纯开销无消费者" —— 每 `reassess_interval`
-    // tick 全表扫 NPC × Player 写 `NpcLodTier`，却没有 scorer 读它。
-    //
-    // 恢复路径（follow-up PR）：接入 brain.rs 3 个核心 scorer 的 skip gate 后，
-    // 把下面的 `add_systems` 同步接回。数据结构 / 纯函数 / classify_tier 单测全部
-    // 保留，方便下一 PR 直接 wire-up。
+    // ccfbb458 曾把这一套 add_systems 和 brain.rs gate 整体撤回，误诊为 TPS 回归
+    // 源；真正根因是 `seed_initial_rogue_population_on_startup` 默认 target=100
+    // 让 brain.rs 20+ scorer × 100 actor 在 CI 单核上跑不动。LOD gate 是正解。
     app.insert_resource(NpcLodConfig::default())
-        .insert_resource(NpcLodTick::default());
+        .insert_resource(NpcLodTick::default())
+        .add_systems(
+            PreUpdate,
+            (tick_lod_counter, update_npc_lod_tier_system)
+                .chain()
+                .before(big_brain::prelude::BigBrainSet::Scorers),
+        );
 }
 
 fn tick_lod_counter(mut counter: ResMut<NpcLodTick>) {

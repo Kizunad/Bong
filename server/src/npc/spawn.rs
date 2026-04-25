@@ -186,8 +186,17 @@ pub struct RoguePopulationSeedConfig {
 
 impl Default for RoguePopulationSeedConfig {
     fn default() -> Self {
+        // 允许通过 `BONG_ROGUE_SEED_COUNT` 环境变量覆盖 target_count。
+        // 用途：CI e2e 无玩家闭环不需要 100 rogue 做负载（LOD gate 已把无玩家
+        // 场景降到 Dormant scorer skip，但 lifecycle / navigator / movement
+        // 等 per-NPC 系统仍是 O(N)）。e2e 只验证 tiandao ↔ server IPC 闭环，
+        // 把 seed 降到 0 让 CI 单核 ubuntu-latest 跑满 20 TPS。
+        let target_count = std::env::var("BONG_ROGUE_SEED_COUNT")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .unwrap_or(100);
         Self {
-            target_count: 100,
+            target_count,
             resource_fraction: 0.8,
             resource_spirit_qi_threshold: 0.4,
             max_initial_age_ratio: 0.8,

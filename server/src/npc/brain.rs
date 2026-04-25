@@ -20,6 +20,7 @@ use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{
     NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
 };
+use crate::npc::lod::{is_dormant, should_skip_scorer_tick, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
@@ -650,10 +651,14 @@ pub fn update_npc_blackboard(
 }
 
 fn player_proximity_scorer_system(
-    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    npcs: Query<(&NpcBlackboard, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<PlayerProximityScorer>>,
     npc_behavior: Option<Res<NpcBehaviorConfig>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let flee_threshold = npc_behavior
             .as_deref()
@@ -661,8 +666,21 @@ fn player_proximity_scorer_system(
             .unwrap_or(DEFAULT_FLEE_THRESHOLD)
             .clamp(0.0, 1.0);
 
-        let value = if let Ok(blackboard) = npcs.get(*actor) {
-            score_for_flee_threshold(proximity_score(blackboard.player_distance), flee_threshold)
+        let value = if let Ok((blackboard, tier)) = npcs.get(*actor) {
+            if is_dormant(tier) {
+                0.0
+            } else if tier
+                .copied()
+                .map(|t| should_skip_scorer_tick(t, tick, &cfg))
+                .unwrap_or(false)
+            {
+                continue;
+            } else {
+                score_for_flee_threshold(
+                    proximity_score(blackboard.player_distance),
+                    flee_threshold,
+                )
+            }
         } else {
             0.0
         };
@@ -1125,26 +1143,62 @@ fn fear_cultivator_scorer_system(
 }
 
 fn hunger_scorer_system(
-    npcs: Query<&Hunger, With<NpcMarker>>,
+    npcs: Query<(&Hunger, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<HungerScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = npcs
-            .get(*actor)
-            .ok()
-            .map(|h| h.hunger_pressure())
-            .unwrap_or(0.0);
+        let value = match npcs.get(*actor) {
+            Ok((h, tier)) => {
+                if is_dormant(tier) {
+                    0.0
+                } else if tier
+                    .copied()
+                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
+                    .unwrap_or(false)
+                {
+                    continue;
+                } else {
+                    h.hunger_pressure()
+                }
+            }
+            Err(_) => 0.0,
+        };
         score.set(value);
     }
 }
 
 fn wander_scorer_system(
-    npcs: Query<Option<&PendingRetirement>, With<NpcMarker>>,
+    npcs: Query<(Option<&PendingRetirement>, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<WanderScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let pending = npcs.get(*actor).ok().flatten().is_some();
-        score.set(if pending { 0.0 } else { WANDER_BASELINE_SCORE });
+        let value = match npcs.get(*actor) {
+            Ok((pending, tier)) => {
+                if is_dormant(tier) {
+                    0.0
+                } else if tier
+                    .copied()
+                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
+                    .unwrap_or(false)
+                {
+                    continue;
+                } else if pending.is_some() {
+                    0.0
+                } else {
+                    WANDER_BASELINE_SCORE
+                }
+            }
+            Err(_) => 0.0,
+        };
+        score.set(value);
     }
 }
 
