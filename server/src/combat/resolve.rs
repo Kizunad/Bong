@@ -4,7 +4,7 @@ use valence::prelude::{
     ResMut, Username, With,
 };
 
-use crate::combat::armor::ARMOR_MITIGATION_CAP;
+use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::status::has_active_status;
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::CombatClock;
@@ -28,7 +28,8 @@ use crate::cultivation::components::{
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     discard_inventory_item_to_dropped_loot, move_equipped_item_to_first_container_slot,
-    set_item_instance_durability, DroppedLootRegistry, PlayerInventory,
+    set_item_instance_durability, DroppedLootRegistry, PlayerInventory, EQUIP_SLOT_CHEST,
+    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -37,6 +38,9 @@ use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
+
+const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
+const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
 
 fn apply_armor_mitigation(wound: &mut Wound, derived: &DerivedAttrs, contam: &mut f64) -> bool {
     let Some(&m) = derived.defense_profile.get(&(wound.location, wound.kind)) else {
@@ -50,6 +54,8 @@ fn apply_armor_mitigation(wound: &mut Wound, derived: &DerivedAttrs, contam: &mu
     wound.severity *= 1.0 - m;
     wound.bleeding_per_sec *= 1.0 - m;
     *contam *= 1.0 - f64::from(m);
+    // New spec: armor hit should heavily damp contamination throughput.
+    *contam *= ARMOR_HIT_CONTAMINATION_MULTIPLIER;
     true
 }
 
@@ -112,6 +118,7 @@ pub fn apply_defense_intents(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn resolve_attack_intents(
     clock: Res<CombatClock>,
+    armor_profiles: Option<Res<ArmorProfileRegistry>>,
     mut intents: EventReader<AttackIntent>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     clients: Query<CombatClientItem<'_>, CombatClientFilter>,
@@ -421,10 +428,72 @@ pub fn resolve_attack_intents(
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
         if let Some(attrs) = defender_attrs {
-            let _ = apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            let armor_hit = apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
             // 同步污染 source 的最后一条（本次命中刚 push）。
             if let Some(last_contam) = contamination.entries.last_mut() {
                 last_contam.amount = emitted_contam_delta;
+            }
+
+            // 护甲命中：扣减装备耐久（少量）。
+            if armor_hit {
+                if let (Some(armor_profiles), Ok(mut inventory)) = (
+                    armor_profiles.as_deref(),
+                    inventories.get_mut(target_entity),
+                ) {
+                    let best: Option<(u64, u32, f64, f32)> = [
+                        EQUIP_SLOT_HEAD,
+                        EQUIP_SLOT_CHEST,
+                        EQUIP_SLOT_LEGS,
+                        EQUIP_SLOT_FEET,
+                    ]
+                    .into_iter()
+                    .filter_map(|slot| {
+                        let item = inventory.equipped.get(slot)?;
+                        let ap = armor_profiles.get(item.template_id.as_str())?;
+                        if !ap.body_coverage.contains(&hit_probe.body_part) {
+                            return None;
+                        }
+                        let base_m = *ap.kind_mitigation.get(&intent.wound_kind).unwrap_or(&0.0);
+                        if base_m <= 0.0 {
+                            return None;
+                        }
+                        let effective_mul =
+                            ap.effective_multiplier_for_durability_ratio(item.durability);
+                        let effective_m = (base_m * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
+                        if effective_m <= 0.0 {
+                            return None;
+                        }
+                        Some((
+                            item.instance_id,
+                            ap.durability_max,
+                            item.durability,
+                            effective_m,
+                        ))
+                    })
+                    .max_by(|a, b| a.3.total_cmp(&b.3));
+
+                    if let Some((instance_id, durability_max, cur_ratio, _effective_m)) = best {
+                        if durability_max > 0 && cur_ratio > 0.0 {
+                            let durability_max = f64::from(durability_max);
+                            let cur_abs = (cur_ratio * durability_max).max(0.0);
+                            let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
+                            let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
+                            if next_ratio < cur_ratio {
+                                if let Err(error) = set_item_instance_durability(
+                                    &mut inventory,
+                                    instance_id,
+                                    next_ratio,
+                                ) {
+                                    tracing::warn!(
+                                        "[bong][combat][armor] failed to persist durability for instance {}: {}",
+                                        instance_id,
+                                        error
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -748,6 +817,7 @@ fn first_open_or_fallback_meridian(
 mod tests {
     use super::*;
 
+    use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
     use crate::combat::components::{
         BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle, StatusEffects, WoundKind,
         Wounds, JIEMAI_CONTAM_MULTIPLIER, JIEMAI_DEFENSE_QI_COST,
@@ -879,6 +949,125 @@ mod tests {
                 },
             ),
         ]))
+    }
+
+    #[test]
+    fn armor_hit_scales_contamination_and_ticks_item_durability() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1500 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.insert_resource(ArmorProfileRegistry::from_map(
+            std::collections::HashMap::from([(
+                "fake_spirit_hide".to_string(),
+                ArmorProfile {
+                    slot: EquipSlotV1::Chest,
+                    body_coverage: vec![BodyPart::Chest],
+                    kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
+                    durability_max: 100,
+                    broken_multiplier: 0.3,
+                },
+            )]),
+        ));
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                crate::combat::armor_sync::sync_armor_to_derived_attrs,
+                resolve_attack_intents,
+            ),
+        );
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(target).insert(PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: std::collections::HashMap::from([(
+                crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+                ItemInstance {
+                    instance_id: 88,
+                    template_id: "fake_spirit_hide".to_string(),
+                    display_name: "假灵兽皮胸甲".to_string(),
+                    grid_w: 2,
+                    grid_h: 2,
+                    weight: 5.0,
+                    rarity: crate::inventory::ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        });
+
+        // Changed<PlayerInventory> 需要一次 mutation 才触发。
+        {
+            let world = app.world_mut();
+            let mut entity_mut = world.entity_mut(target);
+            let mut inv = entity_mut.get_mut::<PlayerInventory>().unwrap();
+            inv.revision = InventoryRevision(inv.revision.0.saturating_add(1));
+        }
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1499,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let event = combat_events
+            .iter_current_update_events()
+            .next()
+            .expect("combat event should emit");
+
+        // emit 逻辑：
+        // - base_contam 用的是「护甲减免前」的 damage
+        // - CombatEvent.damage 用的是「护甲减免后」的 damage
+        // 所以期望值可直接用 event.damage × DEBUG_ATTACK_CONTAMINATION_FACTOR × kind_profile.contam_mul
+        // 再乘本 plan 的 0.1x 缩放。
+        let expected_contam =
+            f64::from(event.damage) * 0.25 * 1.0 * 0.8 * ARMOR_HIT_CONTAMINATION_MULTIPLIER;
+        assert_eq!(event.contam_delta, expected_contam);
+
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].durability < 1.0,
+            "armor hit should tick down durability"
+        );
     }
 
     fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {
