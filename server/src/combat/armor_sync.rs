@@ -56,7 +56,8 @@ pub fn sync_armor_to_derived_attrs(
     armor_profiles: Res<ArmorProfileRegistry>,
 ) {
     for (inv, mut derived) in &mut query {
-        derived.defense_profile = build_defense_profile_from_inventory(inv, armor_profiles.as_ref());
+        derived.defense_profile =
+            build_defense_profile_from_inventory(inv, armor_profiles.as_ref());
     }
 }
 
@@ -188,7 +189,9 @@ mod tests {
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         // 0.5 mitigation × 0.3 broken_multiplier
         assert_eq!(
-            attrs.defense_profile.get(&(BodyPart::Chest, WoundKind::Cut)),
+            attrs
+                .defense_profile
+                .get(&(BodyPart::Chest, WoundKind::Cut)),
             Some(&0.15)
         );
     }
