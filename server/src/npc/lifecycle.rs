@@ -560,6 +560,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<PlayerRevived>();

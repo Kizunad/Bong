@@ -3435,9 +3435,9 @@ cols = 4
 
         let owner = Entity::PLACEHOLDER;
         let mut registry = DroppedLootRegistry::default();
-        registry.by_owner.insert(
-            owner,
-            vec![DroppedLootEntry {
+        registry.entries.insert(
+            42,
+            DroppedLootEntry {
                 instance_id: 42,
                 source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
                 source_row: 0,
@@ -3458,13 +3458,12 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                 },
-            }],
+            },
         );
 
         let revision = pickup_dropped_loot_instance(
             &mut inventory,
             &mut registry,
-            owner,
             [0.0, 64.0, 0.0],
             42,
         )
@@ -3472,7 +3471,8 @@ cols = 4
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);
-        assert!(!registry.by_owner.contains_key(&owner));
+        assert!(!registry.entries.contains_key(&42));
+        let _ = owner;
     }
 
     #[test]
@@ -3484,7 +3484,6 @@ cols = 4
         let outcome = discard_inventory_item_to_dropped_loot(
             &mut inventory,
             &mut registry,
-            owner,
             [0.0, 64.0, 0.0],
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
@@ -3497,13 +3496,13 @@ cols = 4
 
         assert_eq!(outcome.revision, InventoryRevision(8));
         assert!(inventory.containers[0].items.is_empty());
-        let drops = registry
-            .by_owner
-            .get(&owner)
+        let entry = registry
+            .entries
+            .get(&42)
             .expect("registry should contain dropped item");
-        assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].instance_id, 42);
-        assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+        assert_eq!(entry.instance_id, 42);
+        assert_eq!(entry.source_container_id, MAIN_PACK_CONTAINER_ID);
+        let _ = owner;
     }
 
     #[test]

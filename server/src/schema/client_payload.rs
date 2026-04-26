@@ -186,7 +186,7 @@ mod tests {
         match payload {
             ClientPayloadV1::PlayerState { v, player_state } => {
                 assert_eq!(v, 1);
-                assert_eq!(player_state.realm, "qi_refining_3");
+                assert_eq!(player_state.realm, "Induce");
                 assert_eq!(player_state.spirit_qi, 78.0);
                 assert_eq!(player_state.spirit_qi_max, 100.0);
                 assert_eq!(player_state.zone, "blood_valley");

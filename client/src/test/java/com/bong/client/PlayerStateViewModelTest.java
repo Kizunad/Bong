@@ -54,12 +54,12 @@ public class PlayerStateViewModelTest {
         assertEquals("Blood Valley", viewModel.zoneLabel());
         assertEquals(4, viewModel.powerBreakdown().size());
         assertEquals("战斗", viewModel.powerBreakdown().get(0).label());
-        assertEquals("0.40", viewModel.powerBreakdown().get(0).valueLabel());
+        assertEquals("0.46", viewModel.powerBreakdown().get(0).valueLabel());
         assertEquals("财富", viewModel.powerBreakdown().get(1).label());
-        assertEquals("0.42", viewModel.powerBreakdown().get(1).valueLabel());
+        assertEquals("0.48", viewModel.powerBreakdown().get(1).valueLabel());
         assertEquals("社交", viewModel.powerBreakdown().get(2).label());
         assertEquals("0.38", viewModel.powerBreakdown().get(2).valueLabel());
         assertEquals("领地", viewModel.powerBreakdown().get(3).label());
-        assertEquals("0.27", viewModel.powerBreakdown().get(3).valueLabel());
+        assertEquals("0.31", viewModel.powerBreakdown().get(3).valueLabel());
     }
 }
