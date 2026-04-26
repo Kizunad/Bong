@@ -1,7 +1,7 @@
 //! plan-tsy-zone-v1 §2 — 活坍缩渊负压抽真元 tick。
 //!
 //! 公式（§2.1）：
-//!   rate = |zone.spirit_qi| × (player.spirit_qi_max / REFERENCE_POOL) ^ N × BASE
+//!   rate = |zone.spirit_qi| × (cultivation.qi_max / REFERENCE_POOL) ^ N × BASE
 //! 触发条件：玩家有 `TsyPresence` + 当前 zone 是 TSY 系列。
 //! 真元归零 → 发 `DeathEvent { cause: "tsy_drain" }`，由 combat lifecycle 接管。
 
@@ -9,25 +9,38 @@ use valence::prelude::{Entity, EventWriter, Position, Query, Res, Without};
 
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
+use crate::cultivation::components::Cultivation;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::PlayerState;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::tsy::TsyPresence;
 use crate::world::zone::{Zone, ZoneRegistry};
 
-/// 引气满池基准（spirit_qi_max = 100 → pool_ratio = 1.0）。
+/// 引气满池基准（qi_max = 100 → pool_ratio = 1.0）。
 pub const REFERENCE_POOL: f64 = 100.0;
 /// 非线性指数。`plan-tsy-v1.md §0` 公理 2：抽取速率与池大小**平方关系**。
 pub const NONLINEAR_EXPONENT: f64 = 1.5;
 /// 基准抽速（点 / tick）。20Hz tick，0.5/tick = 10/sec @ |灵压|=1.0 引气小池。
 pub const BASE_DRAIN_PER_TICK: f64 = 0.5;
 
+type TsyDrainPlayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut Cultivation,
+        &'static Position,
+        &'static TsyPresence,
+        Option<&'static CurrentDimension>,
+    ),
+    Without<NpcMarker>,
+>;
+
 /// 纯函数：单 tick 抽取量（点）。非 TSY zone 返回 0；空池返回 0。
-pub fn compute_drain_per_tick(zone: &Zone, player: &PlayerState) -> f64 {
+pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
     if !zone.is_tsy() {
         return 0.0;
     }
-    let pool = player.spirit_qi_max.max(0.0);
+    let pool = cultivation.qi_max.max(0.0);
     if pool <= 0.0 {
         return 0.0;
     }
@@ -40,7 +53,7 @@ pub fn compute_drain_per_tick(zone: &Zone, player: &PlayerState) -> f64 {
 ///
 /// 通过 `TsyPresence` filter + `CurrentDimension::Tsy` 双重 gate 规避
 /// "presence 与 dim inconsistent" 的非法状态：
-/// - 正常路径：两者一致，按 TSY dim 查 zone，扣 spirit_qi
+/// - 正常路径：两者一致，按 TSY dim 查 zone，扣 cultivation.qi_current
 /// - 异常路径：玩家在 Overworld 但仍带 TsyPresence（lifecycle bug）→
 ///   `find_zone(Tsy, pos)` 返回 None 自然 skip，不静默错抽
 ///
@@ -49,30 +62,21 @@ pub fn tsy_drain_tick(
     clock: Res<CombatClock>,
     zones: Res<ZoneRegistry>,
     mut deaths: EventWriter<DeathEvent>,
-    mut players: Query<
-        (
-            Entity,
-            &mut PlayerState,
-            &Position,
-            &TsyPresence,
-            Option<&CurrentDimension>,
-        ),
-        Without<NpcMarker>,
-    >,
+    mut players: TsyDrainPlayerQuery,
 ) {
-    for (entity, mut state, pos, _presence, current_dim) in &mut players {
+    for (entity, mut cultivation, pos, _presence, current_dim) in &mut players {
         // 跨位面前 dim 兜底：缺 CurrentDimension 视为 TSY（presence 已经隐含玩家在内）
         let dim = current_dim.map(|c| c.0).unwrap_or(DimensionKind::Tsy);
         let Some(zone) = zones.find_zone(dim, pos.0) else {
             continue;
         };
-        let drain = compute_drain_per_tick(zone, &state);
+        let drain = compute_drain_per_tick(zone, &cultivation);
         if drain <= 0.0 {
             continue;
         }
-        let was_alive = state.spirit_qi > 0.0;
-        state.spirit_qi -= drain;
-        if was_alive && state.spirit_qi <= 0.0 {
+        let was_alive = cultivation.qi_current > 0.0;
+        cultivation.qi_current -= drain;
+        if was_alive && cultivation.qi_current <= 0.0 {
             // 归零 → P0 发 DeathEvent（cause="tsy_drain"），死亡结算由 P1 plan-tsy-loot 处理。
             deaths.send(DeathEvent {
                 target: entity,
@@ -115,10 +119,10 @@ mod tests {
         }
     }
 
-    fn player(spirit_qi_max: f64) -> PlayerState {
-        PlayerState {
-            spirit_qi: spirit_qi_max,
-            spirit_qi_max,
+    fn player(qi_max: f64) -> Cultivation {
+        Cultivation {
+            qi_current: qi_max,
+            qi_max,
             ..Default::default()
         }
     }
