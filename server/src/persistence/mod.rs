@@ -15,7 +15,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
@@ -296,14 +296,6 @@ pub struct ActiveTribulationRecord {
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PlayerCultivationRecord {
-    pub username: String,
-    pub cultivation_json: String,
-    pub schema_version: i32,
-    pub last_updated_wall: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1069,6 +1061,7 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 .collect::<Result<Vec<_>, _>>()?;
             columns
         };
+        backfill_legacy_player_cultivation(&transaction, &player_core_columns)?;
         for legacy_col in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
             if player_core_columns.iter().any(|name| name == legacy_col) {
                 transaction.execute(
@@ -1093,6 +1086,106 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     }
 
     Ok(())
+}
+
+fn backfill_legacy_player_cultivation(
+    transaction: &rusqlite::Transaction<'_>,
+    player_core_columns: &[String],
+) -> rusqlite::Result<()> {
+    let has_column = |column: &str| player_core_columns.iter().any(|name| name == column);
+    if !(has_column("username")
+        && has_column("realm")
+        && has_column("spirit_qi")
+        && has_column("spirit_qi_max"))
+    {
+        return Ok(());
+    }
+
+    let legacy_rows = {
+        let mut stmt = transaction.prepare(
+            "
+            SELECT username, realm, spirit_qi, spirit_qi_max
+            FROM player_core
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let wall_clock = current_unix_seconds();
+    for (username, realm, spirit_qi, spirit_qi_max) in legacy_rows {
+        let mut cultivation = Cultivation::default();
+        if let Some(restored_realm) = legacy_player_realm_to_cultivation(realm.as_str()) {
+            cultivation.realm = restored_realm;
+        }
+        if spirit_qi.is_finite() {
+            cultivation.qi_current = spirit_qi.max(0.0);
+        }
+        if spirit_qi_max.is_finite() && spirit_qi_max > 0.0 {
+            cultivation.qi_max = spirit_qi_max;
+        }
+
+        let bundle = serde_json::json!({
+            "v": 1,
+            "cultivation": cultivation,
+            "meridians": crate::cultivation::components::MeridianSystem::default(),
+            "qi_color": crate::cultivation::components::QiColor::default(),
+            "karma": crate::cultivation::components::Karma::default(),
+            "contamination": crate::cultivation::components::Contamination::default(),
+            "life_record": crate::cultivation::life_record::LifeRecord::new(
+                canonical_player_id(username.as_str()),
+            ),
+            "practice_log": crate::cultivation::color::PracticeLog::default(),
+            "insight_quota": crate::cultivation::insight::InsightQuota::default(),
+            "unlocked_perceptions": crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            "insight_modifiers": crate::cultivation::insight_apply::InsightModifiers::new(),
+        });
+        let cultivation_json = serde_json::to_string(&bundle)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+
+        transaction.execute(
+            "
+            INSERT INTO player_cultivation (
+                username,
+                cultivation_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO NOTHING
+            ",
+            params![
+                username,
+                cultivation_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {
+    match realm {
+        "mortal" => Some(Realm::Awaken),
+        "qi_refining_1" => Some(Realm::Induce),
+        "qi_refining_2" => Some(Realm::Condense),
+        "qi_refining_3" | "foundation_establishment_1" => Some(Realm::Spirit),
+        "Awaken" => Some(Realm::Awaken),
+        "Induce" => Some(Realm::Induce),
+        "Condense" => Some(Realm::Condense),
+        "Solidify" => Some(Realm::Solidify),
+        "Spirit" => Some(Realm::Spirit),
+        "Void" => Some(Realm::Void),
+        _ => None,
+    }
 }
 
 fn ensure_agent_world_model_table(connection: &Connection) -> rusqlite::Result<()> {
@@ -4149,6 +4242,110 @@ mod persistence_tests {
             .optional()
             .expect("sqlite_master player_core query should succeed");
         assert_eq!(player_core_exists.as_deref(), Some("player_core"));
+    }
+
+    #[test]
+    fn task13_migration_backfills_legacy_player_cultivation() {
+        let db_path = database_path("task13-legacy-cultivation-backfill");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_core (
+                    username TEXT PRIMARY KEY,
+                    current_char_id TEXT NOT NULL,
+                    realm TEXT NOT NULL,
+                    spirit_qi REAL NOT NULL,
+                    spirit_qi_max REAL NOT NULL,
+                    karma REAL NOT NULL,
+                    experience INTEGER NOT NULL,
+                    inventory_score REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                CREATE TABLE player_slow (
+                    username TEXT PRIMARY KEY,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                PRAGMA user_version = 12;
+                ",
+            )
+            .expect("legacy schema should be created");
+        connection
+            .execute(
+                "
+                INSERT INTO player_core (
+                    username,
+                    current_char_id,
+                    realm,
+                    spirit_qi,
+                    spirit_qi_max,
+                    karma,
+                    experience,
+                    inventory_score,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ",
+                params![
+                    "Azure",
+                    canonical_player_id("Azure"),
+                    "qi_refining_3",
+                    77.5_f64,
+                    123.0_f64,
+                    0.25_f64,
+                    900_i64,
+                    0.5_f64,
+                    CURRENT_SCHEMA_VERSION,
+                    1_i64,
+                ],
+            )
+            .expect("legacy player should be inserted");
+
+        apply_migrations(&mut connection).expect("v13 migration should succeed");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        for dropped_column in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('player_core') WHERE name = ?1",
+                    params![dropped_column],
+                    |row| row.get(0),
+                )
+                .expect("player_core table_info should be readable");
+            assert_eq!(count, 0, "{dropped_column} should be dropped");
+        }
+
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("backfilled cultivation row should exist");
+        let bundle: Value =
+            serde_json::from_str(&cultivation_json).expect("cultivation bundle should deserialize");
+
+        assert_eq!(bundle["cultivation"]["realm"].as_str(), Some("Spirit"));
+        assert_eq!(bundle["cultivation"]["qi_current"].as_f64(), Some(77.5));
+        assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(123.0));
+        assert_eq!(
+            bundle["life_record"]["character_id"].as_str(),
+            Some(canonical_player_id("Azure").as_str())
+        );
+
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
     }
 
     #[test]

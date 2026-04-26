@@ -536,6 +536,8 @@ where
             PlayerProfile {
                 uuid: canonical_player_id(name),
                 name: name.to_string(),
+                // Test helper only receives PlayerState, not live Cultivation.
+                // Runtime world-state emission uses the real cultivation snapshot path.
                 realm: crate::schema::cultivation::realm_to_string(Realm::Awaken).to_string(),
                 composite_power,
                 breakdown,

@@ -30,6 +30,7 @@ const WELCOME_MESSAGE: &str =
     "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
+const CULTIVATION_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -53,6 +54,19 @@ type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
+type CultivationBundleQueryItem<'a> = (
+    &'a Username,
+    &'a Cultivation,
+    &'a MeridianSystem,
+    &'a QiColor,
+    &'a Karma,
+    &'a PracticeLog,
+    &'a Contamination,
+    &'a LifeRecord,
+    &'a InsightQuota,
+    &'a UnlockedPerceptions,
+    &'a InsightModifiers,
+);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
@@ -68,7 +82,8 @@ pub fn register(app: &mut App) {
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
-            flush_changed_player_skills.after(autosave_player_slow_and_ui_slices),
+            autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
+            flush_changed_player_skills.after(autosave_player_cultivation_bundles),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_skills),
@@ -481,6 +496,58 @@ fn autosave_player_slow_and_ui_slices(
     );
 }
 
+fn autosave_player_cultivation_bundles(
+    settings: Res<PersistenceSettings>,
+    timer: Res<PlayerStateAutosaveTimer>,
+    players: Query<CultivationBundleQueryItem<'_>, With<Client>>,
+) {
+    if !timer.ticks.is_multiple_of(CULTIVATION_FLUSH_INTERVAL_TICKS) {
+        return;
+    }
+
+    let mut saved_count = 0usize;
+
+    for (
+        username,
+        cultivation,
+        meridians,
+        qi_color,
+        karma,
+        practice_log,
+        contamination,
+        life_record,
+        insight_quota,
+        unlocked_perceptions,
+        insight_modifiers,
+    ) in &players
+    {
+        match persist_player_cultivation_bundle(
+            &settings,
+            username.0.as_str(),
+            cultivation,
+            meridians,
+            qi_color,
+            karma,
+            contamination,
+            life_record,
+            practice_log,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+        ) {
+            Ok(()) => saved_count += 1,
+            Err(error) => tracing::warn!(
+                "[bong][player] 60s cultivation flush failed for `{}`: {error}",
+                username.0,
+            ),
+        }
+    }
+
+    tracing::info!(
+        "[bong][player] flushed {saved_count} cultivation bundle(s) after {CULTIVATION_FLUSH_INTERVAL_TICKS} ticks"
+    );
+}
+
 fn flush_changed_player_inventories(
     persistence: Res<PlayerStatePersistence>,
     players: Query<ChangedInventoryClientsQueryItem<'_>, ChangedInventoryClientsQueryFilter>,
@@ -668,6 +735,17 @@ mod tests {
             .expect("player_ui_prefs row should exist")
     }
 
+    fn read_cultivation_json(db_path: &PathBuf) -> String {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_cultivation row should exist")
+    }
+
     #[test]
     fn player_flushes_core_slow_inventory_and_ui_slices() {
         let (persistence, data_dir, db_path) = sqlite_persistence("flush-slices");
@@ -733,6 +811,59 @@ mod tests {
             (42.0, 77.0, -3.5)
         );
 
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn cultivation_bundle_flushes_periodically() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("cultivation-flush");
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-cultivation-flush",
+        ));
+        app.insert_resource(PlayerStateAutosaveTimer {
+            ticks: CULTIVATION_FLUSH_INTERVAL_TICKS - 1,
+        });
+        app.add_systems(
+            Update,
+            (
+                tick_player_persistence_timer,
+                autosave_player_cultivation_bundles.after(tick_player_persistence_timer),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 42.0,
+                qi_max: 88.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            QiColor::default(),
+            Karma::default(),
+            PracticeLog::default(),
+            Contamination::default(),
+            LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
+            InsightQuota::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::new(),
+        ));
+
+        app.update();
+
+        let cultivation_json = read_cultivation_json(&db_path);
+        let bundle: serde_json::Value =
+            serde_json::from_str(&cultivation_json).expect("cultivation bundle should deserialize");
+        assert_eq!(bundle["cultivation"]["realm"].as_str(), Some("Condense"));
+        assert_eq!(bundle["cultivation"]["qi_current"].as_f64(), Some(42.0));
+        assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(88.0));
+
+        let _ = persistence;
         let _ = fs::remove_dir_all(&data_dir);
     }
 

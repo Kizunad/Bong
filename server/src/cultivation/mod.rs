@@ -195,58 +195,84 @@ fn attach_cultivation_to_joined_clients(
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             // Best-effort hydration; schema is versioned and may evolve.
             if let Some(value) = persisted_bundle.get("cultivation") {
-                if let Ok(decoded) = serde_json::from_value::<Cultivation>(value.clone()) {
-                    cultivation = decoded;
+                match serde_json::from_value::<Cultivation>(value.clone()) {
+                    Ok(decoded) => cultivation = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "cultivation", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("meridians") {
-                if let Ok(decoded) = serde_json::from_value::<MeridianSystem>(value.clone()) {
-                    meridians = decoded;
+                match serde_json::from_value::<MeridianSystem>(value.clone()) {
+                    Ok(decoded) => meridians = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "meridians", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("qi_color") {
-                if let Ok(decoded) = serde_json::from_value::<QiColor>(value.clone()) {
-                    qi_color = decoded;
+                match serde_json::from_value::<QiColor>(value.clone()) {
+                    Ok(decoded) => qi_color = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "qi_color", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("karma") {
-                if let Ok(decoded) = serde_json::from_value::<Karma>(value.clone()) {
-                    karma = decoded;
+                match serde_json::from_value::<Karma>(value.clone()) {
+                    Ok(decoded) => karma = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "karma", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("practice_log") {
-                if let Ok(decoded) = serde_json::from_value::<PracticeLog>(value.clone()) {
-                    practice_log = decoded;
+                match serde_json::from_value::<PracticeLog>(value.clone()) {
+                    Ok(decoded) => practice_log = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "practice_log", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("contamination") {
-                if let Ok(decoded) = serde_json::from_value::<Contamination>(value.clone()) {
-                    contamination = decoded;
+                match serde_json::from_value::<Contamination>(value.clone()) {
+                    Ok(decoded) => contamination = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "contamination", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("life_record") {
-                if let Ok(decoded) = serde_json::from_value::<LifeRecord>(value.clone()) {
-                    life_record = decoded;
+                match serde_json::from_value::<LifeRecord>(value.clone()) {
+                    Ok(decoded) => life_record = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "life_record", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_quota") {
-                if let Ok(decoded) = serde_json::from_value::<InsightQuota>(value.clone()) {
-                    insight_quota = decoded;
+                match serde_json::from_value::<InsightQuota>(value.clone()) {
+                    Ok(decoded) => insight_quota = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_quota", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("unlocked_perceptions") {
-                if let Ok(decoded) = serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
-                    unlocked_perceptions = decoded;
+                match serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
+                    Ok(decoded) => unlocked_perceptions = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "unlocked_perceptions", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_modifiers") {
-                if let Ok(decoded) = serde_json::from_value::<InsightModifiers>(value.clone()) {
-                    insight_modifiers = decoded;
+                match serde_json::from_value::<InsightModifiers>(value.clone()) {
+                    Ok(decoded) => insight_modifiers = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_modifiers", error)
+                    }
                 }
             }
-        } else if let Some(_player_state) = player_state {
-            // Legacy fallback: PlayerState no longer carries realm/qi in this plan.
-            // Keep Cultivation defaults until an explicit migration path exists.
+        } else if player_state.is_some() {
+            tracing::debug!(
+                "[bong][cultivation] no persisted cultivation bundle for `{}`; using defaults",
+                username.0,
+            );
         }
 
         let canonical_id = canonical_player_id(username.0.as_str());
@@ -290,6 +316,12 @@ fn attach_cultivation_to_joined_clients(
         }
         tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
     }
+}
+
+fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error) {
+    tracing::warn!(
+        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
+    );
 }
 
 fn emit_skill_caps_on_realm_regressed(
