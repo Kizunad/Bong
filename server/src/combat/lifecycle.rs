@@ -283,6 +283,21 @@ pub fn death_arbiter_tick(
         }
         let lifespan_exhausted =
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
+        let rebirth_chance = if lifespan_exhausted {
+            None
+        } else {
+            determine_revival_decision(
+                &lifecycle,
+                death_registry.as_deref(),
+                event.cause.as_str(),
+                lifespan.as_deref(),
+                player_state,
+                position,
+                zones.as_deref(),
+                now_tick,
+            )
+            .map(|decision| decision.chance_shown())
+        };
         let insight_payload = build_death_insight_request(DeathInsightBuildInput {
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
@@ -295,7 +310,7 @@ pub fn death_arbiter_tick(
             cause: event.cause.as_str(),
             category: DeathInsightCategoryV1::Combat,
             zone_kind: death_zone,
-            rebirth_chance: None,
+            rebirth_chance,
             will_terminate: lifespan_exhausted,
         });
 
@@ -377,20 +392,31 @@ pub fn death_arbiter_tick(
         ) {
             continue;
         }
+        let cause = format!("cultivation:{:?}", event.cause);
         let death_zone = match event.cause {
             CultivationDeathCause::NegativeZoneDrain => ZoneDeathKind::Negative,
-            _ => death_zone_from_context(
-                &format!("cultivation:{:?}", event.cause),
-                position,
-                zones.as_deref(),
-            ),
+            _ => death_zone_from_context(cause.as_str(), position, zones.as_deref()),
         };
         if let Some(registry) = death_registry.as_deref_mut() {
             registry.record_death(clock.tick, death_zone);
         }
         let lifespan_exhausted =
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
-        let cause = format!("cultivation:{:?}", event.cause);
+        let rebirth_chance = if lifespan_exhausted {
+            None
+        } else {
+            determine_revival_decision(
+                &lifecycle,
+                death_registry.as_deref(),
+                cause.as_str(),
+                lifespan.as_deref(),
+                player_state,
+                position,
+                zones.as_deref(),
+                clock.tick,
+            )
+            .map(|decision| decision.chance_shown())
+        };
         let category = death_insight_category_from_cultivation_cause(event.cause);
         let insight_payload = build_death_insight_request(DeathInsightBuildInput {
             lifecycle: &lifecycle,
@@ -404,7 +430,7 @@ pub fn death_arbiter_tick(
             cause: cause.as_str(),
             category,
             zone_kind: death_zone,
-            rebirth_chance: None,
+            rebirth_chance,
             will_terminate: lifespan_exhausted,
         });
 
@@ -1931,6 +1957,7 @@ mod tests {
                     char_id: "offline:Ancestor".to_string(),
                     death_count: 4,
                     last_death_tick: Some(300),
+                    prev_death_tick: None,
                     last_death_zone: Some(ZoneDeathKind::Ordinary),
                 },
                 LifespanComponent {
@@ -2274,6 +2301,7 @@ mod tests {
                     char_id: "offline:Ancestor".to_string(),
                     death_count: 9,
                     last_death_tick: Some(799),
+                    prev_death_tick: None,
                     last_death_zone: Some(ZoneDeathKind::Death),
                 },
                 LifespanComponent {
@@ -2413,7 +2441,15 @@ mod tests {
                     spawn_anchor: None,
                     ..Default::default()
                 },
-                DeathRegistry::new("offline:NoShrine"),
+                DeathRegistry {
+                    char_id: "offline:NoShrine".to_string(),
+                    death_count: 1,
+                    // 当前死亡会在 death_arbiter_tick 内 record_death；这里模拟“上一次死亡”发生在 24h 内，
+                    // 使 without_shrine 不满足运数期保底条件。
+                    last_death_tick: Some(1),
+                    prev_death_tick: None,
+                    last_death_zone: Some(ZoneDeathKind::Ordinary),
+                },
                 player_state.clone(),
             ))
             .id();
@@ -2430,7 +2466,13 @@ mod tests {
                     spawn_anchor: Some([11.0, 22.0, 33.0]),
                     ..Default::default()
                 },
-                DeathRegistry::new("offline:WithShrine"),
+                DeathRegistry {
+                    char_id: "offline:WithShrine".to_string(),
+                    death_count: 1,
+                    last_death_tick: Some(1),
+                    prev_death_tick: None,
+                    last_death_zone: Some(ZoneDeathKind::Ordinary),
+                },
                 player_state,
             ))
             .id();

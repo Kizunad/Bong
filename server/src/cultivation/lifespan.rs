@@ -129,6 +129,13 @@ pub struct DeathRegistry {
     pub death_count: u32,
     #[serde(default)]
     pub last_death_tick: Option<u64>,
+    /// 上一次死亡的 tick（不含当前已记录的死亡）。
+    ///
+    /// 用于实现 plan-death-lifecycle-v1 §2 的「死前 24h 内未死过」判定。
+    /// 当 includes_current_death=true 时，last_death_tick 代表“当前死亡”，
+    /// 需回看 prev_death_tick 才能判断前一次死亡是否发生在 24h 之外。
+    #[serde(default)]
+    pub prev_death_tick: Option<u64>,
     #[serde(default)]
     pub last_death_zone: Option<ZoneDeathKind>,
 }
@@ -145,6 +152,7 @@ impl DeathRegistry {
             char_id: char_id.into(),
             death_count: 0,
             last_death_tick: None,
+            prev_death_tick: None,
             last_death_zone: None,
         }
     }
@@ -155,6 +163,7 @@ impl DeathRegistry {
 
     pub fn record_death(&mut self, at_tick: u64, zone: ZoneDeathKind) {
         self.death_count = self.death_count.saturating_add(1);
+        self.prev_death_tick = self.last_death_tick;
         self.last_death_tick = Some(at_tick);
         self.last_death_zone = Some(zone);
     }
@@ -198,9 +207,14 @@ pub fn calculate_rebirth_chance(input: &RebirthChanceInput) -> RebirthChanceResu
         input.registry.next_death_number()
     };
     let skip_fortune_due_to_zone = input.death_zone.skips_fortune();
-    let no_recent_death = input
-        .registry
-        .last_death_tick
+    // 若 registry 已包含“当前死亡”（includes_current_death=true），last_death_tick
+    // 指向当前 at_tick，不能用于判断“死前 24h 内是否死过”。此时应回看 prev_death_tick。
+    let last_tick_for_window = if input.includes_current_death {
+        input.registry.prev_death_tick
+    } else {
+        input.registry.last_death_tick
+    };
+    let no_recent_death = last_tick_for_window
         .is_none_or(|tick| input.at_tick.saturating_sub(tick) >= REBIRTH_SAFE_WINDOW_TICKS);
     let low_karma = input.karma < KARMA_REBIRTH_THRESHOLD;
     let guaranteed = death_number <= 3
@@ -486,6 +500,7 @@ mod tests {
 
         assert_eq!(registry.death_count, 1);
         assert_eq!(registry.last_death_tick, Some(1440));
+        assert_eq!(registry.prev_death_tick, None);
         assert_eq!(registry.last_death_zone, Some(ZoneDeathKind::Negative));
     }
 
@@ -532,6 +547,7 @@ mod tests {
                 char_id: "offline:Azure".to_string(),
                 death_count: 1,
                 last_death_tick: Some(1440),
+                prev_death_tick: Some(0),
                 last_death_zone: Some(ZoneDeathKind::Ordinary),
             },
             at_tick: 1500,
@@ -565,6 +581,7 @@ mod tests {
                 char_id: "offline:Azure".to_string(),
                 death_count: 3,
                 last_death_tick: Some(1440),
+                prev_death_tick: Some(0),
                 last_death_zone: Some(ZoneDeathKind::Ordinary),
             },
             at_tick: 1440,
