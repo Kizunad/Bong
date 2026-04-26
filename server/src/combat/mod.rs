@@ -1,6 +1,8 @@
 pub mod armor;
 pub mod armor_sync;
 pub mod components;
+#[cfg(test)]
+mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod events;
 pub mod lifecycle;

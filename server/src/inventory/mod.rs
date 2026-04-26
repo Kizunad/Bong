@@ -18,6 +18,9 @@ pub mod corpse;
 pub mod tsy_death_drop;
 // plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
 pub mod tsy_loot_spawn;
+// plan-tsy-loot-v1 §8.2 — 端到端集成测试。
+#[cfg(test)]
+mod tsy_loot_integration_test;
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
