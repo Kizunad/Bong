@@ -2,6 +2,7 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
 pub mod terrain;
+pub mod tsy;
 pub mod zone;
 
 use std::fs;
