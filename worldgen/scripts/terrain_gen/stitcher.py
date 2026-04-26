@@ -25,6 +25,10 @@ from .profiles.spawn_plain import fill_spawn_plain_tile
 from .profiles.rift_valley import fill_rift_valley_tile
 from .profiles.sky_isle import fill_sky_isle_tile
 from .profiles.spring_marsh import fill_spring_marsh_tile
+from .profiles.tsy_daneng_crater import fill_tsy_daneng_crater_tile
+from .profiles.tsy_gaoshou_hermitage import fill_tsy_gaoshou_hermitage_tile
+from .profiles.tsy_zhanchang import fill_tsy_zhanchang_tile
+from .profiles.tsy_zongmen_ruin import fill_tsy_zongmen_ruin_tile
 from .profiles.waste_plateau import fill_waste_plateau_tile
 from .profiles.wilderness import build_wilderness_base_plan, fill_wilderness_tile
 
@@ -400,6 +404,14 @@ def _build_zone_overlay_tile(
         buffer = fill_abyssal_maze_tile(zone, tile, tile_size, palette)
     elif profile == "ancient_battlefield":
         buffer = fill_ancient_battlefield_tile(zone, tile, tile_size, palette)
+    elif profile == "tsy_zongmen_ruin":
+        buffer = fill_tsy_zongmen_ruin_tile(zone, tile, tile_size, palette)
+    elif profile == "tsy_daneng_crater":
+        buffer = fill_tsy_daneng_crater_tile(zone, tile, tile_size, palette)
+    elif profile == "tsy_zhanchang":
+        buffer = fill_tsy_zhanchang_tile(zone, tile, tile_size, palette)
+    elif profile == "tsy_gaoshou_hermitage":
+        buffer = fill_tsy_gaoshou_hermitage_tile(zone, tile, tile_size, palette)
     else:
         return None
     if buffer is not None:
