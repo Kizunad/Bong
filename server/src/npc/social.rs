@@ -5,10 +5,10 @@
 //! （写入 `DuelTarget` component）。本模块提供对接 big-brain 的 Scorer
 //! 让 Beast/Disciple thinker 能感知 DuelTarget 并切换到战斗行为。
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
-use valence::prelude::{
-    bevy_ecs, App, Commands, Component, Entity, IntoSystemConfigs, Position, PreUpdate, Query, With,
-};
+#![allow(dead_code)]
+
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
+use valence::prelude::{bevy_ecs, App, Commands, Component, Entity, Position, Query, With};
 
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::faction::FactionMembership;
@@ -523,10 +523,7 @@ mod tests {
     #[test]
     fn socialize_action_success_when_no_same_faction_peer() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let npc = app
             .world_mut()
             .spawn((
@@ -551,10 +548,7 @@ mod tests {
     #[test]
     fn socialize_action_records_partner_and_succeeds_on_timeout() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let peer = app
             .world_mut()
             .spawn((
@@ -594,10 +588,7 @@ mod tests {
     #[test]
     fn socialize_action_stops_navigator_on_partner_found() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let mut nav = Navigator::new();
         nav.set_goal(DVec3::new(100.0, 64.0, 100.0), 1.0);
         let _peer = app

@@ -129,6 +129,7 @@ impl Resource for TerrainProvider {}
 /// becomes mandatory (§6 contract).
 pub struct TerrainProviders {
     pub overworld: TerrainProvider,
+    #[allow(dead_code)]
     pub tsy: Option<TerrainProvider>,
 }
 
@@ -138,6 +139,7 @@ impl TerrainProviders {
     /// Look up the provider for the given dimension. Returns `None` for TSY
     /// when no TSY manifest is loaded (transitional state until worldgen plan
     /// ships).
+    #[allow(dead_code)]
     pub fn for_dimension(
         &self,
         kind: crate::world::dimension::DimensionKind,
