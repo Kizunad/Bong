@@ -19,5 +19,6 @@ pub mod lingtian;
 pub mod narration;
 pub mod server_data;
 pub mod skill;
+pub mod tsy;
 pub mod vfx_event;
 pub mod world_state;

@@ -27,6 +27,17 @@ impl Default for DimensionKind {
     }
 }
 
+impl DimensionKind {
+    /// Identifier 字符串（与 `valence::ident!` 注册值对齐）。
+    /// 用作 wire schema `dimension` 字段的字面量，server / agent 双端必须一致。
+    pub fn ident_str(self) -> &'static str {
+        match self {
+            DimensionKind::Overworld => "minecraft:overworld",
+            DimensionKind::Tsy => TSY_DIMENSION_IDENT,
+        }
+    }
+}
+
 /// Resource holding the spawned `LayerBundle` entities for each dimension.
 ///
 /// Inserted by `world::setup_world` after both layers are spawned. Cross-dimension
