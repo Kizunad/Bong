@@ -1,13 +1,17 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
+import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.BodyPartState;
+import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Left-bottom mini-body + qi / stamina vertical bars (§2.1).
@@ -43,12 +47,16 @@ public final class MiniBodyHudPlanner {
     static final int BAR_FLASH_BORDER_COLOR = 0xFFFF6060;
     static final float LOW_THRESHOLD = 0.15f;
 
+    // plan-armor-v1 §5：破损护甲裂纹提示（同 layer，靠命令顺序实现 wound dot 覆盖）。
+    static final int BROKEN_ARMOR_CRACK_COLOR = 0xFFB0B0B0;
+
     private MiniBodyHudPlanner() {
     }
 
     public static List<HudRenderCommand> buildCommands(
         CombatHudState hud,
         PhysicalBody body,
+        Map<EquipSlotType, InventoryItem> equipped,
         long nowMillis,
         int screenWidth,
         int screenHeight
@@ -74,7 +82,9 @@ public final class MiniBodyHudPlanner {
             PANEL_BG_COLOR
         ));
 
-        appendSilhouette(out, anchorX, anchorY, body);
+        appendSilhouette(out, anchorX, anchorY);
+        appendBrokenArmorCracks(out, anchorX, anchorY, equipped);
+        appendWoundDots(out, anchorX, anchorY, body);
         appendBars(out, anchorX, anchorY, hud, nowMillis);
 
         return out;
@@ -83,8 +93,7 @@ public final class MiniBodyHudPlanner {
     private static void appendSilhouette(
         List<HudRenderCommand> out,
         int anchorX,
-        int anchorY,
-        PhysicalBody body
+        int anchorY
     ) {
         int bx = anchorX + BODY_X_OFFSET;
         int by = anchorY + BODY_Y_OFFSET;
@@ -114,10 +123,18 @@ public final class MiniBodyHudPlanner {
         // Legs
         out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 9, by + 35, 5, 35, BODY_COLOR));
         out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 16, by + 35, 5, 35, BODY_COLOR));
+    }
 
-        if (body == null) {
-            return;
-        }
+    private static void appendWoundDots(
+        List<HudRenderCommand> out,
+        int anchorX,
+        int anchorY,
+        PhysicalBody body
+    ) {
+        if (body == null) return;
+
+        int bx = anchorX + BODY_X_OFFSET;
+        int by = anchorY + BODY_Y_OFFSET;
 
         for (BodyPart part : BodyPart.values()) {
             BodyPartState state = body.part(part);
@@ -135,6 +152,73 @@ public final class MiniBodyHudPlanner {
                 dotSize,
                 dotSize,
                 dotColor
+            ));
+        }
+    }
+
+    private static void appendBrokenArmorCracks(
+        List<HudRenderCommand> out,
+        int anchorX,
+        int anchorY,
+        Map<EquipSlotType, InventoryItem> equipped
+    ) {
+        if (equipped == null || equipped.isEmpty()) return;
+
+        EnumSet<BodyPart> cracked = EnumSet.noneOf(BodyPart.class);
+        if (isBrokenArmor(equipped.get(EquipSlotType.HEAD))) {
+            cracked.add(BodyPart.HEAD);
+        }
+        if (isBrokenArmor(equipped.get(EquipSlotType.CHEST))) {
+            cracked.add(BodyPart.CHEST);
+            cracked.add(BodyPart.ABDOMEN);
+        }
+        if (isBrokenArmor(equipped.get(EquipSlotType.LEGS))) {
+            cracked.add(BodyPart.LEFT_THIGH);
+            cracked.add(BodyPart.LEFT_CALF);
+            cracked.add(BodyPart.RIGHT_THIGH);
+            cracked.add(BodyPart.RIGHT_CALF);
+        }
+        if (isBrokenArmor(equipped.get(EquipSlotType.FEET))) {
+            cracked.add(BodyPart.LEFT_FOOT);
+            cracked.add(BodyPart.RIGHT_FOOT);
+        }
+
+        if (cracked.isEmpty()) return;
+
+        int bx = anchorX + BODY_X_OFFSET;
+        int by = anchorY + BODY_Y_OFFSET;
+        for (BodyPart part : cracked) {
+            int[] pos = locatePart(bx, by, part);
+            appendCrackGlyph(out, pos[0], pos[1]);
+        }
+    }
+
+    private static boolean isBrokenArmor(InventoryItem item) {
+        if (item == null || item.isEmpty()) return false;
+        return item.durability() <= 0.0;
+    }
+
+    private static void appendCrackGlyph(List<HudRenderCommand> out, int cx, int cy) {
+        // A tiny zigzag, sized for 1/2 mini-body scale. Pure rects keeps planner testable.
+        int[][] pts = new int[][]{
+            {0, -3},
+            {1, -2},
+            {0, -1},
+            {-1, 0},
+            {0, 1},
+            {1, 2},
+            {0, 3},
+            {-2, 1},
+            {2, -1}
+        };
+        for (int[] p : pts) {
+            out.add(HudRenderCommand.rect(
+                HudRenderLayer.MINI_BODY,
+                cx + p[0],
+                cy + p[1],
+                1,
+                1,
+                BROKEN_ARMOR_CRACK_COLOR
             ));
         }
     }
