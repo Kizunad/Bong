@@ -12,6 +12,10 @@ use crate::cultivation::death_hooks::PlayerRevived;
 
 // plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
 pub mod ancient_relics;
+// plan-tsy-loot-v1 §4 — 干尸 component。
+pub mod corpse;
+// plan-tsy-loot-v1 §3 — 秘境内死亡分流。
+pub mod tsy_death_drop;
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
@@ -1387,9 +1391,11 @@ pub fn consume_item_instance_once(
 
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
     registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
+    presences: Query<&crate::world::tsy::TsyPresence>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
 ) {
@@ -1398,17 +1404,67 @@ pub fn apply_death_drop_on_revive(
             continue;
         };
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
+        let base = positions
+            .get(ev.entity)
+            .map(|pos| pos.0)
+            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
 
+        // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
+        // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
+        if let Ok(presence) = presences.get(ev.entity) {
+            let tsy_outcome =
+                tsy_death_drop::apply_tsy_death_drop(&mut inventory, presence, base, seed);
+            if tsy_outcome.total_dropped() == 0 {
+                continue;
+            }
+            let mut combined: Vec<DroppedItemRecord> = Vec::new();
+            for (idx, record) in tsy_outcome
+                .entry_carry_dropped
+                .iter()
+                .chain(tsy_outcome.tsy_acquired_dropped.iter())
+                .enumerate()
+            {
+                let entry = DroppedLootEntry {
+                    instance_id: record.instance.instance_id,
+                    source_container_id: record.container_id.clone(),
+                    source_row: record.row,
+                    source_col: record.col,
+                    world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                    item: record.instance.clone(),
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
+                combined.push(record.clone());
+            }
+
+            // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
+            // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
+            let drop_ids: Vec<u64> = combined.iter().map(|r| r.instance.instance_id).collect();
+            commands.spawn((
+                Position(tsy_outcome.corpse_pos),
+                corpse::CorpseEmbalmed {
+                    family_id: presence.family_id.clone(),
+                    died_at_tick: presence.entered_at_tick, // MVP：用 entered_tick 占位；P2 lifecycle 用真 death tick
+                    death_cause: "tsy_death".to_string(),
+                    drops: drop_ids,
+                    activated_to_daoxiang: false,
+                },
+            ));
+
+            dropped_events.send(DroppedItemEvent {
+                entity: ev.entity,
+                revision: inventory.revision,
+                dropped: combined,
+            });
+            continue;
+        }
+
+        // ----- 主世界路径（保持原 §十二 50% 行为） -----
         let outcome = apply_death_drop_to_inventory(&mut inventory, &registry, seed);
 
         if outcome.dropped.is_empty() {
             continue;
         }
 
-        let base = positions
-            .get(ev.entity)
-            .map(|pos| pos.0)
-            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
         for (idx, dropped) in outcome.dropped.iter().enumerate() {
             let entry = DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
@@ -1694,7 +1750,7 @@ fn death_drop_seed(entity: Entity, revision: u64) -> u64 {
         .wrapping_add(revision.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn select_drop_instance_ids(
+pub(crate) fn select_drop_instance_ids(
     mut instance_ids: Vec<u64>,
     drop_count: usize,
     mut seed: u64,
@@ -1718,7 +1774,7 @@ fn xorshift64(mut x: u64) -> u64 {
     x
 }
 
-fn bump_revision(inventory: &mut PlayerInventory) {
+pub(crate) fn bump_revision(inventory: &mut PlayerInventory) {
     inventory.revision = InventoryRevision(inventory.revision.0.saturating_add(1));
 }
 

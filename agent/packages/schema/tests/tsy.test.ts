@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  TsyCorpseSpawnEventV1,
   TsyEnterEventV1,
   TsyExitEventV1,
+  validateTsyCorpseSpawnEventV1Contract,
   validateTsyEnterEventV1Contract,
   validateTsyExitEventV1Contract,
 } from "../src/tsy.js";
@@ -104,6 +106,52 @@ describe("plan-tsy-zone-v1 §1.4 — TsyExitEventV1", () => {
 
   it("accepts qi_drained_total = 0 (P0 placeholder before loot plan accumulates)", () => {
     const result = validate(TsyExitEventV1, { ...valid, qi_drained_total: 0 });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("plan-tsy-loot-v1 §4.4 — TsyCorpseSpawnEventV1", () => {
+  const valid = {
+    v: 1 as const,
+    kind: "tsy_corpse_spawn" as const,
+    tick: 50000,
+    corpse_entity_id: "npc_42v3",
+    original_player_id: "offline:Foo",
+    original_display_name: "Foo",
+    family_id: "tsy_lingxu_01",
+    death_cause: "tsy_drain",
+    pos: [128.5, 64.0, -45.2],
+  };
+
+  it("accepts a fully populated payload", () => {
+    const result = validate(TsyCorpseSpawnEventV1, valid);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("round-trips through JSON.stringify / parse", () => {
+    const parsed = JSON.parse(JSON.stringify(valid));
+    expect(validateTsyCorpseSpawnEventV1Contract(parsed).ok).toBe(true);
+  });
+
+  it("rejects pos with wrong arity", () => {
+    expect(validate(TsyCorpseSpawnEventV1, { ...valid, pos: [0, 0] } as never).ok).toBe(false);
+  });
+
+  it("rejects empty original_player_id", () => {
+    expect(validate(TsyCorpseSpawnEventV1, { ...valid, original_player_id: "" } as never).ok).toBe(
+      false,
+    );
+  });
+
+  it("rejects unknown extra field", () => {
+    expect(validate(TsyCorpseSpawnEventV1, { ...valid, surprise: 1 } as never).ok).toBe(false);
+  });
+
+  it("accepts pvp death_cause string", () => {
+    const result = validate(TsyCorpseSpawnEventV1, {
+      ...valid,
+      death_cause: "attack_intent:offline:Bob",
+    });
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });
