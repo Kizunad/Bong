@@ -29,6 +29,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "prev_death_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "last_death_zone": {
           "description": "死亡地点域标签",
           "anyOf": [

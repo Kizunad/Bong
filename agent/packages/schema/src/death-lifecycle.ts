@@ -34,6 +34,8 @@ export const DeathRegistryV1 = Type.Object(
     char_id: Type.String({ minLength: 1 }),
     death_count: Type.Integer({ minimum: 0 }),
     last_death_tick: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** 上一次死亡的 tick（不含当前已记录的死亡）。用于 24h 窗口判定。 */
+    prev_death_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     last_death_zone: Type.Optional(ZoneDeathKind),
   },
   { additionalProperties: false },
