@@ -1,0 +1,83 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "player_id",
+    "family_id",
+    "return_to",
+    "filtered_items"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_enter",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "return_to": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dimension",
+        "pos"
+      ],
+      "properties": {
+        "dimension": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "pos": {
+          "minItems": 3,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "filtered_items": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instance_id",
+          "template_id",
+          "reason"
+        ],
+        "properties": {
+          "instance_id": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "template_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "const": "spirit_quality_too_high",
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
