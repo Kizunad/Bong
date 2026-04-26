@@ -1560,9 +1560,7 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
     container_weight + equipped_weight + hotbar_weight
 }
 
-pub fn dropped_loot_snapshot(
-    registry: &DroppedLootRegistry,
-) -> Vec<DroppedLootEntry> {
+pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
     let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
     // Deterministic ordering avoids client-side insertionOrder churn.
     drops.sort_by_key(|entry| entry.instance_id);
@@ -3461,13 +3459,9 @@ cols = 4
             },
         );
 
-        let revision = pickup_dropped_loot_instance(
-            &mut inventory,
-            &mut registry,
-            [0.0, 64.0, 0.0],
-            42,
-        )
-        .expect("pickup should succeed");
+        let revision =
+            pickup_dropped_loot_instance(&mut inventory, &mut registry, [0.0, 64.0, 0.0], 42)
+                .expect("pickup should succeed");
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);

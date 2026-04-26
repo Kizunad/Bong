@@ -248,7 +248,9 @@ impl ArmorProfileRegistry {
 
     #[cfg(test)]
     pub fn from_map(map: HashMap<String, ArmorProfile>) -> Self {
-        Self { by_template_id: map }
+        Self {
+            by_template_id: map,
+        }
     }
 }
 
