@@ -13,7 +13,7 @@ pub fn send_dropped_loot_sync_to_client(
     client: &mut Client,
     registry: &DroppedLootRegistry,
 ) {
-    let drops = dropped_loot_snapshot(registry, entity)
+    let drops = dropped_loot_snapshot(registry)
         .into_iter()
         .map(to_wire_entry)
         .collect::<Vec<_>>();

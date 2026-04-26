@@ -1500,7 +1500,6 @@ fn handle_inventory_discard(
     match discard_inventory_item_to_dropped_loot(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
         &from,
@@ -1553,7 +1552,6 @@ fn handle_pickup_dropped_item(
     match pickup_dropped_loot_instance(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
     ) {
