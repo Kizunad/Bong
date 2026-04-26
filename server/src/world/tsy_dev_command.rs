@@ -11,6 +11,7 @@
 //! 正式发布走 plan-tsy-worldgen-v1：本调试命令退化为"强制激活已注册 zone +
 //! 传玩家"。P0 阶段是骨架兜底。
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -145,10 +146,19 @@ pub fn apply_tsy_spawn_requests(
         return;
     };
 
+    // 同 tick 去重：本系统这一遍消费的所有 family_id 缓存到 HashSet。
+    // 必须显式去重，因为 `Commands::spawn` 是 deferred —— 同 tick 内 spawn 的
+    // RiftPortal 实体在 `apply_deferred` 之前对 `portals.iter()` 不可见。
+    // 不加这层会让两个相邻 TsySpawnRequested(同 family) 都通过 already-present
+    // 检查，造成重复 portal + 第二条 outcome 撒谎说 Success（codex review P2）。
+    let mut handled_in_tick: HashSet<String> = HashSet::new();
+
     for req in requests.read() {
-        // 已存在同 family 的 portal → 拒绝重复 spawn（plan §3.1 idempotency）
+        // 已存在同 family 的 portal（持久层）或本 tick 已处理过 → 拒绝
+        // （plan §3.1 idempotency + codex review P2 同 tick 防重）
         let family_already_present = portals.iter().any(|p| p.family_id == req.family_id);
-        if family_already_present {
+        let family_handled_this_tick = handled_in_tick.contains(&req.family_id);
+        if family_already_present || family_handled_this_tick {
             results.send(TsySpawnResult {
                 player_entity: req.player_entity,
                 outcome: TsySpawnOutcome::AlreadySpawned {
@@ -203,6 +213,11 @@ pub fn apply_tsy_spawn_requests(
             });
             continue;
         };
+
+        // 标记本 tick 已为该 family 触发 spawn —— 任何后续同 family 请求会
+        // 在循环顶端 `family_handled_this_tick` 分支拦掉，避免 deferred Commands
+        // 让 portals.iter() 看不到刚 spawn 的同 family portal 而误判 not-present。
+        handled_in_tick.insert(req.family_id.clone());
 
         // Entry portal：主世界，玩家当前坐标
         commands.spawn((
@@ -367,6 +382,61 @@ mod tests {
             out.iter()
                 .any(|o| matches!(o, TsySpawnOutcome::AlreadySpawned { .. })),
             "expected one AlreadySpawned outcome, got: {out:?}"
+        );
+    }
+
+    /// Codex review P2 regression：两条同 family 的 TsySpawnRequested 在同一
+    /// system pass 内被消费时，必须只 spawn 一组 portal —— 因为 Commands::spawn
+    /// 是 deferred，第二条 request 看不到第一条刚发的 spawn 命令，没有去重保护
+    /// 会让 portal 加倍。
+    #[test]
+    fn same_tick_double_request_for_same_family_dedupes_to_one_spawn() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<TsySpawnRequested>();
+        app.add_event::<TsySpawnResult>();
+        app.add_systems(Update, apply_tsy_spawn_requests);
+
+        let player = app.world_mut().spawn(()).id();
+
+        // 同一 tick 内连发两条同 family 请求
+        {
+            let mut tx = app.world_mut().resource_mut::<Events<TsySpawnRequested>>();
+            tx.send(TsySpawnRequested {
+                player_entity: player,
+                player_pos: DVec3::new(1.0, 64.0, 1.0),
+                family_id: "tsy_lingxu_01".to_string(),
+            });
+            tx.send(TsySpawnRequested {
+                player_entity: player,
+                player_pos: DVec3::new(2.0, 64.0, 2.0), // 不同位置——确认不会 spawn 第二组
+                family_id: "tsy_lingxu_01".to_string(),
+            });
+        }
+        app.update();
+
+        // 1) 只 spawn 一对 portal（Entry + Exit），不是两对
+        let mut q = app.world_mut().query::<&RiftPortal>();
+        let portals: Vec<_> = q.iter(app.world()).cloned().collect();
+        assert_eq!(
+            portals.len(),
+            2,
+            "expected exactly 2 portals (1 Entry + 1 Exit), got {}",
+            portals.len()
+        );
+
+        // 2) outcomes：第一条 Success，第二条 AlreadySpawned
+        let out = outcomes(&app);
+        assert_eq!(out.len(), 2, "got: {out:?}");
+        assert!(
+            matches!(out[0], TsySpawnOutcome::Success { .. }),
+            "first outcome should be Success, got: {:?}",
+            out[0]
+        );
+        assert!(
+            matches!(out[1], TsySpawnOutcome::AlreadySpawned { .. }),
+            "second outcome should be AlreadySpawned, got: {:?}",
+            out[1]
         );
     }
 }
