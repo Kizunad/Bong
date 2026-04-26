@@ -81,6 +81,53 @@ pub struct RiftPortal {
     pub direction: PortalDirection,
 }
 
+/// 容器 POI marker（plan-tsy-worldgen-v1 §1.1，本 plan 落最简 schema）。
+///
+/// archetype/lock 字符串约定（在 plan §1.1 表）：
+/// - archetype: `dry_corpse` / `skeleton` / `storage_pouch` / `stone_casket` / `relic_core`
+/// - lock: `stone_key` / `jade_seal` / `array_sigil` / None=unlocked
+///
+/// **Schema 故意保留 String** —— 严格 enum 化属 `plan-tsy-container-v1` (P3) 责任，
+/// P3 active 阶段会扩字段（loot_pool 命中表、open animation、locked drop chain 等）；
+/// 本 plan 仅承担"POI → marker entity"通道，让 P3 可以直接 query 已 spawn 的 marker。
+#[allow(dead_code)] // 字段由未来的 plan-tsy-container-v1 系统消费。
+#[derive(Component, Debug, Clone)]
+pub struct LootContainer {
+    /// 形态档次：见 archetype 字符串约定。Worldgen consumer 解析 POI tag
+    /// `archetype:X`；未知值 → log warn + skip spawn（plan §1.4）。
+    pub archetype: String,
+    /// 钥匙约束。POI tag `locked:X`；缺省 = unlocked。
+    pub lock: Option<String>,
+    /// 战利品池覆写。POI tag `loot_pool:X`；缺省 = 用 archetype 默认池（P3 决定）。
+    pub loot_pool: Option<String>,
+}
+
+/// NPC anchor POI marker（plan-tsy-worldgen-v1 §1.1）。
+///
+/// archetype/trigger 字符串约定：
+/// - archetype: `daoxiang` / `zhinian` / `sentinel` / `fuya` / `ancient_sentinel`
+///   (P4 命名 TBD 用 ancient_sentinel 占位；未知值 consumer 走 warn+skip)
+/// - trigger: `on_enter` / `on_relic_touched` / `always`
+///
+/// 行为系统（aggro 半径、AI tree、leash 物理）属 `plan-tsy-hostile-v1` (P4)。
+#[allow(dead_code)]
+#[derive(Component, Debug, Clone)]
+pub struct NpcAnchor {
+    pub archetype: String,
+    pub trigger: String,
+    pub leash_radius: f64,
+}
+
+/// Relic-core 槽位 POI marker（plan-tsy-worldgen-v1 §1.1）。
+///
+/// 槽位数 1..=8（worldgen consumer clamp）。`plan-tsy-container-v1` (P3) 决定
+/// "remove relic" 流程（取走核心 → 触发塌缩事件 → P2 lifecycle 接手）。
+#[allow(dead_code)]
+#[derive(Component, Debug, Clone)]
+pub struct RelicCoreSlot {
+    pub slot_count: u8,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

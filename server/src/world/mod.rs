@@ -8,6 +8,7 @@ pub mod tsy_drain;
 pub mod tsy_filter;
 #[cfg(test)]
 mod tsy_integration_test;
+pub mod tsy_poi_consumer;
 pub mod tsy_portal;
 pub mod zone;
 
@@ -96,10 +97,12 @@ pub fn register(app: &mut App) {
     tsy_portal::register(app);
     // plan-tsy-zone-v1 §3.1 — `!tsy-spawn` 调试命令的事件消费器
     tsy_dev_command::register(app);
+    // plan-tsy-worldgen-v1 §1 — startup 期消费 TerrainProviders.pois() 把 POI 转 marker
+    tsy_poi_consumer::register(app);
     app.add_systems(Startup, setup_world);
 }
 
-fn setup_world(
+pub fn setup_world(
     mut commands: Commands,
     server: Res<Server>,
     mut dimensions: ResMut<DimensionTypeRegistry>,
