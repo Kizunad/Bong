@@ -155,6 +155,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
         let last_dimension = persisted.last_dimension;
+        let composite_power = persisted.state.composite_power(&Cultivation::default());
 
         if let Some(layers) = dimension_layers.as_deref() {
             let target_layer = layers.entity_for(last_dimension);
@@ -177,9 +178,6 @@ pub(crate) fn attach_player_state_to_joined_clients(
             entity_commands.insert(player_inventory);
         }
         entity_commands.insert(persisted.skill_set);
-        let composite_power = persisted
-            .state
-            .composite_power(&Cultivation::default());
         tracing::info!(
             "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
             username.0,
@@ -217,23 +215,25 @@ fn despawn_disconnected_clients(
     persistence: Res<PlayerStatePersistence>,
     mut disconnected_clients: RemovedComponents<Client>,
     settings: Res<PersistenceSettings>,
-    persisted_players: Query<(
+    core_players: Query<(
         &Username,
         &PlayerState,
         &Position,
         Option<&CurrentDimension>,
         Option<&PlayerInventory>,
         Option<&SkillSet>,
-        Option<&Cultivation>,
-        Option<&MeridianSystem>,
-        Option<&QiColor>,
-        Option<&Karma>,
-        Option<&PracticeLog>,
-        Option<&Contamination>,
-        Option<&LifeRecord>,
-        Option<&InsightQuota>,
-        Option<&UnlockedPerceptions>,
-        Option<&InsightModifiers>,
+    )>,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
     )>,
 ) {
     for entity in disconnected_clients.read() {
@@ -244,34 +244,13 @@ fn despawn_disconnected_clients(
             current_dimension,
             player_inventory,
             skill_set,
-            cultivation,
-            meridians,
-            qi_color,
-            karma,
-            practice_log,
-            contamination,
-            life_record,
-            insight_quota,
-            unlocked_perceptions,
-            insight_modifiers,
-        )) = persisted_players.get(entity)
+        )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
                 .map(|cd| cd.0)
                 .unwrap_or(DimensionKind::default());
 
-            if let (
-                Some(cultivation),
-                Some(meridians),
-                Some(qi_color),
-                Some(karma),
-                Some(practice_log),
-                Some(contamination),
-                Some(life_record),
-                Some(insight_quota),
-                Some(unlocked_perceptions),
-                Some(insight_modifiers),
-            ) = (
+            if let Ok((
                 cultivation,
                 meridians,
                 qi_color,
@@ -282,7 +261,8 @@ fn despawn_disconnected_clients(
                 insight_quota,
                 unlocked_perceptions,
                 insight_modifiers,
-            ) {
+            )) = cultivation_bundle.get(entity)
+            {
                 if let Err(error) = persist_player_cultivation_bundle(
                     &settings,
                     username.0.as_str(),
@@ -342,65 +322,48 @@ fn flush_connected_players_on_shutdown(
     settings: Res<PersistenceSettings>,
     players: Query<
         (
+            Entity,
             &Username,
             &PlayerState,
             &Position,
             Option<&CurrentDimension>,
             Option<&PlayerInventory>,
             Option<&SkillSet>,
-            Option<&Cultivation>,
-            Option<&MeridianSystem>,
-            Option<&QiColor>,
-            Option<&Karma>,
-            Option<&PracticeLog>,
-            Option<&Contamination>,
-            Option<&LifeRecord>,
-            Option<&InsightQuota>,
-            Option<&UnlockedPerceptions>,
-            Option<&InsightModifiers>,
         ),
         With<Client>,
     >,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
+    )>,
 ) {
     if app_exit.read().next().is_none() {
         return;
     }
 
     for (
+        entity,
         username,
         player_state,
         position,
         current_dimension,
         player_inventory,
         skill_set,
-        cultivation,
-        meridians,
-        qi_color,
-        karma,
-        practice_log,
-        contamination,
-        life_record,
-        insight_quota,
-        unlocked_perceptions,
-        insight_modifiers,
     ) in &players
     {
         let last_dimension = current_dimension
             .map(|cd| cd.0)
             .unwrap_or(DimensionKind::default());
 
-        if let (
-            Some(cultivation),
-            Some(meridians),
-            Some(qi_color),
-            Some(karma),
-            Some(practice_log),
-            Some(contamination),
-            Some(life_record),
-            Some(insight_quota),
-            Some(unlocked_perceptions),
-            Some(insight_modifiers),
-        ) = (
+        if let Ok((
             cultivation,
             meridians,
             qi_color,
@@ -411,7 +374,8 @@ fn flush_connected_players_on_shutdown(
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
-        ) {
+        )) = cultivation_bundle.get(entity)
+        {
             if let Err(error) = persist_player_cultivation_bundle(
                 &settings,
                 username.0.as_str(),
