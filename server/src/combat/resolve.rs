@@ -28,8 +28,8 @@ use crate::cultivation::components::{
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     discard_inventory_item_to_dropped_loot, move_equipped_item_to_first_container_slot,
-    set_item_instance_durability, DroppedLootRegistry, PlayerInventory, EQUIP_SLOT_CHEST,
-    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
+    set_item_instance_durability, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -130,6 +130,7 @@ pub fn resolve_attack_intents(
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
+    mut durability_changed_tx: EventWriter<InventoryDurabilityChangedEvent>,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     weapon_break: (
         Query<&mut Weapon>,
@@ -489,6 +490,13 @@ pub fn resolve_attack_intents(
                                         instance_id,
                                         error
                                     );
+                                } else {
+                                    durability_changed_tx.send(InventoryDurabilityChangedEvent {
+                                        entity: target_entity,
+                                        revision: inventory.revision,
+                                        instance_id,
+                                        durability: next_ratio,
+                                    });
                                 }
                             }
                         }
@@ -960,6 +968,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.insert_resource(ArmorProfileRegistry::from_map(
             std::collections::HashMap::from([(
                 "fake_spirit_hide".to_string(),
@@ -1111,6 +1120,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -1241,6 +1251,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1331,6 +1342,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let npc_attacker = spawn_npc(
@@ -1410,6 +1422,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let player = spawn_player(
@@ -1505,6 +1518,7 @@ mod tests {
             (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
         );
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -1576,6 +1590,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1636,6 +1651,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1711,6 +1727,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1759,6 +1776,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1818,6 +1836,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1908,6 +1927,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1985,6 +2005,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2061,6 +2082,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2131,6 +2153,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2220,6 +2243,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2276,6 +2300,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2374,6 +2399,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2478,6 +2504,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2614,6 +2641,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2739,6 +2767,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2877,6 +2906,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let cut_attacker = spawn_player(
@@ -2975,6 +3005,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let pierce_attacker = spawn_player(

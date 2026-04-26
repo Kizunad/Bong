@@ -235,6 +235,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
     app.add_event::<DroppedItemEvent>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_systems(Update, (apply_death_drop_on_revive, sync_overloaded_marker));
 }
 
@@ -1040,6 +1041,17 @@ pub enum InventoryMoveOutcome {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryDurabilityUpdate {
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub durability: f64,
+}
+
+/// bevy Event：库存中某个物品耐久变更（面向单个玩家 client）。
+///
+/// 用于低频增量 UI 更新（例如护甲命中扣耐久），避免必须依赖完整 snapshot 刷新。
+#[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
+pub struct InventoryDurabilityChangedEvent {
+    pub entity: Entity,
     pub revision: InventoryRevision,
     pub instance_id: u64,
     pub durability: f64,
