@@ -173,6 +173,115 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                         f"({water_cols} water cols) — may look like floating water"
                     )
 
+    # plan-tsy-worldgen-v1 §4.3 — TSY / overworld manifest 分支校验。
+    # 判定 manifest 类型：tile.zones 含 tsy_* 即视为 TSY manifest，否则 overworld。
+    manifest_kind = "overworld"
+    for tile in tiles:
+        if any(z.startswith("tsy_") for z in tile.get("zones", [])):
+            manifest_kind = "tsy"
+            break
+
+    if manifest_kind == "tsy":
+        # 1. 每 family 至少 1 个 kind=rift_portal direction=exit POI
+        families: dict[str, dict[str, int]] = {}
+        for poi in manifest.get("pois", []):
+            if poi["kind"] != "rift_portal":
+                continue
+            tags = {
+                t.split(":", 1)[0]: t.split(":", 1)[1]
+                for t in poi.get("tags", [])
+                if ":" in t
+            }
+            family = tags.get("family_id")
+            direction = tags.get("direction")
+            if family:
+                families.setdefault(family, {"entry": 0, "exit": 0})
+                if direction in ("entry", "exit"):
+                    families[family][direction] += 1
+        for fam, counts in families.items():
+            if counts.get("exit", 0) < 1:
+                errors.append(f"TSY family '{fam}' has no rift_portal direction=exit")
+
+        # 2. 每 family 三层齐全（按 zone name 后缀 _shallow/_mid/_deep）
+        fam_tiers: dict[str, set[str]] = {}
+        for tile in tiles:
+            for z in tile.get("zones", []):
+                if not z.startswith("tsy_"):
+                    continue
+                for tier in ("shallow", "mid", "deep"):
+                    suffix = f"_{tier}"
+                    if z.endswith(suffix):
+                        fam = z[len("tsy_") : -len(suffix)]
+                        fam_tiers.setdefault(fam, set()).add(tier)
+        for fam, tiers in fam_tiers.items():
+            missing = {"shallow", "mid", "deep"} - tiers
+            if missing:
+                errors.append(f"TSY family '{fam}' missing tiers: {sorted(missing)}")
+
+        # 3. tsy_presence > 0 的 cell 必须 qi_density >= 0.7
+        for tile_info in tiles:
+            tile_dir = raster_path / tile_info["dir"]
+            presence = tile_dir / "tsy_presence.bin"
+            qi_file = tile_dir / "qi_density.bin"
+            if not (presence.exists() and qi_file.exists()):
+                continue
+            pres_raw = presence.read_bytes()
+            qi_data = _read_float_layer(qi_file, area)
+            if qi_data is None or len(pres_raw) != area:
+                continue
+            for p, q in zip(pres_raw, qi_data):
+                if p > 0 and q < 0.70:
+                    errors.append(
+                        f"{tile_info['dir']}: tsy_presence>0 with "
+                        f"qi_density={q:.2f} < 0.7"
+                    )
+                    break
+
+        # 4. tsy_origin_id ∈ {0..4}, tsy_depth_tier ∈ {0..3}
+        for tile_info in tiles:
+            for layer_name, max_val in (("tsy_origin_id", 4), ("tsy_depth_tier", 3)):
+                f = raster_path / tile_info["dir"] / f"{layer_name}.bin"
+                if not f.exists():
+                    continue
+                raw = f.read_bytes()
+                if len(raw) == area and max(raw) > max_val:
+                    errors.append(
+                        f"{tile_info['dir']}: {layer_name} max={max(raw)} > {max_val}"
+                    )
+
+        # 5. 三层 AABB Y 区间不 overlap — 此校验需读 blueprint 而非 raster；
+        #    blueprint loader 一致性校验里做（cross_manifest_check.py 后续接入）。
+    else:
+        # 6. 每个 kind=rift_portal direction=entry POI 必须带 family_id + target_family_pos_xyz
+        for poi in manifest.get("pois", []):
+            if poi["kind"] != "rift_portal":
+                continue
+            tags = {
+                t.split(":", 1)[0]: t.split(":", 1)[1]
+                for t in poi.get("tags", [])
+                if ":" in t
+            }
+            if tags.get("direction") != "entry":
+                continue
+            if "family_id" not in tags:
+                errors.append(
+                    f"overworld rift_portal at {poi['pos_xyz']} missing family_id tag"
+                )
+            if "target_family_pos_xyz" not in tags:
+                errors.append(
+                    f"overworld rift_portal at {poi['pos_xyz']} missing "
+                    f"target_family_pos_xyz tag"
+                )
+
+        # 7. 主世界 manifest 不出现 tsy_* layer
+        for tile in tiles:
+            for layer in tile.get("layers", []):
+                if layer.startswith("tsy_"):
+                    errors.append(
+                        f"overworld manifest tile {tile['dir']} unexpectedly "
+                        f"contains {layer}"
+                    )
+
     # Build report
     lines: list[str] = []
     if errors:
@@ -185,7 +294,9 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
             lines.append(f"  ⚠ {w}")
 
     if not errors and not warnings:
-        lines.append(f"All {len(tiles)} tiles passed validation.")
+        lines.append(
+            f"All {len(tiles)} tiles passed validation (manifest_kind={manifest_kind})."
+        )
 
     return len(errors) == 0, "\n".join(lines)
 

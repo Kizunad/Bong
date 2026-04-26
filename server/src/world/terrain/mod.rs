@@ -105,13 +105,54 @@ pub fn spawn_raster_world(
 
     let layer = valence::prelude::LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
     let entity = commands.spawn((layer, OverworldLayer)).id();
-    // Wrap the loaded provider in `TerrainProviders` so consumers can route by `DimensionKind`.
-    // `tsy` stays `None` until `plan-tsy-worldgen-v1` ships the TSY manifest.
+
+    // plan-tsy-worldgen-v1 §6.1 — optional TSY raster manifest from
+    // BONG_TSY_RASTER_PATH; absent → tsy=None (legacy behaviour).
+    let tsy_provider = load_tsy_provider_from_env(biomes);
+
     commands.insert_resource(TerrainProviders {
         overworld: provider,
-        tsy: None,
+        tsy: tsy_provider,
     });
     entity
+}
+
+const TSY_RASTER_PATH_ENV_VAR: &str = "BONG_TSY_RASTER_PATH";
+
+fn load_tsy_provider_from_env(biomes: &BiomeRegistry) -> Option<TerrainProvider> {
+    let raw = std::env::var_os(TSY_RASTER_PATH_ENV_VAR)?;
+    if raw.is_empty() {
+        return None;
+    }
+    let manifest_path = PathBuf::from(raw);
+    let raster_dir = match raster_dir_from_manifest_path(&manifest_path) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][world] BONG_TSY_RASTER_PATH={} unreadable: {error}",
+                manifest_path.display()
+            );
+            return None;
+        }
+    };
+    match TerrainProvider::load(&manifest_path, &raster_dir, biomes) {
+        Ok(provider) => {
+            tracing::info!(
+                "[bong][world] loaded TSY {} terrain tiles / {} POIs from {}",
+                provider.tile_count(),
+                provider.pois().len(),
+                manifest_path.display()
+            );
+            Some(provider)
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][world] failed to load TSY raster {}: {error}",
+                manifest_path.display()
+            );
+            None
+        }
+    }
 }
 
 fn generate_chunks_around_players(

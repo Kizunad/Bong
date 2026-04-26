@@ -18,6 +18,7 @@ pub mod redis_bridge;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
 pub mod treasure_equipped_emit;
+pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
@@ -261,6 +262,9 @@ pub fn register(app: &mut App) {
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+            // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
+            tsy_event_bridge::publish_tsy_enter_events,
+            tsy_event_bridge::publish_tsy_exit_events,
         ),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.

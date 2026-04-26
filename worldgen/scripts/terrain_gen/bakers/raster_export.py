@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -55,8 +56,15 @@ def _write_u8_layer(path: Path, values: np.ndarray) -> None:
 
 
 def export_rasters(
-    plan: TerrainGenerationPlan, fields: GeneratedFieldSet
+    plan: TerrainGenerationPlan,
+    fields: GeneratedFieldSet,
+    layer_whitelist: Optional[set[str]] = None,
 ) -> dict[str, Path]:
+    """Export rasters; if layer_whitelist is given, only those layers are written.
+
+    plan-tsy-worldgen-v1 §2.1 — 主世界 manifest 调用传 whitelist 过滤掉 tsy_*；
+    TSY manifest 调用传 None 导全部。
+    """
     if plan.bake_plan is None:
         raise ValueError("raster bake plan is required before export")
 
@@ -73,6 +81,8 @@ def export_rasters(
         written_layers: list[str] = []
         for layer_name in fields.layers:
             if layer_name not in tile.layers:
+                continue
+            if layer_whitelist is not None and layer_name not in layer_whitelist:
                 continue
             layer_path = tile_dir / _layer_file_name(layer_name)
             values = tile.layers[layer_name]

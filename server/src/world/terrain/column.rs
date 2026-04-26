@@ -323,6 +323,9 @@ mod tests {
             flora_variant_id: 0,
             anomaly_intensity: 0.0,
             anomaly_kind: 0,
+            tsy_presence: 0,
+            tsy_origin_id: 0,
+            tsy_depth_tier: 0,
         }
     }
 
