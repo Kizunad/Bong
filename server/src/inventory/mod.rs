@@ -16,6 +16,8 @@ pub mod ancient_relics;
 pub mod corpse;
 // plan-tsy-loot-v1 §3 — 秘境内死亡分流。
 pub mod tsy_death_drop;
+// plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
+pub mod tsy_loot_spawn;
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
@@ -244,9 +246,20 @@ pub fn register(app: &mut App) {
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
+    // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
+    app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
+    app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
     app.add_event::<DroppedItemEvent>();
     app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, (apply_death_drop_on_revive, sync_overloaded_marker));
+    app.add_systems(
+        Update,
+        (
+            apply_death_drop_on_revive,
+            sync_overloaded_marker,
+            // plan-tsy-loot-v1 §2.2 — 玩家踏入 family 时 spawn 1% 上古遗物（idempotent）。
+            tsy_loot_spawn::tsy_loot_spawn_on_enter,
+        ),
+    );
 }
 
 pub(crate) fn attach_inventory_to_joined_clients(

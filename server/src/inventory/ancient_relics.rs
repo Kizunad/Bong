@@ -30,7 +30,7 @@ pub enum AncientRelicKind {
 
 /// 上古遗物来源类（来自 `worldview §十六.一` TSY 生命周期表）。
 /// `tsy_loot_spawn.rs` 按 source_class 决定每座 TSY spawn 的总数与种类倾向。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AncientRelicSource {
     /// 大能陨落类
     DaoLord,
