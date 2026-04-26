@@ -38,14 +38,14 @@ public class PlayerStateViewModelTest {
     @Test
     public void viewModelFormatsCultivationFieldsForScreenDisplay() {
         PlayerStateState.record(
-                new BongServerPayload.PlayerState("qi_refining_3", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley"),
+                new BongServerPayload.PlayerState("Induce", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley"),
                 10_000L
         );
 
         PlayerStateViewModel viewModel = PlayerStateViewModel.fromCurrentState();
 
         assertTrue(viewModel.hasState());
-        assertEquals("练气三层", viewModel.realmLabel());
+        assertEquals("引气", viewModel.realmLabel());
         assertEquals("78 / 100", viewModel.spiritQiLabel());
         assertEquals("████████░░", viewModel.spiritQiBar());
         assertEquals("-0.20", viewModel.karmaLabel());
@@ -54,12 +54,12 @@ public class PlayerStateViewModelTest {
         assertEquals("Blood Valley", viewModel.zoneLabel());
         assertEquals(4, viewModel.powerBreakdown().size());
         assertEquals("战斗", viewModel.powerBreakdown().get(0).label());
-        assertEquals("0.46", viewModel.powerBreakdown().get(0).valueLabel());
+        assertEquals("0.40", viewModel.powerBreakdown().get(0).valueLabel());
         assertEquals("财富", viewModel.powerBreakdown().get(1).label());
-        assertEquals("0.48", viewModel.powerBreakdown().get(1).valueLabel());
+        assertEquals("0.42", viewModel.powerBreakdown().get(1).valueLabel());
         assertEquals("社交", viewModel.powerBreakdown().get(2).label());
         assertEquals("0.38", viewModel.powerBreakdown().get(2).valueLabel());
         assertEquals("领地", viewModel.powerBreakdown().get(3).label());
-        assertEquals("0.31", viewModel.powerBreakdown().get(3).valueLabel());
+        assertEquals("0.27", viewModel.powerBreakdown().get(3).valueLabel());
     }
 }
