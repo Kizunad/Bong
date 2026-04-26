@@ -1,6 +1,6 @@
 use valence::prelude::{bevy_ecs, Client, Position, Query, Username, With};
 
-use crate::inventory::DroppedItemEvent;
+use crate::inventory::{DroppedItemEvent, InventoryDurabilityChangedEvent};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -8,6 +8,43 @@ use crate::network::inventory_snapshot_emit::item_view_from_instance;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::inventory::{ContainerIdV1, InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+
+pub fn emit_durability_changed_inventory_events(
+    mut events: bevy_ecs::event::EventReader<InventoryDurabilityChangedEvent>,
+    mut clients: Query<(&Username, &mut Client), With<Client>>,
+) {
+    for ev in events.read() {
+        let Ok((_username, mut client)) = clients.get_mut(ev.entity) else {
+            continue;
+        };
+
+        let payload = ServerDataV1::new(ServerDataPayloadV1::InventoryEvent(
+            InventoryEventV1::DurabilityChanged {
+                revision: ev.revision.0,
+                instance_id: ev.instance_id,
+                durability: ev.durability,
+            },
+        ));
+        let payload_type = payload_type_label(payload.payload_type());
+        let payload_bytes = match serialize_server_data_payload(&payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log_payload_build_error(payload_type, &error);
+                continue;
+            }
+        };
+
+        send_server_data_payload(&mut client, payload_bytes.as_slice());
+        tracing::debug!(
+            "[bong][network] sent {} {} payload to client entity {:?} (durability instance={} value={})",
+            SERVER_DATA_CHANNEL,
+            payload_type,
+            ev.entity,
+            ev.instance_id,
+            ev.durability
+        );
+    }
+}
 
 pub fn emit_dropped_item_inventory_events(
     mut dropped_events: bevy_ecs::event::EventReader<DroppedItemEvent>,

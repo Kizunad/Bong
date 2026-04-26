@@ -336,6 +336,7 @@ mod tests {
     use valence::testing::{create_mock_client, MockClientHelper};
 
     use super::*;
+    use crate::inventory::InventoryDurabilityChangedEvent;
     use crate::inventory::{
         ContainerState, DroppedItemEvent, DroppedItemRecord, InventoryRevision, ItemInstance,
         ItemRarity, PlacedItemState,
@@ -345,12 +346,14 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.add_event::<DroppedItemEvent>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
                 emit_join_inventory_snapshots,
                 emit_changed_inventory_snapshots,
                 crate::network::inventory_event_emit::emit_dropped_item_inventory_events,
+                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
             ),
         );
         app
@@ -726,6 +729,43 @@ mod tests {
                 }
             }
             other => panic!("expected dropped inventory_event payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn durability_changed_event_emits_inventory_event_payload() {
+        let mut app = setup_app();
+        let state = PlayerState::default();
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Some(make_inventory(21, true)),
+        );
+
+        app.world_mut().send_event(InventoryDurabilityChangedEvent {
+            entity,
+            revision: InventoryRevision(34),
+            instance_id: 2004,
+            durability: 0.25,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_inventory_event_payloads(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::DurabilityChanged {
+                revision,
+                instance_id,
+                durability,
+            }) => {
+                assert_eq!(*revision, 34);
+                assert_eq!(*instance_id, 2004);
+                approx_eq(*durability, 0.25);
+            }
+            other => panic!("expected durability_changed inventory_event payload, got {other:?}"),
         }
     }
 
