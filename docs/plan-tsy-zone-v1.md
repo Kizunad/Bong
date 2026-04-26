@@ -695,3 +695,10 @@ fn strip_name(template_id: &str, original: &str) -> String {
 - Smoke script：~30 行
 
 规模 ≈ `plan-inventory-v1` 的 30%（因为复用了 Zone 框架而非重建）。
+
+---
+
+## §10 进度日志
+
+- 2026-04-25：P0 ⏳ 纯设计未实装。`server/src/world/` 现仅有 `events.rs / mod.rs / terrain/ / zone.rs`，未见 `tsy.rs / tsy_drain.rs / tsy_portal.rs / tsy_filter.rs`；`zone.rs` 无 `tsy_*` / `dimension` / `register_runtime_zone` 字样（`apply_runtime_records` 已有但仅改 `active_events/blocked_tiles`）；`agent/packages/schema/src/` 无 `tsy.ts`；`server/tests/`、`scripts/smoke-tsy-zone.sh`、`server/zones.tsy.json` 均不存在。前置 `plan-tsy-dimension-v1` 亦未落地，等其先行后再开 `/consume-plan tsy-zone`。
+- **2026-04-26**：**前置解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，本 plan 依赖的全部 dimension API 已就位：`DimensionKind` enum / `DimensionLayers` resource / `CurrentDimension` 组件 / `DimensionTransferRequest` event / `apply_dimension_transfers` system / `TerrainProviders { overworld, tsy: Option }` / `Zone.dimension` 字段 + `find_zone(dim, pos)` 签名 + 旧 zones.json 向后兼容。本 plan 自身 §3.1 隐形前置 `ZoneRegistry::register_runtime_zone()` 仍未补，属本 plan 范围。**现可开 `/consume-plan tsy-zone`**。

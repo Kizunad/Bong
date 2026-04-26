@@ -346,11 +346,11 @@ can_take(pill) = Contamination.entries
 
 | Phase | 内容 | 验收 |
 |---|---|---|
-| P0 | RecipeRegistry + JSON 加载 + IPC Schema + 单测 | 启动加载 3 份测试 recipe 无错 |
+| P0 | RecipeRegistry + JSON 加载 + IPC Schema + 单测 | 启动加载 3 份测试 recipe 无错 ✅ |
 | P1 | AlchemyFurnace BlockEntity + LearnedRecipes component + 右键打开 Screen | 方块持久化 session_id · 客户端拿到 RecipeScrollStore |
 | P2 | 投料槽 + 材料消耗规则（投入即消耗/不返还）+ stages 多阶支持 | 赌命散三阶投料流程跑通 |
-| P3 | 火候进程 tick + 偏差计算 + 精确匹配 outcome 分桶 | 三种测试丹能 perfect/good/flawed/explode |
-| P4 | 残缺匹配 + side_effect_pool 抽取 + LifeRecord 记录 | 缺一料能走 fallback，inspect 看得到试药史 |
+| P3 | 火候进程 tick + 偏差计算 + 精确匹配 outcome 分桶 | 三种测试丹能 perfect/good/flawed/explode ✅ |
+| P4 | 残缺匹配 + side_effect_pool 抽取 + LifeRecord 记录 | 缺一料能走 fallback，inspect 看得到试药史 ✅ |
 | P5 | 服药 → ContamSource 注入 + 重复服药阈值 + 过量 debuff | 过量服赌命散触发禁服 / 强吃 debuff |
 | P6 | BaseOwoScreen 接入（卷轴手札 + 塔科夫背包 + 拖拽投料 + 翻页/拖残卷学习） | 全流程端到端可玩 |
 
@@ -393,3 +393,9 @@ can_take(pill) = Contamination.entries
 | 中途投料 tick 漂移导致一直 miss window | window 默认 ≥ 10 ticks（0.5s）· 服务器权威 tick，不受客户端 FPS 影响 |
 | 与 botany 耦合阻塞进度 | placeholder material 先行，botany 落地后无痛替换 |
 | 配方 JSON 结构变更频繁 | schema 走 TypeBox（agent/packages/schema），双端契约 |
+
+---
+
+## §9 进度日志
+
+- 2026-04-25：P0 落地确认（server alchemy/ 3909 行 + 3 份测试 recipe）

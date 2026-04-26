@@ -473,3 +473,20 @@ DimensionKind / DimensionLayers / DimensionAnchor / CurrentDimension
 ---
 
 **下一步**：`/consume-plan tsy-dimension` 启动。本 plan **必须先于** P0 和 worldgen plan 的 active 阶段落地（基础设施前置）。
+
+---
+
+## §12 进度日志
+
+- **2026-04-25**：实装零落地。`server/src/` grep `DimensionKind` / `DimensionLayers` / `DimensionTransferRequest` / `TerrainProviders` / `CurrentDimension` / `register_tsy_dimension` / `bong:tsy` / `TSY_DIMENSION_IDENT` 全部零命中；`world/mod.rs:370,384` + `world/terrain/mod.rs:104` 仍是单 `LayerBundle::new(ident!("overworld"), …)`；`world/zone.rs:187` `find_zone(pos)` 仍单 dim 签名，`Zone` struct 无 `dimension` 字段。本 plan 当前为 active 设计稿（§1–§11 已 audit 定稿，1360 行规模评估完成，骨架已升 active），但代码实施尚未开始 —— `/consume-plan tsy-dimension` 仍是下一步。
+- **2026-04-26**：PR #47（merge commit 579fc67e）落地 §1.1–§3.2 + §4.2/§11-A + Q2 候选 A 完整链路，1252 单测全绿（server 36 文件 +1293/-267）：
+  - **§1.1**：新 `world/dimension.rs` → `DimensionKind` enum + `DimensionLayers` resource + `CurrentDimension` 组件 + `register_tsy_dimension`（按 Valence pin `2b705351` 17 字段注册 `bong:tsy`，Nether 风格视觉/永夜/无天空）+ 6 单测
+  - **§1.2**：`setup_world` 双 spawn overworld + TSY layer，`OverworldLayer` / `TsyLayer` 标记组件，9 处单层 query 加 `With<OverworldLayer>` 过滤；`spawn_anvil_world` / `spawn_fallback_flat_world` / `spawn_raster_world` 改返回 overworld Entity
+  - **§1.3**：`init_clients` 插入 `CurrentDimension::default()`；`attach_player_state_to_joined_clients` 按 persisted `last_dimension` 重写 `EntityLayerId` / `VisibleChunkLayer` / `VisibleEntityLayers`（DB migration v13 加 `player_slow.last_dimension`，重连恢复闭环）
+  - **§2.2/§2.3**：新 `TerrainProviders { overworld, tsy: Option<TerrainProvider> }`（`world/terrain/raster.rs`），3 处 resource consumer 升级（`world/terrain/mod.rs` + `network/chat_collector.rs` + `npc/navigator.rs`）；TSY provider `None` 占位等 `plan-tsy-worldgen-v1` 产 manifest
+  - **§3.1/§3.2**：新 `world/dimension_transfer.rs` → `DimensionTransferRequest` event + `apply_dimension_transfers` system（同 tick 同 entity HashMap dedup / 缺组件 `tracing::warn` 跳过 / 缺 resource 安静 drain），5 单测
+  - **§4.2/§11-A**：跨位面传送由 Valence `respawn` 系统监听 `Changed<VisibleChunkLayer>` 自动 `PlayerRespawnS2c`，client MC 1.20.1 vanilla 零改动
+  - **Q2 候选 A**：`Zone` struct + `ZoneConfig` 加 `dimension: DimensionKind` 字段（`#[serde(default)]` 向后兼容旧 zones.json），`find_zone(pos)` → `find_zone(dim, pos)` 签名升级；50+ 处生产/测试 caller 升级，3 新单测覆盖旧 snapshot/显式 tsy/dim 隔离；`find_zone_by_name` 保留全局（plan §11.C / Q3）
+  - **Codex P1 修**：`cultivation/tick.rs::qi_regen_and_zone_drain_tick` 改读 `CurrentDimension` 真实位面，杜绝 TSY 玩家被错查 overworld zone 倒扣 spirit_qi（commit 链尾）
+  - **未覆盖**：§5/§6/§7（worldgen routing 留给 `plan-tsy-worldgen-v1`），§11.B 16 处 helper 仍传 overworld provider 单参（helper 自身不感知 dim，调用方决定）
+  - **下游解冻**：P0 `plan-tsy-zone-v1` / P1 `plan-tsy-loot-v1` / `plan-tsy-worldgen-v1` 现可基于本基础设施开工

@@ -4,6 +4,8 @@
 
 **2026-04-24 升 active 备忘**：代码先行已落地 2770 行（`server/src/shelflife/` 六个文件），M0-M4 完成，M5 消费侧接入 alchemy 会话层，M6-M7 待跨 plan blessing 推进。骨架追认本 plan 为 active。见 §-1 现有代码基线。
 
+**2026-04-25 audit**：alchemy 消费侧已实际联通 —— `alchemy/mod.rs:337` 调用 `consume_pill`，`pill.rs:107` 接收 `SpoilCheckOutcome` + `AgePeakCheck`，`resolver.rs:245` 把 shelflife `quality_factor` 应用到 `Pill.qi_gain`，alchemy 段 M5 不再是"待 verify"。forge / cultivation / lingtian / food 仍未接入。`DecayProfileRegistry` 生产 resource 仍空（`shelflife/mod.rs:45` 注册 `default()`），M7 待各消费 plan 填档。
+
 **世界观锚点**（改用章节引用，对齐战力分层插入后的行号稳定性）：
 - `worldview.md §三 末法命名` — 一切物品带衰败意象（"末法时代的修士不配用上古称呼"那段）
 - `worldview.md §六 封灵骨币章` — 骨币封印真元 / 陈化冻结的正例
@@ -39,7 +41,7 @@
 
 **已知缺口**（M6/M7 剩余工作）：
 1. `DecayProfileRegistry::new()` 默认空 HashMap —— 生产代码从未注册任何 profile（只有 `registry.rs` test 里的 `ling_shi_fan_v1` 作 fixture）。**M7 跨 plan DecayProfile 定稿** 需要：`plan-mineral-v1` 注册四档 `ling_shi_*_v1`、`plan-fauna-v1` 注册 `bone_coin_v1` + `beast_blood_v1` + `beast_meat_v1` 等、`plan-alchemy-v1` 注册常规丹药 + 老坛丹 profile、`plan-food-v1` 注册 `chen_jiu_v1` + `chen_cu_v1` 迁移对、`plan-botany-v1` 注册鲜草 / 阴干 / 陈年灵茶
-2. 消费侧调用点：`alchemy/session.rs:112` 已注释引用 `decay_current_qi_factor`，**实际是否在消费流程中调用**待 alchemy 下一版 verify；`forge` / `cultivation` / `food` 层消费入口暂未接入
+2. 消费侧调用点：alchemy 已实接 ✅（`alchemy/mod.rs:337` 调 `consume_pill`，`pill.rs:107` 收 `SpoilCheckOutcome` + `AgePeakCheck`，`resolver.rs:245` 把 quality_factor 应用到 `Pill.qi_gain`）；`forge` / `cultivation` / `lingtian` / `food` 层消费入口暂未接入
 3. **死物 / 腐败 / 过峰 item ID 切换**（§6.3）未实装 —— `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 等 item 变体未注册到 items 表
 
 ---
@@ -334,8 +336,8 @@ pub enum DecayFormula {
 - [x] **M4 — 神识感知** ✅ `probe.rs` `FreshnessProbeIntent` / `Response` / `resolve_freshness_probe_intents`
 - [~] **M5 — 消费侧接入**（部分）：
   - `consume.rs` 函数层完整（`decay_current_qi_factor` / `spoil_check` / `age_peak_check` + `SpoilConsumeWarning` / `AgeBonusRoll` event）✅
-  - alchemy 已引用 `alchemy/session.rs:112`（注释 + 函数签名），**实际消费调用待 verify**
-  - forge / cultivation / food 未接入 ❌
+  - alchemy 实接闭环 ✅（`alchemy/mod.rs:337` 调 `consume_pill`；`pill.rs:107` 接收 `SpoilCheckOutcome` 驱动 Warn/Block 分支 + `AgePeakCheck` 在 `Peaking` 时叠 bonus；`resolver.rs:245` 把 staged.quality_factor 应用到 `Pill.qi_gain`）
+  - forge / cultivation / lingtian / food 未接入 ❌
 - [ ] **M6 — 死物 / 腐败 / 过峰 item 变体**：floor_qi / spoil_threshold / peak 窗口触发 item ID 切换 —— `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 未注册到 items 表
 - [ ] **M7 — 跨 plan DecayProfile 定稿**：`DecayProfileRegistry::new()` 默认空，需要 mineral / fauna / botany / alchemy / food 各自在自家 plan blessing 后 hardcode 注册。当前生产 registry 无任何 profile —— 即使 item 挂了 freshness，查 profile_id 会 miss，UI 回退 None
 
@@ -358,3 +360,10 @@ pub enum DecayFormula {
 ---
 
 > 本 plan 立项目标：跨 mineral / fauna / botany / alchemy / food / forge 共用保质期基础设施。三条路径（衰减 / 腐败 / 陈化）覆盖末法世界所有"时间敏感"物品类别。M0 纯函数层可与各消费 plan 并行推进；M5 消费侧联调是关键拐点。
+
+---
+
+## §11 进度日志
+
+- 2026-04-24：plan 升 active；M0-M4 完成 ✅，M5 部分（consume.rs 函数层 + alchemy session 占位），M6-M7 待跨 plan blessing。
+- 2026-04-25：alchemy 消费侧实接闭环 —— `alchemy/mod.rs:337` 真调 `consume_pill`，`pill.rs` 接 `SpoilCheckOutcome`/`AgePeakCheck`，`resolver.rs:245` 把 quality_factor 应用到 `Pill.qi_gain`；M5 alchemy 段 verified ✅，forge/cultivation/lingtian/food 仍未接入；`DecayProfileRegistry` 生产仍空。

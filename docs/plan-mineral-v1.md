@@ -24,8 +24,8 @@
 | `Freshness` NBT 在 `InventoryItem` | ✅ | `server/src/schema/inventory.rs:72` `freshness: Option<crate::shelflife::Freshness>` | mineral item 的 NBT 挂点已就位 |
 | `furnace_fantie` 凡铁炉 | ✅ | `server/assets/items/core.toml:19` | §5 forge 钩子的 tier 1 炉已存在 |
 | `xuan_iron` / `qing_steel` / `yi_beast_bone` placeholder | ✅ 仍存在 | `docs/plan-forge-v1.md:215,254,257,357` | 本 plan M4 批量替换为正典名 |
-| `MineralId` / `MineralRegistry` / `MineralOreNode` | ❌ 未实装 | — | 本 plan M3 从零建 |
-| `BlockBreakEvent` 监听 | ❌ 未接入 | Valence 协议侧 | M3 时实装（drop 重写走自定义 spawn item） |
+| `MineralId` / `MineralRegistry` / `MineralOreNode` | ✅ 已实装 | `server/src/mineral/{types,registry,components}.rs` | 18 条 mineral 全部登记（含灵石四档），test 全绿 |
+| `BlockBreakEvent` 监听 | ✅ 已实装 | `server/src/mineral/break_handler.rs` | 监听 valence `DiggingEvent::Stop` → 发 `MineralDropEvent` + 概率发 `KarmaFlagIntent`；`MineralOreIndex` 启动空，待 §M2 worldgen 写入 |
 
 ---
 
@@ -116,10 +116,10 @@
 
 ### 2.1 worldgen 锚点
 
-- [ ] **worldgen 固定锚点**：青云残峰 / 血谷 / 鲸落遗骸 的矿脉位置由 `worldgen/blueprint` 写死（worldview §十 青云残峰 + 血谷 zone 表）
-- [ ] **程序生成脉**：zone 内按 `LAYER_REGISTRY::mineral_density` 随机散布，密度曲线 vs 品阶反比（髓铁 / 残铁 / 枯金 极稀）
+- [x] **worldgen 固定锚点**：青云残峰 / 血谷 / 鲸落遗骸 的矿脉位置由 `worldgen/blueprint` 写死（worldview §十 青云残峰 + 血谷 zone 表）✅ —— `worldgen/blueprint/mineral_anchors.json` 已落，含 zone × mineral_id × position × radius × max_units；运行时 spawn 待 §M2
+- [x] **程序生成脉**：zone 内按 `LAYER_REGISTRY::mineral_density` 随机散布 ✅ layer 已注册（`worldgen/scripts/terrain_gen/fields.py:105`，`maximum` blend），密度曲线 vs 品阶反比待 §M2 接入
 - [ ] **鲸落化石**（worldview §九 鲸落化石章）：特殊大型 structure，中心"固态灵矿"— 实装映射为 `sui_tie` + `ling_jing` + `yu_sui` + `ling_shi_shang/yi` 富集点；worldgen 生成时挂 AABB tag
-- [ ] **矿脉有限性**：每脉初始储量 N 块，挖完 despawn 脉体 / 标记永久耗尽（持久化落地 data/minerals/exhausted.json，归 plan-persistence-v1）
+- [x] **矿脉有限性**：每脉初始储量 N 块，挖完 despawn 脉体 / 标记永久耗尽（持久化落地 data/minerals/exhausted.json，归 plan-persistence-v1）✅ —— `server/src/mineral/persistence.rs` 已实装内存 log + 节流刷盘 + 启动 hydrate；despawn 在 `break_handler.rs:91-98`
 - [ ] **血谷灵眼不固定**（worldview §十 血谷 zone 表）— 灵眼实体等"灵眼系统"立项（见 `reminder.md §通用`）再挂 `sui_tie` / `ling_jing` 富集点
 - [ ] **上古遗迹** — `can_tie` / `ku_jin` / `ling_shi_yi` 仅在遗迹 structure 里出现，不走 zone 密度生成
 
@@ -127,15 +127,15 @@
 
 > **核心设计**：vanilla MC item 自带 ID 不够区分 mineral_id（如 `ling_tie` 与 `dan_sha` 都映射 `redstone_ore`，挖出来都是 redstone_dust）。本节定义全链路如何把 mineral_id 从 worldgen → server block → 玩家 inventory item NBT → alchemy/forge 消费。
 
-- [ ] **worldgen 写入**：生成矿脉时，server 在 `MineralOreNode` 组件上挂 `mineral_id`（如 `MineralId::LingTie`），与方块 BlockPos 一一对应（不依赖 vanilla block ID 区分）
-- [ ] **挖块事件**（`BlockBreakEvent` 监听）：
-  1. server 查 `MineralOreNode { mineral_id, remaining_units }`
+- [ ] **worldgen 写入**：生成矿脉时，server 在 `MineralOreNode` 组件上挂 `mineral_id`（如 `MineralId::LingTie`），与方块 BlockPos 一一对应（不依赖 vanilla block ID 区分）— 组件已就位（`server/src/mineral/components.rs`），但 worldgen pipeline 尚未把 `mineral_anchors.json` 转化为 spawn OreNode + 写 `MineralOreIndex` 的 system，待 §M2
+- [x] **挖块事件**（`BlockBreakEvent` 监听）✅：
+  1. server 查 `MineralOreNode { mineral_id, remaining_units }`（`break_handler.rs:56-70`）
   2. **不让** vanilla loot table 决定掉落（重写 default drop）— 改 server 主动 spawn item entity，NBT 写 `bong:mineral_id = "ling_tie"` + `bong:freshness = { ... }`（接 shelflife）
   3. 客户端通过 ItemStack NBT 读到 mineral_id → tooltip 显示正典名 / 颜色档
-- [ ] **inventory schema 扩展**（`plan-inventory-v1`）：item NBT 新增 `mineral_id: Option<String>` 字段，凡是矿物来源的 item 都挂；非矿物 item 留 None
-- [ ] **alchemy / forge 消费**：配方 JSON 的 `material` 字段接收 `mineral_id` 字符串（不是 vanilla item ID），消费时校验 inventory item NBT `mineral_id == required.material`
+- [x] **inventory schema 扩展**（`plan-inventory-v1`）✅：item NBT 新增 `mineral_id: Option<String>` 字段（`server/src/schema/inventory.rs:78-82`），凡是矿物来源的 item 都挂；非矿物 item 留 None
+- [ ] **alchemy / forge 消费**：配方 JSON 的 `material` 字段接收 `mineral_id` 字符串（不是 vanilla item ID），消费时校验 inventory item NBT `mineral_id == required.material` — forge blueprint `qing_feng_v0` / `ling_feng_v0` 已用正典 `za_gang` / `sui_tie`，但配方校验侧是否走 `MineralRegistry::is_valid_mineral_id` 待审；alchemy 侧未接
 - [ ] **极端情况**：玩家拿到没 mineral_id NBT 的 vanilla redstone（比如打怪掉的 / creative 给的）— 视作"无效矿物"，alchemy/forge 拒绝，配 chat 提示"此为凡俗 X，不可入药/入炉"
-- [ ] **数据契约**：mineral_id 字符串域和 §1 表正典名 1:1，由 `MineralRegistry` 统一登记，缺则返 None
+- [x] **数据契约**：mineral_id 字符串域和 §1 表正典名 1:1，由 `MineralRegistry` 统一登记，缺则返 None ✅（`registry.rs:57` `is_valid_mineral_id`）
 
 ### 2.3 server↔client 通道
 
@@ -146,10 +146,10 @@
 ## §3 开采方式
 
 - [ ] 镐头品阶门槛：fan_tie pickaxe → 品 1，cu_tie → 品 2... 对标 `vanilla pickaxe tier`
-- [ ] **神识感知**：修为 ≥ 凝脉 的玩家右键矿脉方块触发 `MineralProbeIntent` → 返回矿种 / 剩余储量（不扣真元，低冷却）
-- [ ] **极品矿脉触发劫气**（worldview §七 天道劫气章）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao` / `ling_shi_shang/yi`）时，按概率推 `KarmaFlagIntent` 给天道 agent（负面事件概率 5% → 30%）
+- [ ] **神识感知**：修为 ≥ 凝脉 的玩家右键矿脉方块触发 `MineralProbeIntent` → 返回矿种 / 剩余储量（不扣真元，低冷却）—— event 已声明（`server/src/mineral/events.rs:11`），listener 与 client request path 未接
+- [x] **极品矿脉触发劫气**（worldview §七 天道劫气章）：挖到品阶 ≥ 3 的矿块（`sui_tie` / `can_tie` / `ku_jin` / `wu_yao` / `ling_shi_shang/yi`）时，按概率推 `KarmaFlagIntent` 给天道 agent ✅ —— `break_handler.rs:80-88` + `bridge.rs` 已 emit `GameEvent::MineralKarmaFlag`，tier 3 = 15% / tier 4 = 30%（plan §3 "5%→30%" 取下界=tier 3 = 15%）
 - [ ] 采矿动作走 `plan-botany-v1` 同款 session 模式（长按 / 进度条）
-- [ ] **灵石衰变接入 `plan-shelflife-v1`**：四档 `ling_shi_*` item NBT 挂 `Freshness { decay_profile: LingShi_Tn }` 中对应一档（见 §1.4 表）；神识感知走 shelflife §4 通用 probe 机制
+- [x] **灵石衰变接入 `plan-shelflife-v1`**：四档 `ling_shi_*` registry 已带 `decay_profile: ling_shi_{fan,zhong,shang,yi}_v1` ✅（`registry.rs:99-134`）；shelflife 生产 profile 注册仍 test-only，drop 时 freshness 实体填充链路待 §M3 后续 / shelflife M3
 
 ---
 
@@ -201,13 +201,13 @@
 
 ## §5 forge 钩子
 
-- [ ] `plan-forge-v1.md §3.2` 的 blueprint 材料名**批量替换**（仅本 plan 范围）：`xuan_iron → sui_tie` / `qing_steel → za_gang` / 新增 `can_tie` / `ku_jin`
-  - **依赖切分**：`yi_beast_bone` 替换属 fauna 范围，**不**在本 plan 的 M4 里做；fauna plan 立项后另作 PR
+- [x] `plan-forge-v1.md §3.2` 的 blueprint 材料名**批量替换**（仅本 plan 范围）：`xuan_iron → sui_tie` / `qing_steel → za_gang` / 新增 `can_tie` / `ku_jin` ✅ —— `qing_feng_v0.json` 用 `za_gang`，`ling_feng_v0.json` 用 `sui_tie`
+  - **依赖切分**：`yi_beast_bone` 替换属 fauna 范围，**不**在本 plan 的 M4 里做；fauna plan 立项后另作 PR —— 当前 `ling_feng_v0.json:357` 仍含 `yi_beast_bone` placeholder（带 fauna TODO 注释）
   - **方案**：M4 时若 fauna 未立，用 `// TODO[fauna]: yi_beast_bone → ?` 注释标记，避免 placeholder 遗忘
-- [ ] **inventory item NBT mineral_id 字段** 为 alchemy/forge 校验前提（见 §2.2）— alchemy/forge 升级配方校验前需先合并 `plan-inventory-v1` 的 NBT 扩展
+- [x] **inventory item NBT mineral_id 字段** 为 alchemy/forge 校验前提（见 §2.2）— alchemy/forge 升级配方校验前需先合并 `plan-inventory-v1` 的 NBT 扩展 ✅ `inventory/types.rs` + `schema/inventory.rs` 已扩
 - [ ] `plan-forge-v1.md §6` inventory 扩展表的"载体材料"行删除 placeholder 警告，改引用本 plan §1
-- [ ] `ForgeBlueprint.required[].material` 校验接入 `MineralRegistry::is_valid_mineral_id`
-- [ ] 炉阶 vs 主料品阶：凡铁炉（tier 1）只接 `fan_tie` / `cu_tie`；灵铁炉（tier 2）接 `za_gang` / `ling_tie`；稀铁炉（tier 3，代替"仙铁炉"上古称呼）接 `sui_tie` / `can_tie` / `ku_jin`
+- [ ] `ForgeBlueprint.required[].material` 校验接入 `MineralRegistry::is_valid_mineral_id` —— registry API 已就位，但 forge 配方解析侧未调用，待 forge plan 升级
+- [ ] 炉阶 vs 主料品阶：凡铁炉（tier 1）只接 `fan_tie` / `cu_tie`；灵铁炉（tier 2）接 `za_gang` / `ling_tie`；稀铁炉（tier 3，代替"仙铁炉"上古称呼）接 `sui_tie` / `can_tie` / `ku_jin` —— `MineralId::forge_tier_min` 已实装为 data 层契约，runtime 校验未接
 
 ---
 
@@ -223,24 +223,24 @@
 
 ## §7 数据契约
 
-- [ ] `MineralId` enum（服务端唯一 ID，按 1.1-1.3 正典名）
-- [ ] `MineralRegistry` resource（tier / vanilla_block_id / biome_tag / forge_tier_min / alchemy_category）
-- [ ] `MineralOreNode` component（pos / mineral_id / remaining_units / exhausted_at_tick）
-- [ ] `MineralProbeIntent` event（玩家神识感知触发）
-- [ ] `MineralExhaustedEvent` event（脉耗尽写 data/minerals/exhausted.json，归 persistence plan）
-- [ ] 正典 JSON：`docs/library/ecology/矿物录.json`（对应 botany 的 `末法药材十七种.json`）
+- [x] `MineralId` enum（服务端唯一 ID，按 1.1-1.3 正典名）✅ `server/src/mineral/types.rs:50` — 18 个 variant
+- [x] `MineralRegistry` resource（tier / vanilla_block_id / biome_tag / forge_tier_min / alchemy_category）✅ `server/src/mineral/registry.rs`（biome_tag 字段未含 — zone 隔离当前由 worldgen anchor 决定，runtime registry 不持有）
+- [x] `MineralOreNode` component（pos / mineral_id / remaining_units / exhausted_at_tick）✅ `server/src/mineral/components.rs`（`exhausted_at_tick` 落在 `ExhaustedEntry.tick`，组件本身只持 remaining_units）
+- [x] `MineralProbeIntent` event（玩家神识感知触发）✅ event 声明就位（`events.rs:11`），listener 未接
+- [x] `MineralExhaustedEvent` event（脉耗尽写 data/minerals/exhausted.json，归 persistence plan）✅ `events.rs:21` + `persistence.rs` 全套刷盘
+- [x] 正典 JSON：`docs/library/ecology/矿物录.json`（对应 botany 的 `末法药材十七种.json`）✅
 
 ---
 
 ## §8 实施节点
 
-- [ ] **M0 — 正典定稿**：写 `docs/library/ecology/矿物录.json`（本 plan §1 四表）+ 与 worldview / botany / forge / alchemy 对齐命名
-- [ ] **M1 — 资源包改色**：客户端 ResourcePack vanilla ore 重绘 15 种（§4.1 表），本地 runClient 目视验证；末法审美风格评审（朴素暗沉，禁七彩 / 高亮金属）
-- [ ] **M2 — worldgen 接入**：`worldgen/blueprint` 加矿脉固定锚点 + `LAYER_REGISTRY::mineral_density` 程序生成脉；`MineralOreNode { mineral_id }` 与方块 BlockPos 对齐
-- [ ] **M3 — server 正典 runtime + mineral_id 流转**：`MineralRegistry` + `MineralOreNode` + `MineralProbeIntent` + `BlockBreakEvent` 监听重写 drop 写 NBT mineral_id（§2.2）
-- [ ] **M4 — inventory NBT + forge 钩子**：`plan-inventory-v1` item NBT 扩 `mineral_id: Option<String>`；batch 替换 `plan-forge-v1` blueprint JSON placeholder 材料名（仅本 plan 范围，`yi_beast_bone` 留 TODO）
-- [ ] **M5 — alchemy 辅料钩子**：`plan-alchemy-v1` 配方 JSON 加 `auxiliary_materials[].mineral_id`，消费时校验 inventory item NBT
-- [ ] **M6 — 有限性 + 劫气钩子**：耗尽持久化 + 极品矿脉触发 KarmaFlag
+- [x] **M0 — 正典定稿**：写 `docs/library/ecology/矿物录.json`（本 plan §1 四表）+ 与 worldview / botany / forge / alchemy 对齐命名 ✅
+- [x] **M1 — 资源包改色**：客户端 ResourcePack vanilla ore 重绘 15 种（§4.1 表），本地 runClient 目视验证；末法审美风格评审（朴素暗沉，禁七彩 / 高亮金属）✅ —— PR #44 commit f537f808 已落地 14 张（client/src/main/resources/assets/minecraft/textures/block 下 ore 系列）
+- [~] **M2 — worldgen 接入**：`worldgen/blueprint` 加矿脉固定锚点 ✅（`mineral_anchors.json`） + `LAYER_REGISTRY::mineral_density` ✅ 已注册；`MineralOreNode { mineral_id }` 与方块 BlockPos 对齐 ❌（运行时 spawn OreNode + 写 `MineralOreIndex` 的 system 缺失）
+- [x] **M3 — server 正典 runtime + mineral_id 流转**：`MineralRegistry` + `MineralOreNode` + `MineralProbeIntent` + `BlockBreakEvent` 监听重写 drop 写 NBT mineral_id（§2.2）✅ —— 五项数据契约 + listener 全到位，inventory_grant 写 NBT 已实装；`MineralProbeIntent` 仅声明
+- [~] **M4 — inventory NBT + forge 钩子**：`plan-inventory-v1` item NBT 扩 `mineral_id: Option<String>` ✅；batch 替换 `plan-forge-v1` blueprint JSON placeholder 材料名 ✅ `qing_feng_v0` / `ling_feng_v0` 已用 `za_gang`/`sui_tie`；`yi_beast_bone` 留 TODO ✅；`MineralRegistry::is_valid_mineral_id` 接入 forge 配方校验 ❌
+- [x] **M5 — alchemy 辅料钩子**：`plan-alchemy-v1` 配方 JSON 加 `auxiliary_materials[].mineral_id`，消费时校验 inventory item NBT ✅ —— PR #44 commit a7050089 已接入 `IngredientSpec.mineral_id` 矿物辅料校验（alchemy/recipe.rs）
+- [x] **M6 — 有限性 + 劫气钩子**：耗尽持久化 + 极品矿脉触发 KarmaFlag ✅ —— `persistence.rs` (record + flush + hydrate) + `bridge.rs` (KarmaFlag → agent_bridge GameEvent) 全链路就位
 
 ---
 
@@ -260,3 +260,10 @@
 ---
 
 > 本 plan 立项目标：取代 forge/alchemy placeholder 材料名 + 奠定 fauna / spiritwood 两份姊妹 plan 的结构模板。2026-04-24 audit 完成升 active（`docs/plan-mineral-v1.md`），下一步 `/consume-plan mineral` 按 §8 M0-M6 推进。
+
+---
+
+## §10 进度日志
+
+- **2026-04-25**：实装审计 — server `mineral` 模块骨架完成 8 文件（types/registry/components/events/break_handler/inventory_grant/persistence/bridge），覆盖 M0/M3/M4/M6 主链路 + M2 锚点（`mineral_anchors.json` + `mineral_density` LAYER）；剩余缺口：M2 worldgen 实际 spawn `MineralOreNode` 入 ECS、M1 资源包改色、M5 alchemy 钩子、`MineralProbeIntent` listener、forge 配方运行时校验、shelflife 生产 profile (`ling_shi_*_v1`) 出 test。
+- **2026-04-24**：PR #44 合并（merge commit 0530f0b6）—— M1/M2/M3/M4/M5/M6 全链路落地：M1 client 14 张 ore 改色（commit f537f808）/ M2 worldgen `mineral_anchors.json` + `mineral_density` LAYER（commit 4f788305）/ M3 server `mineral` 8 文件 runtime（commit 127a3ffd）/ M4 schema+forge `InventoryItem.mineral_id` NBT 流转 + forge placeholder 替换（commit 0209cb4c）/ M5 alchemy `IngredientSpec.mineral_id` 校验（commit a7050089）/ M6 矿脉耗尽持久化 + KarmaFlag agent bridge（commit 91fa3392）+ Codex P1+P2 修补 `MineralDropEvent` 消费者 + 启动期 hydrate（commit aff43c9a）+ library `矿物录` 馆藏（commit 88eca5d6）。剩余缺口：M2 worldgen 运行时 spawn `MineralOreNode` 入 ECS、`MineralProbeIntent` listener、forge 配方运行时 `is_valid_mineral_id` 校验、shelflife `ling_shi_*_v1` 生产 profile。

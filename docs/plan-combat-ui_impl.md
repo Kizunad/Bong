@@ -23,27 +23,30 @@
 
 ## 1. UI 总览（从 `plan-combat-v1.md §12` 迁入）
 
-| UI 组件 | 数据来源 | 常驻? | 草图 |
-|---|---|---|---|
-| **inspect 伤口层** | `Wounds[]` 实时同步（inspect 屏已有骨架） | inspect 内 | [svg](./svg/inspect-wounds.svg) |
-| **inspect 状态面板** | `StatusEffects` 全量（按 kind 分组） | inspect 内 | [svg](./svg/inspect-status.svg) |
-| **inspect 武器/法宝检视** | `Weapon` tooltip / `Treasure` 展开 | inspect 内 | [svg](./svg/weapon-treasure.svg) |
-| **真元条（战斗扩展）** | `throughput_current` 峰值高亮覆盖真元条 | 常驻 | [svg](./svg/hud-combat.svg) |
-| **Stamina 条** | 独立于 qi/health，跑/冲刺掉 | 常驻 | [svg](./svg/hud-combat.svg) |
-| **HUD 顶部状态效果栏** | 最多 8 格（DoT 优先→控制→加成），图标 `source_color` 描边 | 按需（有效果时） | [svg](./svg/hud-combat.svg) |
-| **DerivedAttrs 大图标** | 飞行/虚化/渡劫锁定等特殊状态 | 按需（有状态时） | [svg](./svg/hud-combat.svg) |
-| **法术体积滑块面板** | radius / velocity_cap 双滑块，实时预览 | 施法时弹出 | [svg](./svg/attack-panels.svg) |
-| **施法 qi_invest 滑块** | "N 格内可命中" 提示 | 施法时弹出 | [svg](./svg/attack-panels.svg) |
-| **防御 UI** | 截脉 200ms 弹反提示 / 涡流键 / 伪皮层 | 按需 | [svg](./svg/defense-ui.svg) |
-| **暗器制作面板** | ForgeWeaponCarrier（选物+注真元+计时） | 主动打开 | [svg](./svg/attack-panels.svg) |
-| **阵法布置 UI** | 方块选择+触发类型+注真元 | 主动打开 | [svg](./svg/attack-panels.svg) |
-| **死亡画面** | 运数 + 遗念 + 重生/终结 + 60s 倒计时 | 致死时全屏 | [svg](./svg/death-screens.svg) |
-| **终结画面** | 终焉之言 + 创建新角色 | 终结时全屏 | [svg](./svg/death-screens.svg) |
-| **全服天劫广播** | 屏幕顶部红字 + 雷云图标 + 方向指引 | 天劫事件时 | [svg](./svg/tribulation-ui.svg) |
-| **渡劫观战提示** | 50 格内自动提示前往 | 天劫事件时 | [svg](./svg/tribulation-ui.svg) |
-| **NearDeath 视觉** | 视野红/模糊后处理 + "hold-on cost" 提示 | NearDeath 时 | — |
-| **已学功法列表** | 品阶色 + 熟练度环 | inspect 内 | — |
-| **飞行/踏空 HUD** | 剩余 qi 倒计时 + 强制下落预警 | 飞行时 | — |
+| UI 组件 | 数据来源 | 常驻? | 状态 | 草图 |
+|---|---|---|---|---|
+| **inspect 伤口层** | `Wounds[]` 实时同步（inspect 屏已有骨架） | inspect 内 | ✅ `combat/inspect/WoundLayerBinding.java` + `store/WoundsStore.java` + `handler/WoundsSnapshotHandler.java` | [svg](./svg/inspect-wounds.svg) |
+| **inspect 状态面板** | `StatusEffects` 全量（按 kind 分组） | inspect 内 | ✅ `combat/inspect/StatusPanelExtension.java` + `store/StatusEffectStore.java` | [svg](./svg/inspect-status.svg) |
+| **inspect 武器/法宝检视** | `Weapon` tooltip / `Treasure` 展开 | inspect 内 | ✅ `combat/inspect/WeaponTreasurePanel.java` + `WeaponEquippedStore` / `TreasureEquippedStore` | [svg](./svg/weapon-treasure.svg) |
+| **真元条（战斗扩展）** | `throughput_current` 峰值高亮覆盖真元条 | 常驻 | ✅ `hud/ThroughputPeakHudPlanner.java` | [svg](./svg/hud-combat.svg) |
+| **Stamina 条** | 独立于 qi/health，跑/冲刺掉 | 常驻 | ✅ `hud/StaminaBarHudPlanner.java` | [svg](./svg/hud-combat.svg) |
+| **HUD 顶部状态效果栏** | 最多 8 格（DoT 优先→控制→加成），图标 `source_color` 描边 | 按需（有效果时） | ✅ `hud/StatusEffectHudPlanner.java` | [svg](./svg/hud-combat.svg) |
+| **DerivedAttrs 大图标** | 飞行/虚化/渡劫锁定等特殊状态 | 按需（有状态时） | ✅ `hud/DerivedAttrIconHudPlanner.java` + `combat/store/DerivedAttrsStore.java` | [svg](./svg/hud-combat.svg) |
+| **法术体积滑块面板** | radius / velocity_cap 双滑块，实时预览 | 施法时弹出 | ✅ `hud/SpellVolumeHudPlanner.java` + `combat/SpellVolumeStore.java` | [svg](./svg/attack-panels.svg) |
+| **施法 qi_invest 滑块** | "N 格内可命中" 提示 | 施法时弹出 | ✅（与 SpellVolume 面板合并实现） | [svg](./svg/attack-panels.svg) |
+| **防御 UI** | 截脉 200ms 弹反提示 / 涡流键 / 伪皮层 | 按需 | ✅ `hud/JiemaiRingHudPlanner.java` + `hud/EdgeFeedbackHudPlanner.java` + `combat/DefenseWindowStore.java` | [svg](./svg/defense-ui.svg) |
+| **暗器制作面板** | ForgeWeaponCarrier（选物+注真元+计时） | 主动打开 | ✅ `combat/screen/ForgeCarrierScreen.java` | [svg](./svg/attack-panels.svg) |
+| **阵法布置 UI** | 方块选择+触发类型+注真元 | 主动打开 | ✅ `combat/screen/ZhenfaLayoutScreen.java` | [svg](./svg/attack-panels.svg) |
+| **死亡画面** | 运数 + 遗念 + 重生/终结 + 60s 倒计时 | 致死时全屏 | ✅ `combat/screen/DeathScreen.java` + `handler/DeathScreenHandler.java` + `store/DeathStateStore.java` | [svg](./svg/death-screens.svg) |
+| **终结画面** | 终焉之言 + 创建新角色 | 终结时全屏 | ✅ `combat/screen/TerminateScreen.java` + `handler/TerminateScreenHandler.java` | [svg](./svg/death-screens.svg) |
+| **全服天劫广播** | 屏幕顶部红字 + 雷云图标 + 方向指引 | 天劫事件时 | ✅ `hud/TribulationBroadcastHudPlanner.java` + `handler/TribulationBroadcastHandler.java` | [svg](./svg/tribulation-ui.svg) |
+| **渡劫观战提示** | 50 格内自动提示前往 | 天劫事件时 | ✅（合并在 `TribulationBroadcastHudPlanner`） | [svg](./svg/tribulation-ui.svg) |
+| **NearDeath 视觉** | 视野红/模糊后处理 + "hold-on cost" 提示 | NearDeath 时 | ✅ `hud/NearDeathOverlayPlanner.java` | — |
+| **已学功法列表** | 品阶色 + 熟练度环 | inspect 内 | ✅ `combat/inspect/TechniquesListPanel.java` | — |
+| **飞行/踏空 HUD** | 剩余 qi 倒计时 + 强制下落预警 | 飞行时 | ✅ `hud/FlightHudPlanner.java` | — |
+| **伤害飘字** | `combat_event` 实时 | 战斗时 | ✅ `hud/DamageFloaterHudPlanner.java` + `handler/CombatEventHandler.java` + `store/DamageFloaterStore.java` | — |
+| **武器/法宝修复界面** | 拖材料/丹药 → 进度条 | 主动打开 | ✅ `combat/screen/RepairScreen.java` | — |
+| **感染度进度环** | wound infection 0→1 高亮 | 按需 | ✅ `hud/ContaminationHudPlanner.java` | — |
 
 ---
 
@@ -131,16 +134,16 @@ client/src/main/java/com/bong/client/combat/
 
 ## 4. 阶段化实施（配合 `plan-combat-no_ui.md` C1-C7）
 
-| 阶段 | 对应 server 阶段 | UI 交付 |
-|---|---|---|
-| **U1** | C1 基础设施 | WoundsStore + inspect 伤口层绑定 + Stamina 条 + 基础伤害飘字 |
-| **U2** | C2 完整攻击事务 | SpellVolumePanel（radius/qi_invest 双滑块）+ 状态效果顶部栏 + CombatHudOverlay 真元条扩展 |
-| **U3** | C3 死亡-重生 | DeathScreen（60s 倒计时 + 遗念 + 重生/终结）+ NearDeath 视觉后处理 |
-| **U4** | C4 终结归档 | TerminateScreen + 感染度进度环 + Scar 永久标记 |
-| **U5** | C5 四攻三防完整 | 防御 UI（截脉弹反指示/涡流键/伪皮层）+ ForgeCarrierScreen + ZhenfaLayoutScreen + inspect 状态面板全量展开 |
-| **U6** | C6 天劫 | TribulationBroadcast（全服红字）+ 渡劫观战提示 + DerivedAttrs 大图标（TribulationLocked） |
-| **U7** | C7 飞行 | FlightHud（qi 倒计时 + 下落预警）+ DerivedAttrs 飞行图标 |
-| **并行（任何阶段）** | — | WeaponTreasurePanel（inspect 武器/法宝）+ TechniquesListPanel（已学功法）+ RepairScreen |
+| 阶段 | 对应 server 阶段 | UI 交付 | 状态 |
+|---|---|---|---|
+| **U1** | C1 基础设施 | WoundsStore + inspect 伤口层绑定 + Stamina 条 + 基础伤害飘字 | ✅ |
+| **U2** | C2 完整攻击事务 | SpellVolumePanel（radius/qi_invest 双滑块）+ 状态效果顶部栏 + CombatHudOverlay 真元条扩展 | ✅ |
+| **U3** | C3 死亡-重生 | DeathScreen（60s 倒计时 + 遗念 + 重生/终结）+ NearDeath 视觉后处理 | ✅ |
+| **U4** | C4 终结归档 | TerminateScreen + 感染度进度环 + Scar 永久标记 | ✅ |
+| **U5** | C5 四攻三防完整 | 防御 UI（截脉弹反指示/涡流键/伪皮层）+ ForgeCarrierScreen + ZhenfaLayoutScreen + inspect 状态面板全量展开 | ✅ |
+| **U6** | C6 天劫 | TribulationBroadcast（全服红字）+ 渡劫观战提示 + DerivedAttrs 大图标（TribulationLocked） | ✅ |
+| **U7** | C7 飞行 | FlightHud（qi 倒计时 + 下落预警）+ DerivedAttrs 飞行图标 | ✅ |
+| **并行（任何阶段）** | — | WeaponTreasurePanel（inspect 武器/法宝）+ TechniquesListPanel（已学功法）+ RepairScreen | ✅ |
 
 ---
 
@@ -160,3 +163,9 @@ client/src/main/java/com/bong/client/combat/
 - **`plan-HUD-v1.md`** — 常驻 HUD 基础（两层快捷栏、三状态条、事件流），本文档扩展战斗相关 overlay
 - **`plan-inventory-v1.md`** — inspect 屏容器，本文档在其 tab 内插入武器/法宝/状态/功法面板
 - **`plan-cultivation-v1.md §7`** — 修炼 UI（经脉层、突破闭关、顿悟、淬炼），与本文档并列互不侵入
+
+---
+
+## 7. 进度日志
+
+- 2026-04-25：盘点 client `combat/{handler,screen,store,inspect}` + `hud/*HudPlanner`，§3 目录规划全部命名落地，§1 UI 总览 21 项与 §4 阶段表 U1–U7 + 并行项均完成；下一步是按 server `plan-combat-no_ui.md` 拓展端到端联调与 `runClient` 验收。

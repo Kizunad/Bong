@@ -321,3 +321,9 @@ pub struct SkinPool {
 - **EntityCustomName 浮标**：头顶 `[散修·凝气四重]` 文字，与现 EntityKind 组合。不换 skin 但信息层到位。
 
 如果本 plan Phase 3-5 的协议层实测超出预期复杂度，回退到 `plan-npc-nametag-v1` + Witch 换皮的组合拳。
+
+---
+
+## §12 进度日志
+
+- 2026-04-25：调研完成，代码层零实装。`server/src/skin/` 模块未建，无 `reqwest` 依赖，无 `.env` 模板，无 `SignedSkin`/`SkinPool`/`NpcPlayerInfoUpdateS2c`/`npc_uuid` 任何符号；`server/src/npc/spawn.rs` 仍用 `VillagerEntityBundle`(Rogue/Commoner) + `ZombieEntityBundle`(Beast) 视觉占位（见 spawn.rs:558/617/674）。Phase 0-9 全部 `[ ]` 保持未勾选，等待开工。
