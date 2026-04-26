@@ -24,7 +24,7 @@ public class PlayerStateViewModelTest {
     @Test
     void createClampsOutOfRangeValuesIntoRenderSafeState() {
         PlayerStateViewModel state = PlayerStateViewModel.create(
-            " qi_refining_3 ",
+            " Induce ",
             150.0,
             80.0,
             1.6,
@@ -35,7 +35,7 @@ public class PlayerStateViewModelTest {
             4.0
         );
 
-        assertEquals("qi_refining_3", state.realm());
+        assertEquals("Induce", state.realm());
         assertEquals(80.0, state.spiritQiCurrent(), 0.0001);
         assertEquals(80.0, state.spiritQiMax(), 0.0001);
         assertEquals(1.0, state.spiritQiFillRatio(), 0.0001);
@@ -53,7 +53,7 @@ public class PlayerStateViewModelTest {
     @Test
     void invalidSpiritQiMaxFallsBackToSafeDefaultAndNullBreakdown() {
         PlayerStateViewModel state = PlayerStateViewModel.create(
-            "foundation_establishment",
+            "Condense",
             45.0,
             0.0,
             -1.6,

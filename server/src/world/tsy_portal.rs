@@ -174,10 +174,8 @@ fn collect_instance_ids(inv: &PlayerInventory) -> Vec<u64> {
     for item in inv.equipped.values() {
         ids.push(item.instance_id);
     }
-    for slot in inv.hotbar.iter() {
-        if let Some(item) = slot {
-            ids.push(item.instance_id);
-        }
+    for item in inv.hotbar.iter().flatten() {
+        ids.push(item.instance_id);
     }
     ids
 }

@@ -1,7 +1,7 @@
 package com.bong.client.inventory.model;
 
 /**
- * 模拟体表状态 — 刚经历一场战斗的炼气三层修士。
+ * 模拟体表状态 — 刚经历一场战斗的引气修士。
  * 右前臂断了（爆脉流后遗症），左大腿骨折，多处擦伤割裂。
  */
 public final class MockPhysicalData {

@@ -4,6 +4,7 @@ use valence::prelude::{
     bevy_ecs, Added, Changed, Client, DetectChanges, Entity, Query, Ref, Username, With,
 };
 
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
@@ -17,6 +18,7 @@ use crate::network::agent_bridge::{
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::{canonical_player_id, PlayerState};
+use crate::schema::cultivation::realm_to_string;
 use crate::schema::inventory::{
     ContainerIdV1, ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryItemViewV1,
     InventorySnapshotV1, InventoryWeightV1, ItemRarityV1, PlacedInventoryItemV1,
@@ -35,6 +37,7 @@ type JoinedClientQueryItem<'a> = (
     &'a Username,
     &'a PlayerInventory,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
 type ChangedClientQueryItem<'a> = (
@@ -43,18 +46,21 @@ type ChangedClientQueryItem<'a> = (
     &'a Username,
     Ref<'a, PlayerInventory>,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
 pub fn emit_join_inventory_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
-    for (entity, mut client, username, inventory, player_state) in &mut joined_clients {
+    for (entity, mut client, username, inventory, player_state, cultivation) in &mut joined_clients
+    {
         send_inventory_snapshot_to_client(
             entity,
             &mut client,
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             "join",
         );
     }
@@ -62,10 +68,21 @@ pub fn emit_join_inventory_snapshots(
 
 pub fn emit_revive_inventory_resyncs(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
-    mut clients: Query<(&mut Client, &Username, &PlayerInventory, &PlayerState), With<Client>>,
+    mut clients: Query<
+        (
+            &mut Client,
+            &Username,
+            &PlayerInventory,
+            &PlayerState,
+            &Cultivation,
+        ),
+        With<Client>,
+    >,
 ) {
     for ev in revived.read() {
-        let Ok((mut client, username, inventory, player_state)) = clients.get_mut(ev.entity) else {
+        let Ok((mut client, username, inventory, player_state, cultivation)) =
+            clients.get_mut(ev.entity)
+        else {
             continue;
         };
         send_inventory_snapshot_to_client(
@@ -74,6 +91,7 @@ pub fn emit_revive_inventory_resyncs(
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             "revive_death_drop_resync",
         );
     }
@@ -85,7 +103,8 @@ pub fn emit_changed_inventory_snapshots(
         (With<Client>, Changed<PlayerInventory>),
     >,
 ) {
-    for (entity, mut client, username, inventory, player_state) in &mut changed_clients {
+    for (entity, mut client, username, inventory, player_state, cultivation) in &mut changed_clients
+    {
         if inventory.is_added() {
             continue;
         }
@@ -95,6 +114,7 @@ pub fn emit_changed_inventory_snapshots(
             username.0.as_str(),
             &inventory,
             player_state,
+            cultivation,
             "inventory_changed",
         );
     }
@@ -108,9 +128,10 @@ pub(crate) fn send_inventory_snapshot_to_client(
     username: &str,
     inventory: &PlayerInventory,
     player_state: &PlayerState,
+    cultivation: &Cultivation,
     reason: &str,
 ) {
-    let snapshot = build_inventory_snapshot(inventory, player_state);
+    let snapshot = build_inventory_snapshot(inventory, player_state, cultivation);
     let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -136,8 +157,10 @@ pub(crate) fn send_inventory_snapshot_to_client(
 pub(crate) fn build_inventory_snapshot(
     inventory: &PlayerInventory,
     player_state: &PlayerState,
+    cultivation: &Cultivation,
 ) -> InventorySnapshotV1 {
-    let normalized_state = player_state.normalized();
+    // Keep normalization call for future derived fields; currently unused.
+    let _normalized_state = player_state.normalized();
     let containers_by_id: HashMap<&str, &ContainerState> = inventory
         .containers
         .iter()
@@ -200,11 +223,8 @@ pub(crate) fn build_inventory_snapshot(
         .map(|slot| slot.as_ref().map(item_view_from_instance))
         .collect::<Vec<_>>();
 
-    let body_level = if normalized_state.spirit_qi_max <= 0.0 {
-        0.0
-    } else {
-        (normalized_state.spirit_qi / normalized_state.spirit_qi_max).clamp(0.0, 1.0)
-    };
+    let qi_max = cultivation.qi_max.max(1.0);
+    let body_level = (cultivation.qi_current / qi_max).clamp(0.0, 1.0);
 
     InventorySnapshotV1 {
         revision: inventory.revision.0,
@@ -217,9 +237,9 @@ pub(crate) fn build_inventory_snapshot(
             current: calculate_current_weight(inventory),
             max: inventory.max_weight,
         },
-        realm: normalized_state.realm,
-        qi_current: normalized_state.spirit_qi,
-        qi_max: normalized_state.spirit_qi_max,
+        realm: realm_to_string(cultivation.realm).to_string(),
+        qi_current: cultivation.qi_current,
+        qi_max,
         body_level,
     }
 }
@@ -360,13 +380,16 @@ mod tests {
         app: &mut App,
         username: &str,
         player_state: PlayerState,
+        cultivation: Cultivation,
         inventory: Option<PlayerInventory>,
     ) -> (Entity, MockClientHelper) {
         let (mut client_bundle, helper) = create_mock_client(username);
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
         let entity = app.world_mut().spawn(client_bundle).id();
 
-        app.world_mut().entity_mut(entity).insert(player_state);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((player_state, cultivation));
         if let Some(inventory) = inventory {
             app.world_mut().entity_mut(entity).insert(inventory);
         }
@@ -522,19 +545,11 @@ mod tests {
         let mut app = setup_app();
 
         let target_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 24.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 10,
             inventory_score: 0.1,
         };
         let other_state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 70.0,
-            spirit_qi_max: 140.0,
             karma: 0.0,
-            experience: 22,
             inventory_score: 0.2,
         };
 
@@ -542,12 +557,24 @@ mod tests {
             &mut app,
             "Azure",
             target_state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 24.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(11, true)),
         );
         let (_other_entity, mut other_helper) = spawn_client_with_state_and_inventory(
             &mut app,
             "Bob",
             other_state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 70.0,
+                qi_max: 140.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(22, false)),
         );
 
@@ -603,7 +630,7 @@ mod tests {
         assert_eq!(target_snapshot.bone_coins, 57);
         approx_eq(target_snapshot.weight.current, 3.6);
         approx_eq(target_snapshot.weight.max, 45.0);
-        assert_eq!(target_snapshot.realm, "qi_refining_1");
+        assert_eq!(target_snapshot.realm, "Awaken");
         approx_eq(target_snapshot.qi_current, 24.0);
         approx_eq(target_snapshot.qi_max, 100.0);
         approx_eq(target_snapshot.body_level, 0.24);
@@ -631,11 +658,7 @@ mod tests {
     fn rejects_oversize_inventory_snapshot() {
         let mut app = setup_app();
         let state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 24.0,
-            spirit_qi_max: 100.0,
             karma: 0.0,
-            experience: 1,
             inventory_score: 0.0,
         };
 
@@ -653,8 +676,18 @@ mod tests {
             item.description = huge.clone();
         }
 
-        let (_entity, mut helper) =
-            spawn_client_with_state_and_inventory(&mut app, "Azure", state, Some(inventory));
+        let (_entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 24.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+            Some(inventory),
+        );
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -674,6 +707,7 @@ mod tests {
             &mut app,
             "Azure",
             state,
+            Cultivation::default(),
             Some(make_inventory(21, true)),
         );
 
@@ -774,11 +808,7 @@ mod tests {
     fn changed_inventory_emits_fresh_snapshot() {
         let mut app = setup_app();
         let state = PlayerState {
-            realm: "qi_refining_2".to_string(),
-            spirit_qi: 32.0,
-            spirit_qi_max: 100.0,
             karma: 0.0,
-            experience: 7,
             inventory_score: 0.0,
         };
 
@@ -786,6 +816,12 @@ mod tests {
             &mut app,
             "Azure",
             state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 32.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(11, true)),
         );
 

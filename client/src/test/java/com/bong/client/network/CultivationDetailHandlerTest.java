@@ -182,7 +182,7 @@ public class CultivationDetailHandlerTest {
         assertEquals(8, CultivationDetailHandler.skillCapForRealm("Solidify"));
         assertEquals(9, CultivationDetailHandler.skillCapForRealm("Spirit"));
         assertEquals(10, CultivationDetailHandler.skillCapForRealm("Void"));
-        assertNull(CultivationDetailHandler.skillCapForRealm("炼气三层"));
+        assertNull(CultivationDetailHandler.skillCapForRealm("MysteryRealm"));
     }
 
     @Test

@@ -4,9 +4,11 @@
 //! 领地内 Beast 成体饱腹时周期性尝试繁衍：发 `NpcReproductionRequest` 请
 //! `spawn` 侧创建幼崽（满员时迁出 200 格外，自动形成新领地锚点）。
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EventWriter, IntoSystemConfigs,
@@ -14,7 +16,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Wounds;
-use crate::combat::events::{AttackIntent, FIST_REACH};
+use crate::combat::events::AttackIntent;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
@@ -23,7 +25,7 @@ use crate::npc::lifecycle::{
 use crate::npc::movement::GameTick;
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-use crate::npc::spawn::{NpcBlackboard, NpcMarker, NpcMeleeProfile};
+use crate::npc::spawn::{NpcMarker, NpcMeleeProfile};
 
 /// 满员后幼崽迁出 200 格外开新领地（plan §8 决议）。
 pub const YOUNG_EMIGRATE_DISTANCE: f64 = 200.0;
@@ -738,6 +740,7 @@ fn protect_young_action_system(
 mod tests {
     use super::*;
     use crate::npc::patrol::NpcPatrol;
+    use crate::npc::spawn::NpcBlackboard;
     use valence::prelude::{App, Events, PreUpdate};
 
     fn spawn_adult_beast(
@@ -1203,7 +1206,8 @@ mod tests {
             DVec3::new(0.0, 64.0, 0.0),
             Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1228,7 +1232,8 @@ mod tests {
             DVec3::new(0.0, 64.0, 0.0),
             Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1253,7 +1258,8 @@ mod tests {
             DVec3::new(0.0, 64.0, 0.0),
             Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1301,10 +1307,7 @@ mod tests {
     fn territory_patrol_action_requested_sets_navigator_then_succeeds_on_timeout() {
         let mut app = App::new();
         app.insert_resource(GameTick(42));
-        app.add_systems(
-            PreUpdate,
-            territory_patrol_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, territory_patrol_action_system);
 
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0);
         let beast = spawn_beast_with_territory(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
@@ -1343,8 +1346,10 @@ mod tests {
     // --- HuntAction ---
 
     fn spawn_hunt_target(app: &mut App, pos: DVec3, realm: Realm) -> Entity {
-        let mut cult = Cultivation::default();
-        cult.realm = realm;
+        let cult = Cultivation {
+            realm,
+            ..Default::default()
+        };
         app.world_mut()
             .spawn((Position::new([pos.x, pos.y, pos.z]), cult))
             .id()
@@ -1362,10 +1367,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameTick(10));
         app.add_event::<AttackIntent>();
-        app.add_systems(
-            PreUpdate,
-            hunt_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, hunt_action_system);
         app
     }
 
@@ -1457,7 +1459,8 @@ mod tests {
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 50.0);
         let beast = spawn_beast_hunter(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
         // 另一只 Beast（应被排除）
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1482,10 +1485,7 @@ mod tests {
 
     fn build_protect_young_action_app() -> App {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            protect_young_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, protect_young_action_system);
         app
     }
 

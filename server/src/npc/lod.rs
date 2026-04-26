@@ -33,6 +33,7 @@ pub struct NpcLodConfig {
     pub near_radius: f64,
     pub far_radius: f64,
     pub far_skip_interval: u32,
+    #[allow(dead_code)]
     pub dormant_skip_interval: u32,
     /// 每 N tick 重新评估一次 tier（避免每 tick O(npc × player)）。
     pub reassess_interval: u32,
@@ -151,6 +152,7 @@ pub fn is_dormant(tier: Option<&NpcLodTier>) -> bool {
 
 /// 与 scorer 系统配合：给 `Actor(npc)` 上挂的 scorer 查 actor 的 LOD tier。
 /// 供 brain.rs / territory.rs 等共享使用的极简 helper。
+#[allow(dead_code)]
 pub fn actor_lod_tier<'a>(
     npc_tiers: &'a Query<'_, '_, &'a NpcLodTier, With<NpcMarker>>,
     actor: Entity,
@@ -159,6 +161,7 @@ pub fn actor_lod_tier<'a>(
 }
 
 /// 统计每个 tier 的 NPC 数量（debug / 监控用）。
+#[allow(dead_code)]
 pub fn count_by_tier(
     npcs: &Query<Option<&NpcLodTier>, With<NpcMarker>>,
 ) -> HashMap<NpcLodTier, usize> {
@@ -271,8 +274,10 @@ mod tests {
 
     #[test]
     fn should_skip_scorer_tick_far_respects_interval() {
-        let mut cfg = NpcLodConfig::default();
-        cfg.far_skip_interval = 10;
+        let cfg = NpcLodConfig {
+            far_skip_interval: 10,
+            ..Default::default()
+        };
         // 0, 10, 20 跑；其他跳
         assert!(!should_skip_scorer_tick(NpcLodTier::Far, 0, &cfg));
         assert!(should_skip_scorer_tick(NpcLodTier::Far, 1, &cfg));
@@ -283,8 +288,10 @@ mod tests {
 
     #[test]
     fn should_skip_clamps_zero_interval_to_at_least_one() {
-        let mut cfg = NpcLodConfig::default();
-        cfg.far_skip_interval = 0;
+        let cfg = NpcLodConfig {
+            far_skip_interval: 0,
+            ..Default::default()
+        };
         // 0 间隔会除零；确保 clamp 到 1 → 永不跳过
         assert!(!should_skip_scorer_tick(NpcLodTier::Far, 1, &cfg));
     }
@@ -311,7 +318,8 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([1000.0, 64.0, 0.0])))
             .id();
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
 
@@ -337,8 +345,10 @@ mod tests {
     #[test]
     fn update_tier_respects_reassess_interval() {
         let mut app = App::new();
-        let mut cfg = NpcLodConfig::default();
-        cfg.reassess_interval = 50;
+        let cfg = NpcLodConfig {
+            reassess_interval: 50,
+            ..Default::default()
+        };
         app.insert_resource(cfg);
         app.insert_resource(NpcLodTick(0));
         app.add_systems(
@@ -350,7 +360,8 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
 

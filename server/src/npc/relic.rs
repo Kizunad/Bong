@@ -4,14 +4,16 @@
 //! 本 plan 只提供组件 + Scorer + Guard/Trial Action 的最小状态机骨架，
 //! TrialAction 对接 UI 前以"立即 Success"降级，避免 thinker 卡死。
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
+#![allow(dead_code)]
+
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, Position, Query,
+    With, Without,
 };
 
-use crate::combat::events::{AttackIntent, AttackReach};
+use crate::combat::events::AttackIntent;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::movement::GameTick;
@@ -33,6 +35,8 @@ pub const TRIAL_EVAL_SCORE_PEAK: f32 = 0.8;
 /// TrialAction stub 退出延时（tick）。
 pub const TRIAL_STUB_COOLDOWN_TICKS: u32 = 20;
 
+// plan-npc-ai-v1 scaffolding: GuardianRelic NPC AI is not wired into the live
+// thinker set yet, but the components and helpers are kept for follow-up PRs.
 /// 绑定遗迹 ID + 守护半径。`relic_id` 由 worldgen 或 agent 产生，NPC 自身不管；
 /// 仅用半径 + alarm_center 判入侵。
 #[derive(Clone, Debug, Component)]
@@ -477,7 +481,8 @@ mod tests {
             &mut app,
             GuardianDuty::new("r", DVec3::new(0.0, 64.0, 0.0)).with_radius(10.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((ClientMarker, Position::new([5.0, 64.0, 5.0])))
             .id();
         let scorer = app
@@ -495,7 +500,8 @@ mod tests {
             &mut app,
             GuardianDuty::new("r", DVec3::new(0.0, 64.0, 0.0)).with_radius(10.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::GuardianRelic,
@@ -517,7 +523,8 @@ mod tests {
             &mut app,
             GuardianDuty::new("r", DVec3::new(0.0, 64.0, 0.0)).with_radius(10.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Rogue,
@@ -570,9 +577,12 @@ mod tests {
             .entity_mut(guardian)
             .insert(TrialEval::new("trial.basic"));
 
-        let mut cult = Cultivation::default();
-        cult.realm = Realm::Condense;
-        app.world_mut()
+        let cult = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let _ = app
+            .world_mut()
             .spawn((ClientMarker, Position::new([5.0, 64.0, 5.0]), cult))
             .id();
         let scorer = app
@@ -596,9 +606,12 @@ mod tests {
         let mut trial = TrialEval::new("trial.basic");
         trial.last_offered_tick = Some(100); // 当前 tick
         app.world_mut().entity_mut(guardian).insert(trial);
-        let mut cult = Cultivation::default();
-        cult.realm = Realm::Condense;
-        app.world_mut()
+        let cult = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let _ = app
+            .world_mut()
             .spawn((ClientMarker, Position::new([5.0, 64.0, 5.0]), cult))
             .id();
         let scorer = app
@@ -615,7 +628,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameTick(500));
         app.add_event::<AttackIntent>();
-        app.add_systems(PreUpdate, guard_action_system.in_set(BigBrainSet::Actions));
+        app.add_systems(PreUpdate, guard_action_system);
         app
     }
 
@@ -694,7 +707,7 @@ mod tests {
     fn build_trial_action_app() -> App {
         let mut app = App::new();
         app.insert_resource(GameTick(1000));
-        app.add_systems(PreUpdate, trial_action_system.in_set(BigBrainSet::Actions));
+        app.add_systems(PreUpdate, trial_action_system);
         app
     }
 

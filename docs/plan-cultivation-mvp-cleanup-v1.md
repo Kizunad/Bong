@@ -1,23 +1,23 @@
 # Cultivation 双头清理 · plan-cultivation-mvp-cleanup-v1
 
-> Server 里有**两套并行的境界 / 突破 / 真元实现**：`player/gameplay.rs` + `player/progression.rs` 的 MVP 占位（15 档传统仙侠 ladder：mortal + qi_refining_1..9 + foundation_* + golden_core + nascent_soul）与 `cultivation/` 的真实六境（Awaken/Induce/Condense/Solidify/Spirit/Void），两套没对接——`/attempt_breakthrough` 走占位、cultivation 模块的 `try_breakthrough` 从没被玩家指令触发。本 plan 清理 MVP 占位，让 cultivation 成为 single source of truth；一并删除 `PlayerState` 里和 cultivation 并行的 4 个字段、Client 端传统仙侠体系的 `humanizeRealm` 映射、IPC schema 里 realm 字段的 MVP 源头。**karma 一字不改**——它不是境界并行，是独立系统（`cultivation/karma.rs` 独立模块 + worldview §十二 运数/劫数依赖）。
+> Server 里有**两套并行的境界 / 突破 / 真元实现**：`player/gameplay.rs` + `player/progression.rs` 的 MVP 占位（旧 ladder：一套传统境界 key（15 档；已废弃））与 `cultivation/` 的真实六境（Awaken/Induce/Condense/Solidify/Spirit/Void），两套没对接——`/attempt_breakthrough` 走占位、cultivation 模块的 `try_breakthrough` 从没被玩家指令触发。本 plan 清理 MVP 占位，让 cultivation 成为 single source of truth；一并删除 `PlayerState` 里和 cultivation 并行的 4 个字段、Client 端传统仙侠体系的 `humanizeRealm` 映射、IPC schema 里 realm 字段的 MVP 源头。**karma 一字不改**——它不是境界并行，是独立系统（`cultivation/karma.rs` 独立模块 + worldview §十二 运数/劫数依赖）。
 > 交叉引用：`worldview.md §三`（六境，末法去上古）· `worldview.md §四.零`（战力分层 —— 经脉打通是突破主路径）· `worldview.md §十二`（运数/劫数依赖 karma，本 plan 不碰）· `plan-cultivation-v1 §6.1`（BreakthroughEvent IPC）
 
 ---
 
 ## §-1 现有代码基线（2026-04-24 audit 完成）
 
-### MVP 占位实现（两文件）
+### MVP 占位实现（两文件；已废弃）
 
 | 能力 | 位置 | 档数 | 依赖字段 |
 |------|------|------|------|
-| `BREAKTHROUGH_RULES` 突破规则表 | `gameplay.rs:30-55` | 4 档（mortal → qi_refining_1/2/3） | experience + karma + spirit_qi |
+| `BREAKTHROUGH_RULES` 突破规则表 | `gameplay.rs:30-55` | 4 档（旧 ladder） | experience + karma + spirit_qi |
 | `struct BreakthroughRule` | `gameplay.rs:148-155` | - | 规则结构 |
 | `apply_breakthrough_action` | `gameplay.rs:372-416` | - | 写 `PlayerState.realm` |
 | `validate_breakthrough` | `gameplay.rs:418-449` | - | 读 `PlayerState` 4 字段（含 karma 门槛） |
-| `realm_display_name` | `gameplay.rs:480-488` | - | 中文输出 "炼气一层" 等 |
+| `realm_display_name` | `gameplay.rs:480-488` | - | 中文输出旧体系境界名 |
 | `breakthrough_rule` | `gameplay.rs:473-478` | - | 查表 |
-| `REALM_LADDER` 15 档经验爬阶表 | `progression.rs:35-130` | 15 档（mortal + qi_refining_1..9 + foundation_establishment_1..3 + golden_core + nascent_soul） | experience 阈值 |
+| `REALM_LADDER` 15 档经验爬阶表 | `progression.rs:35-130` | 15 档（旧 ladder） | experience 阈值 |
 | `apply_progression` / `apply_progression_in_place` | `progression.rs:179-225` | - | 按 experience/karma 自动爬阶 |
 | `ProgressionInput` | `progression.rs:6-23` | - | experience_gain / karma_delta / spirit_qi_delta |
 | `AttemptBreakthrough` action 消费 | `gameplay.rs:77, 202, 265-280` | - | 路由到 `apply_breakthrough_action` |
@@ -58,7 +58,7 @@
 ### Client 侧传统仙侠 humanizeRealm
 
 `client/src/main/java/com/bong/client/PlayerStateViewModel.java:98-132`：
-- 映射 `"qi_refining_*" → "练气N层"`、`"foundation_*" → "筑基N层"`、`"golden_core" → "金丹"`、`"nascent_soul" → "元婴"`
+- 映射旧 ladder 的 realmKey 到传统仙侠境界称谓（已与 world view 冲突）
 - **传统仙侠体系，与 worldview §三"末法去上古，只有六境"直接冲突**
 - 调用点：`PlayerStateViewModel:54` humanizeRealm(snapshot.realmKey())，`CultivationScreen.java:71` 直接 `playerState.realm()`
 - 本 plan 替换为六境映射（不保留 fallback）
@@ -69,7 +69,7 @@
 |------|------|------|------|
 | `CultivationSnapshotV1.realm` | PascalCase (`"Awaken"`) | `cultivation.realm` via `realm_to_string()` | ✅ 正确 |
 | `BreakthroughEventV1.from_realm/to_realm` | PascalCase | cultivation | ✅ 正确 |
-| `PlayerStatePayload.realm` (`schema/client_payload.rs:45`) | MVP (`"qi_refining_3"`) | `PlayerState.realm.clone()` | ❌ 源头错 |
+| `PlayerStatePayload.realm` (`schema/client_payload.rs:45`) | MVP（旧 ladder） | `PlayerState.realm.clone()` | ❌ 源头错 |
 | `PlayerStateSnapshot.realm` (`schema/world_state.rs:26`) | MVP | 同上 | ❌ 同上 |
 | `SnapshotTargetState.realm` (`schema/inventory.rs:171`) | MVP | 同上 | ❌ 同上 |
 
@@ -89,12 +89,12 @@
 ## §0 设计轴心（audit 后 scope 从单头 cleanup 扩到双头 + IPC 统一）
 
 1. **`cultivation/` 是 single source of truth** —— 所有 realm / breakthrough / meridian / qi 状态走 cultivation，`player/gameplay.rs` 只做 intent 转发，不持并行数据
-2. **一次性清理 MVP 占位**，不做灰度迁移 —— `mortal` / `qi_refining_*` / `foundation_*` / `golden_core` / `nascent_soul` 字符串全部删除，不保留兼容字段
+2. **一次性清理 MVP 占位**，不做灰度迁移 —— 旧 ladder 的 realmKey 字符串全部删除，不保留兼容字段
 3. **`PlayerState` 删 4 字段**（`realm` / `spirit_qi` / `spirit_qi_max` / `experience`），保留 `karma` / `inventory_score` —— Cultivation component 是 realm/qi 权威，不搞数据双写
 4. **`AttemptBreakthrough` action 转发为 Event** —— gameplay 把 queue intent 转换成 Bevy event `AttemptBreakthroughEvent`，cultivation 侧 handler 消费（`AttemptBreakthrough` 的 enqueue 源 `chat_collector.rs` 不动）
 5. **显示名中文化在 client 侧** —— server 下发 PascalCase（`"Induce"`），client 的 `humanizeRealm` **替换**成六境映射（不 fallback 到传统仙侠）
 6. **六境对齐 worldview §三**：Awaken(醒灵) / Induce(引气) / Condense(凝脉) / Solidify(固元) / Spirit(通灵) / Void(化虚)
-7. **`progression.rs` 的 15 档 REALM_LADDER 整块删** —— 传统仙侠体系（筑基/金丹/元婴）违反 worldview §三"末法去上古"，且 `apply_progression` 无生产调用者，纯死代码
+7. **`progression.rs` 的 15 档 REALM_LADDER 整块删** —— 传统仙侠 ladder 与 worldview §三"末法去上古"冲突，且 `apply_progression` 无生产调用者，纯死代码
 8. **IPC schema realm 字段源头统一到 Cultivation** —— `PlayerStatePayload.realm` / `PlayerStateSnapshot.realm` / `SnapshotTargetState.realm` 的产生处全部改 Query `Cultivation` + `realm_to_string()`，与 `CultivationSnapshotV1.realm` 对齐
 9. **karma 一字不改** —— karma 不是境界并行（Cultivation 没 karma 字段），是独立系统。`gameplay.rs` 中 "karma 阈值影响突破" 这条规则因 `validate_breakthrough` 被整块删除而**自然失效**，不是主动移除 karma。`PlayerState.karma` 字段、`cultivation/karma.rs` 模块、worldview §十二 运数/劫数机制全部保持现状。未来若要改 karma 参与突破，另立 plan
 10. **保留 MVP 占位的 gather / combat action queue 流程** —— 本 plan 只动 breakthrough 分支，`Gather` / `Combat` 的 action 消费逻辑不动
@@ -149,7 +149,7 @@ test mod (整块删，大部分针对死代码的测试)            progression.
 ### Client humanizeRealm 传统仙侠映射
 
 `client/.../PlayerStateViewModel.java:98-132`：
-- 删 `qi_refining_` / `foundation_` / `golden_core` / `nascent_soul` 映射（~35 行逻辑）
+- 删旧 ladder 的映射（~35 行逻辑）
 - 替换为六境映射（~15 行，见 §2.4）
 
 ---
@@ -262,7 +262,7 @@ static String humanizeRealm(String realmKey) {
 }
 ```
 
-所有 `humanizeRealm` 调用点不变。辅助函数 `parseStage` / `chineseStage`（传统仙侠的"一二三"数字生成）一并删除。`realmProgressScore` 若有按 `qi_refining_*` 做数值评分的代码段也要改（或改读 Cultivation 的 realm ordinal）。
+所有 `humanizeRealm` 调用点不变。辅助函数 `parseStage` / `chineseStage`（传统仙侠的"一二三"数字生成）一并删除。`realmProgressScore` 若有按旧 ladder 做数值评分的代码段也要改（或改读 Cultivation 的 realm ordinal）。
 
 ### 2.5 Schema realm 源头统一到 Cultivation
 
@@ -279,18 +279,18 @@ static String humanizeRealm(String realmKey) {
 **Rust 侧**：
 - `progression.rs` 整个 test mod 删除（~175 行）
 - `gameplay.rs` 的 breakthrough test 删除
-- `network/mod.rs:1826,3714,3821` 等 `"qi_refining_*"` 测试字符串改 PascalCase + 新建 Cultivation component
+- `network/mod.rs:1826,3714,3821` 等旧 ladder 测试字符串改 PascalCase + 新建 Cultivation component
 - `inventory_snapshot_emit.rs:491,499,572,600` 同改
 - `state.rs` 内部 test 删 qi/realm 相关断言
 - 新增 `cultivation/breakthrough.rs` 的 `handle_attempt_breakthrough` 单测（mock Cultivation + MeridianSystem）
 
 **Java 侧**：
-- `PlayerStateViewModelTest.java` 的 `"qi_refining_3"` → `"Induce"`
-- `PlayerStateHandlerTest.java`（两个）的 `"foundation_1"` / `"qi_refining_3"` → `"Induce"` 或 `"Condense"`
+- `PlayerStateViewModelTest.java` 的旧 ladder realm key → `"Induce"`
+- `PlayerStateHandlerTest.java`（两个）的旧 ladder realm key → `"Induce"` 或 `"Condense"`
 - `BongNetworkHandlerPayloadFixtureTest.java` 同改
-- `InventorySnapshotHandlerTest.java` 的 `"qi_refining_1"` 改 `"Awaken"`
-- `state/PlayerStateViewModelTest.java` 的 `"foundation_establishment"` → `"Induce"` 或删测试（如果是专测 stage parse 的，整块删）
-- `test/resources/bong/payloads/valid-player-state.json` 的 `"realm": "qi_refining_3"` → `"realm": "Induce"`
+- `InventorySnapshotHandlerTest.java` 的旧 ladder realm key 改 `"Awaken"`
+- `state/PlayerStateViewModelTest.java` 的旧 stage parse fixture → `"Induce"` 或删测试（如果是专测 stage parse 的，整块删）
+- `test/resources/bong/payloads/valid-player-state.json` 的 realm fixture → `"realm": "Induce"`
 
 ### 2.7 SQL 持久化 schema migration
 
@@ -310,8 +310,8 @@ static String humanizeRealm(String realmKey) {
 | `player_state.realm` 读取（生产） | `network/mod.rs:477,485,566,574`, `inventory_snapshot_emit.rs:220`, `player/mod.rs:125`, `state.rs` 内部 normalizer | Query Cultivation 替换 |
 | `player_state.spirit_qi` / `_max` 读 | `state.rs:94,128,462,670,848,887`, `network/mod.rs` 733/891, power_breakdown | 改 Cultivation + zone spirit_qi 保留为 zone 侧 |
 | `player_state.experience` 读 | `state.rs:96,453,891,426,768,851`, `progression.rs`（随删除消失） | 删字段后清理引用 |
-| `"qi_refining_*"` / `"mortal"` 硬编码 | `progression.rs:37-91`（随 LADDER 删）, `network/mod.rs:1826,3714,3821` test, `inventory_snapshot_emit.rs:491,499,572,600` test, `gameplay.rs:280`（"突破" rejection 文案） | 删除或改 `"Induce"` 等 |
-| `"foundation_*" / "golden_core" / "nascent_soul"` | `progression.rs:97-121`（随 LADDER 删）, client tests | 删除或改六境 |
+| 旧 ladder realmKey 硬编码 | `progression.rs:37-91`（随 LADDER 删）, `network/mod.rs:1826,3714,3821` test, `inventory_snapshot_emit.rs:491,499,572,600` test, `gameplay.rs:280`（"突破" rejection 文案） | 删除或改 `"Induce"` 等 |
+| 旧 ladder 后续阶段 realmKey | `progression.rs:97-121`（随 LADDER 删）, client tests | 删除或改六境 |
 | `AttemptBreakthrough` action | enqueue: `chat_collector.rs:197,657`（**不改**）；消费: `gameplay.rs:77,202,265`（改转发） | enqueue 端不动，消费端转 event |
 | `realm_display_name` 调用点 | `gameplay.rs:422`（自身），narration 路径若有 | 随删除，server 不再下发中文 |
 | IPC schema realm 字段 | `schema/cultivation.rs:20,35` ✅, `schema/client_payload.rs:45`, `schema/world_state.rs:26`, `schema/inventory.rs:171` | §2.5 改源头，schema 结构不变（字段仍叫 realm） |
@@ -331,7 +331,7 @@ static String humanizeRealm(String realmKey) {
 | IPC schema realm 格式切换破坏 agent 消费 | `CultivationSnapshotV1.realm` 已是 PascalCase，agent 只要认 PascalCase 即可；本 plan 前 agent 可能混收两种格式，改完反而统一。验证 agent 现有 tests |
 | Client 现有 realm display 逻辑和新 humanizeRealm 冲突 | §2.4 一次性替换，删旧映射 + 删 parseStage/chineseStage helpers；所有 test 同步改 |
 | MVP demo 流程被破坏（player 无法突破） | `cultivation::breakthrough::try_breakthrough` 已完整实装 488 行，handler 是薄 wrapper；起稿时 mock Cultivation 走测试能过 |
-| agent narration 从"炼气一层"变"引气"观感跳跃 | 迁移时一并检查 agent narration templates（如果有 hardcode 旧境界名） |
+| agent narration 从旧体系命名切到六境命名观感跳跃 | 迁移时一并检查 agent narration templates（如果有 hardcode 旧境界名） |
 | `apply_progression` 删除后 experience 采集逻辑失去出口 | experience 字段整体删除，Gather/Combat action 里的 experience_gain 一并删（或改喂 plan-skill-v1 的 SkillProgress）。若后者，需 plan-skill-v1 同步 |
 | Client Cultivation 数据不同步导致显示 "凡体" fallback | 首次登录要确保 Cultivation 在 `PlayerState` 之前 spawn；startup system 顺序校对 |
 | karma 独立系统中的 breakthrough 门槛丢失 | 骨架 §0 轴心 9 明确 karma 不影响突破（自然副作用）；如果设计上想保留"大恶人突破难"，不在本 plan 做，另立 plan |
