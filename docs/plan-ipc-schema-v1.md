@@ -12,7 +12,7 @@
 
 - [x] 单一真相源（TypeBox in TS）
 - [x] 双端强校验（samples/*.json）
-- [ ] channel 命名规范
+- [x] channel 命名规范（`bong:<domain>` / `bong:<domain>/<event>`，双端 `CHANNELS` / `CH_*` 常量 + frozen 测试）
 - [ ] 版本化策略
 
 ## §1 Channel 总表
@@ -34,7 +34,7 @@
 
 ## §3 命名规范
 
-- [ ] channel 前缀约定（`bong:<domain>/<event>`）
+- [x] channel 前缀约定（`bong:<domain>/<event>`，已落于 botany/skill；agent_* / *_event / world_state 走单段命名）
 - [ ] Intent / State / Event 后缀
 - [ ] Store 命名
 
@@ -52,3 +52,9 @@
 ## §6 开放问题
 
 - [ ]
+
+---
+
+## 进度日志
+
+- 2026-04-25：现状盘点 — 已有 18 个 channel 双端落地（`agent/packages/schema/src/channels.ts` ↔ `server/src/schema/channels.rs`，含 `REDIS_V1_CHANNELS` 与 frozen 测试），TypeBox source-of-truth + samples/*.json round-trip + CI 校验闭环；剩 P2 版本化（schemaVersion / migration）未启动。

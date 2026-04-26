@@ -349,3 +349,9 @@ zone_pressure = Σ (crop.kind.growth_cost × crop_count)   // 作物需求
 | 翻新卡关消耗过多锄头 | 锄头耐久按档分配（玄铁 100 次可翻新 20 次）|
 | 补灵溢出 | 溢出量回馈 zone.spirit_qi 保持零和；但来源材料不退，代价仍付（UI 浮窗提示"将溢出 X，回馈本区"）|
 | 偷菜/偷灵被滥用成人身攻击 | 匿名系统下只能通过 LifeRecord 间接感知，无法锁定具体"冤家"；§7 留 TODO 可升级为连续偷触发 PVP flag |
+
+---
+
+## §9 进度日志
+
+- 2026-04-25：核对实装—P0–P5 服务端全闭环（lingtian/ 14 模块齐 + 客户端 5 文件接入），server 627 单测；剩余 `[ ]` 集中在 client UI 切片（独立浮窗 / 种子作物图标 / 拆除回收）+ 跨 plan 钩子（skill / alchemy / forge / zhenfa）+ MID 刷新率联动 npc spawn，均无证据保留待办。

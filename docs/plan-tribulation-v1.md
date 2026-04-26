@@ -11,7 +11,7 @@
 ## §0 设计轴心
 
 - [x] **唯一境界天劫 = 渡虚劫**（通灵→化虚）；其他境界突破无天劫
-- [ ] **全服广播 + 地点公开**——"有人在渡虚劫"；所有玩家获地理坐标，鼓励截胡
+- [x] **全服广播 + 地点公开**——"有人在渡虚劫"；所有玩家获地理坐标，鼓励截胡 ✅（事件层 `TribulationAnnounce` 已 emit + 预警雷 VFX；network → 客户端聊天栏接线待补）
 - [ ] **高风险高回报 · 无辅助 · 无捷径**（worldview line 130）
 - [ ] **天道激烈手段**分三类：渡虚劫（玩家主动）/ 域崩（区域事件）/ 定向天罚（天道精准打击高消耗修士）
 - [ ] 渡虚劫**失败不死透**：退回通灵初期、不掉物品、不扣寿（plan-death §1）；但截胡杀死走正常死亡
@@ -208,16 +208,16 @@ pub struct DuXuResult {
 ## §7 实施节点
 
 **Phase 0 — 数据层 + 名额**
-- [ ] `TribulationState` / `TribulationKind` / `DuXuResult` schema
-- [ ] `AscensionQuotaStore`（server 全局，读 player count）
+- [x] `TribulationState` schema ✅（`server/src/cultivation/tribulation.rs`）；`TribulationKind` / `DuXuResult` enum 仍待补
+- [x] `AscensionQuotaStore`（server 全局）✅（`server/src/npc/tribulation.rs`，固定 `max_concurrent=4`，未读 player count；持久化 quota 已落 `ascension_quota` 表）
 - [x] 与 plan-death §7 `LifespanEvent` 对齐（渡虚失败不扣寿标记）
 
 **Phase 1 — 渡虚劫核心流程**
 - [ ] 起劫菜单（cultivation 面板"奇经八脉全通"后解锁按钮）
-- [ ] 预兆期（天象 VFX + 全服广播）
+- [x] 预兆期（天象 VFX + 全服广播）✅（`start_tribulation_system` emit `TribulationAnnounce` + `bong:tribulation_lightning` VFX；network 层下发待补）
 - [ ] 锁定期（20 格边界 + 下线检测 + 丹药栏锁定）
 - [ ] 3 波雷劫机制（落雷 AOE + 噬灵雷）
-- [ ] 结算分支（化虚 / 半步化虚 / 退境 / 被截胡）
+- [x] 结算分支（化虚 / 半步化虚 / 退境 / 被截胡）：化虚成功 + 退境失败两条已通（`tribulation_wave_system` / `tribulation_failure_system`）；**半步化虚 / 被截胡** 未实装
 
 **Phase 2 — 观战 / 截胡**
 - [ ] 渡劫 HUD（渡劫者本人 + 观战者差异化）
@@ -279,3 +279,7 @@ pub struct DuXuResult {
 ## §9 剩余开放问题
 
 _（无未决项，所有设计问题均已收口）_
+
+## §10 进度日志
+
+- 2026-04-25：核对实装。Phase 0 数据层 + Quota 已落库（`TribulationState` / `AscensionQuotaStore` / `tribulations_active` / `ascension_quota`），Phase 1 仅渡虚劫成功(化虚) / 失败(退境) 两条结算闭环；预兆事件 `TribulationAnnounce` + 预警雷 VFX 已 emit，network → 客户端聊天栏未接；锁定期/3 波 AOE/心魔劫/截胡/半步化虚/域崩/定向天罚均未启动。

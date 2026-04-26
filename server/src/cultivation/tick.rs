@@ -9,6 +9,7 @@
 
 use valence::prelude::{bevy_ecs, Position, Query, ResMut, Resource};
 
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{Cultivation, MeridianSystem};
@@ -50,7 +51,12 @@ pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) 
 pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
-    mut players: Query<(&Position, &MeridianSystem, &mut Cultivation)>,
+    mut players: Query<(
+        &Position,
+        Option<&CurrentDimension>,
+        &MeridianSystem,
+        &mut Cultivation,
+    )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
 
@@ -58,9 +64,12 @@ pub fn qi_regen_and_zone_drain_tick(
         return;
     };
 
-    for (pos, meridians, mut cultivation) in players.iter_mut() {
-        // 通过 pos 找到 zone 的 name（不持可变借用）
-        let Some(zone_name) = zones.find_zone(pos.0).map(|z| z.name.clone()) else {
+    for (pos, current_dim, meridians, mut cultivation) in players.iter_mut() {
+        // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
+        // 时按 Overworld 处理（NPC 暂未跨位面）。Player 在 spawn 时一定带
+        // CurrentDimension（apply_spawn_defaults / restore_player_dimension）。
+        let dim = current_dim.map(|c| c.0).unwrap_or(DimensionKind::Overworld);
+        let Some(zone_name) = zones.find_zone(dim, pos.0).map(|z| z.name.clone()) else {
             continue;
         };
         let Some(zone) = zones.find_zone_mut(&zone_name) else {

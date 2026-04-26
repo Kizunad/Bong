@@ -457,7 +457,7 @@ pub struct WeaponBrokenV1 {
 | Phase | 内容 | 工作量（天） | 依赖 |
 |---|---|---|---|
 | **W0 plan 文档** | 本文档 | 1 | — |
-| **W1 Weapon component + schema** | §1.3 + §8.2 `WeaponEquippedV1` + `WeaponBroken` 事件 + TOML 扩展 | 1 | — |
+| **W1 Weapon component + schema** ✅ | §1.3 + §8.2 `WeaponEquippedV1` + `WeaponBroken` 事件 + TOML 扩展 | 1 | — |
 | **W2 装备/卸下 gameplay** | inventory-v1 `InventoryMoveRequest` 处理 filling + §2 状态机 | 1.5 | W1 + inv-v1 P2 |
 | **W3 Mixin 关原生 UI** | §4.2 + §4.4 两个 Mixin + InspectScreen 背包 tab 接管 | 1 | — |
 | **W4 BongHotbarHudPlanner** | §4.3 自定义 hotbar 渲染替代原生 | 1.5 | W3 |
@@ -524,3 +524,10 @@ pub struct WeaponBrokenV1 {
 - 后续：`plan-skill-v1.md`（武器内置 Technique）
 - 后续（未定 plan）：`plan-asset-pipeline-v1.md`（Tripo AI → Blockbench 中转 → OBJ 批量管线，§5.3 路径 X 的自动化细化）
 - 评估钩子：`plan-armor-v1.md` / `plan-monster-v1.md` 启动时触发路径 Y 重评估（§5.3.Y `poly_mesh` + GeckoLib 扩展）；若决定走 Y，武器资产一并迁移
+
+---
+
+## §15 进度日志
+
+- 2026-04-25：W1 数据模型落地确认（combat/weapon.rs 495 行 + client weapon 4 文件）
+- 2026-04-23：PR #41 合并（merge commit 7bbf5bf6）—— client 收口武器模型注册与贴图资源（feat 63ec9f07）/ 对齐破损掉地与法宝装备校验（fix 98fc144c）/ server 放宽破损武器掉地对注册表的测试依赖（fix a7c28e4b）；W1+W2 数据模型 + client 渲染骨架 + 装备槽 closure 已闭环。

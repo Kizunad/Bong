@@ -776,4 +776,11 @@ P4 plan 的 `NpcDrops` 配置文件要能写 `key_stone_casket` 等钥匙 templa
 
 ---
 
+## §11 进度日志
+
+- 2026-04-25：本 plan 仍为纯设计骨架，未开工。`server/src/world/` 下仅有 `events.rs` / `mod.rs` / `terrain/` / `zone.rs`，未见 `tsy_container.rs` / `tsy_events.rs`；全仓 grep `LootContainer` / `ContainerKind` / `SearchProgress` / `RelicExtracted` / `TsyZoneInitialized` 均无命中；`server/loot_pools.json` 与 `server/tsy_containers.json` 不存在；`server/assets/items/tsy_keys.toml` 不存在；现有 `server/src/npc/loot.rs` 仅服务 NPC kill drop，与本 plan 5 档容器无关。等 P0/P1/P2 demoable 后再 `/consume-plan tsy-container`。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面基础设施就位（含 `DimensionLayers.tsy` 用于挂 container 实体到 TSY layer）。本 plan 仍 blocking on **P0/P1/P2 串行前置**。
+
+---
+
 **下一步**：P0/P1/P2 全部 demoable 后，`/consume-plan tsy-container` 启动 P3。

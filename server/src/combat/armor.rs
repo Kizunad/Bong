@@ -2,13 +2,14 @@
 //!
 //! 本模块只负责：
 //! - `ArmorProfile` 数据结构（slot/覆盖部位/按 WoundKind 的减免系数/耐久）
-//! - `ArmorProfileRegistry` resource（instance_id -> ArmorProfile）
+//! - `ArmorProfileRegistry` resource（template_id -> ArmorProfile blueprint）
 //! - 启动期从 `server/assets/combat/armor_profiles/*.json` 扫描加载。
 //!
 //! 设计意图：
 //! - 运行时结算侧只读 `DerivedAttrs.defense_profile`（二维矩阵），不直接依赖 inventory。
-//! - registry 以 `instance_id` 为 key，避免给 ItemInstance 增肥；同时允许同模板不同 instance
-//!   有不同耐久。
+//! - registry 以 `template_id` 为 key，避免与运行时分配的 `instance_id` 耦合。
+//! - 单件护甲的运行时耐久使用 inventory 侧 `ItemInstance.durability` (0..=1) 表示；
+//!   破损判定亦以此为准。
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -30,7 +31,6 @@ pub struct ArmorProfile {
     pub slot: EquipSlotV1,
     pub body_coverage: Vec<BodyPart>,
     pub kind_mitigation: HashMap<WoundKind, f32>,
-    pub durability_cur: u32,
     pub durability_max: u32,
     #[serde(default = "default_broken_multiplier")]
     pub broken_multiplier: f32,
@@ -47,12 +47,6 @@ impl ArmorProfile {
         }
         if self.durability_max == 0 {
             return Err("durability_max must be >= 1".to_string());
-        }
-        if self.durability_cur > self.durability_max {
-            return Err(format!(
-                "durability_cur {} exceeds durability_max {}",
-                self.durability_cur, self.durability_max
-            ));
         }
         if !self.broken_multiplier.is_finite() || !(0.0..=1.0).contains(&self.broken_multiplier) {
             return Err(format!(
@@ -96,12 +90,12 @@ impl ArmorProfile {
         Ok(())
     }
 
-    pub fn is_broken(&self) -> bool {
-        self.durability_cur == 0
-    }
-
-    pub fn effective_multiplier(&self) -> f32 {
-        if self.is_broken() {
+    pub fn effective_multiplier_for_durability_ratio(&self, durability_ratio: f64) -> f32 {
+        let ratio = durability_ratio;
+        if !ratio.is_finite() {
+            return self.broken_multiplier;
+        }
+        if ratio <= 0.0 {
             self.broken_multiplier
         } else {
             1.0
@@ -111,7 +105,7 @@ impl ArmorProfile {
 
 #[derive(Debug, Default, Clone)]
 pub struct ArmorProfileRegistry {
-    by_instance_id: HashMap<u64, ArmorProfile>,
+    by_template_id: HashMap<String, ArmorProfile>,
 }
 
 impl Resource for ArmorProfileRegistry {}
@@ -123,10 +117,10 @@ pub enum ArmorProfileLoadError {
         path: PathBuf,
         source: serde_json::Error,
     },
-    DuplicateInstanceId(u64),
+    DuplicateTemplateId(String),
     Invalid {
         path: PathBuf,
-        instance_id: u64,
+        template_id: String,
         reason: String,
     },
 }
@@ -138,16 +132,16 @@ impl std::fmt::Display for ArmorProfileLoadError {
             ArmorProfileLoadError::Json { path, source } => {
                 write!(f, "json: {}: {source}", path.display())
             }
-            ArmorProfileLoadError::DuplicateInstanceId(id) => {
-                write!(f, "duplicate armor profile instance_id {id}")
+            ArmorProfileLoadError::DuplicateTemplateId(id) => {
+                write!(f, "duplicate armor profile template_id {id}")
             }
             ArmorProfileLoadError::Invalid {
                 path,
-                instance_id,
+                template_id,
                 reason,
             } => write!(
                 f,
-                "invalid armor profile {} (instance_id={instance_id}): {reason}",
+                "invalid armor profile {} (template_id={template_id}): {reason}",
                 path.display()
             ),
         }
@@ -165,28 +159,8 @@ impl From<std::io::Error> for ArmorProfileLoadError {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ArmorProfileFile {
-    #[serde(deserialize_with = "deserialize_instance_id")]
-    instance_id: u64,
+    template_id: String,
     profile: ArmorProfile,
-}
-
-fn deserialize_instance_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // 与 inventory schema 里的 JS safe integer 约束保持一致。
-    const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
-
-    let id = u64::deserialize(deserializer)?;
-    if id == 0 {
-        return Err(serde::de::Error::custom("instance_id must be >= 1"));
-    }
-    if id > JS_SAFE_INTEGER_MAX {
-        return Err(serde::de::Error::custom(format!(
-            "instance_id {id} exceeds JS safe integer max {JS_SAFE_INTEGER_MAX}"
-        )));
-    }
-    Ok(id)
 }
 
 impl ArmorProfileRegistry {
@@ -195,24 +169,28 @@ impl ArmorProfileRegistry {
     }
 
     pub fn len(&self) -> usize {
-        self.by_instance_id.len()
+        self.by_template_id.len()
     }
 
     // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（is_empty 供 registry 消费者使用）
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.by_instance_id.is_empty()
+        self.by_template_id.is_empty()
     }
 
-    pub fn get(&self, instance_id: u64) -> Option<&ArmorProfile> {
-        self.by_instance_id.get(&instance_id)
+    pub fn get(&self, template_id: &str) -> Option<&ArmorProfile> {
+        self.by_template_id.get(template_id)
     }
 
     // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（insert 供装备 sync 手动装载用）
     #[allow(dead_code)]
-    pub fn insert(&mut self, instance_id: u64, profile: ArmorProfile) -> Result<(), String> {
+    pub fn insert(&mut self, template_id: String, profile: ArmorProfile) -> Result<(), String> {
+        let template_id = template_id.trim().to_string();
+        if template_id.is_empty() {
+            return Err("template_id must not be empty".to_string());
+        }
         profile.validate()?;
-        self.by_instance_id.insert(instance_id, profile);
+        self.by_template_id.insert(template_id, profile);
         Ok(())
     }
 
@@ -239,35 +217,38 @@ impl ArmorProfileRegistry {
                     path: path.clone(),
                     source: e,
                 })?;
-            if reg.by_instance_id.contains_key(&parsed.instance_id) {
-                return Err(ArmorProfileLoadError::DuplicateInstanceId(
-                    parsed.instance_id,
-                ));
+            let template_id = parsed.template_id.trim().to_string();
+            if template_id.is_empty() {
+                return Err(ArmorProfileLoadError::Invalid {
+                    path: path.clone(),
+                    template_id,
+                    reason: "template_id must not be empty".to_string(),
+                });
+            }
+            if reg.by_template_id.contains_key(&template_id) {
+                return Err(ArmorProfileLoadError::DuplicateTemplateId(template_id));
             }
             if let Err(reason) = parsed.profile.validate() {
                 return Err(ArmorProfileLoadError::Invalid {
                     path: path.clone(),
-                    instance_id: parsed.instance_id,
+                    template_id,
                     reason,
                 });
             }
             tracing::info!(
-                "[bong][combat][armor] loaded armor profile instance_id={} slot={:?}",
-                parsed.instance_id,
+                "[bong][combat][armor] loaded armor profile template_id={} slot={:?}",
+                template_id,
                 parsed.profile.slot
             );
-            reg.by_instance_id
-                .insert(parsed.instance_id, parsed.profile);
+            reg.by_template_id.insert(template_id, parsed.profile);
         }
 
         Ok(reg)
     }
 
     #[cfg(test)]
-    pub fn from_map(map: HashMap<u64, ArmorProfile>) -> Self {
-        Self {
-            by_instance_id: map,
-        }
+    pub fn from_map(map: HashMap<String, ArmorProfile>) -> Self {
+        Self { by_template_id: map }
     }
 }
 
@@ -280,7 +261,7 @@ mod tests {
         let r = ArmorProfileRegistry::new();
         assert!(r.is_empty());
         assert_eq!(r.len(), 0);
-        assert!(r.get(1).is_none());
+        assert!(r.get("fake_spirit_hide").is_none());
     }
 
     #[test]
@@ -289,7 +270,6 @@ mod tests {
             slot: EquipSlotV1::MainHand,
             body_coverage: vec![BodyPart::Chest],
             kind_mitigation: HashMap::from([(WoundKind::Cut, 0.1)]),
-            durability_cur: 1,
             durability_max: 1,
             broken_multiplier: 0.3,
         };

@@ -15,10 +15,13 @@ use std::path::PathBuf;
 
 use valence::prelude::{
     ident, App, BiomeRegistry, BlockState, ChunkLayer, ChunkPos, Client, Commands,
-    DimensionTypeRegistry, Query, Res, ResMut, Resource, Server, UnloadedChunk, Update, View, With,
+    DimensionTypeRegistry, Entity, Query, Res, ResMut, Resource, Server, UnloadedChunk, Update,
+    View, VisibleChunkLayer, With,
 };
 
-pub use raster::{raster_dir_from_manifest_path, TerrainProvider};
+use crate::world::dimension::{DimensionLayers, OverworldLayer};
+
+pub use raster::{raster_dir_from_manifest_path, TerrainProvider, TerrainProviders};
 
 const WORLD_HEIGHT: u32 = 512;
 pub const MIN_Y: i32 = -64;
@@ -76,13 +79,13 @@ pub fn register(app: &mut App) {
 }
 
 pub fn spawn_raster_world(
-    mut commands: Commands,
-    server: Res<Server>,
-    mut dimensions: ResMut<DimensionTypeRegistry>,
-    biomes: Res<BiomeRegistry>,
+    commands: &mut Commands,
+    server: &Server,
+    dimensions: &mut DimensionTypeRegistry,
+    biomes: &BiomeRegistry,
     config: RasterBootstrapConfig,
-) {
-    let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, &biomes)
+) -> Entity {
+    let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, biomes)
         .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
     tracing::info!(
         "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations from {}",
@@ -100,30 +103,45 @@ pub fn spawn_raster_world(
         dim.logical_height = WORLD_HEIGHT as i32;
     }
 
-    let layer =
-        valence::prelude::LayerBundle::new(ident!("overworld"), &dimensions, &biomes, &server);
-    commands.spawn(layer);
-    commands.insert_resource(provider);
+    let layer = valence::prelude::LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
+    let entity = commands.spawn((layer, OverworldLayer)).id();
+    // Wrap the loaded provider in `TerrainProviders` so consumers can route by `DimensionKind`.
+    // `tsy` stays `None` until `plan-tsy-worldgen-v1` ships the TSY manifest.
+    commands.insert_resource(TerrainProviders {
+        overworld: provider,
+        tsy: None,
+    });
+    entity
 }
 
 fn generate_chunks_around_players(
     mut layers: Query<&mut ChunkLayer>,
-    clients: Query<View, With<Client>>,
-    terrain: Option<Res<TerrainProvider>>,
+    clients: Query<(View, &VisibleChunkLayer), With<Client>>,
+    providers: Option<Res<TerrainProviders>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
 ) {
-    let Some(terrain) = terrain else {
+    let Some(providers) = providers else {
         return;
     };
-    let terrain = terrain.into_inner();
+    let terrain = &providers.overworld;
     let generated = generated.as_mut();
 
-    let mut layer = match layers.get_single_mut() {
-        Ok(layer) => layer,
-        Err(_) => return,
+    // For now we only generate raster-backed chunks for the overworld layer.
+    // TSY chunk routing arrives with `plan-tsy-worldgen-v1`.
+    let Some(dimension_layers) = dimension_layers else {
+        return;
+    };
+    let overworld_layer_entity = dimension_layers.overworld;
+
+    let Ok(mut layer) = layers.get_mut(overworld_layer_entity) else {
+        return;
     };
 
-    for view in &clients {
+    for (view, visible_chunk_layer) in &clients {
+        if visible_chunk_layer.0 != overworld_layer_entity {
+            continue;
+        }
         for pos in view.get().iter() {
             ensure_chunk_generated(&mut layer, pos, terrain, &mut generated.loaded);
         }
@@ -132,15 +150,19 @@ fn generate_chunks_around_players(
 
 fn remove_unviewed_chunks(
     mut layers: Query<&mut ChunkLayer>,
-    terrain: Option<Res<TerrainProvider>>,
+    providers: Option<Res<TerrainProviders>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
 ) {
-    if terrain.is_none() {
+    if providers.is_none() {
         return;
     }
+    let Some(dimension_layers) = dimension_layers else {
+        return;
+    };
     let generated = generated.as_mut();
 
-    let Ok(mut layer) = layers.get_single_mut() else {
+    let Ok(mut layer) = layers.get_mut(dimension_layers.overworld) else {
         return;
     };
 

@@ -314,3 +314,9 @@ pub struct StopSoundRecipePayload {
 | LLM 编辑 JSON 出错 → sound id 不存在 | 启动期校验所有 recipe 的 sound id 是否在 vanilla 注册表；失败 recipe 跳过（不 crash）+ log |
 | 玩家觉得"听起来像 MC" | 大量变调 + 层叠能显著脱离原感；若仍不足，未来接资源包即可（架构已留口）|
 | 音量过大 / 扰人 | 走 MC 原生 SoundCategory，玩家可细粒度调节 |
+
+---
+
+## §11 进度日志
+
+- 2026-04-25：代码核查未发现 SoundRecipe schema/Registry/JSON/网络包/Player 任何实装（server `assets/audio/` 不存在，`SoundRecipe/PlaySoundRecipe` 符号缺失，client 仅 BongPunchCombo 直接用 vanilla SoundEvents），P0/P1 暂按未实装保留 `[ ]`

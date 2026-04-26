@@ -173,7 +173,7 @@ pub fn handle_alchemy_furnace_place(
     mut events: EventReader<PlaceFurnaceRequest>,
     mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     existing: Query<&AlchemyFurnace>,
     mut clients: Query<(&Username, &mut Client, &PlayerState)>,
 ) {

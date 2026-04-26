@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::Deserialize;
 use valence::prelude::{App, Commands, DVec3, Resource, Startup};
 
+use super::dimension::DimensionKind;
 use super::TEST_AREA_BLOCK_EXTENT;
 use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord};
 
@@ -22,6 +23,9 @@ const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
     pub name: String,
+    /// Dimension this zone lives in. Defaults to overworld for backwards compatibility
+    /// with `zones.json` snapshots that pre-date the TSY dim.
+    pub dimension: DimensionKind,
     pub bounds: (DVec3, DVec3),
     pub spirit_qi: f64,
     pub danger_level: u8,
@@ -54,6 +58,7 @@ impl Zone {
     fn spawn() -> Self {
         Self {
             name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            dimension: DimensionKind::Overworld,
             bounds: default_spawn_bounds(),
             spirit_qi: DEFAULT_SPAWN_SPIRIT_QI,
             danger_level: 0,
@@ -184,8 +189,13 @@ impl ZoneRegistry {
         self.zones.iter().find(|zone| zone.name == name)
     }
 
-    pub fn find_zone(&self, pos: DVec3) -> Option<&Zone> {
-        self.zones.iter().find(|zone| zone.contains(pos))
+    /// Find the zone at `pos` within `dim`. Zones registered to other dimensions
+    /// are skipped even if their AABB happens to overlap on the same XYZ in their
+    /// own coordinate system.
+    pub fn find_zone(&self, dim: DimensionKind, pos: DVec3) -> Option<&Zone> {
+        self.zones
+            .iter()
+            .find(|zone| zone.dimension == dim && zone.contains(pos))
     }
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
@@ -332,6 +342,9 @@ struct ZonesFileConfig {
 #[derive(Debug, Deserialize)]
 struct ZoneConfig {
     name: String,
+    /// Dimension; defaults to overworld for backwards-compat with pre-TSY snapshots.
+    #[serde(default)]
+    dimension: DimensionKind,
     aabb: ZoneAabbConfig,
     spirit_qi: f64,
     danger_level: u8,
@@ -458,6 +471,7 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
 
     Ok(Zone {
         name: name.to_string(),
+        dimension: zone.dimension,
         bounds: (min, max),
         spirit_qi: zone.spirit_qi,
         danger_level: zone.danger_level,
@@ -581,10 +595,16 @@ mod zone_tests {
 
         let registry = ZoneRegistry::load_from_path(&valid_path);
         let spawn = registry
-            .find_zone(DVec3::new(14.0, 66.0, 14.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(14.0, 66.0, 14.0),
+            )
             .expect("valid config should load spawn zone");
         let blood_valley = registry
-            .find_zone(DVec3::new(110.0, 66.0, 110.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(110.0, 66.0, 110.0),
+            )
             .expect("valid config should load blood_valley zone");
 
         assert_eq!(registry.zones.len(), 2);
@@ -606,6 +626,105 @@ mod zone_tests {
         let fallback_registry = ZoneRegistry::load_from_path(&fallback_path);
         assert_eq!(fallback_registry.zones.len(), 1);
         assert_eq!(fallback_registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    #[test]
+    fn zones_json_without_dimension_field_defaults_to_overworld() {
+        // Backwards-compat: pre-TSY zones.json snapshots have no `dimension` key.
+        // `#[serde(default)]` on `ZoneConfig::dimension` must yield Overworld.
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-default-dim", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn zones_json_with_explicit_tsy_dimension_loads_correctly() {
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-explicit-tsy", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "dimension": "overworld",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    },
+    {
+      "name": "tsy_test",
+      "dimension": "tsy",
+      "aabb": { "min": [-100.0, 0.0, -100.0], "max": [100.0, 128.0, 100.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 5
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 2);
+        let tsy_zone = registry
+            .zones
+            .iter()
+            .find(|z| z.name == "tsy_test")
+            .expect("tsy_test zone should be present");
+        assert_eq!(tsy_zone.dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn find_zone_filters_by_dimension() {
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-find-by-dim", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    },
+    {
+      "name": "tsy_overlap",
+      "dimension": "tsy",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 5
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        // Same XYZ, but `find_zone` must return only the matching dimension.
+        let pos = DVec3::new(8.0, 66.0, 8.0);
+        let overworld_match = registry
+            .find_zone(DimensionKind::Overworld, pos)
+            .expect("overworld query should find spawn");
+        let tsy_match = registry
+            .find_zone(DimensionKind::Tsy, pos)
+            .expect("tsy query should find tsy_overlap");
+        assert_eq!(overworld_match.name, "spawn");
+        assert_eq!(tsy_match.name, "tsy_overlap");
     }
 
     #[test]

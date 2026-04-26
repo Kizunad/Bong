@@ -31,6 +31,7 @@ pub const HEAD_STUN_SEVERITY_THRESHOLD: f32 = 0.5;
 pub const HEAD_STUN_DURATION_TICKS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BodyPart {
     Head,
     Chest,
@@ -42,6 +43,7 @@ pub enum BodyPart {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WoundKind {
     Cut,
     Blunt,

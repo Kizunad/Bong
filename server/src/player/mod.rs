@@ -16,12 +16,13 @@ use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
-    Added, App, AppExit, Changed, ChunkLayer, Client, Commands, Entity, EntityLayer, EntityLayerId,
-    EventReader, GameMode, IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res,
-    ResMut, Update, Username, VisibleChunkLayer, VisibleEntityLayers, With, Without,
+    Added, App, AppExit, Changed, Client, Commands, Entity, EntityLayerId, EventReader, GameMode,
+    IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
+    VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
@@ -40,7 +41,13 @@ type ClientInitQueryItem<'a> = (
     &'a mut GameMode,
 );
 
-type JoinedClientsWithoutStateQueryItem<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutStateQueryItem<'a> = (
+    Entity,
+    &'a Username,
+    &'a mut EntityLayerId,
+    &'a mut VisibleChunkLayer,
+    &'a mut VisibleEntityLayers,
+);
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
 type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
@@ -84,10 +91,20 @@ pub fn initial_game_mode() -> GameMode {
 }
 
 fn init_clients(
+    mut commands: Commands,
     mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    dimension_layers: Option<Res<DimensionLayers>>,
 ) {
-    let layer = layers.single();
+    // Spawn defaults route every client into the overworld layer. The follow-up
+    // `attach_player_state_to_joined_clients` system reads persisted state and
+    // reroutes the client to its `last_dimension` (and inserts a matching
+    // `CurrentDimension`) before any client packets are flushed this tick.
+    // `DimensionLayers` is missing only in tests that do not bootstrap the world
+    // plugin — fall through silently in that case.
+    let Some(dimension_layers) = dimension_layers else {
+        return;
+    };
+    let layer = dimension_layers.overworld;
 
     for (
         entity,
@@ -107,6 +124,7 @@ fn init_clients(
             &mut position,
             &mut game_mode,
         );
+        commands.entity(entity).insert(CurrentDimension::default());
 
         client.send_chat_message(welcome_message());
 
@@ -123,25 +141,47 @@ fn init_clients(
 pub(crate) fn attach_player_state_to_joined_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
-    joined_clients: Query<
+    dimension_layers: Option<Res<DimensionLayers>>,
+    mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
     >,
 ) {
-    for (entity, username) in &joined_clients {
+    for (entity, username, mut layer_id, mut visible_chunk_layer, mut visible_entity_layers) in
+        &mut joined_clients
+    {
         let persisted = load_player_slices(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
-        let mut entity_commands = commands.entity(entity);
+        let last_dimension = persisted.last_dimension;
 
-        entity_commands.insert((persisted.state, Position::new(persisted.position)));
+        if let Some(layers) = dimension_layers.as_deref() {
+            let target_layer = layers.entity_for(last_dimension);
+            let previous_layer = layer_id.0;
+            if previous_layer != target_layer {
+                visible_entity_layers.0.remove(&previous_layer);
+                layer_id.0 = target_layer;
+                visible_chunk_layer.0 = target_layer;
+                visible_entity_layers.0.insert(target_layer);
+            }
+        }
+
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert((
+            persisted.state,
+            Position::new(persisted.position),
+            CurrentDimension(last_dimension),
+        ));
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
         entity_commands.insert(persisted.skill_set);
+        let composite_power = persisted
+            .state
+            .composite_power(&Cultivation::default());
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (restored_inventory={restored_inventory}, restored_skill={restored_skill})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
             username.0,
         );
     }
@@ -181,6 +221,7 @@ fn despawn_disconnected_clients(
         &Username,
         &PlayerState,
         &Position,
+        Option<&CurrentDimension>,
         Option<&PlayerInventory>,
         Option<&SkillSet>,
         Option<&Cultivation>,
@@ -200,6 +241,7 @@ fn despawn_disconnected_clients(
             username,
             player_state,
             position,
+            current_dimension,
             player_inventory,
             skill_set,
             cultivation,
@@ -214,6 +256,10 @@ fn despawn_disconnected_clients(
             insight_modifiers,
         )) = persisted_players.get(entity)
         {
+            let last_dimension = current_dimension
+                .map(|cd| cd.0)
+                .unwrap_or(DimensionKind::default());
+
             if let (
                 Some(cultivation),
                 Some(meridians),
@@ -257,12 +303,12 @@ fn despawn_disconnected_clients(
                     );
                 }
             }
-
             match save_player_slices(
                 &persistence,
                 username.0.as_str(),
                 player_state,
                 position_to_array(position),
+                last_dimension,
                 player_inventory,
                 skill_set.unwrap_or(&SkillSet::default()),
             ) {
@@ -299,6 +345,7 @@ fn flush_connected_players_on_shutdown(
             &Username,
             &PlayerState,
             &Position,
+            Option<&CurrentDimension>,
             Option<&PlayerInventory>,
             Option<&SkillSet>,
             Option<&Cultivation>,
@@ -323,6 +370,7 @@ fn flush_connected_players_on_shutdown(
         username,
         player_state,
         position,
+        current_dimension,
         player_inventory,
         skill_set,
         cultivation,
@@ -337,6 +385,10 @@ fn flush_connected_players_on_shutdown(
         insight_modifiers,
     ) in &players
     {
+        let last_dimension = current_dimension
+            .map(|cd| cd.0)
+            .unwrap_or(DimensionKind::default());
+
         if let (
             Some(cultivation),
             Some(meridians),
@@ -380,12 +432,12 @@ fn flush_connected_players_on_shutdown(
                 );
             }
         }
-
         match save_player_slices(
             &persistence,
             username.0.as_str(),
             player_state,
             position_to_array(position),
+            last_dimension,
             player_inventory,
             skill_set.unwrap_or(&SkillSet::default()),
         ) {
@@ -431,7 +483,7 @@ fn autosave_player_core_slices(
 fn autosave_player_slow_and_ui_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &Position), With<Client>>,
+    players: Query<(&Username, &Position, Option<&CurrentDimension>), With<Client>>,
 ) {
     if !timer
         .ticks
@@ -442,11 +494,15 @@ fn autosave_player_slow_and_ui_slices(
 
     let mut saved_count = 0usize;
 
-    for (username, position) in &players {
+    for (username, position, current_dimension) in &players {
+        let last_dimension = current_dimension
+            .map(|cd| cd.0)
+            .unwrap_or(DimensionKind::default());
         match save_player_slow_slice(
             &persistence,
             username.0.as_str(),
             position_to_array(position),
+            last_dimension,
         ) {
             Ok(_) => saved_count += 1,
             Err(error) => tracing::warn!(
@@ -806,6 +862,78 @@ mod tests {
             app.world().get::<Client>(entity).is_some(),
             "shutdown flush should persist while the player is still connected"
         );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn reconnecting_into_tsy_routes_layer_and_current_dimension() {
+        use crate::world::dimension::{DimensionKind, DimensionLayers};
+
+        let (persistence, data_dir, _db_path) = sqlite_persistence("reconnect-into-tsy");
+
+        // Persist a player whose last dimension is Tsy so reconnect should
+        // route them back into the TSY layer rather than the overworld default.
+        crate::player::state::save_player_slices(
+            &persistence,
+            "Azure",
+            &PlayerState::default(),
+            [12.0, 80.0, -34.0],
+            DimensionKind::Tsy,
+            None,
+            &SkillSet::default(),
+        )
+        .expect("seeding TSY-resident player should persist");
+
+        let mut app = App::new();
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
+        app.insert_resource(persistence);
+        app.add_systems(Update, attach_player_state_to_joined_clients);
+
+        // Mock client bundle: Added<Client> fires this tick. Pre-set its layer
+        // pointers to the overworld so we can verify attach reroutes them.
+        let (mut client_bundle, _helper) = valence::testing::create_mock_client("Azure");
+        client_bundle.player.layer.0 = overworld_layer;
+        client_bundle.visible_chunk_layer.0 = overworld_layer;
+        client_bundle
+            .visible_entity_layers
+            .0
+            .insert(overworld_layer);
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let world = app.world();
+        let er = world.entity(entity);
+        let current = er
+            .get::<CurrentDimension>()
+            .copied()
+            .expect("attach should insert CurrentDimension");
+        let layer_id = er
+            .get::<EntityLayerId>()
+            .expect("client bundle should carry EntityLayerId")
+            .0;
+        let visible_chunk = er
+            .get::<VisibleChunkLayer>()
+            .expect("client bundle should carry VisibleChunkLayer")
+            .0;
+        let visible_entities = &er
+            .get::<VisibleEntityLayers>()
+            .expect("client bundle should carry VisibleEntityLayers")
+            .0;
+        let position = er.get::<Position>().expect("position should be set").get();
+
+        assert_eq!(current, CurrentDimension(DimensionKind::Tsy));
+        assert_eq!(layer_id, tsy_layer);
+        assert_eq!(visible_chunk, tsy_layer);
+        assert!(visible_entities.contains(&tsy_layer));
+        assert!(!visible_entities.contains(&overworld_layer));
+        assert_eq!(position, DVec3::new(12.0, 80.0, -34.0));
 
         let _ = fs::remove_dir_all(&data_dir);
     }

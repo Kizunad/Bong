@@ -448,3 +448,10 @@ P0 `plan-tsy-zone-v1` 已在 2026-04-23 修订：
 ---
 
 **下一步**：等 dimension plan merged + P0 merged + P3 或 P4 开工后，回答 Q1/Q2/Q4/Q8/Q11，骨架升级为 active plan（移出 `plans-skeleton/`），`/consume-plan tsy-worldgen` 启动。
+
+---
+
+## §11 进度日志
+
+- **2026-04-25**：骨架现状校核——无任何 TSY 实装。`worldgen/scripts/terrain_gen/profiles/` 仅 9 个现有 profile（abyssal_maze / ancient_battlefield / broken_peaks / cave_network / rift_valley / sky_isle / spawn_plain / spring_marsh / waste_plateau），未见 `tsy_*.py`；`fields.py:LAYER_REGISTRY` 未注册 `tsy_presence` / `tsy_origin_id` / `tsy_depth_tier`；`server/zones.tsy.json` 不存在，`zones.worldview.example.json` 未含 `kind=rift_portal` POI；`server/src/world/` 无 `tsy_poi_consumer.rs`。POI 通道前置确认已通：`blueprint.py:156-184` 已序列化 `pois[]`，待 dimension plan + P0 落 Rust 后开工。本 plan 仍处骨架阶段，未触发 §10 升级条件（dimension plan 文档已 active 但 Rust 侧 `DimensionKind` / `TerrainProviders` 未实装）。
+- **2026-04-26**：**dimension plan Rust 侧解冻** — PR #47（merge 579fc67e）落地 `DimensionKind` / `DimensionLayers` / `TerrainProviders { overworld, tsy: Option }` / `DimensionTransferRequest` / `Zone.dimension` 全套基础设施。本 plan §10 升级条件之一（dimension Rust 侧落地）已满足，仍欠 **P0 `tsy-zone` merged**（升级条件之二）；可与 P0 active 阶段并行起步骨架→active 升级。POI 通道（`blueprint.py:156-184`）已就位等 consumer 接入。

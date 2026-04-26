@@ -36,6 +36,9 @@ public final class InventoryEventHandler implements ServerDataHandler {
     private record HotbarLoc(int index) implements Location {}
     private record WorldPos(double x, double y, double z) {}
 
+    private static final int ARMOR_BROKEN_TOAST_COLOR = 0xFFC04040;
+    private static final long ARMOR_BROKEN_TOAST_DURATION_MS = 1200L;
+
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         if (!InventoryStateStore.isAuthoritativeLoaded()) {
@@ -67,6 +70,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
 
         InventoryModel current = InventoryStateStore.snapshot();
         InventoryModel next;
+        ServerDataDispatch.ToastSpec alertToast = null;
         switch (kind) {
             case "moved" -> {
                 Location from = parseLocation(readRequiredObject(payload, "from"));
@@ -136,6 +140,21 @@ public final class InventoryEventHandler implements ServerDataHandler {
                     return ServerDataDispatch.noOp(envelope.type(),
                         "Ignoring inventory_event 'durability_changed' payload: invalid durability");
                 }
+
+                // If an armor slot item breaks (durability hits 0), surface a short toast.
+                InventoryItem existing = findItem(current, instanceId);
+                if (existing != null
+                    && existing.durability() > 0.0
+                    && durability <= 0.0
+                    && isArmorSlotItem(current, instanceId)) {
+                    EquipSlotType slot = armorSlotForInstance(current, instanceId);
+                    String label = slot == null ? "护甲" : slot.displayName();
+                    alertToast = new ServerDataDispatch.ToastSpec(
+                        label + "破损",
+                        ARMOR_BROKEN_TOAST_COLOR,
+                        ARMOR_BROKEN_TOAST_DURATION_MS
+                    );
+                }
                 next = applyItemReplace(current, instanceId,
                     item -> withDurability(item, durability));
             }
@@ -152,6 +171,15 @@ public final class InventoryEventHandler implements ServerDataHandler {
         }
 
         InventoryStateStore.applyAuthoritativeSnapshot(next, revision);
+        if (alertToast != null) {
+            return ServerDataDispatch.handledWithEventAlert(
+                envelope.type(),
+                alertToast,
+                null,
+                "Applied inventory_event '" + kind + "' (instance_id " + instanceId
+                    + ", revision " + revision + ") with toast"
+            );
+        }
         return ServerDataDispatch.handled(envelope.type(),
             "Applied inventory_event '" + kind + "' (instance_id " + instanceId
                 + ", revision " + revision + ")");
@@ -262,6 +290,24 @@ public final class InventoryEventHandler implements ServerDataHandler {
         }
         for (InventoryItem item : model.hotbar()) {
             if (item != null && item.instanceId() == instanceId) return item;
+        }
+        return null;
+    }
+
+    private static boolean isArmorSlotItem(InventoryModel model, long instanceId) {
+        EquipSlotType slot = armorSlotForInstance(model, instanceId);
+        return slot == EquipSlotType.HEAD
+            || slot == EquipSlotType.CHEST
+            || slot == EquipSlotType.LEGS
+            || slot == EquipSlotType.FEET;
+    }
+
+    private static EquipSlotType armorSlotForInstance(InventoryModel model, long instanceId) {
+        for (Map.Entry<EquipSlotType, InventoryItem> e : model.equipped().entrySet()) {
+            InventoryItem item = e.getValue();
+            if (item != null && item.instanceId() == instanceId) {
+                return e.getKey();
+            }
         }
         return null;
     }

@@ -13,7 +13,7 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
     bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut,
-    Resource, Username,
+    Resource, Username, With,
 };
 
 use crate::alchemy::{
@@ -101,7 +101,7 @@ pub struct LingtianRequestParams<'w, 's> {
     pub harvest_tx: EventWriter<'w, StartHarvestRequest>,
     pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
     pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
-    pub layers: Query<'w, 's, &'static ChunkLayer>,
+    pub layers: Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 }
 
 /// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
@@ -771,7 +771,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::combat::components::UnlockedStyles;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
@@ -998,6 +998,7 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
+                UnlockedStyles::default(),
             ))
             .id();
         app.world_mut()
@@ -1080,6 +1081,7 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
+                UnlockedStyles::default(),
             ))
             .id();
         app.world_mut()
@@ -1500,7 +1502,6 @@ fn handle_inventory_discard(
     match discard_inventory_item_to_dropped_loot(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
         &from,
@@ -1553,7 +1554,6 @@ fn handle_pickup_dropped_item(
     match pickup_dropped_loot_instance(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
     ) {

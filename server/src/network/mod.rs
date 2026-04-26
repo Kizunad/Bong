@@ -876,7 +876,7 @@ fn zone_name_for_position(
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -2211,6 +2211,7 @@ mod tests {
         fn zone_scope_filters_by_zone() {
             let spawn_zone = Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                 spirit_qi: 0.9,
                 danger_level: 0,
@@ -2220,6 +2221,7 @@ mod tests {
             };
             let blood_valley = Zone {
                 name: "blood_valley".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     DVec3::new(1000.0, 64.0, 1000.0),
                     DVec3::new(1200.0, 128.0, 1200.0),
@@ -2568,6 +2570,7 @@ mod tests {
                 zones: vec![
                     Zone {
                         name: "spawn".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                         spirit_qi: 0.9,
                         danger_level: 0,
@@ -2577,6 +2580,7 @@ mod tests {
                     },
                     Zone {
                         name: "blood_valley".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (
                             DVec3::new(1000.0, 64.0, 1000.0),
                             DVec3::new(1200.0, 128.0, 1200.0),
@@ -3145,6 +3149,7 @@ mod tests {
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
             app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
             app.add_systems(
                 Update,
                 (

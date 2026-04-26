@@ -658,57 +658,74 @@ Channel：
 
 ## §12 实施节点（按 C 阶段）
 
-### C1 · HUD 骨架 + 左下状态小控件
+| 阶段 | 状态 |
+|---|---|
+| C1 · HUD 骨架 + 左下状态小控件 | ✅ |
+| C2 · 两层快捷栏 | ✅ |
+| C3 · cast 状态机 + 打断 | ✅ |
+| C4 · 通用事件流 + 节流折叠 | ✅ |
+| C5 · 条件渲染元素 | ✅（伪皮 / 涡流角标未做） |
+| C6 · InspectScreen 快捷使用 tab | ⏳（hotbar 渲染 + Store hydrate 已做，拖拽 tab 未做） |
+| C7 · 特殊场景 | ✅ |
+| C8 · 调参 + QoL | ⏳（HudConfig 已有，事件流隐藏 toggle 未做） |
 
-- 新增 `HudRenderCallback` 注册点 + `MiniBodyComponent`
-- 新增 `CombatHudState` Store + `bong:combat/hud_state` payload
-- 左下角人体 + 双竖条渲染（百分比）
-- 伤口复用 `PhysicalBodyStore`（已有）
+### C1 · HUD 骨架 + 左下状态小控件 ✅
 
-### C2 · 两层快捷栏
+- [x] 新增 `HudRenderCallback` 注册点 + `MiniBodyComponent`（`MiniBodyHudPlanner`）
+- [x] 新增 `CombatHudState` Store + `bong:combat/hud_state` payload（`CombatHudStateStore` / `CombatHudStateHandler`）
+- [x] 左下角人体 + 双竖条渲染（百分比）（`StaminaBarHudPlanner` 等）
+- [x] 伤口复用 `PhysicalBodyStore`（已有）
 
-- 下层：扩展 MC 原生 hotbar 描边（法宝紫 + qi_invest 指示）
-- 上层：新增 `QuickUseSlotStore` + 9 格自定义 Component
-- F1-F9 KeyBinding 注册 → `UseQuickSlotIntent`
-- cast bar 渲染（对应格子下方）
+### C2 · 两层快捷栏 ✅
 
-### C3 · cast 状态机 + 打断
+- [x] 下层：扩展 MC 原生 hotbar 描边（法宝紫 + qi_invest 指示）（`WeaponHotbarHudPlanner`）
+- [x] 上层：新增 `QuickUseSlotStore` + 9 格自定义 Component（`QuickBarHudPlanner` / `QuickUseSlotStore`）
+- [x] F1-F9 KeyBinding 注册 → `UseQuickSlotIntent`（`CombatKeybindings`）
+- [x] cast bar 渲染（对应格子下方）
 
-- `CastStateStore` 新增
-- server 端 cast 管理（duration / cooldown / interrupt 检测）
-- 打断矩阵（移动/受击/控制/主动）
-- 物品返还策略
+### C3 · cast 状态机 + 打断 ✅
 
-### C4 · 通用事件流 + 节流折叠
+- [x] `CastStateStore` 新增（`CastState` / `CastStateStore` / `CastSyncHandler`）
+- [x] server 端 cast 管理（duration / cooldown / interrupt 检测）
+- [x] 打断矩阵（移动/受击/控制/主动）（`CastInterruptRules`）
+- [x] 物品返还策略（`CastOutcome`）
 
-- `UnifiedEventStore` + 多 channel 订阅
-- 节流 / 折叠算法
-- 右侧竖条 Component
+### C4 · 通用事件流 + 节流折叠 ✅
 
-### C5 · 条件渲染元素
+- [x] `UnifiedEventStore` + 多 channel 订阅（`UnifiedEventStore` / `UnifiedEventStream` / `EventStreamPushHandler`）
+- [x] 节流 / 折叠算法
+- [x] 右侧竖条 Component（`EventStreamHudPlanner`）
 
-- 截脉弹反环（中心 Canvas Component）
-- 法术体积面板（按 R 触发）
-- 屏幕边缘反馈系统（Edge Pulse / Flash / Tint / Shake / Vignette）
-- DerivedAttrs 边缘短显
-- 伪皮 / 涡流 角标
+### C5 · 条件渲染元素 ✅（部分）
 
-### C6 · InspectScreen 快捷使用 tab
+- [x] 截脉弹反环（中心 Canvas Component）（`JiemaiRingHudPlanner` / `DefenseWindowHandler`）
+- [x] 法术体积面板（按 R 触发）（`SpellVolumeHudPlanner` / `SpellVolumeStore`）
+- [x] 屏幕边缘反馈系统（Edge Pulse / Flash / Tint / Shake / Vignette）（`EdgeFeedbackHudPlanner`）
+- [x] DerivedAttrs 边缘短显（`DerivedAttrIconHudPlanner` / `FlightHudPlanner` / `TribulationBroadcastHudPlanner`）
+- [ ] 伪皮 / 涡流 角标（未实装：尚无 fake_skin / vortex_cooldown 数据流）
 
-- InspectScreen 新增第 5 个 tab
-- 拖拽流程 + `QuickSlotBindIntent`
-- server 端权威存储 + hydration
+### C6 · InspectScreen 快捷使用 tab ⏳
 
-### C7 · 特殊场景
+- [ ] InspectScreen 新增第 5 个 tab（当前仅 3 tab：装备 / 修仙 / 技艺；hotbar + quick-use 已作为左侧渲染区显示，但**无独立 tab**也**无拖拽配置 UI**）
+- [ ] 拖拽流程 + `QuickSlotBindIntent`（数据契约存在 `QuickSlotBindIntent.java`，但 client 未发送）
+- [x] server 端权威存储 + hydration（`QuickSlotConfigHandler` / `hydrateQuickUseFromStore`）
 
-- `HudRenderCallback` 内的 Screen 类型分发
-- 死亡 / 断线 二场景
-- narration 双通道路由
+### C7 · 特殊场景 ✅
 
-### C8 · 调参 + QoL
+- [x] `HudRenderCallback` 内的 Screen 类型分发（`ScreenHudVisibility`：VISIBLE / HIDDEN / CAST_BAR_ONLY）
+- [x] 死亡 / 断线 二场景
+- [x] narration 双通道路由（`NarrationHandler` / `NarrationState`：天道 narration → ChatHud；事件 → UnifiedEventStore）
 
-- 阈值可配置（config 文件）
-- 事件流隐藏 toggle（§6.4 TODO）
+### C8 · 调参 + QoL ⏳
+
+- [x] 阈值可配置（`HudConfig`）
+- [ ] 事件流隐藏 toggle（§6.4 TODO）
+
+---
+
+## §15 进度日志
+
+- 2026-04-25：C1-C5（除伪皮/涡流角标）+ C7 + C8 阈值配置已实装；C6 仅 hotbar 渲染与 hydrate 完成，拖拽 tab 未做；伪皮/涡流角标与事件流隐藏 toggle 仍待。
 
 ---
 
