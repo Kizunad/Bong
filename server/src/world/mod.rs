@@ -5,6 +5,7 @@ pub mod terrain;
 pub mod tsy;
 pub mod tsy_drain;
 pub mod tsy_filter;
+pub mod tsy_portal;
 pub mod zone;
 
 use std::fs;
@@ -86,6 +87,10 @@ pub fn register(app: &mut App) {
         Update,
         tsy_drain::tsy_drain_tick.in_set(CombatSystemSet::Physics),
     );
+    // plan-tsy-zone-v1 §3.3 / §3.4 — entry / exit portal tick；约束在
+    // DimensionTransferSet 之前，让本 tick 内发的 DimensionTransferRequest 在
+    // 同 tick 末由 apply_dimension_transfers 立即消费。
+    tsy_portal::register(app);
     app.add_systems(Startup, setup_world);
 }
 

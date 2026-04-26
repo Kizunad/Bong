@@ -115,6 +115,10 @@ impl Zone {
     }
 
     /// plan-tsy-zone-v1 §1.2 — 解析 TSY 层深（None = 不是 TSY 或后缀不规范）。
+    ///
+    /// 当前 P0 暴露公共 API，由 `!tsy-spawn` 调试命令（plan §3.1）/ worldgen plan /
+    /// loot plan 后续消费；P0 自身 drain / portal 不使用层深字段。
+    #[allow(dead_code)]
     pub fn tsy_depth(&self) -> Option<TsyDepth> {
         if !self.is_tsy() {
             return None;
@@ -131,6 +135,10 @@ impl Zone {
     }
 
     /// plan-tsy-zone-v1 §1.2 — TSY 系列 id（"tsy_lingxu_01_shallow" → "tsy_lingxu_01"）。
+    ///
+    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn`（用于 family→3-subzone 检索）
+    /// 与后续 worldgen plan。
+    #[allow(dead_code)]
     pub fn tsy_family_id(&self) -> Option<String> {
         if !self.is_tsy() {
             return None;
@@ -143,6 +151,10 @@ impl Zone {
     }
 
     /// plan-tsy-zone-v1 §1.1 — 入口层标记（active_events 含 `tsy_entry` tag）。
+    ///
+    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn` 调试命令（plan §3.1）+ worldgen plan
+    /// 用于"哪一层是着陆点"的查询。
+    #[allow(dead_code)]
     pub fn is_tsy_entry(&self) -> bool {
         self.active_events.iter().any(|e| e == "tsy_entry")
     }
@@ -152,6 +164,7 @@ impl Zone {
 ///
 /// 命名为 `TsyDepth` 而非 plan 文档原文的 `TsyLayer`，避免与
 /// `world::dimension::TsyLayer`（marker component for the bong:tsy `LayerBundle`）冲突。
+#[allow(dead_code)] // P0 仅由测试 + 公共 API 消费；运行时使用方在后续 plan 接入。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsyDepth {
     Shallow,

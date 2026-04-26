@@ -5,7 +5,7 @@
 //! 触发条件：玩家有 `TsyPresence` + 当前 zone 是 TSY 系列。
 //! 真元归零 → 发 `DeathEvent { cause: "tsy_drain" }`，由 combat lifecycle 接管。
 
-use valence::prelude::{bevy_ecs, Entity, EventWriter, Position, Query, Res, Without};
+use valence::prelude::{Entity, EventWriter, Position, Query, Res, Without};
 
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
