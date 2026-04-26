@@ -112,6 +112,16 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   4 cursed_echo, 5 wild_formation. Declared in manifest.anomaly_kinds.
     "anomaly_intensity":    LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "anomaly_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- TSY-specific layers (plan-tsy-worldgen-v1 §4.1) ---
+    # 仅在 TSY dim manifest 中产出；主世界 manifest 通过 raster_export.layer_whitelist 过滤。
+    # tsy_presence: 1 表示 TSY family 区域内（Rust hot-path mask 查询）；
+    #   maximum blend 让 family 边界外保持 0 不被覆盖。
+    # tsy_origin_id: 1=daneng_luoluo / 2=zongmen_yiji / 3=zhanchang_chendian /
+    #   4=gaoshou_sichu / 0=none.
+    # tsy_depth_tier: 1=shallow / 2=mid / 3=deep / 0=none.
+    "tsy_presence":         LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
+    "tsy_origin_id":        LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    "tsy_depth_tier":       LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
 
 
