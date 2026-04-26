@@ -144,6 +144,40 @@ public class InventoryEventHandlerTest {
     }
 
     @Test
+    void durabilityChangedBreakingArmorEmitsToast() {
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .equip(
+                com.bong.client.inventory.model.EquipSlotType.CHEST,
+                InventoryItem.createFull(
+                    1002L,
+                    "fake_spirit_hide",
+                    "假灵兽皮胸甲",
+                    2,
+                    2,
+                    5.0,
+                    "rare",
+                    "fixture",
+                    1,
+                    0.8,
+                    0.2
+                )
+            )
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"durability_changed","revision":6,"instance_id":1002,"durability":0.0}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertTrue(dispatch.alertToast().isPresent(), "armor break should return toast dispatch");
+        ServerDataDispatch.ToastSpec toast = dispatch.alertToast().orElseThrow();
+        assertEquals("护甲破损", toast.text());
+        assertEquals(1_200L, toast.durationMillis());
+    }
+
+    @Test
     void movedFromGridToHotbarRelocatesItem() {
         InventoryModel baseline = baselineWithStarterTalisman();
         InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
