@@ -276,4 +276,23 @@ mod tests {
         };
         assert!(profile.validate().is_err());
     }
+
+    #[test]
+    fn loads_default_blueprint_json_from_assets() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profile assets");
+        let profile = registry
+            .get("fake_spirit_hide")
+            .expect("fake_spirit_hide armor profile should be loaded from blueprint JSON");
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(profile.slot, EquipSlotV1::Chest);
+        assert_eq!(
+            profile.body_coverage,
+            vec![BodyPart::Chest, BodyPart::Abdomen]
+        );
+        assert_eq!(profile.kind_mitigation.get(&WoundKind::Cut), Some(&0.25));
+        assert_eq!(profile.durability_max, 100);
+        assert_eq!(profile.broken_multiplier, 0.3);
+    }
 }
