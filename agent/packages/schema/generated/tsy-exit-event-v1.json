@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "player_id",
+    "family_id",
+    "duration_ticks",
+    "qi_drained_total"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_exit",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "duration_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "qi_drained_total": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

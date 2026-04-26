@@ -2,6 +2,11 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
 pub mod terrain;
+pub mod tsy;
+pub mod tsy_dev_command;
+pub mod tsy_drain;
+pub mod tsy_filter;
+pub mod tsy_portal;
 pub mod zone;
 
 use std::fs;
@@ -9,11 +14,13 @@ use std::path::PathBuf;
 
 use valence::anvil::AnvilLevel;
 use valence::prelude::{
-    ident, App, BiomeRegistry, BlockState, Commands, DimensionTypeRegistry, Entity, LayerBundle,
-    Res, ResMut, Server, Startup, UnloadedChunk,
+    ident, App, BiomeRegistry, BlockState, Commands, DimensionTypeRegistry, Entity,
+    IntoSystemConfigs, LayerBundle, Res, ResMut, Server, Startup, UnloadedChunk, Update,
 };
 
 use self::dimension::{DimensionLayers, OverworldLayer, TsyLayer};
+
+use crate::combat::CombatSystemSet;
 
 const TEST_AREA_CHUNKS: i32 = 16;
 const CHUNK_WIDTH: i32 = 16;
@@ -73,6 +80,20 @@ pub fn register(app: &mut App) {
     zone::register(app);
     events::register(app);
     terrain::register(app);
+    // plan-tsy-zone-v1 §2.3 — drain tick 接到 combat::Physics set 内：
+    // 同 tick 顺序为 wound_bleed_tick → tsy_drain_tick → death_arbiter_tick
+    // （Physics 在 Resolve 之前，death_arbiter_tick 在 Resolve；Bevy 自动按 set
+    // chain 排序，无需 .after 显式约束）
+    app.add_systems(
+        Update,
+        tsy_drain::tsy_drain_tick.in_set(CombatSystemSet::Physics),
+    );
+    // plan-tsy-zone-v1 §3.3 / §3.4 — entry / exit portal tick；约束在
+    // DimensionTransferSet 之前，让本 tick 内发的 DimensionTransferRequest 在
+    // 同 tick 末由 apply_dimension_transfers 立即消费。
+    tsy_portal::register(app);
+    // plan-tsy-zone-v1 §3.1 — `!tsy-spawn` 调试命令的事件消费器
+    tsy_dev_command::register(app);
     app.add_systems(Startup, setup_world);
 }
 

@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "kind": "tsy_enter",
+  "tick": 12345,
+  "player_id": "kiz",
+  "family_id": "tsy_lingxu_01",
+  "return_to": {
+    "dimension": "minecraft:overworld",
+    "pos": [0.0, 65.0, 0.0]
+  },
+  "filtered_items": [
+    {
+      "instance_id": 7,
+      "template_id": "bone_coin",
+      "reason": "spirit_quality_too_high"
+    }
+  ]
+}
