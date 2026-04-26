@@ -6,6 +6,8 @@ pub mod tsy;
 pub mod tsy_dev_command;
 pub mod tsy_drain;
 pub mod tsy_filter;
+#[cfg(test)]
+mod tsy_integration_test;
 pub mod tsy_portal;
 pub mod zone;
 
