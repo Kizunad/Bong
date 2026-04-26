@@ -4001,6 +4001,11 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
+            // Flush one more tick so the post-breakthrough Cultivation change is observed
+            // by `emit_player_state_payloads` (which runs earlier in the Update chain).
+            app.update();
+            flush_all_client_packets(&mut app);
+
             let cultivation = app
                 .world()
                 .entity(entity)
@@ -4018,10 +4023,21 @@ mod tests {
             assert_eq!(player_state, &initial_state);
 
             let payloads = collect_server_data_payloads(&mut helper);
-            assert!(
-                extract_player_state_payloads(payloads.as_slice()).is_empty(),
-                "breakthrough should not emit player_state payload until PlayerStatePayload reads Cultivation"
+            let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
+            assert_eq!(
+                player_state_payloads.len(),
+                1,
+                "breakthrough should emit one updated player_state payload"
             );
+            match &player_state_payloads[0].payload {
+                ServerDataPayloadV1::PlayerState {
+                    realm, spirit_qi, ..
+                } => {
+                    assert_eq!(realm, "Induce");
+                    assert_approx_eq(*spirit_qi, 72.0);
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
 
         #[test]
