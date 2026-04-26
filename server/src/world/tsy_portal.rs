@@ -18,6 +18,11 @@ use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransf
 use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftPortal, TsyPresence};
 use crate::world::tsy_filter::{apply_entry_filter, FilteredItem};
 
+/// 出关时把玩家落点推到 entry portal trigger_radius **外** 的安全裕度（格）。
+/// 偏移量 = `trigger_radius + RETURN_ESCAPE_MARGIN`；保证欧氏距离严格大于 radius
+/// 即可——避免出关那一瞬间被同 portal 吸回去。
+const RETURN_ESCAPE_MARGIN: f64 = 1.0;
+
 /// 玩家踏进 Entry 裂缝时由 portal system emit。
 ///
 /// 由 `plan-tsy-zone-v1 §1.4` schema 接成 IPC `tsy_enter` event 推到 agent 层；
@@ -74,10 +79,14 @@ pub fn tsy_entry_portal_tick(
             // Step 1: 入场过滤（剥离高灵质物品）
             let filtered = apply_entry_filter(&mut inv);
 
-            // Step 2: 出关锚点 = 触发裂缝主世界坐标 + (0,1,0)（防卡方块）
+            // Step 2: 出关锚点 — 必须落在 entry portal 的 trigger_radius **外**，
+            // 否则出关后下一 tick 又会被同一个 entry portal 吸进去（plan §3.3 文档
+            // 写 `+ (0,1,0)` 是漏洞，距离只 1.0，而默认 trigger_radius=1.5）。
+            // 沿 +X 方向偏移 (radius + RETURN_ESCAPE_MARGIN)，保证欧氏距离 > radius。
+            let escape_offset = portal.trigger_radius + RETURN_ESCAPE_MARGIN;
             let return_to = DimensionAnchor {
                 dimension: DimensionKind::Overworld,
-                pos: portal_pos.0 + DVec3::Y,
+                pos: portal_pos.0 + DVec3::new(escape_offset, 1.0, 0.0),
             };
 
             // Step 3: attach TsyPresence
@@ -375,7 +384,16 @@ mod tests {
             let ev = &collected[0];
             assert_eq!(ev.family_id, "tsy_lingxu_01");
             assert_eq!(ev.return_to.dimension, DimensionKind::Overworld);
-            assert_eq!(ev.return_to.pos, DVec3::new(0.0, 65.0, 0.0));
+            // 出关锚点必须落在 entry portal 的 trigger_radius 外（escape margin），
+            // 这里 portal_pos = (0,64,0) + (radius=1.5 + margin=1.0, 1.0, 0.0) = (2.5, 65.0, 0.0)
+            assert_eq!(
+                ev.return_to.pos,
+                DVec3::new(0.0 + 1.5 + RETURN_ESCAPE_MARGIN, 65.0, 0.0)
+            );
+            assert!(
+                ev.return_to.pos.distance(DVec3::new(0.0, 64.0, 0.0)) > 1.5,
+                "return_to must be outside entry trigger_radius (1.5) to avoid re-entry loop"
+            );
             assert_eq!(ev.filtered.len(), 1, "高灵质骨币应当被过滤一次");
             assert_eq!(ev.filtered[0].instance_id, 7);
         }
@@ -518,6 +536,98 @@ mod tests {
             events.get_reader().read(events).count(),
             0,
             "wrong family_id should not trigger exit"
+        );
+    }
+
+    /// Regression test for codex review P1：出关后玩家被传到 return_to，必须
+    /// 落在 entry portal trigger_radius 外，否则下一 tick 又被吸进去。
+    ///
+    /// 这里只验证"几何不变量"：从 entry tick 计算出的 return_to.pos 严格在
+    /// entry portal trigger_radius 之外（不需要再跑 second-tick 模拟入场判定）。
+    #[test]
+    fn return_to_pos_lies_strictly_outside_entry_trigger_radius() {
+        let mut app = App::new();
+        app.add_event::<DimensionTransferRequest>();
+        app.add_event::<TsyEnterEmit>();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_systems(Update, tsy_entry_portal_tick);
+
+        let portal_pos = DVec3::new(10.0, 64.0, 7.0);
+        let trigger_radius = 1.5_f64;
+
+        app.world_mut().spawn((
+            Position::new([portal_pos.x, portal_pos.y, portal_pos.z]),
+            RiftPortal {
+                family_id: "tsy_test".to_string(),
+                target: DimensionAnchor {
+                    dimension: DimensionKind::Tsy,
+                    pos: DVec3::new(50.0, 80.0, 50.0),
+                },
+                trigger_radius,
+                direction: PortalDirection::Entry,
+            },
+        ));
+        app.world_mut().spawn((
+            Position::new([portal_pos.x + 0.2, portal_pos.y, portal_pos.z]),
+            empty_inv(),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<TsyEnterEmit>>();
+        let collected: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(collected.len(), 1, "should have entered exactly once");
+        let return_to_pos = collected[0].return_to.pos;
+        let dist = return_to_pos.distance(portal_pos);
+        assert!(
+            dist > trigger_radius,
+            "return_to.pos {return_to_pos:?} is at distance {dist} from portal {portal_pos:?}; \
+             must be > trigger_radius={trigger_radius} to prevent re-entry loop"
+        );
+    }
+
+    /// Regression test for codex review P1：portal 自定义 trigger_radius 时
+    /// escape offset 也要按 radius 自适应——不是写死 1 格。
+    #[test]
+    fn return_to_escape_offset_adapts_to_custom_trigger_radius() {
+        let mut app = App::new();
+        app.add_event::<DimensionTransferRequest>();
+        app.add_event::<TsyEnterEmit>();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_systems(Update, tsy_entry_portal_tick);
+
+        // 故意调成大半径
+        let trigger_radius = 5.0_f64;
+        app.world_mut().spawn((
+            Position::new([0.0, 64.0, 0.0]),
+            RiftPortal {
+                family_id: "tsy_big".to_string(),
+                target: DimensionAnchor {
+                    dimension: DimensionKind::Tsy,
+                    pos: DVec3::new(50.0, 80.0, 50.0),
+                },
+                trigger_radius,
+                direction: PortalDirection::Entry,
+            },
+        ));
+        app.world_mut().spawn((
+            Position::new([2.0, 64.0, 0.0]),
+            empty_inv(),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.update();
+        let events = app.world().resource::<Events<TsyEnterEmit>>();
+        let collected: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(collected.len(), 1);
+        let dist = collected[0]
+            .return_to
+            .pos
+            .distance(DVec3::new(0.0, 64.0, 0.0));
+        assert!(
+            dist > trigger_radius,
+            "with trigger_radius=5.0, return_to must escape > 5.0; got dist={dist}"
         );
     }
 
