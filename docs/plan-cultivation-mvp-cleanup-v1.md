@@ -285,12 +285,12 @@ static String humanizeRealm(String realmKey) {
 - 新增 `cultivation/breakthrough.rs` 的 `handle_attempt_breakthrough` 单测（mock Cultivation + MeridianSystem）
 
 **Java 侧**：
-- `PlayerStateViewModelTest.java` 的 `"qi_refining_3"` → `"Induce"`
-- `PlayerStateHandlerTest.java`（两个）的 `"foundation_1"` / `"qi_refining_3"` → `"Induce"` 或 `"Condense"`
+- `PlayerStateViewModelTest.java` 的旧 ladder realm key → `"Induce"`
+- `PlayerStateHandlerTest.java`（两个）的旧 ladder realm key → `"Induce"` 或 `"Condense"`
 - `BongNetworkHandlerPayloadFixtureTest.java` 同改
-- `InventorySnapshotHandlerTest.java` 的 `"qi_refining_1"` 改 `"Awaken"`
-- `state/PlayerStateViewModelTest.java` 的 `"foundation_establishment"` → `"Induce"` 或删测试（如果是专测 stage parse 的，整块删）
-- `test/resources/bong/payloads/valid-player-state.json` 的 `"realm": "qi_refining_3"` → `"realm": "Induce"`
+- `InventorySnapshotHandlerTest.java` 的旧 ladder realm key 改 `"Awaken"`
+- `state/PlayerStateViewModelTest.java` 的旧 stage parse fixture → `"Induce"` 或删测试（如果是专测 stage parse 的，整块删）
+- `test/resources/bong/payloads/valid-player-state.json` 的 realm fixture → `"realm": "Induce"`
 
 ### 2.7 SQL 持久化 schema migration
 
