@@ -17,26 +17,49 @@ RASTER_DIR="worldgen/generated/terrain-gen/rasters"
 WORLDGEN_RASTER_DIR="generated/terrain-gen/rasters"
 MANIFEST="$RASTER_DIR/manifest.json"
 
-# --- Step 1: Regenerate rasters ---
+# plan-tsy-worldgen-v1 §6.1 — TSY 双 manifest 改造
+TSY_BLUEPRINT="server/zones.tsy.json"
+TSY_RASTER_DIR="worldgen/generated/terrain-gen-tsy/rasters"
+WORLDGEN_TSY_RASTER_DIR="generated/terrain-gen-tsy/rasters"
+TSY_MANIFEST="$TSY_RASTER_DIR/manifest.json"
+
+# --- Step 1: Regenerate rasters (overworld + optional TSY) ---
 if [ "$SKIP_REGEN" = false ]; then
-    echo "==> [1/4] Regenerating terrain rasters..."
-    (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster) || {
-        echo "FAIL: terrain generation failed"; exit 1
-    }
+    if [ -f "$TSY_BLUEPRINT" ]; then
+        echo "==> [1/4] Regenerating terrain rasters (overworld + tsy)..."
+        (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster \
+             --tsy-blueprint "../$TSY_BLUEPRINT" \
+             --tsy-output-dir "$WORLDGEN_TSY_RASTER_DIR/..") || {
+            echo "FAIL: terrain generation failed"; exit 1
+        }
+    else
+        echo "==> [1/4] Regenerating terrain rasters (overworld only — no $TSY_BLUEPRINT)..."
+        (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster) || {
+            echo "FAIL: terrain generation failed"; exit 1
+        }
+    fi
     echo "    OK"
 else
     echo "==> [1/4] Skipping raster regeneration (--skip-regen)"
 fi
 
-# --- Step 2: Validate raster data ---
+# --- Step 2: Validate raster data (overworld + optional TSY) ---
 if [ "$SKIP_VALIDATE" = false ]; then
     echo "==> [2/4] Validating raster data..."
     (cd worldgen && .venv/bin/python -c "
 from scripts.terrain_gen.harness.raster_check import validate_rasters
 import sys
 ok, msg = validate_rasters('$WORLDGEN_RASTER_DIR')
+print('[overworld]')
 print(msg)
-sys.exit(0 if ok else 1)
+ok_all = ok
+import os.path
+if os.path.isdir('$WORLDGEN_TSY_RASTER_DIR'):
+    ok2, msg2 = validate_rasters('$WORLDGEN_TSY_RASTER_DIR')
+    print('[tsy]')
+    print(msg2)
+    ok_all = ok_all and ok2
+sys.exit(0 if ok_all else 1)
 ") || { echo "FAIL: raster validation failed"; exit 1; }
     echo "    OK"
 else
@@ -53,7 +76,12 @@ echo "==> [4/4] Restarting server..."
 pkill -f 'target/debug/bong-server' 2>/dev/null || true
 sleep 0.5
 MANIFEST_ABS="$(pwd)/$MANIFEST"
-(cd server && BONG_TERRAIN_RASTER_PATH="$MANIFEST_ABS" cargo run > /tmp/bong-server.log 2>&1 &)
+TSY_MANIFEST_ABS="$(pwd)/$TSY_MANIFEST"
+ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
+if [ -f "$TSY_MANIFEST_ABS" ]; then
+    ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
+fi
+(cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1 &)
 disown
 sleep 2
 
