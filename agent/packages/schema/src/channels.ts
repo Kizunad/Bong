@@ -39,6 +39,9 @@ export const CHANNELS = {
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
 
+  /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
+  ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
+
   /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
   BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
 
@@ -71,6 +74,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CULTIVATION_DEATH,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.ARMOR_DURABILITY_CHANGED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
   CHANNELS.SKILL_XP_GAIN,

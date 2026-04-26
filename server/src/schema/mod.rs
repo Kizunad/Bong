@@ -5,6 +5,7 @@
 pub mod agent_command;
 pub mod agent_world_model;
 pub mod alchemy;
+pub mod armor_event;
 pub mod botany;
 pub mod channels;
 pub mod chat_message;

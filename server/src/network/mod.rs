@@ -278,6 +278,8 @@ pub fn register(app: &mut App) {
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
+            inventory_event_emit::publish_armor_durability_changed_events
+                .after(crate::combat::resolve::resolve_attack_intents),
             inventory_event_emit::emit_durability_changed_inventory_events,
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
