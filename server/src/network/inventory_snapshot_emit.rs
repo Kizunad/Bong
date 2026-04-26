@@ -324,6 +324,7 @@ fn rarity_from_runtime(rarity: ItemRarity) -> ItemRarityV1 {
         ItemRarity::Rare => ItemRarityV1::Rare,
         ItemRarity::Epic => ItemRarityV1::Epic,
         ItemRarity::Legendary => ItemRarityV1::Legendary,
+        ItemRarity::Ancient => ItemRarityV1::Ancient,
     }
 }
 

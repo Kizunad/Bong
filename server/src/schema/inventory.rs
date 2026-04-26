@@ -40,6 +40,8 @@ pub enum ItemRarityV1 {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.4 — TSY 上古遗物 wire 形态。
+    Ancient,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

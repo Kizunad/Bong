@@ -37,6 +37,9 @@ export const ItemRarityV1 = Type.Union([
   Type.Literal("rare"),
   Type.Literal("epic"),
   Type.Literal("legendary"),
+  // plan-tsy-loot-v1 §1.4 — TSY 上古遗物。spirit_quality 恒为 0，
+  // durability 字段语义切换为"剩余使用次数"（1/3/5）。
+  Type.Literal("ancient"),
 ]);
 export type ItemRarityV1 = Static<typeof ItemRarityV1>;
 

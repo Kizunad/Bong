@@ -170,6 +170,10 @@
                   {
                     "const": "legendary",
                     "type": "string"
+                  },
+                  {
+                    "const": "ancient",
+                    "type": "string"
                   }
                 ]
               },
@@ -392,6 +396,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -598,6 +606,10 @@
                     },
                     {
                       "const": "legendary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ancient",
                       "type": "string"
                     }
                   ]
@@ -806,6 +818,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1012,6 +1028,10 @@
                     },
                     {
                       "const": "legendary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ancient",
                       "type": "string"
                     }
                   ]
@@ -1220,6 +1240,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1426,6 +1450,10 @@
                     },
                     {
                       "const": "legendary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ancient",
                       "type": "string"
                     }
                   ]
@@ -1634,6 +1662,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1840,6 +1872,10 @@
                     },
                     {
                       "const": "legendary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ancient",
                       "type": "string"
                     }
                   ]
@@ -2048,6 +2084,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -2255,6 +2295,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -2461,6 +2505,10 @@
                     },
                     {
                       "const": "legendary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ancient",
                       "type": "string"
                     }
                   ]
@@ -2674,6 +2722,10 @@
                   },
                   {
                     "const": "legendary",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ancient",
                     "type": "string"
                   }
                 ]

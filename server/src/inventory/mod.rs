@@ -10,6 +10,9 @@ use valence::prelude::{
 
 use crate::cultivation::death_hooks::PlayerRevived;
 
+// plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
+pub mod ancient_relics;
+
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
 const DEFAULT_LOADOUT_PATH: &str = "assets/inventory/loadouts/default.toml";
@@ -90,6 +93,9 @@ pub enum ItemRarity {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.1 — 上古遗物，仅由 TSY 自然 spawn 产生，
+    /// 灵质恒为 0（"无灵"），耐久作为"剩余使用次数"语义。
+    Ancient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
