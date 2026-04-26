@@ -3,6 +3,7 @@ pub mod dimension_transfer;
 pub mod events;
 pub mod terrain;
 pub mod tsy;
+pub mod tsy_dev_command;
 pub mod tsy_drain;
 pub mod tsy_filter;
 pub mod tsy_portal;
@@ -91,6 +92,8 @@ pub fn register(app: &mut App) {
     // DimensionTransferSet 之前，让本 tick 内发的 DimensionTransferRequest 在
     // 同 tick 末由 apply_dimension_transfers 立即消费。
     tsy_portal::register(app);
+    // plan-tsy-zone-v1 §3.1 — `!tsy-spawn` 调试命令的事件消费器
+    tsy_dev_command::register(app);
     app.add_systems(Startup, setup_world);
 }
 

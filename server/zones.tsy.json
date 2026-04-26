@@ -1,0 +1,35 @@
+{
+  "_doc": "plan-tsy-zone-v1 §1.1 / §3.1 — 活坍缩渊 subzone blueprint。结构与 zones.json 同 schema，区别仅在 dimension=tsy。!tsy-spawn 调试命令读取本文件 + register_runtime_zone 动态追加到 ZoneRegistry。worldgen plan (plan-tsy-worldgen-v1) 落地后由 blueprint→manifest 自动产出，本静态文件转骨架兜底。",
+  "zones": [
+    {
+      "name": "tsy_lingxu_01_shallow",
+      "dimension": "tsy",
+      "aabb": { "min": [0, 40, 0], "max": [100, 120, 100] },
+      "spirit_qi": -0.4,
+      "danger_level": 4,
+      "active_events": ["tsy_entry", "portal_rift"],
+      "patrol_anchors": [[50, 80, 50]],
+      "blocked_tiles": []
+    },
+    {
+      "name": "tsy_lingxu_01_mid",
+      "dimension": "tsy",
+      "aabb": { "min": [0, 0, 0], "max": [100, 40, 100] },
+      "spirit_qi": -0.7,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[50, 20, 50]],
+      "blocked_tiles": []
+    },
+    {
+      "name": "tsy_lingxu_01_deep",
+      "dimension": "tsy",
+      "aabb": { "min": [0, -40, 0], "max": [100, 0, 100] },
+      "spirit_qi": -1.1,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[50, -20, 50]],
+      "blocked_tiles": []
+    }
+  ]
+}
