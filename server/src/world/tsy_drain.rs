@@ -74,9 +74,12 @@ pub fn tsy_drain_tick(
         state.spirit_qi -= drain;
         if was_alive && state.spirit_qi <= 0.0 {
             // 归零 → P0 发 DeathEvent（cause="tsy_drain"），死亡结算由 P1 plan-tsy-loot 处理。
+            // 环境死亡：无攻击者。
             deaths.send(DeathEvent {
                 target: entity,
                 cause: "tsy_drain".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: clock.tick,
             });
         }

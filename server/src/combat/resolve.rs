@@ -42,7 +42,11 @@ use crate::world::events::ActiveEventsResource;
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
 const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
 
-fn apply_armor_mitigation(wound: &mut Wound, derived: &DerivedAttrs, contam: &mut f64) -> Option<f32> {
+fn apply_armor_mitigation(
+    wound: &mut Wound,
+    derived: &DerivedAttrs,
+    contam: &mut f64,
+) -> Option<f32> {
     let Some(&m) = derived.defense_profile.get(&(wound.location, wound.kind)) else {
         return None;
     };
@@ -432,14 +436,16 @@ pub fn resolve_attack_intents(
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
         if let Some(attrs) = defender_attrs {
-            let armor_mitigation = apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            let armor_mitigation =
+                apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
             // 同步污染 source 的最后一条（本次命中刚 push）。
             if let Some(last_contam) = contamination.entries.last_mut() {
                 last_contam.amount = emitted_contam_delta;
             }
 
             // 护甲命中：扣减装备耐久（少量）。
-            if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref()) {
+            if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
+            {
                 if let Ok(mut inventory) = inventories.get_mut(target_entity) {
                     let best: Option<(u64, u32, f64, f32)> = [
                         EQUIP_SLOT_HEAD,
@@ -458,7 +464,8 @@ pub fn resolve_attack_intents(
                         if base_m <= 0.0 {
                             return None;
                         }
-                        let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
+                        let effective_mul =
+                            ap.effective_multiplier_for_durability_ratio(item.durability);
                         let effective_m = (base_m * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
                         if effective_m <= 0.0 {
                             return None;
@@ -627,9 +634,17 @@ pub fn resolve_attack_intents(
                 )
             })
         {
+            // plan-tsy-loot-v1 §6 — 攻击链路：attacker entity 来自 intent；
+            // attacker_player_id 仅在攻击者是 player 时填（canonical id 形如
+            // "offline:Foo"），NPC 攻击者保留 None。
+            let attacker_player_id = attacker_id
+                .starts_with("offline:")
+                .then(|| attacker_id.clone());
             death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
+                attacker: Some(intent.attacker),
+                attacker_player_id,
                 at_tick: clock.tick,
             });
         }
@@ -970,16 +985,18 @@ mod tests {
         app.add_event::<InventoryDurabilityChangedEvent>();
 
         app.insert_resource(crate::inventory::ItemRegistry::default());
-        app.insert_resource(ArmorProfileRegistry::from_map(std::collections::HashMap::from([(
-            "fake_spirit_hide".to_string(),
-            ArmorProfile {
-                slot: EquipSlotV1::Chest,
-                body_coverage: vec![BodyPart::Chest],
-                kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
-                durability_max: 100,
-                broken_multiplier: 0.3,
-            },
-        )])));
+        app.insert_resource(ArmorProfileRegistry::from_map(
+            std::collections::HashMap::from([(
+                "fake_spirit_hide".to_string(),
+                ArmorProfile {
+                    slot: EquipSlotV1::Chest,
+                    body_coverage: vec![BodyPart::Chest],
+                    kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
+                    durability_max: 100,
+                    broken_multiplier: 0.3,
+                },
+            )]),
+        ));
 
         app.add_systems(
             Update,
@@ -1060,7 +1077,8 @@ mod tests {
         // event.damage 是 mitigation 之后的 wound_severity（已乘 1-m）。
         // emitted_contam_delta = init_damage * 0.25 * 1 * 0.8 * (1-m) * MULTIPLIER
         //                       = event.damage * 0.25 * 1 * 0.8 * MULTIPLIER。
-        let expected_contam = f64::from(event.damage) * 0.25 * 1.0 * 0.8 * ARMOR_HIT_CONTAMINATION_MULTIPLIER;
+        let expected_contam =
+            f64::from(event.damage) * 0.25 * 1.0 * 0.8 * ARMOR_HIT_CONTAMINATION_MULTIPLIER;
         assert_eq!(event.contam_delta, expected_contam);
 
         let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
