@@ -320,7 +320,7 @@ struct DeathCauseRegistry { ... }
 #### 移动速度（参考真人）
 
 ```
-人类基线 (untrained mortal):
+人类基线 (untrained human):
   walk_speed   = 1.4 m/s   (5 km/h，散步)
   jog_speed    = 3.0 m/s   (11 km/h，慢跑，长时持续)
   sprint_speed = 5.5 m/s   (20 km/h，全力冲刺，~10s 内耗尽)

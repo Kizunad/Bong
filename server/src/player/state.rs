@@ -1594,7 +1594,7 @@ mod player_state_tests {
         }
 
         let legacy_state = LegacyPlayerStateV0 {
-            realm: "qi_refining_3".to_string(),
+            realm: "Induce".to_string(),
             spirit_qi: 78.0,
             spirit_qi_max: 100.0,
             karma: 0.2,
