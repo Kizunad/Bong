@@ -5,8 +5,10 @@
 //! marker entities into the appropriate Valence layer. Failure handling
 //! (missing tag / unknown enum) follows §1.4: log warn + skip, never panic.
 //!
-//! POI tag convention (§1.1): `Vec<String>` of `"key:value"` pairs; multi-value
-//! tags repeat the same key (e.g. two `loot_pool:X` entries → multiple pools).
+//! POI tag convention (§1.1): `Vec<String>` of `"key:value"` pairs. Multi-value
+//! semantics are NOT supported by `parse_tags` — duplicate keys collapse
+//! last-write-wins. If P3 introduces multi-`loot_pool` semantics it must
+//! migrate this helper to `HashMap<&str, Vec<&str>>` and update callers.
 //!
 //! Cross-dim split (§架构反转 2026-04-24):
 //! - overworld provider hosts only `rift_portal direction=entry`
@@ -20,7 +22,8 @@
 
 use crate::world::dimension::DimensionKind;
 use crate::world::dimension::DimensionLayers;
-use crate::world::terrain::{TerrainProvider, TerrainProviders};
+use crate::world::setup_world;
+use crate::world::terrain::TerrainProviders;
 use crate::world::tsy::{
     DimensionAnchor, LootContainer, NpcAnchor, PortalDirection, RelicCoreSlot, RiftPortal,
 };
@@ -57,6 +60,9 @@ const KNOWN_NPC_ARCHETYPES: &[&str] = &[
 const KNOWN_NPC_TRIGGERS: &[&str] = &["on_enter", "on_relic_touched", "always"];
 
 pub fn register(app: &mut App) {
+    // Bevy 0.14 默认并行 Startup —— 必须显式 .after(setup_world) 让 consumer
+    // 在 TerrainProviders / DimensionLayers 资源插入之后运行；否则
+    // Option<Res<...>> 全是 None，4 个系统全 silent skip，看起来"成功跑了 0 个 marker"。
     app.add_systems(
         Startup,
         (
@@ -64,7 +70,8 @@ pub fn register(app: &mut App) {
             spawn_tsy_containers,
             spawn_tsy_npc_anchors,
             spawn_tsy_relic_slots,
-        ),
+        )
+            .after(setup_world),
     );
 }
 
@@ -110,9 +117,21 @@ pub fn spawn_rift_portals(
             warn_skip("rift_portal", &poi.zone, poi.pos_xyz, "missing family_id");
             continue;
         };
-        let target_pos = parse_target_family_pos_xyz(&tags)
-            .or_else(|| resolve_tsy_shallow_center(providers.tsy.as_ref().map(|p| p), &family_id))
-            .unwrap_or(DVec3::ZERO);
+        // Entry portal must resolve to an explicit TSY-side spawn coord.
+        // Fallback to DVec3::ZERO would silently teleport players into the
+        // void; §1.4 mandates warn+skip on incomplete data.
+        // raster_check invariant §4.3 #6 already enforces this tag at validate
+        // time, but defend at runtime too — a stale manifest must not fall back
+        // to (0,0,0) and silently void the player.
+        let Some(target_pos) = parse_target_family_pos_xyz(&tags) else {
+            warn_skip(
+                "rift_portal",
+                &poi.zone,
+                poi.pos_xyz,
+                "missing target_family_pos_xyz tag (entry portals require explicit TSY coord)",
+            );
+            continue;
+        };
 
         commands.spawn((
             RiftPortal {
@@ -213,7 +232,23 @@ pub fn spawn_tsy_containers(
             );
             continue;
         };
-        let lock = parse_known(&tags, "locked", KNOWN_CONTAINER_LOCKS);
+        // 缺 `locked:` tag 视为 unlocked；写了但值未知（typo 风险）需要 warn
+        // 而非默默 unlocked，否则 `locked:bone_key` 拼写错就让箱子直接打开。
+        let lock = match tags.get("locked").copied() {
+            Some(value) if KNOWN_CONTAINER_LOCKS.contains(&value) => Some(value.to_string()),
+            Some(value) => {
+                tracing::warn!(
+                    "[bong][tsy-poi] loot_container at zone={} pos=({:.1},{:.1},{:.1}): \
+                     unknown locked value {value:?}, treating as unlocked",
+                    poi.zone,
+                    poi.pos_xyz[0],
+                    poi.pos_xyz[1],
+                    poi.pos_xyz[2]
+                );
+                None
+            }
+            None => None,
+        };
         let loot_pool = tags.get("loot_pool").map(|s| s.to_string());
 
         commands.spawn((
@@ -307,8 +342,8 @@ pub fn spawn_tsy_relic_slots(
 // ---------- Tag parsing helpers ----------
 
 /// Parse `tags: Vec<String>` (each element shaped `"key:value"`) into a flat
-/// HashMap. Multi-value tags collapse to last-write-wins; if downstream needs
-/// multi-value we extend to `HashMap<String, Vec<String>>`.
+/// HashMap. Duplicate keys collapse last-write-wins — multi-value semantics
+/// are explicitly NOT supported (see module doc).
 fn parse_tags(raw: &[String]) -> std::collections::HashMap<&str, &str> {
     let mut out = std::collections::HashMap::new();
     for tag in raw {
@@ -358,21 +393,6 @@ fn parse_f64(tags: &std::collections::HashMap<&str, &str>, key: &str) -> Option<
 
 fn parse_u8(tags: &std::collections::HashMap<&str, &str>, key: &str) -> Option<u8> {
     tags.get(key).copied()?.parse::<u8>().ok()
-}
-
-/// Look up the `_shallow` zone center in the TSY provider's POI set, falling
-/// back to `(50, 80, 50)` if unresolved. Entry portals on the overworld side
-/// rely on this when the blueprint omits `target_family_pos_xyz` — by
-/// convention the family's TSY origin is at `_shallow` zone center.
-fn resolve_tsy_shallow_center(tsy: Option<&TerrainProvider>, family_id: &str) -> Option<DVec3> {
-    let tsy = tsy?;
-    let suffix = format!("tsy_{family_id}_shallow");
-    for poi in tsy.pois() {
-        if poi.zone == suffix && poi.kind == "rift_portal" {
-            return Some(poi_pos_dvec3(poi.pos_xyz));
-        }
-    }
-    None
 }
 
 fn poi_pos_dvec3(pos: [f32; 3]) -> DVec3 {

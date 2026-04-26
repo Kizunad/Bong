@@ -62,9 +62,10 @@ class BlueprintZone:
     worldgen: ZoneWorldgenConfig
     pois: tuple[PoiSpec, ...] = ()
     # plan-tsy-worldgen-v1 §2.2.d — TSY 架构反转后 zone 必须显式标位面。
-    #   "minecraft:overworld" 默认 / "bong:tsy" 由 zones.tsy.json 写。
-    #   Rust ZoneConfig 已支持 (server/src/world/zone.rs:347, 474)。
-    dimension: str = "minecraft:overworld"
+    #   "overworld" 默认 / "tsy" 由 zones.tsy.json 写。
+    #   Rust ZoneConfig 已支持 (server/src/world/zone.rs:347, 474)，
+    #   实际值域对齐 DimensionKind serde rename_all = "snake_case"。
+    dimension: str = "overworld"
 
 
 @dataclass(frozen=True)

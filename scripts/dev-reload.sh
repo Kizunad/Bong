@@ -19,8 +19,9 @@ MANIFEST="$RASTER_DIR/manifest.json"
 
 # plan-tsy-worldgen-v1 §6.1 — TSY 双 manifest 改造
 TSY_BLUEPRINT="server/zones.tsy.json"
-TSY_RASTER_DIR="worldgen/generated/terrain-gen-tsy/rasters"
-WORLDGEN_TSY_RASTER_DIR="generated/terrain-gen-tsy/rasters"
+WORLDGEN_TSY_OUTPUT_DIR="generated/terrain-gen-tsy"
+TSY_RASTER_DIR="worldgen/$WORLDGEN_TSY_OUTPUT_DIR/rasters"
+WORLDGEN_TSY_RASTER_DIR="$WORLDGEN_TSY_OUTPUT_DIR/rasters"
 TSY_MANIFEST="$TSY_RASTER_DIR/manifest.json"
 
 # --- Step 1: Regenerate rasters (overworld + optional TSY) ---
@@ -29,7 +30,7 @@ if [ "$SKIP_REGEN" = false ]; then
         echo "==> [1/4] Regenerating terrain rasters (overworld + tsy)..."
         (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster \
              --tsy-blueprint "../$TSY_BLUEPRINT" \
-             --tsy-output-dir "$WORLDGEN_TSY_RASTER_DIR/..") || {
+             --tsy-output-dir "$WORLDGEN_TSY_OUTPUT_DIR") || {
             echo "FAIL: terrain generation failed"; exit 1
         }
     else

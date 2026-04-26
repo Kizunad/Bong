@@ -102,7 +102,7 @@ pub fn register(app: &mut App) {
     app.add_systems(Startup, setup_world);
 }
 
-fn setup_world(
+pub fn setup_world(
     mut commands: Commands,
     server: Res<Server>,
     mut dimensions: ResMut<DimensionTypeRegistry>,
