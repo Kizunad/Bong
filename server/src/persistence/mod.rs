@@ -1041,7 +1041,17 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 ",
             )?;
         }
-        transaction.execute_batch("PRAGMA user_version = 13;")?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_cultivation (
+                username TEXT PRIMARY KEY,
+                cultivation_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 13;
+            ",
+        )?;
         transaction.commit()?;
     }
 
