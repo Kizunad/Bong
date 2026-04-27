@@ -2978,3 +2978,117 @@ M3.6 — 天劫成型：C6 完成，化虚渡劫全服广播
 
 - 2026-04-21：C1+C2+C3 验收通过——`server/src/combat/{components,resolve,lifecycle,raycast,status,events,debug}.rs` 全数落地，IPC 双通道 `bong:combat_realtime` / `bong:combat_summary` 双端对齐（`agent/packages/schema/src/combat-event.ts` + `server/src/network/combat_bridge.rs`），`DeathEvent` → `DeathArbiter` → `PlayerRevived` / `PlayerTerminated` 收口，C4+ 终结归档与全部客户端 UI 仍按 worktree v1 边界禁碰。
 - 2026-04-25：本地核查代码确认 C1/C2/C3 server 侧已实装（`Wounds` / `AttackIntent` / `Lifecycle` / `DefenseWindow` / `StatusEffectKind::{Bleeding,Stunned,Slowed,DamageAmp}` 全在）；阶段表与小节标题同步勾 ✅。
+
+---
+
+## Finish Evidence
+
+> 消费时间：2026-04-28 | 消费模式：代码已验收，归档沉淀
+
+### 落地清单
+
+#### C1：基础设施 + 受伤与气血 ✅
+
+| 模块 | 文件路径 | 核心内容 |
+|------|---------|---------|
+| 战斗组件 | `server/src/combat/components.rs` | `Wounds` / `Stamina` (含 `StaminaState`) / `CombatState` / `DefenseWindow` / `Lifecycle` (含 `LifecycleState` / `RevivalDecision`) / `DerivedAttrs` / `StatusEffects` / `ActiveStatusEffect` / `Casting` / `UnlockedStyles` / `QuickSlotBindings` / `BodyRefiningMarker` |
+| 事件定义 | `server/src/combat/events.rs` | `AttackReach` / `AttackIntent` / `DefenseIntent` / `StatusEffectKind` / `ApplyStatusEffectIntent` / `CombatEvent` / `DeathEvent` / `DeathInsightRequested` / `RevivalActionIntent` / `DebugCombatCommand` |
+| 模块注册 | `server/src/combat/mod.rs` | 8 个 Bevy Event 注册 + 系统管线编排（`SpawnSet` / `SyncSet` / `PhysicsSet` / `StatusSet` / `LifecycleSet` / `ResolveSet` / `EmitSet`） |
+| Raycast 工具 | `server/src/combat/raycast.rs` | AABB slab-test 自写 raycast（方案 A），含 `body_part_from_y_ratio()` 部位分类 |
+| 调试命令 | `server/src/combat/debug.rs` | `/wound add` / `/health set` / `/stamina set` 等调试入口 |
+| 状态效果 | `server/src/combat/status.rs` | `StatusEffectKind::Bleeding/Stunned/Slowed/DamageAmp/QiCorrosion` + apply/dispel tick |
+| 单元测试 | `server/src/combat/tests.rs` | raycast / body_part / stamina 状态机 等测试 |
+| 死亡生命周期 | `server/src/combat/lifecycle.rs` | `death_arbiter_tick()` / `near_death_tick()` / `handle_revival_action_intents()` / `auto_confirm_revival_decisions()` / `wound_bleed_tick()` / `stamina_tick()` / `combat_state_tick()` / `sync_combat_state_from_events()` |
+| 攻击事件链测试 | `server/src/combat/death_event_attacker_chain_test.rs` | DeathEvent 的 attacker 链完整性测试 |
+| 武器运行时 | `server/src/combat/weapon.rs` | `Weapon` component + 武器类型/材质/耐久/导流系数 |
+| 护甲 | `server/src/combat/armor.rs` / `armor_sync.rs` | 护甲 profile + 耐久消耗/破损降级/体修 buff |
+
+#### C2：完整攻击事务 + 最小状态效果 ✅
+
+| 模块 | 文件路径 | 核心内容 |
+|------|---------|---------|
+| 攻击事务 | `server/src/combat/resolve.rs` | `resolve_attack_intents()` 六步管线：校验 → 衰减 → 射线命中 → 部位分类 → 防御者结算 → 事件广播 |
+| 防御意图 | `server/src/combat/resolve.rs` | `apply_defense_intents()` 截脉防御处理 |
+| 战斗桥接 | `server/src/network/combat_bridge.rs` | `CombatEvent` / `DeathEvent` → Redis outbound（realtime + summary 双通道节流） |
+| 调试桥接 | `server/src/player/gameplay.rs` | `bridge_debug_combat_action()`：`/bong combat` 命令 → `GameplayActionQueue` → `AttackIntent` Bevy event |
+| 距离衰减 | `server/src/combat/resolve.rs` (内联) | 按染色 + 载体品质 + 距离计算 `decay_factor` |
+| 污染写入 | `server/src/combat/resolve.rs` (内联) | 命中后写入 `Contamination.entries` + `MeridianSystem.throughput_current` |
+| 状态效果注册 | `server/src/combat/status.rs` | `EFFECT_REGISTRY` 最小子集 `{Bleeding, Stunned, Slowed, DamageAmp}` |
+| 属性聚合 | `server/src/combat/components.rs` `DerivedAttrs` | `reset_from_base()` + `apply_modifier()` — 下游只读消费 |
+
+#### C3：死亡-重生流程 + IPC Schema ✅
+
+| 模块 | 文件路径 | 核心内容 |
+|------|---------|---------|
+| DeathArbiter | `server/src/combat/lifecycle.rs:256` | `death_arbiter_tick()` 消费 `DeathEvent` → 运数豁免/概率判定/遗念请求/物品掉落/`PlayerRevived` 发布 |
+| NearDeath | `server/src/combat/lifecycle.rs:570` | `near_death_tick()` 30s 自救窗口 + health 恢复检测 |
+| 重生处理 | `server/src/combat/lifecycle.rs:699` | `handle_revival_action_intents()` 运数期/劫数期分流 → `PlayerRevived` 或终结 |
+| Redis 通道 | `server/src/schema/channels.rs:22-23` | `CH_COMBAT_REALTIME = "bong:combat_realtime"` / `CH_COMBAT_SUMMARY = "bong:combat_summary"` |
+| Redis 发布 | `server/src/network/redis_bridge.rs:287-305` | `RedisOutbound::CombatRealtime` / `CombatSummary` → `RedisIoCommand::Publish` |
+| TS Schema | `agent/packages/schema/src/combat-event.ts` | `CombatRealtimeEventV1` / `CombatSummaryV1` TypeBox 定义 |
+| Schema 注册 | `agent/packages/schema/src/schema-registry.ts` | `combatRealtimeEventV1` / `combatSummaryV1` 注册入 registry |
+| 遗念工具 | `agent/packages/tiandao/src/death-insight-runtime.ts` | Agent 层遗念生成 runtime |
+
+### 关键 Commit（已在 main 历史中）
+
+| Hash | 日期 | 消息 |
+|------|------|------|
+| `b7b8461f` | 2026-04 | `feat(server): 实装死亡生命周期 v1（寿元/劫数/终结/遗念）` |
+| `bb801a92` | 2026-04 | `fix(server): 修复运数期 24h 判定并补齐遗念重生概率` |
+| `3ad73f90` | 2026-04 | `feat(server): 补齐死亡生命周期续命与夺舍闭环` |
+| `6891a3a6` | 2026-04 | `fix(server): 修复死亡生命周期 review 问题` |
+| `6d71f3e3` | 2026-04 | `合并 main：解决死亡生命周期分支冲突` |
+| `29f8033c` | 2026-04 | `plan-tsy-zone-followup-v1: 集成测 + Server→Redis 桥` |
+| `688384e3` | 2026-04 | `refactor(cultivation): 清理旧 ladder 并统一 realm 来源` |
+| `b7423fdd` | 2026-04 | `feat: 完成护甲 v1 战斗与 HUD 闭环 (#52)` |
+| `7072cfdf` | 2026-04 | `plan-armor-v1: P1 护甲耐久消耗/破损降级/体修buff/client HUD (#56)` |
+| `ff0bff7d` | 2026-04 | `plan-forge-v1: 炼器（武器）IPC Schema + 客户端 stores/handlers/UI 占位 (#61)` |
+
+### 测试结果
+
+```
+# Server (Rust)
+$ cd server && cargo test
+1539 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.29s
+
+涵盖：
+- combat::tests (raycast / body_part / stamina 状态机)
+- combat::death_event_attacker_chain_test (DeathEvent chain 完整性)
+- combat::lifecycle (death_arbiter / near_death / revival)
+- combat::status (StatusEffect apply/dispel/tick)
+- combat::resolve (AttackIntent 解析 + hit/miss/outofreach)
+- schema::channels (channel 常量断言)
+- network::combat_bridge (bridge 发布逻辑)
+- cultivation::components (ContamSource attacker_id serde roundtrip)
+- world::zone (负 zone.spirit_qi 边界)
+```
+
+### 跨仓库核验
+
+| 栈 | 命中 Symbol |
+|----|------------|
+| **Server (Rust)** | `Wounds` / `Stamina` / `CombatState` / `Lifecycle` / `DerivedAttrs` / `StatusEffects` / `AttackIntent` / `DefenseIntent` / `CombatEvent` / `DeathEvent` / `resolve_attack_intents` / `death_arbiter_tick` / `CH_COMBAT_REALTIME` / `CH_COMBAT_SUMMARY` / `CombatBridge` |
+| **Agent (TypeScript)** | `CombatRealtimeEventV1` / `CombatSummaryV1` / `combatRealtimeEventV1`(schema-registry) / `deathInsight`(tiandao runtime) |
+| **Client (Java/Fabric)** | `CombatHudStateStore` / `WoundsStore` / `StatusEffectStore` / `DerivedAttrsStore` / `DeathScreen` / `TerminateScreen` / `DefenseWindowStore` / `CastStateStore` / `WeaponEquippedStore` / `TreasureEquippedStore` / `CombatKeybindings` / 50+ 文件 |
+
+### Plan 设计 vs 实际实现差异
+
+| Plan 要求 (§6 "双战斗系统收敛") | 实际实现 | 评估 |
+|---|---|---|
+| `/bong combat` 路由到新 `AttackIntentQueue` | 走 `GameplayActionQueue` → `bridge_debug_combat_action()` → `AttackIntent` Bevy event | 功能等价——已实现 debug bridge 模式；命名不同但语义一致 |
+| `apply_combat_action` 加 `#[cfg(debug_assertions)]` 门控 | 该函数已在重构中消失，替换为 `bridge_debug_combat_action()` | 旧代码已清理 |
+| `GameplayAction::Combat` 标记 `#[deprecated]` | 未添加 deprecation 注解 | 轻量遗漏——变体仍被 `bridge_debug_combat_action` 消费，加注解需全链路 `#[allow(deprecated)]` 配合，改动面大，留待后续 plan 统一收敛 |
+
+### 遗留 / 后续
+
+| 待办 | 归属 Plan | 状态 |
+|------|----------|------|
+| C4 终结归档（亡者博物馆） | 本 plan（当前 worktree 边界禁碰） | 待后续 worktree |
+| C5 四攻三防完整流派（暗器/阵法/毒蛊/替尸/涡流） | 本 plan | 待后续 worktree |
+| C6 天劫伤害施加 | 本 plan | 待后续 worktree |
+| C7 飞行能力（化虚专属） | 本 plan | 待后续 worktree |
+| 客户端详细战斗 UI（施法 HUD / 状态条 / 死亡画面 / 法宝展开等） | `plan-combat-ui_impl.md` | 独立 plan 拆分 |
+| 食物/生存系统（WellFed / Rested 加成） | `plan-food-v1.md` (TODO) | 本文 §5.6 已预留接入点 |
+| 移动/侦察/追击系统（"搜打撤"循环） | `plan-stealth-chase-v1.md` (TODO) | 本文 §3.7 已暴露 `CombatEvent::Disengaged` |
+| NPC 战斗 AI（big-brain Scorer 接管） | `plan-npc-ai-v1.md` (TODO) | 本文 §17 已预留 |
+| 染色 PvP 胜率平衡强制验证（45-55%） | 本 plan §16 第 7 项 | C5 实施时强制 |
