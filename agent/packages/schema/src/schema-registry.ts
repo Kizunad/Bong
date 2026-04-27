@@ -2,6 +2,7 @@ import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
+import { ArmorDurabilityChangedV1 } from "./armor-event.js";
 import {
   AlchemyContaminationLevelV1,
   AlchemyInterventionV1,
@@ -91,6 +92,7 @@ export const SCHEMA_REGISTRY = {
   cultivationDeathV1: CultivationDeathV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
+  armorDurabilityChangedV1: ArmorDurabilityChangedV1,
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
@@ -159,6 +161,7 @@ export const GENERATED_SCHEMA_FILES = {
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,

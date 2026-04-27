@@ -534,11 +534,13 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
-/// GuardianRelic thinker（plan §2）：完整行为是 `GuardianDuty` 追入侵者
-/// + `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
-///   的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander
-///   兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
-///   不走 AgeingScorer —— GuardianRelic 不老。
+/// GuardianRelic thinker（plan §2）：完整行为包括 `GuardianDuty` 追入侵者
+/// 和 `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
+/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander。
+///
+/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
+///
+/// 不走 AgeingScorer —— GuardianRelic 不老。
 #[allow(dead_code)]
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()

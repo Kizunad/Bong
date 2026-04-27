@@ -1412,6 +1412,7 @@ pub fn consume_item_instance_once(
     Err(format!("instance {instance_id} not found in inventory"))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
     mut commands: Commands,

@@ -62,6 +62,11 @@ public class ItemTooltipPanel extends BaseComponent {
             needed += lineBlock;
         }
 
+        // plan-armor-v1 §5：护甲矩阵（仅护甲类物品显示）。
+        if (com.bong.client.combat.ArmorProfileStore.isArmor(item.itemId())) {
+            needed += lineBlock * 2;
+        }
+
         // top 部分至少保证 icon 高度（描述推到 icon 底部之下显示）。
         needed = Math.max(needed, ICON_MARGIN + ICON_SIZE);
 
@@ -135,6 +140,29 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
+        // plan-armor-v1 §5：护甲减免矩阵（WoundKind×系数）。
+        com.bong.client.combat.ArmorProfileStore.ArmorMitigation mitigation =
+            com.bong.client.combat.ArmorProfileStore.mitigationForItemId(hoveredItem.itemId());
+        if (mitigation != null) {
+            // Two compact rows: 斩/钝/刺 and 灼/震.
+            String row1 = String.format(Locale.ROOT,
+                "护甲 %s %s %s",
+                renderMitigationCell("cut", mitigation.cut()),
+                renderMitigationCell("blunt", mitigation.blunt()),
+                renderMitigationCell("pierce", mitigation.pierce())
+            );
+            String row2 = String.format(Locale.ROOT,
+                "     %s %s",
+                renderMitigationCell("burn", mitigation.burn()),
+                renderMitigationCell("concussion", mitigation.concussion())
+            );
+
+            context.drawTextWithShadow(textRenderer, Text.literal(row1), cx, cy, 0xFF88A0B0);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+            context.drawTextWithShadow(textRenderer, Text.literal(row2), cx, cy, 0xFF88A0B0);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
         // Description —— 用 TextRenderer.wrapLines 做真正的 word-wrap（按字符宽度分行，不加 "…"）。
         // 为保证 wrap 宽度稳定，统一推到 icon 底部之下全宽显示，不再绕 icon 右侧。
         int iconBottom = y + ICON_MARGIN + ICON_SIZE;
@@ -157,6 +185,12 @@ public class ItemTooltipPanel extends BaseComponent {
             case "uncommon" -> "精良";
             default -> "普通";
         };
+    }
+
+    private static String renderMitigationCell(String kind, float mitigation) {
+        String label = com.bong.client.combat.ArmorProfileStore.kindLabel(kind);
+        int pct = Math.round(mitigation * 100f);
+        return label + "-" + pct + "%";
     }
 
     @Override

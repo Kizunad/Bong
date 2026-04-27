@@ -187,11 +187,8 @@ pub fn apply_tsy_death_drop(
     let equipped_to_remove: Vec<String> = inventory
         .equipped
         .iter()
-        .filter_map(|(slot, item)| {
-            all_dropped_ids
-                .contains(&item.instance_id)
-                .then(|| slot.clone())
-        })
+        .filter(|(_slot, item)| all_dropped_ids.contains(&item.instance_id))
+        .map(|(slot, _item)| slot.clone())
         .collect();
     for slot in equipped_to_remove {
         if let Some(item) = inventory.equipped.remove(&slot) {

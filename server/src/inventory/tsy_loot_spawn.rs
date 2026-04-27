@@ -22,7 +22,9 @@ use valence::prelude::bevy_ecs::{
 };
 use valence::prelude::{bevy_ecs, Resource};
 
-use super::ancient_relics::{seed_ancient_relics, AncientRelicPool, AncientRelicSource};
+use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
+#[cfg(test)]
+use super::ancient_relics::seed_ancient_relics;
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
 use crate::world::tsy_portal::TsyEnterEmit;
 use crate::world::zone::{TsyDepth, ZoneRegistry};

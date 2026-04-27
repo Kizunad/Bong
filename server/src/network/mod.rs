@@ -282,10 +282,15 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
-            inventory_snapshot_emit::emit_changed_inventory_snapshots,
+            inventory_snapshot_emit::emit_changed_inventory_snapshots
+                .after(inventory_event_emit::emit_durability_changed_inventory_events),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
+            inventory_event_emit::publish_armor_durability_changed_events
+                .after(crate::combat::resolve::resolve_attack_intents),
+            inventory_event_emit::emit_durability_changed_inventory_events
+                .after(crate::combat::resolve::resolve_attack_intents),
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
             unlocks_sync_emit::emit_unlocks_sync_payloads,

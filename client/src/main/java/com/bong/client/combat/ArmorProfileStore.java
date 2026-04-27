@@ -1,0 +1,68 @@
+package com.bong.client.combat;
+
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * plan-armor-v1 §5 — client 侧护甲 profile 的最小镜像。
+ *
+ * <p>当前不走 server 下发：护甲 profile blueprint 仅存在于 server assets。
+ * HUD/tooltip 需要在不扩 IPC 的前提下渲染矩阵，因此先做一个 client-side
+ * lookup（按 template_id/itemId）。后续若补 §3 ArmorDurabilityChanged +
+ * profile 下发，可替换成网络驱动 store。
+ */
+public final class ArmorProfileStore {
+    /** Mitigation in [0, 0.85]. Wire tokens align with server WoundKind snake_case. */
+    public record ArmorMitigation(
+        float cut,
+        float blunt,
+        float pierce,
+        float burn,
+        float concussion
+    ) {
+        public ArmorMitigation {
+            cut = clampCap(cut);
+            blunt = clampCap(blunt);
+            pierce = clampCap(pierce);
+            burn = clampCap(burn);
+            concussion = clampCap(concussion);
+        }
+
+        private static float clampCap(float v) {
+            if (Float.isNaN(v)) return 0.0f;
+            if (v < 0.0f) return 0.0f;
+            // plan-armor-v1 Q7: cap 0.85
+            if (v > 0.85f) return 0.85f;
+            return v;
+        }
+    }
+
+    private static final Map<String, ArmorMitigation> BY_ITEM_ID = Map.ofEntries(
+        // server/assets/combat/armor_profiles/fake_spirit_hide_chest.json
+        Map.entry("fake_spirit_hide", new ArmorMitigation(0.25f, 0.30f, 0.20f, 0.10f, 0.15f))
+    );
+
+    private ArmorProfileStore() {
+    }
+
+    public static ArmorMitigation mitigationForItemId(String itemId) {
+        if (itemId == null) return null;
+        return BY_ITEM_ID.get(itemId.trim());
+    }
+
+    public static boolean isArmor(String itemId) {
+        return mitigationForItemId(itemId) != null;
+    }
+
+    public static String kindLabel(String kindSnakeCase) {
+        String k = Objects.requireNonNullElse(kindSnakeCase, "").trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (k) {
+            case "cut" -> "斩";
+            case "blunt" -> "钝";
+            case "pierce" -> "刺";
+            case "burn" -> "灼";
+            case "concussion" -> "震";
+            default -> "?";
+        };
+    }
+}

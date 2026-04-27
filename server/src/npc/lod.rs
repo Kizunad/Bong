@@ -9,6 +9,8 @@
 //! 真正"卸载到 agent 代管"（plan §7 Phase 9 第 2 项）需要跨进程协作，属
 //! 后续 PR 范围；本 commit 只提供 ECS 层降频 infra。
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use valence::client::ClientMarker;

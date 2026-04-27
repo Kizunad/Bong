@@ -259,7 +259,7 @@ mod tests {
         });
         app.update();
         assert!(
-            app.world().resource::<DroppedLootRegistry>().entries.len() > 0,
+            !app.world().resource::<DroppedLootRegistry>().entries.is_empty(),
             "zone 就绪后再入场应成功 spawn"
         );
         assert!(

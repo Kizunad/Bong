@@ -11,6 +11,8 @@
 //! 正式发布走 plan-tsy-worldgen-v1：本调试命令退化为"强制激活已注册 zone +
 //! 传玩家"。P0 阶段是骨架兜底。
 
+#![allow(dead_code)]
+
 use std::collections::HashSet;
 use std::path::Path;
 

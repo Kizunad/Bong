@@ -58,8 +58,11 @@ fn apply_armor_mitigation(
     }
     wound.severity *= 1.0 - m;
     wound.bleeding_per_sec *= 1.0 - m;
-    // Q10: armor absorbs severity -> contamination should scale down too.
-    // New spec: additionally scale contamination to 0.1x on an armor hit.
+    // plan-armor-v1 §Q10: armor 把 severity 压低 (1-m) -> contam 一阶要随之减少；
+    // 然后整体再压 ARMOR_HIT_CONTAMINATION_MULTIPLIER (0.1) 实现 "甲挡住基本不污染"。
+    // 两段叠乘是有意为之 —— 1-m 让强弱甲仍有量级区分（顶甲 0.015×、弱甲 0.095×），
+    // 0.1 整体闸门保证哪怕弱甲也不会推 contam 失控。改公式必须同步更新
+    // `armor_hit_scales_contamination_and_ticks_item_durability` 的 expected_contam。
     *contam *= 1.0 - f64::from(m);
     *contam *= ARMOR_HIT_CONTAMINATION_MULTIPLIER;
     Some(m)
@@ -484,23 +487,28 @@ pub fn resolve_attack_intents(
                             let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
                             let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
                             if next_ratio < cur_ratio {
-                                if let Err(error) = set_item_instance_durability(
+                                match set_item_instance_durability(
                                     &mut inventory,
                                     instance_id,
                                     next_ratio,
                                 ) {
-                                    tracing::warn!(
-                                        "[bong][combat][armor] failed to persist durability for instance {}: {}",
-                                        instance_id,
-                                        error
-                                    );
-                                } else {
-                                    durability_changed_tx.send(InventoryDurabilityChangedEvent {
-                                        entity: target_entity,
-                                        revision: inventory.revision,
-                                        instance_id,
-                                        durability: next_ratio,
-                                    });
+                                    Ok(update) => {
+                                        durability_changed_tx.send(
+                                            InventoryDurabilityChangedEvent {
+                                                entity: target_entity,
+                                                revision: update.revision,
+                                                instance_id: update.instance_id,
+                                                durability: update.durability,
+                                            },
+                                        );
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][armor] failed to persist durability for instance {}: {}",
+                                            instance_id,
+                                            error
+                                        );
+                                    }
                                 }
                             }
                         }

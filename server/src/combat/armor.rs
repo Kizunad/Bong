@@ -172,26 +172,8 @@ impl ArmorProfileRegistry {
         self.by_template_id.len()
     }
 
-    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（is_empty 供 registry 消费者使用）
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.by_template_id.is_empty()
-    }
-
     pub fn get(&self, template_id: &str) -> Option<&ArmorProfile> {
         self.by_template_id.get(template_id)
-    }
-
-    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（insert 供装备 sync 手动装载用）
-    #[allow(dead_code)]
-    pub fn insert(&mut self, template_id: String, profile: ArmorProfile) -> Result<(), String> {
-        let template_id = template_id.trim().to_string();
-        if template_id.is_empty() {
-            return Err("template_id must not be empty".to_string());
-        }
-        profile.validate()?;
-        self.by_template_id.insert(template_id, profile);
-        Ok(())
     }
 
     pub fn load_dir(path: impl AsRef<Path>) -> Result<Self, ArmorProfileLoadError> {
@@ -261,7 +243,6 @@ mod tests {
     #[test]
     fn empty_registry_is_empty() {
         let r = ArmorProfileRegistry::new();
-        assert!(r.is_empty());
         assert_eq!(r.len(), 0);
         assert!(r.get("fake_spirit_hide").is_none());
     }
@@ -276,5 +257,24 @@ mod tests {
             broken_multiplier: 0.3,
         };
         assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn loads_default_blueprint_json_from_assets() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profile assets");
+        let profile = registry
+            .get("fake_spirit_hide")
+            .expect("fake_spirit_hide armor profile should be loaded from blueprint JSON");
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(profile.slot, EquipSlotV1::Chest);
+        assert_eq!(
+            profile.body_coverage,
+            vec![BodyPart::Chest, BodyPart::Abdomen]
+        );
+        assert_eq!(profile.kind_mitigation.get(&WoundKind::Cut), Some(&0.25));
+        assert_eq!(profile.durability_max, 10);
+        assert_eq!(profile.broken_multiplier, 0.3);
     }
 }

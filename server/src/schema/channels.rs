@@ -15,6 +15,7 @@ pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
+pub const CH_ARMOR_DURABILITY_CHANGED: &str = "bong:armor/durability_changed";
 
 // botany 观测通道（server-agent 侧），客户端 gameplay 仍走 bong:server_data / bong:client_request
 // 注：每株 spawn / wither 不单推（agent 难处理高频事件）——聚合走 `bong:botany/ecology`，
@@ -46,6 +47,7 @@ mod tests {
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
+        assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
         assert_eq!(CH_SKILL_XP_GAIN, "bong:skill/xp_gain");

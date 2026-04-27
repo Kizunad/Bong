@@ -115,6 +115,7 @@ impl AncientRelicPool {
         }
     }
 
+    #[allow(dead_code)]
     pub fn templates(&self) -> &[AncientRelicTemplate] {
         &self.templates
     }
@@ -140,10 +141,12 @@ impl AncientRelicPool {
         Some(pool[idx])
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.templates.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.templates.is_empty()
     }

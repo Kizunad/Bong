@@ -58,6 +58,7 @@ pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
 ///   `find_zone(Tsy, pos)` 返回 None 自然 skip，不静默错抽
 ///
 /// 排除 NPC（`Without<NpcMarker>`）—— P0 不在 TSY 内放 NPC（§7 未决）。
+#[allow(clippy::type_complexity)]
 pub fn tsy_drain_tick(
     clock: Res<CombatClock>,
     zones: Res<ZoneRegistry>,
