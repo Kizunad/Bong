@@ -71,6 +71,15 @@ import {
   TsyExitEventV1,
   TsyZoneActivatedV1,
 } from "./tsy.js";
+import {
+  CancelSearchRequestV1,
+  ContainerStateV1,
+  SearchAbortedV1,
+  SearchCompletedV1,
+  SearchProgressV1,
+  SearchStartedV1,
+  StartSearchRequestV1,
+} from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -146,6 +155,14 @@ export const SCHEMA_REGISTRY = {
   tsyCollapseStartedV1: TsyCollapseStartedV1,
   tsyCollapseCompletedV1: TsyCollapseCompletedV1,
   daoxiangSpawnedV1: DaoxiangSpawnedV1,
+  // plan-tsy-container-v1 §5.1 — TSY 容器搜刮
+  containerStateV1: ContainerStateV1,
+  searchStartedV1: SearchStartedV1,
+  searchProgressV1: SearchProgressV1,
+  searchCompletedV1: SearchCompletedV1,
+  searchAbortedV1: SearchAbortedV1,
+  clientRequestStartSearchV1: StartSearchRequestV1,
+  clientRequestCancelSearchV1: CancelSearchRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -245,6 +262,14 @@ export const GENERATED_SCHEMA_FILES = {
   "tsy-collapse-started-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedV1,
   "tsy-collapse-completed-v1.json": SCHEMA_REGISTRY.tsyCollapseCompletedV1,
   "daoxiang-spawned-v1.json": SCHEMA_REGISTRY.daoxiangSpawnedV1,
+  // plan-tsy-container-v1 §5.1
+  "container-state-v1.json": SCHEMA_REGISTRY.containerStateV1,
+  "search-started-v1.json": SCHEMA_REGISTRY.searchStartedV1,
+  "search-progress-v1.json": SCHEMA_REGISTRY.searchProgressV1,
+  "search-completed-v1.json": SCHEMA_REGISTRY.searchCompletedV1,
+  "search-aborted-v1.json": SCHEMA_REGISTRY.searchAbortedV1,
+  "client-request-start-search-v1.json": SCHEMA_REGISTRY.clientRequestStartSearchV1,
+  "client-request-cancel-search-v1.json": SCHEMA_REGISTRY.clientRequestCancelSearchV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

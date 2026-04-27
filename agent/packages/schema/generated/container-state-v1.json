@@ -1,0 +1,90 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "entity_id",
+    "kind",
+    "family_id",
+    "world_pos",
+    "depleted"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "dry_corpse",
+          "type": "string"
+        },
+        {
+          "const": "skeleton",
+          "type": "string"
+        },
+        {
+          "const": "storage_pouch",
+          "type": "string"
+        },
+        {
+          "const": "stone_casket",
+          "type": "string"
+        },
+        {
+          "const": "relic_core",
+          "type": "string"
+        }
+      ]
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "world_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "locked": {
+      "anyOf": [
+        {
+          "const": "stone_casket_key",
+          "type": "string"
+        },
+        {
+          "const": "jade_coffin_seal",
+          "type": "string"
+        },
+        {
+          "const": "array_core_sigil",
+          "type": "string"
+        }
+      ]
+    },
+    "depleted": {
+      "type": "boolean"
+    },
+    "searched_by_player_id": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

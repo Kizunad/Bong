@@ -1,0 +1,22 @@
+{
+  "_doc": "plan-tsy-container-v1 §1.5 — TSY 容器 spawn 配置。按 family_id × layer 列出每层要 spawn 的容器列表。loot_pool 必须存在于 server/loot_pools.json。spawn 实际坐标由 /tsy-spawn 在 zone AABB 内随机撒点。",
+  "families": {
+    "tsy_lingxu_01": {
+      "shallow": [
+        { "kind": "dry_corpse",    "count": 12, "loot_pool": "dry_corpse_shallow_common" },
+        { "kind": "skeleton",      "count":  8, "loot_pool": "skeleton_shallow_common" },
+        { "kind": "storage_pouch", "count":  2, "loot_pool": "storage_pouch_mid" }
+      ],
+      "mid": [
+        { "kind": "dry_corpse",    "count": 6, "loot_pool": "dry_corpse_shallow_common" },
+        { "kind": "storage_pouch", "count": 4, "loot_pool": "storage_pouch_mid" },
+        { "kind": "stone_casket",  "count": 2, "loot_pool": "stone_casket_mid" }
+      ],
+      "deep": [
+        { "kind": "dry_corpse",    "count": 3, "loot_pool": "dry_corpse_shallow_common" },
+        { "kind": "stone_casket",  "count": 1, "loot_pool": "stone_casket_mid" },
+        { "kind": "relic_core",    "count": 3, "loot_pool": "relic_core_deep" }
+      ]
+    }
+  }
+}
