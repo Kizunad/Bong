@@ -702,3 +702,80 @@ fn strip_name(template_id: &str, original: &str) -> String {
 
 - 2026-04-25：P0 ⏳ 纯设计未实装。`server/src/world/` 现仅有 `events.rs / mod.rs / terrain/ / zone.rs`，未见 `tsy.rs / tsy_drain.rs / tsy_portal.rs / tsy_filter.rs`；`zone.rs` 无 `tsy_*` / `dimension` / `register_runtime_zone` 字样（`apply_runtime_records` 已有但仅改 `active_events/blocked_tiles`）；`agent/packages/schema/src/` 无 `tsy.ts`；`server/tests/`、`scripts/smoke-tsy-zone.sh`、`server/zones.tsy.json` 均不存在。前置 `plan-tsy-dimension-v1` 亦未落地，等其先行后再开 `/consume-plan tsy-zone`。
 - **2026-04-26**：**前置解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，本 plan 依赖的全部 dimension API 已就位：`DimensionKind` enum / `DimensionLayers` resource / `CurrentDimension` 组件 / `DimensionTransferRequest` event / `apply_dimension_transfers` system / `TerrainProviders { overworld, tsy: Option }` / `Zone.dimension` 字段 + `find_zone(dim, pos)` 签名 + 旧 zones.json 向后兼容。本 plan 自身 §3.1 隐形前置 `ZoneRegistry::register_runtime_zone()` 仍未补，属本 plan 范围。**现可开 `/consume-plan tsy-zone`**。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 数据模型**
+  - `server/src/world/zone.rs:113-160` — `Zone::is_tsy / tsy_depth / tsy_family_id / is_tsy_entry`（`TsyDepth` enum 在 zone.rs:165+，命名为 `TsyDepth` 而非 plan 原文 `TsyLayer`，避让 `world::dimension::TsyLayer` marker component 冲突）
+  - `server/src/world/zone.rs:270` — `ZoneRegistry::register_runtime_zone(zone) -> Result<(), String>`（同名拒绝）
+  - `server/src/world/tsy.rs:17 / :47` — `DimensionAnchor` struct + `TsyPresence` Component（`family_id / entered_at_tick / entry_inventory_snapshot / return_to`）
+  - `server/src/world/rift_portal.rs:54+` — `RiftPortal` Component + `PortalDirection { Entry, Exit }` + `RiftKind / TickWindow`（在 tsy.rs 通过 `pub use` 重导出）
+  - `agent/packages/schema/src/tsy.ts:40 / :65` — `TsyEnterEventV1` / `TsyExitEventV1`（含 contract validators）；在 `schema-registry.ts:136-243` 注册导出
+- **§2 负压 tick**
+  - `server/src/world/tsy_drain.rs:46` — `compute_drain_per_tick(zone, cultivation)` 公式（const `REFERENCE_POOL=100 / NONLINEAR_EXPONENT=1.5 / BASE_DRAIN_PER_TICK=0.5`）
+  - `server/src/world/tsy_drain.rs:79` — `tsy_drain_tick` system；通过 `TsyPresence + CurrentDimension` 双 gate；qi=0 发 `DeathEvent(cause="tsy_drain")`
+  - `server/src/world/mod.rs:97-102` — 注册到 `CombatSystemSet::Physics`，wound_bleed_tick 之后、death_arbiter_tick 之前
+- **§3 裂缝 POI 跨位面传送**
+  - `server/src/world/tsy_portal.rs:33 / :44` — `TsyEnterEmit` / `TsyExitEmit` event
+  - `server/src/world/tsy_portal.rs:59` — `tsy_entry_portal_tick`（plan 原文 `tsy_entry_portal_system`）：发 `DimensionTransferRequest`，attach `TsyPresence`
+  - `server/src/world/tsy_portal.rs:142` — `tsy_exit_portal_tick`（plan 原文 `tsy_exit_portal_system`）：跨位面传回主世界锚点 + remove `TsyPresence`
+  - `server/src/world/tsy_portal.rs:207` — 注册到 `DimensionTransferSet` 之前
+  - `server/src/world/tsy_dev_command.rs:218-228` — `!tsy-spawn <family_id>` 调试命令；调 `register_runtime_zone` 追加三 subzone
+  - `server/zones.tsy.json` — 3 subzone sample（独立文件）
+- **§4 入场过滤**
+  - `server/src/world/tsy_filter.rs:24` — `apply_entry_filter(inv) -> Vec<FilteredItem>`，扫描 containers / equipped / hotbar，`spirit_quality >= 0.3` 剥离
+
+### 关键 commit
+
+- `bd349286` (2026-04-26) — plan-tsy-zone-v1: 活坍缩渊 P0 基础设施（zone 识别 + 负压 tick + 跨位面 portal + 入场过滤） (#49)
+- `3427a890` — feat(world/tsy): TsyPresence + RiftPortal + DimensionAnchor
+- `f9c13451` — feat(world/tsy_drain): 负压抽真元 tick + DeathEvent on qi=0
+- `01731731` — feat(world/tsy_filter): TSY 入场过滤器（剥离高灵质物品）
+- `4394701c` — feat(world/tsy_portal): entry / exit 跨位面传送 system
+- `5e132b02` — feat(world/tsy_dev_command): !tsy-spawn 调试命令 + zones.tsy.json 骨架
+- `6f92cd9a` — fix(tsy_portal): 出关锚点必须落在 entry portal trigger_radius 外
+- `96c0f269` — feat(schema): TsyEnterEventV1 + TsyExitEventV1 (plan-tsy-zone §1.4)
+- `0cbe4d51` — fix(world): TSY 负压使用修为组件（与 cultivation realm 重构 #48 对齐）
+
+### 测试结果
+
+- `cd server && cargo test 'world::tsy'` — 98 passed; 0 failed（涵盖 tsy / tsy_drain / tsy_filter / tsy_portal / tsy_integration_test 等）
+- `cd server && cargo test 'world::zone'` — 16 passed; 0 failed（含 `register_runtime_zone_appends_unique_zone` / `register_runtime_zone_rejects_duplicate_name` / TsyDepth helpers）
+- `cd agent/packages/schema && npm test` — 161 passed (7 files)，其中 `tests/tsy.test.ts` 36 tests（TsyEnterEventV1 / TsyExitEventV1 round-trip + contract validator）
+- `#[test]` 计数：tsy.rs 4 / tsy_drain.rs 11 / tsy_filter.rs 8 / tsy_portal.rs 7 / tsy_integration_test.rs 4 / zone.rs 16
+
+### 跨仓库核验
+
+- **server**：
+  - `Zone::is_tsy / tsy_depth / tsy_family_id / is_tsy_entry` @ `server/src/world/zone.rs:113-160`
+  - `TsyDepth` enum @ `server/src/world/zone.rs:165+`
+  - `ZoneRegistry::register_runtime_zone` @ `server/src/world/zone.rs:270`
+  - `TsyPresence / DimensionAnchor` @ `server/src/world/tsy.rs:17 / :47`
+  - `RiftPortal / PortalDirection / RiftKind / TickWindow` @ `server/src/world/rift_portal.rs`
+  - `compute_drain_per_tick / tsy_drain_tick` @ `server/src/world/tsy_drain.rs:46 / :79`
+  - `tsy_entry_portal_tick / tsy_exit_portal_tick / TsyEnterEmit / TsyExitEmit` @ `server/src/world/tsy_portal.rs:59 / :142 / :33 / :44`
+  - `apply_entry_filter / FilteredItem` @ `server/src/world/tsy_filter.rs:24`
+  - `!tsy-spawn` 调试命令 @ `server/src/world/tsy_dev_command.rs`
+- **agent**：
+  - `TsyEnterEventV1 / TsyExitEventV1` + `validateTsyEnterEventV1Contract / validateTsyExitEventV1Contract` @ `agent/packages/schema/src/tsy.ts:40-80`
+  - schema-registry 注册 @ `agent/packages/schema/src/schema-registry.ts:136-243`
+- **client**：不涉及（P0 全部为服务端 + IPC schema；客户端只在 dimension Respawn packet 路径上消费 dimension plan 的能力）
+- **worldgen**：不涉及（`/tsy-spawn` 调试命令是骨架兜底；blueprint / manifest 通道由 plan-tsy-worldgen-v1 承载，已独立合并）
+
+### 命名差异说明
+
+- plan 文档原文 `TsyLayer` enum → 实装命名 `TsyDepth`（避让 `world::dimension::TsyLayer` marker component；语义不变）
+- plan 文档原文 `tsy_entry_portal_system / tsy_exit_portal_system` → 实装命名 `tsy_entry_portal_tick / tsy_exit_portal_tick`（与 `tsy_drain_tick` 命名风格统一）
+
+### 遗留 / 后续
+
+- P1 死亡分流（`DeathEvent.attacker / attacker_player_id`、秘境内死亡分流、干尸 component）已在 `plan-tsy-loot-v1`（merge 9fb8d2b7）落地
+- P2 lifecycle（zone 状态机 / 塌缩 / 道伥转化 / 强制弹出）已在 `plan-tsy-lifecycle-v1`（merge 99c29ebd）落地
+- worldgen 自动 POI 生成（双 manifest + POI consumer）已在 `plan-tsy-worldgen-v1`（merge 77d042fb）落地
+- TSY 容器 / 搜刮 / 钥匙 已在 `plan-tsy-container-v1`（merge d6e84e37）落地
+- 撤离点闭环已在 `plan-tsy-extract-v1`（merge c0b08a54）落地
+- 敌对 NPC 接入已在 `plan-tsy-hostile-v1`（merge ed2d63f5）落地

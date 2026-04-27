@@ -338,8 +338,8 @@ pub enum DecayFormula {
   - `consume.rs` 函数层完整（`decay_current_qi_factor` / `spoil_check` / `age_peak_check` + `SpoilConsumeWarning` / `AgeBonusRoll` event）✅
   - alchemy 实接闭环 ✅（`alchemy/mod.rs:337` 调 `consume_pill`；`pill.rs:107` 接收 `SpoilCheckOutcome` 驱动 Warn/Block 分支 + `AgePeakCheck` 在 `Peaking` 时叠 bonus；`resolver.rs:245` 把 staged.quality_factor 应用到 `Pill.qi_gain`）
   - forge / cultivation / lingtian / food 未接入 ❌
-- [ ] **M6 — 死物 / 腐败 / 过峰 item 变体**：floor_qi / spoil_threshold / peak 窗口触发 item ID 切换 —— `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 未注册到 items 表
-- [ ] **M7 — 跨 plan DecayProfile 定稿**：`DecayProfileRegistry::new()` 默认空，需要 mineral / fauna / botany / alchemy / food 各自在自家 plan blessing 后 hardcode 注册。当前生产 registry 无任何 profile —— 即使 item 挂了 freshness，查 profile_id 会 miss，UI 回退 None
+- [x] **M6 — 死物 / 腐败 / 过峰 item 变体**：floor_qi / spoil_threshold / peak 窗口触发 item ID 切换 —— ✅ `dead_ling_shi_*` / `rotten_bone_coin` / `chen_cu` 已注册 items 表 + `variant.rs` 切换逻辑 + `sweep.rs` tick 200 全局扫描
+- [~] **M7 — 跨 plan DecayProfile 定稿**：`build_default_registry()` 已注册 ling_shi 四档 ✅ + `bone_coin_v1` ✅ + `chen_jiu_v1`/`chen_cu_v1` ✅。仍缺：fauna（beast_blood / beast_meat / 内丹）/ botany（鲜草 / 阴干 / 陈年灵茶）/ alchemy（常规丹药 / 老坛丹）/ food（凡俗食物）的 profile，由各 plan 自身 blessing 推进。
 
 ---
 
@@ -367,4 +367,53 @@ pub enum DecayFormula {
 
 - 2026-04-24：plan 升 active；M0-M4 完成 ✅，M5 部分（consume.rs 函数层 + alchemy session 占位），M6-M7 待跨 plan blessing。
 - 2026-04-25：alchemy 消费侧实接闭环 —— `alchemy/mod.rs:337` 真调 `consume_pill`，`pill.rs` 接 `SpoilCheckOutcome`/`AgePeakCheck`，`resolver.rs:245` 把 quality_factor 应用到 `Pill.qi_gain`；M5 alchemy 段 verified ✅，forge/cultivation/lingtian/food 仍未接入；`DecayProfileRegistry` 生产仍空。
-- 2026-04-27：**registry 已非空** —— 实地审核发现 plan-mineral-v1 顺手注册了 ling_shi 衰变 profile（commit `f04a18db`），`build_default_registry()` 已注册四档灵石 DecayProfile 并在 `main.rs` 调用，§11 之前自述"生产 registry 仍空"已过时。M0-M5 全确认：`shelflife/` 7 文件含 `compute.rs` 874 行、`container.rs` / `consume.rs` / `probe.rs` / `registry.rs`。剩余 ~20%：M6 item ID 切换（`dead_ling_shi_*` 未注册）、M7 fauna/botany/food 各 plan 自身 profile 注册、forge/cultivation/lingtian 消费入口仍未接。dashboard state 升级为 merged，percent 80%。
+- 2026-04-28：**M6 落地** —— `shelflife_dead.toml`（6 个变体模板）、`variant.rs`（`apply_variant_switch` + Dead/AgePostPeakSpoiled 映射）、`sweep.rs`（tick 200 全局 sweep）、`registry.rs` 新增 `bone_coin_v1` + `chen_jiu_v1` + `chen_cu_v1` 3 个生产 profile。shelflife 测试 110 全绿。M7 7 个 profile 中 7 个已有（ling_shi×4 + bone_coin×1 + chen_jiu×1 + chen_cu×1），fauna/botany/alchemy/food 的 profile 归各 plan 自补。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| Plan 章节 | 实装文件 |
+|---|---|
+| M6 死物变体模板 | `server/assets/items/shelflife_dead.toml` — 6 个变体 item 模板 |
+| M6 variant 切换逻辑 | `server/src/shelflife/variant.rs` — `apply_variant_switch()` + Dead/AgePostPeakSpoiled 映射 |
+| M6 tick 200 sweep | `server/src/shelflife/sweep.rs` — `sweep_shelflife_variants` 系统 |
+| M7 profile 注册 | `server/src/shelflife/registry.rs` — 新增 `bone_coin_v1` + `chen_jiu_v1` + `chen_cu_v1` |
+| 模块注册 | `server/src/shelflife/mod.rs` — 新增 `sweep`/`variant` 模块导出 + `register_sweep` 调用 |
+
+### 关键 commit
+
+| Hash | 日期 | 消息 |
+|---|---|---|
+| `d3c3b0c7` | 2026-04-28 | feat(shelflife): M6 死物/腐败变体 item ID 切换 |
+
+### 测试结果
+
+```
+cargo test shelflife
+test result: ok. 110 passed; 0 failed
+
+cargo test (全量)
+test result: ok. 1563 passed; 0 failed
+
+cargo clippy --all-targets -- -D warnings
+Finished (无警告)
+```
+
+### 跨仓库核验
+
+| 仓库/模块 | 命中 symbol |
+|---|---|
+| `server/src/shelflife/variant.rs` | `apply_variant_switch` — Dead/AgePostPeakSpoiled → 变体 item ID |
+| `server/src/shelflife/sweep.rs` | `sweep_shelflife_variants` — tick 200 sweep 系统 |
+| `server/src/shelflife/registry.rs` | `build_default_registry` — 7 个生产 profile |
+| `server/assets/items/shelflife_dead.toml` | 6 个变体模板 |
+
+### 遗留 / 后续
+
+- **M7 跨 plan profile**：fauna（beast_blood / beast_meat / 内丹）、botany（鲜草 / 阴干 / 陈年灵茶）、alchemy（常规丹药 / 老坛丹）、food（凡俗食物）的 DecayProfile 由各 plan 自补
+- **消费侧接入**：forge / cultivation / lingtian 消费入口仍未接 shelflife，由各 plan 推进
+- **fast-path 切换**：`apply_inventory_move`/`pickup_dropped_loot_instance` 等 mutation 路径未做即时切换，当前依赖 tick 200 sweep（≤10s 延迟）。后续可加 immediate check 消除延迟
+- **骨币 freshness 创建**：`fengling_bone_coin` 当前无 freshness 字段，需 fauna plan 在创建骨币时挂 `bone_coin_v1` profile

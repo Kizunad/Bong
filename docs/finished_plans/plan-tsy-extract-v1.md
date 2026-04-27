@@ -672,3 +672,39 @@ export const TsyCollapseStartedIpcV1 = Type.Object({
 
 - 2026-04-25：纯设计骨架，server/src 内无 `RiftPortal` / `RiftKind` / `ExtractProgress` / `StartExtractRequest` / `TsyPresence` 任何代码痕迹（前置 P0 也未实装），`tsy_portals.json` 未创建，agent schema 无 `extract-v1`，client 无 `ExtractProgressHud`；现有 server 中 `Portal` 字样仅指 `SpawnPortal`（terrain 出生地结构物，无关）。整 plan 待 P0/P1/P2 就位后开工。
 - **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，§3 `DimensionTransferRequest` event + `apply_dimension_transfers` system 已就位，本 plan §1（撤离传送）现有上游接口可直接消费。仍 blocking on **P0/P1/P2 串行前置**（P3/P4 可选）。
+- **2026-04-27**：**P0/P1/P2/P3 一并落地** — PR #59（merge `c0b08a54`）后续 fix `ee224a1a`（对齐撤离点服务端权威状态）已合。
+  - §1 数据模型 ✅：`RiftPortal` / `RiftKind` / `ExtractProgress` / `StartExtractRequest` / `ExtractCompleted` / `ExtractFailed` 全部就位（`server/src/world/rift_portal.rs` 277 行 + `extract_system.rs` 889 行），`tsy_portals.json` 配置驱动加载
+  - §2 撤离系统 ✅：5 个核心 system（`start_extract_request` 含全 6 种 rejection / `tick_extract_progress` 含真元归零 + 中断 / `handle_extract_completed` 跨位面传送 + 清 `TsyPresence` / `handle_extract_failed` 委托干尸化）
+  - §3 race-out ✅：`on_tsy_collapse_started` / `on_tsy_collapse_completed` 实装；CollapseTear spawn 闭环
+  - §4 客户端 ✅：`agent/packages/schema/src/extract-v1.ts` schema + client `ExtractInteractionBootstrap` / `RiftPortalView` / `ExtractState` HUD 栈
+  - **状态**：本 plan §1-§4 主体功能 demoable，剩 smoke/E2E 验收。
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 数据模型**：`server/src/world/rift_portal.rs`（252 行）实装 `RiftKind`（`MainRift`/`DeepRift`/`CollapseTear` 三 variant + `base_extract_ticks` / `allows_entry` / `allows_exit` / `as_str` 表）+ `RiftPortal` Component（`kind` / `family_id` / `current_extract_ticks` / `activation_window: Option<TickWindow>`）+ `TickWindow` + `tsy_portals.json` 加载（`load_tsy_portals` / 测试 `family.shallow[0].kind == MainRift` / `family.deep[0].kind == DeepRift`）；服务端配置文件 `server/tsy_portals.json` 已落盘
+- **§2 撤离系统**：`server/src/world/extract_system.rs`（889 行）实装 5 个核心 system —— `start_extract_request`（L141）/ `tick_extract_progress`（L248，移动中断 `tick_extract_progress_aborts_when_moved`）/ `handle_extract_completed`（L354，跨位面 `DimensionTransferRequest` + `remove::<TsyPresence>`）/ `handle_extract_failed`（L373）/ 配套事件枚举 `ExtractRejectionReason` 等
+- **§3 race-out**：`on_tsy_collapse_started`（L392，portal `current_extract_ticks` 压到 60 + `progress.required_ticks` 重置）/ `spawn_collapse_tears`（L433）/ `on_tsy_collapse_completed`（L505，despawn portal + 清残留玩家 `DeathEvent`）/ `despawn_expired_portals`（L534，`activation_window.end_at_tick` 过期清理）
+- **§4 客户端**：schema `agent/packages/schema/src/extract-v1.ts`（schema-registry L83/L251/L363/L365/L430 注册）+ server 镜像 `server/src/schema/server_data.rs`（`ExtractProgressV1` / `ExtractCompletedV1` / `ExtractAbortedV1` / `ExtractFailedV1` + reason enum）+ Java 类 `client/src/main/java/com/bong/client/tsy/{ExtractInteractionBootstrap, ExtractState, ExtractStateStore, RiftPortalView}.java` + `client/src/main/java/com/bong/client/hud/ExtractProgressHudPlanner.java` + `client/src/main/java/com/bong/client/network/ExtractServerDataHandler.java`（订阅 `RiftPortalState` / `ExtractStarted` / `ExtractProgress` / `ExtractCompleted` / `ExtractAborted` / `ExtractFailed`）
+
+### 关键 commit
+
+- `c0b08a54` (2026-04-27) — plan-tsy-extract-v1: 服务端撤离点闭环
+- `ee224a1a` (2026-04-27) — fix(tsy-extract): 对齐撤离点服务端权威状态
+
+### 测试结果
+
+- `cd server && cargo test extract` — 13 passed; 0 failed; 0 ignored；覆盖：`rift_kind_extract_table_matches_worldview` / `deep_rift_is_exit_only` / `start_extract_rejects_missing_portal_as_expired` / `tick_extract_progress_aborts_when_moved` / `start_extract_rejects_out_of_range` / `start_extract_uses_portal_trigger_radius` / `extract_completed_sends_dimension_transfer_and_removes_presence` / `collapse_started_compresses_portals_and_spawns_tears` / `collapse_completed_despawns_portals_and_kills_remaining_players` / `network::extract_emit::removed_portal_broadcasts_cache_eviction` / `joined_client_receives_existing_rift_portal_state` / `schema::client_request::extract_requests_roundtrip`
+- 单测分布：`rift_portal.rs` 3 个 `#[test]` + `extract_system.rs` 8 个 `#[test]`
+
+### 跨仓库核验
+
+- **server**：`RiftKind` / `RiftPortal` / `TickWindow` @ `server/src/world/rift_portal.rs`；`start_extract_request` / `tick_extract_progress` / `handle_extract_completed` / `handle_extract_failed` / `on_tsy_collapse_started` / `on_tsy_collapse_completed` / `despawn_expired_portals` / `spawn_collapse_tears` @ `server/src/world/extract_system.rs`；`ExtractProgressV1` / `ExtractCompletedV1` / `ExtractAbortedV1` / `ExtractFailedV1` + `ServerDataType::{ExtractProgress,ExtractCompleted,ExtractAborted,ExtractFailed}` @ `server/src/schema/server_data.rs`；`ServerDataType::RiftPortalState => "rift_portal_state"` @ `server/src/network/agent_bridge.rs:78`；配置 `server/tsy_portals.json`
+- **agent**：`extract-v1.ts` @ `agent/packages/schema/src/extract-v1.ts`；schema-registry 注册项 `client-request-start-extract-v1.json` / `client-request-cancel-extract-v1.json` @ `agent/packages/schema/src/schema-registry.ts`
+- **client**：`ExtractInteractionBootstrap` / `ExtractState` / `ExtractStateStore` / `RiftPortalView` @ `client/src/main/java/com/bong/client/tsy/`；`ExtractProgressHudPlanner` @ `client/src/main/java/com/bong/client/hud/`（`BongHudOrchestrator` 在 L183 接入）；`ExtractServerDataHandler` @ `client/src/main/java/com/bong/client/network/`；HUD tick @ `client/src/main/java/com/bong/client/BongHud.java:53`
+- **worldgen**：（不涉及）
+
+### 遗留 / 后续
+
+- §6 验收 demo 中描述的 12 步 E2E 场景（含 `/tsy-spawn tsy_lingxu_01` + 玩家 A/B/C/D 多人撤离 + 塌缩 race-out）尚未跑过 smoke/E2E 验收；§7 列举的 client polish（粒子 / sound）、AFK / disconnect 处理、CollapseTear spawn raycast 检查均按 plan 推迟到 v2 或独立 plan

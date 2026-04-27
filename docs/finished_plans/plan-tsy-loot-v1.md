@@ -822,3 +822,55 @@ pub struct DeathEvent {
   - 全部 `[ ]` 维持未勾选状态。
 - **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面 API / `Zone.dimension` / `CurrentDimension` 全部就位。本 plan 仍 blocking on **P0 `tsy-zone`**（`TsyPresence` component 由 P0 引入），需 P0 demoable 后才能开 `/consume-plan tsy-loot`。横切依赖 `plan-death-lifecycle-v1 §6 DeathEvent.attacker` 仍未启动。
 - **2026-04-27**：**主体 merged** — PR #53（merge 9fb8d2b7）已合并。代码核对：`server/src/inventory/` 下 `ancient_relics.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs` 全部确认；`ItemRarity::Ancient` variant 已加；`DeathEvent.attacker` / `attacker_player_id` 已扩；`DroppedLootRegistry.ownerless` 字段已建；`tsy_loot_integration_test.rs` 存在；client `MixinPlayerEntityDrop` 已加。横切 `plan-death-lifecycle-v1 §6 DeathEvent.attacker` 已被本 plan 顺手实装。剩余 ~8%：smoke 全链路 e2e 与文档自审清单全勾未跑。dashboard percent 92%。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 上古遗物（§1 ItemRarity + AncientRelicTemplate）**：`server/src/inventory/ancient_relics.rs`（`AncientRelicTemplate` / `AncientRelicKind` / `AncientRelicSource` / `AncientRelicPool` / `seed_ancient_relics()`，8 件 MVP 遗物模板）；`server/src/inventory/mod.rs` 内 `ItemRarity::Ancient` variant；schema 端 `agent/packages/schema/src/inventory.ts` 同步 `ItemRarityV1::Ancient`（被 `server/src/network/inventory_snapshot_emit.rs:349` 映射使用）。
+- **P1 99/1 分布与 Spawn（§2）**：`server/src/inventory/tsy_loot_spawn.rs`（按 source_class 抽 3-5 件 + mid/deep 层分布 + 接 lifecycle `tsy_loot_spawn_on_zone_activate`）；`DroppedLootRegistry` 改用 `entries: HashMap<u64, DroppedLootEntry>` 单一统一表（取代设计稿 by_owner+ownerless 双表方案，由 `instance_id` 全局寻址，支持无主 entry）@ `server/src/inventory/mod.rs:1455-1463`；99% 凡物按设计走"玩家死在 TSY 内自然累积"路径。
+- **P2 秘境死亡分流（§3）**：`server/src/inventory/tsy_death_drop.rs`（`TsyDeathDropOutcome` / `apply_tsy_death_drop`，按 `entry_inventory_snapshot` 分流原带 50% + 秘境所得 100%）；`apply_death_drop_on_revive` 在 `server/src/inventory/mod.rs:1764` 接入分流并 spawn `CorpseEmbalmed`。
+- **P3 干尸化（§4）**：`server/src/inventory/corpse.rs`（`CorpseEmbalmed` Component + `activated_to_daoxiang` 占位字段 + serde round-trip test）；干尸 spawn 入口在 `server/src/inventory/mod.rs:1799-1804`；P2 lifecycle 已在 `server/src/world/tsy_lifecycle.rs:383-587` 消费 `CorpseEmbalmed` 完成道伥转化。
+- **P4 Fabric Mixin（§5）**：`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityDrop.java`（`@Inject(method = "dropInventory", at = @At("HEAD"), cancellable = true)`）；注册见 `client/src/main/resources/bong-client.mixins.json:14`。
+- **P5 DeathEvent.attacker 扩展（§6）**：`server/src/combat/events.rs:93-94`（`attacker: Option<Entity>` + `attacker_player_id: Option<String>`）；全部发出点对齐：`server/src/combat/lifecycle.rs`（11 处填充 attacker 字段）、`server/src/world/tsy_drain.rs:108-109`、`server/src/world/extract_system.rs:385-386`；专属链路测试 `server/src/combat/death_event_attacker_chain_test.rs`（PVP / PVE / 环境死亡三档）。
+
+### 关键 commit
+
+- `5081e313` — feat(inventory): plan-tsy-loot-v1 §1 — ItemRarity::Ancient + 上古遗物模板池
+- `97d63089` — feat(inventory): plan-tsy-loot-v1 §2 — TSY 99/1 上古遗物 spawn
+- `21e700d2` — feat(inventory): plan-tsy-loot-v1 §3+§4 — 秘境内死亡分流 + 干尸 component
+- `a916b24d` — feat(combat): plan-tsy-loot-v1 §6 — DeathEvent 加 attacker / attacker_player_id
+- `24ddd5f2` — feat(client): plan-tsy-loot-v1 §5 — Mixin 取消 vanilla 死亡掉落
+- `62b870d6` — test(tsy-loot): plan-tsy-loot-v1 §8.2 + §8.5 — 集成测试 + DeathEvent attacker chain
+- `6efba100` — feat(scripts): plan-tsy-loot-v1 §9 — smoke-tsy-loot.sh
+- `c5c37b78` — fix(inventory): codex review #3 — charges 字段替代 durability 越界
+- `701310db` — fix(inventory): codex review #2 — spawn 成功后才 mark family 为 spawned
+- `2815df99` — fix(inventory): codex review #1 — TSY 死亡分流复用主世界武器保护
+- `9fb8d2b7` (2026-04-27) — plan-tsy-loot-v1: TSY 物资 99/1 + 秘境分流死亡 + 干尸 + Mixin (#53)（merge）
+
+### 测试结果
+
+- `server/src/inventory/ancient_relics.rs` — 7 个 `#[test]`（pool size、source_class 覆盖、to_item_instance 字段断言）
+- `server/src/inventory/tsy_loot_spawn.rs` — 9 个 `#[test]`（layer_distribution / relic_count_for_source / 重复 spawn 抑制）
+- `server/src/inventory/tsy_death_drop.rs` — 11 个 `#[test]`（snapshot 空 / 全原带 / 全秘境 / 50% Roll seed 稳定 / 装备槽分流）
+- `server/src/inventory/corpse.rs` — 2 个 `#[test]`（字段赋值 + serde round-trip）
+- `server/src/inventory/tsy_loot_integration_test.rs` — 8 个 `#[test]`（端到端：TSY 内死亡分流 + 干尸 spawn + 主世界回归 + 双玩家 loot 转移）
+- `server/src/combat/death_event_attacker_chain_test.rs` — PVP / PVE / 环境 三类 attacker 链路命中
+- `scripts/smoke-tsy-loot.sh` — 验收脚本已建（`9fb8d2b7` 末次绿）
+
+### 跨仓库核验
+
+- **server**：`AncientRelicTemplate` / `AncientRelicPool::sample` / `seed_ancient_relics()` @ `server/src/inventory/ancient_relics.rs`；`apply_tsy_death_drop` / `TsyDeathDropOutcome` @ `server/src/inventory/tsy_death_drop.rs`；`CorpseEmbalmed` @ `server/src/inventory/corpse.rs`；`DroppedLootRegistry { entries: HashMap<u64, _> }` @ `server/src/inventory/mod.rs:1455`；`DeathEvent { attacker, attacker_player_id }` @ `server/src/combat/events.rs:93-94`。
+- **agent**：`TsyCorpseSpawnEventV1` @ `agent/packages/schema/src/tsy.ts:94`（注册于 `agent/packages/schema/src/schema-registry.ts:135,245`）；`ItemRarityV1::Ancient` @ `agent/packages/schema/src/inventory.ts`（被 `server/src/network/inventory_snapshot_emit.rs:349` 映射）。
+- **client**：`MixinPlayerEntityDrop` @ `client/src/main/java/com/bong/client/mixin/MixinPlayerEntityDrop.java`，注册于 `client/src/main/resources/bong-client.mixins.json:14`。
+- **worldgen**：（不涉及）
+
+### 遗留 / 后续
+
+- 设计稿 §2.3 的 `DroppedLootRegistry { by_owner, ownerless }` 双表结构在实施时被简化为 `entries: HashMap<u64, DroppedLootEntry>` 单一表（`instance_id` 全局寻址，自然支持无主 entry）；行为等价但 API 形态不同，下游 doc 若引用旧结构需对齐。
+- §9 Manual QA A-F 全链路 e2e（in-game）尚未在交付时跑；smoke 脚本自动化部分已绿。
+- 干尸→道伥的激活 / 塌缩 cleanup 由 `plan-tsy-lifecycle-v1`（PR #54, `99c29ebd`）接管，本 plan 仅留 `CorpseEmbalmed.activated_to_daoxiang` 占位字段。
+- 上古遗物耐久 tooltip 可视化推给 `plan-HUD-v1` 扩展，本 plan 不做。
+- 封灵匣（§7）按设计未做，留给后续 polish plan。

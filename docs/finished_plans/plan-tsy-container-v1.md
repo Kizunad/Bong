@@ -785,3 +785,40 @@ P4 plan 的 `NpcDrops` 配置文件要能写 `key_stone_casket` 等钥匙 templa
 ---
 
 **下一步**：P0/P1/P2 全部 demoable 后，`/consume-plan tsy-container` 启动 P3。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 数据模型 §1**：`server/src/world/tsy_container.rs` — `LootContainer` (line 119) / `ContainerKind` 5 档 enum (line 27, DryCorpse/Skeleton/StoragePouch/StoneCasket/RelicCore) / `KeyKind` 3 类 (line 92, StoneCasketKey/JadeCoffinSeal/ArrayCoreSigil) / `SearchProgress` (line 161) / `item_as_container_key` helper (line 183) / `SEARCH_DRAIN_MULTIPLIER = 1.5` 常量 (line 179) / `SEARCH_INTERACT_RANGE_M = 3.0` (line 176) / `SEARCH_MOVE_INTERRUPT_THRESHOLD_M = 0.5` (line 173)
+- **P1 搜刮系统 §2**：`server/src/world/tsy_container_search.rs` — `start_search_container` (line 154) / `tick_search_progress` (line 260) / `handle_search_completed` / `CancelSearchRequest` handler (line 413) / `IsSearching` marker (line 131) / `RelicExtracted` 事件 (line 109) / `TsyZoneInitialized` 事件 (line 116) / `find_key_in_inventory` (line 452) / `SearchRejectionReason::{Depleted,OccupiedByOther,MissingKey,AlreadySearching,OutOfRange,InCombat}` (line 70) ；真元 1.5× hook：`server/src/world/tsy_drain.rs::compute_search_drain_multiplier` (line 61) 在 `compute_drain_per_tick_with_modifiers` 中乘入
+- **P2 Spawn 配置 §1.4/§1.5/§4**：`server/loot_pools.json`（5 档 pool）/ `server/tsy_containers.json`（zone 容器 spec）/ `server/assets/items/tsy_keys.toml`（3 把钥匙 37 行）/ `server/src/world/tsy_container_spawn.rs` — `TsyOriginModifier` (line 67) / `OriginMultiplier::for_kind` (line 122) / `apply_origin_multiplier` (line 174) / `loads_default_tsy_containers_json` 测试覆盖 JSON 解析；spawn 入口：`server/src/world/tsy_dev_command.rs::apply_tsy_spawn_requests` (line 161, 发 `TsyZoneInitialized` line 288) + `server/src/world/tsy_poi_consumer.rs::spawn_tsy_containers` (line 207)
+- **P3 客户端同步 §5**：IPC schema `agent/packages/schema/src/container-interaction.ts` — `ContainerStateV1` / `SearchStartedV1` / `SearchProgressV1` / `SearchCompletedV1` / `SearchAbortedV1` / `StartSearchRequestV1` / `CancelSearchRequestV1`，registry 已通过 `agent/packages/schema/src/schema-registry.ts:153` 暴露；generated JSON：`search-started-v1.json` / `search-progress-v1.json` / `search-completed-v1.json` / `search-aborted-v1.json` / `container-state-v1.json` / `client-request-start-search-v1.json` / `client-request-cancel-search-v1.json`；客户端 HUD：`client/src/main/java/com/bong/client/hud/SearchHudState.java`（5 状态：IDLE/SEARCHING/COMPLETED_FLASH/ABORTED_FLASH + AbortReason）+ `SearchProgressHudPlanner.java`（line 19，包含 `abortReasonLabel`）
+
+### 关键 commit
+
+- `d6e84e37` (2026-04-27) — plan-tsy-container-v1: TSY 容器搜刮 5 档 + 钥匙 + 真元 1.5× (#55)
+- `ca310579` — feat(tsy-container): §1 数据模型 LootContainer/SearchProgress/KeyKind
+- `97d2e633` — feat(tsy-container): §1.5/§4 容器 spawn 配置 + origin modifier + 撒点 helper
+- `f1ed1966` — feat(tsy-container): §2 搜刮 system + event 总线 + 互锁
+- `e4258400` — chore(tsy-container): 修 fmt + clippy（dead_code/needless_borrow/too_many_args）
+
+### 测试结果
+
+- `cd server && cargo test tsy_container` — 23 passed (`tsy_container::tests` 8 + `tsy_container_search::tests` 7 + `tsy_container_spawn::tests` 8)；含 `base_search_ticks_table` / `required_key_mapping` / `is_skeleton_only_relic_core` / `kind_str_roundtrip` / `key_kind_template_id_table` / `item_as_container_key_recognises_three_kinds` / `loot_container_new_locks_per_kind` / `find_key_in_inventory_*`（hotbar/main_pack/none 三路径）/ `is_in_combat_recognises_active_window` / `damaged_this_tick_match` / `apply_origin_multiplier_ceils_and_clamps` / `origin_multiplier_picks_correct_table` / `skeleton_uses_dry_corpse_multiplier` / `unknown_kind_in_json_is_rejected` / `loads_default_tsy_containers_json` 等
+- `cd server && cargo test --test ... tsy_drain` — `search_drain_multiplier_is_one_when_not_searching` / `search_drain_multiplier_is_one_point_five_when_searching` / `multiplier_compounds_with_base_drain` 等通过
+- `cd client && ./gradlew test --tests '*SearchProgressHudPlanner*'` — BUILD SUCCESSFUL（`SearchProgressHudPlannerTest` 11 个 `@Test` / 94 行）
+
+### 跨仓库核验
+
+- **server**：`LootContainer` / `ContainerKind` / `KeyKind` / `SearchProgress` / `IsSearching` @ `server/src/world/tsy_container.rs`；`start_search_container` / `tick_search_progress` / `handle_search_completed` / `CancelSearchRequest` / `RelicExtracted` / `TsyZoneInitialized` @ `server/src/world/tsy_container_search.rs`；`TsyOriginModifier` / `OriginMultiplier` / `apply_origin_multiplier` @ `server/src/world/tsy_container_spawn.rs`；`compute_search_drain_multiplier` @ `server/src/world/tsy_drain.rs`；`!tsy-spawn` 命令分发 @ `server/src/network/chat_collector.rs:474`；`spawn_tsy_containers` @ `server/src/world/tsy_poi_consumer.rs:207`；下游消费 `RelicExtracted` @ `server/src/world/tsy_lifecycle.rs:783`；NPC 钥匙绑定 @ `server/src/npc/tsy_hostile.rs:1537-1538`
+- **agent**：`container-interaction.ts` 内 7 个 contract（5 个 server→client，2 个 client→server） @ `agent/packages/schema/src/container-interaction.ts`；导出 @ `agent/packages/schema/src/index.ts:52` + `schema-registry.ts:153`；7 份 generated JSON @ `agent/packages/schema/generated/{container-state,search-started,search-progress,search-completed,search-aborted,client-request-start-search,client-request-cancel-search}-v1.json`
+- **client**：`SearchHudState`（record，5 状态 + AbortReason 枚举） @ `client/src/main/java/com/bong/client/hud/SearchHudState.java`；`SearchProgressHudPlanner` @ `client/src/main/java/com/bong/client/hud/SearchProgressHudPlanner.java`；测试 @ `client/src/test/java/com/bong/client/hud/SearchProgressHudPlannerTest.java`
+- **worldgen**：（不涉及）
+
+### 遗留 / 后续
+
+- 实机搜刮联调与文档自审清单未跑（plan §11 进度日志 2026-04-27 自报"剩余 ~5%"），交后续 smoke 验证；worldgen 自动 spawn 容器 / 封灵匣 / 容器贴图等独立 plan 未启动（详见 §8 非目标表）
+

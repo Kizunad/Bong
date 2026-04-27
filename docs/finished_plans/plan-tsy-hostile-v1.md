@@ -719,3 +719,71 @@ export const TsySentinelPhaseChangedV1 = Type.Object({
 
 - 2026-04-25：P4 仍为纯设计骨架，零代码落地。`server/src/npc/lifecycle.rs:41-49` 的 `NpcArchetype` 只有 6 个 variant（`Zombie/Commoner/Rogue/Beast/Disciple/GuardianRelic`），尚未加入 P2 占位的 `Daoxiang` 或 P4 的 `Zhinian/Fuya`；`server/src/npc/` 下无 `tsy_hostile.rs`，`server/src/world/` 下无 `tsy_origin.rs`，仓库根也无 `tsy_spawn_pools.json` / `tsy_drops.json`。整个 TSY 位面（P0 `TsyPresence` / P3 容器 / P2 lifecycle Daoxiang）前置链未启动，须等 `/consume-plan tsy-dimension`→`tsy-zone`→`tsy-lifecycle`→`tsy-container` 串行落地后再开 P4。
 - **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并；串行链中 `tsy-dimension` 已划掉，剩 `tsy-zone`→`tsy-lifecycle`→`tsy-container` 三档串行前置仍未启动。本 plan 仍 ⬜。
+- **2026-04-27**：**前置全部就位 + 主体落地** — `tsy-zone` (#49 `bd349286`) / `tsy-zone-followup` (#50 `29f8033c`) / `tsy-lifecycle` (#54 `99c29ebd`) / `tsy-container` (#55 `d6e84e37`) 全部 merged，串行前置链清空。本 plan 主体 PR `9d05e622` 于 23:50 merged：
+  - §1 `NpcArchetype` ✅：`Daoxiang` / `Zhinian` / `Fuya` / `TsySentinelMarker` 三 variant + 守灵标记全部接入 `npc/lifecycle.rs`
+  - §2 AI Trees ✅：`server/src/npc/tsy_hostile.rs` 1936 行，4 套差异化 thinker（`DaoxiangInstinctScorer` / `ZhinianAmbush` / `SentinelPhase` / `FuyaEnrage`）+ 9 单测
+  - §3 Fuya aura ✅：`FuyaAura` component + `compute_fuya_aura_drain_multiplier()` 接入 `world/tsy_drain.rs`
+  - §4 Spawn Pool ✅：`tsy_spawn_pools.json` + `DEFAULT_TSY_SPAWN_POOLS_PATH`；`TsyOrigin` enum @ `world/tsy_origin.rs`（4 值：DanengLuoluo/ZongmenYiji/ZhanchangChendian/GaoshouShichu）
+  - §5 Drop Table ✅：`tsy_drops.json` + `DEFAULT_TSY_DROPS_PATH`，`npc/loot.rs` 接入 archetype 查询
+  - §6 IPC schema ✅：`TsyNpcSpawnedV1` / `TsySentinelPhaseChangedV1` 在 `server/schema/tsy_hostile.rs`
+- **2026-04-28**：审核反馈修复 `6e964407` (07:45)，schema/network/loot 同步 4 个 follow-up commit。本 plan 全 P 落地，剩归档准备。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 NpcArchetype 扩展**：`server/src/npc/lifecycle.rs:51-95` — `NpcArchetype` 加 `Daoxiang` / `Zhinian` / `Fuya` 三 variant + `as_str()` + `default_max_age_ticks()`（Daoxiang 实际取 1_000_000.0 承接 lifecycle "不老" 语义而非 plan 草稿的 120_000.0；Zhinian 180_000 / Fuya 240_000）
+- **§1.2 TsySentinelMarker tag**：`server/src/npc/tsy_hostile.rs:62`（`family_id` / `guarding_container` / `phase` / `max_phase`）
+- **§1.3 TsyOrigin enum**：`server/src/world/tsy_origin.rs:6-10` — 4 variant（`DanengLuoluo` / `ZongmenYiji` / `ZhanchangChendian` / `GaoshouShichu`）+ `from_zone_name` + `from_origin_key`
+- **§2 AI Trees**：`server/src/npc/tsy_hostile.rs`（1936 行）— 4 套差异化 thinker：
+  - 道伥：`DaoxiangInstinctScorer` (line 161) → `DaoxiangInstinctAction` (line 893 thinker)
+  - 执念：`ZhinianMind` (line 99) + `ZhinianAmbushScorer` (line 167) → `ZhinianComboStepAction` (line 903 thinker)
+  - 守灵：`SentinelAggroScorer` + `SentinelPhaseAction` (line 179) → 阶段切换 system (line 1195) + `TsySentinelPhaseChanged` event (line 304)
+  - 畸变体：`FuyaEnrageScorer` (line 182) + `FuyaEnrageAction` (line 188) + `FuyaEnragedMarker` (line 85)
+- **§3 Fuya aura**：`compute_fuya_aura_drain_multiplier` @ `server/src/npc/tsy_hostile.rs:926`，接入 `server/src/world/tsy_drain.rs:96` 与 `compute_drain_per_tick` 相乘叠加
+- **§4 Spawn Pool**：`server/tsy_spawn_pools.json` + `DEFAULT_TSY_SPAWN_POOLS_PATH` (`tsy_hostile.rs:53`)；`TsySpawnPoolRegistry` (line 231) + `load_tsy_spawn_pool_registry` (line 396)；接入 `server/src/world/tsy_dev_command.rs:165` (`hostile_specs: Option<Res<TsySpawnPoolRegistry>>`)
+- **§5 Drop Table**：`server/tsy_drops.json` + `DEFAULT_TSY_DROPS_PATH` (`tsy_hostile.rs:54`)；`server/src/npc/loot.rs:93/98/102` 按 `Daoxiang` / `Zhinian` / `Fuya` archetype 派生 drop entries
+- **§6 IPC schema**：
+  - server `server/src/schema/tsy_hostile.rs:18` `TsyNpcSpawnedV1` / line 29 `TsySentinelPhaseChangedV1`
+  - agent `agent/packages/schema/src/tsy-hostile-v1.ts:18/39` TypeBox 双端契约 + `validateTsyNpcSpawnedV1Contract` / `validateTsySentinelPhaseChangedV1Contract`
+  - registry 接入 `agent/packages/schema/src/schema-registry.ts:142-279`
+  - 运行时投递 `server/src/network/redis_bridge.rs:64/65` (`RedisOutbound::TsyNpcSpawned` / `TsySentinelPhaseChanged`)
+
+### 关键 commit
+
+- `3fe36222` (2026-04-27) — 定义敌对 NPC IPC schema（双端 contract 起手）
+- `ed2d63f5` (2026-04-27) — 接入 TSY 敌对 NPC（首次落地）
+- `ca0374bc` (2026-04-27) — 补齐敌对 NPC schema 产物
+- `9d05e622` (2026-04-27) — 接入 TSY 敌对 NPC（主体 PR 合并提交）
+- `a3d7e127` (2026-04-27) — 监听敌对 NPC 事件
+- `6be3cf06` (2026-04-27) — 接线敌对 NPC Redis 事件
+- `6e964407` (2026-04-27) — 修复敌对 NPC 审核反馈
+
+### 测试结果
+
+- `grep -c '#\[test\]' server/src/npc/tsy_hostile.rs` → **9** 单测（覆盖 Fuya aura drain 叠加、零半径、空集合、距离衰减、`TsyOrigin::from_zone_name` 等）
+- `server/src/world/tsy_origin.rs:46-67` — `from_zone_name` 5 case 测试（4 origin 命中 + spawn 落空）
+- `server/src/schema/tsy_hostile.rs:47-85` — sample JSON 双向序列化测试（`TsyNpcSpawnedV1` / `TsySentinelPhaseChangedV1`）
+- `server/src/network/redis_bridge.rs:1384-1420` — Redis outbound 序列化 + `kind` 字段断言（`tsy_npc_spawned` / `tsy_sentinel_phase_changed`）
+
+### 跨仓库核验
+
+- **server**：
+  - `NpcArchetype::{Daoxiang,Zhinian,Fuya}` @ `server/src/npc/lifecycle.rs:60-64`
+  - `TsySentinelMarker` / `FuyaAura` / `ZhinianMind` / `FuyaEnragedMarker` @ `server/src/npc/tsy_hostile.rs:62/70/85/99`
+  - 4 套 Scorer / Action（`DaoxiangInstinctScorer` / `ZhinianAmbushScorer` / `SentinelPhaseAction` / `FuyaEnrageScorer`）@ `server/src/npc/tsy_hostile.rs:161/167/179/182`
+  - `compute_fuya_aura_drain_multiplier` @ `server/src/npc/tsy_hostile.rs:926`，drain 链接入 `server/src/world/tsy_drain.rs:96`
+  - `TsyOrigin` 4 variant @ `server/src/world/tsy_origin.rs:6-10`
+  - schema `TsyNpcSpawnedV1` / `TsySentinelPhaseChangedV1` @ `server/src/schema/tsy_hostile.rs:18/29`
+  - Redis outbound 接线 @ `server/src/network/redis_bridge.rs:27/64/65`
+- **agent**：
+  - `TsyNpcSpawnedV1` / `TsySentinelPhaseChangedV1` TypeBox @ `agent/packages/schema/src/tsy-hostile-v1.ts:18/39`
+  - schema registry 注入 @ `agent/packages/schema/src/schema-registry.ts:142-279`
+- **client**：不涉及（client 视觉 polish 列入 §8 非目标，独立 plan）
+- **worldgen**：不涉及
+
+### 遗留 / 后续
+
+- §6 schema 已 publish；agent 层 narration 消费侧由独立 plan 处理（plan 自报范围内不消费）。其他 §8 列出的视觉特效 / Zhinian LifeRecord 招式录像 / Fuya 种族变种 / 道伥喷出主世界行为均归独立 plan，本 plan 不再扩展。
