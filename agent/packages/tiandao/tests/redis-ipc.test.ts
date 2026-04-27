@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { RedisIpc, WORLD_MODEL_STATE_FIELDS, WORLD_MODEL_STATE_KEY } from "../src/redis-ipc.js";
 import { CHANNELS } from "@bong/schema";
 
-const { AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, WORLD_STATE } = CHANNELS;
+const { AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, TSY_EVENT, WORLD_STATE } =
+  CHANNELS;
 
 interface FakeMultiResult {
   lrange: string[];
@@ -252,6 +253,56 @@ describe("redis-ipc", () => {
     );
 
     expect(ipc.getLatestState()?.tick).toBe(1);
+  });
+
+  it("observes TSY hostile events from the shared TSY event channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onTsyHostileEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      TSY_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "tsy_npc_spawned",
+        family_id: "tsy_zongmen_yiji_01",
+        archetype: "guardian_relic_sentinel",
+        count: 3,
+        at_tick: 12000,
+      }),
+    );
+    await sub.publish(
+      TSY_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "tsy_sentinel_phase_changed",
+        family_id: "tsy_zongmen_yiji_01",
+        container_entity_id: 42,
+        phase: 1,
+        max_phase: 3,
+        at_tick: 12345,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(ipc.getLatestTsyHostileEvents()).toEqual([
+      expect.objectContaining({ kind: "tsy_npc_spawned", count: 3 }),
+      expect.objectContaining({ kind: "tsy_sentinel_phase_changed", phase: 1 }),
+    ]);
   });
 
   it("publishes spawn_npc commands through the existing agent command channel", async () => {

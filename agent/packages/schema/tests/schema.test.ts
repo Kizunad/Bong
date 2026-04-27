@@ -23,6 +23,10 @@ import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import {
+  TsyNpcSpawnedV1,
+  TsySentinelPhaseChangedV1,
+} from "../src/tsy-hostile-v1.js";
+import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
   SkillSnapshotPayloadV1,
@@ -140,6 +144,18 @@ describe("sample files pass schema validation", () => {
   it("server-data.inventory-event.sample.json", () => {
     const data = loadSample("server-data.inventory-event.sample.json");
     const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("tsy-npc-spawned.sample.json", () => {
+    const data = loadSample("tsy-npc-spawned.sample.json");
+    const result = validate(TsyNpcSpawnedV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("tsy-sentinel-phase-changed.sample.json", () => {
+    const data = loadSample("tsy-sentinel-phase-changed.sample.json");
+    const result = validate(TsySentinelPhaseChangedV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

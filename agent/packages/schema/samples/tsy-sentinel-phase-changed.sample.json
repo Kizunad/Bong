@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "kind": "tsy_sentinel_phase_changed",
+  "family_id": "tsy_zongmen_yiji_01",
+  "container_entity_id": 42,
+  "phase": 1,
+  "max_phase": 3,
+  "at_tick": 12345
+}
