@@ -277,6 +277,7 @@ mod server_data_tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         }
     }
 
@@ -358,7 +359,7 @@ mod server_data_tests {
                 current: 3.5,
                 max: 50.0,
             },
-            realm: "qi_refining_1".to_string(),
+            realm: "Awaken".to_string(),
             qi_current: 24.0,
             qi_max: 100.0,
             body_level: 0.18,
@@ -438,7 +439,7 @@ mod server_data_tests {
             (
                 ServerDataV1::new(ServerDataPayloadV1::PlayerState {
                     player: Some("offline:Steve".to_string()),
-                    realm: "qi_refining_3".to_string(),
+                    realm: "Induce".to_string(),
                     spirit_qi: 78.0,
                     karma: 0.2,
                     composite_power: 0.35,
@@ -449,7 +450,7 @@ mod server_data_tests {
                     "v": SERVER_DATA_VERSION,
                     "type": "player_state",
                     "player": "offline:Steve",
-                    "realm": "qi_refining_3",
+                    "realm": "Induce",
                     "spirit_qi": 78.0,
                     "karma": 0.2,
                     "composite_power": 0.35,
@@ -661,6 +662,7 @@ mod server_data_tests {
                     scroll_kind: None,
                     scroll_skill_id: None,
                     scroll_xp_grant: None,
+                    charges: None,
                 },
             },
         ));

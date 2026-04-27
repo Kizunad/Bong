@@ -895,6 +895,7 @@ fn award_item_to_inventory(
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1282,6 +1283,7 @@ mod tests {
             durability,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -1455,6 +1457,7 @@ mod tests {
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
         let inv = PlayerInventory {
@@ -1772,6 +1775,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -2218,6 +2222,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2341,6 +2346,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             });
         inv

@@ -1307,10 +1307,7 @@ mod tests {
     fn territory_patrol_action_requested_sets_navigator_then_succeeds_on_timeout() {
         let mut app = App::new();
         app.insert_resource(GameTick(42));
-        app.add_systems(
-            PreUpdate,
-            territory_patrol_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, territory_patrol_action_system);
 
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0);
         let beast = spawn_beast_with_territory(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
@@ -1370,10 +1367,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameTick(10));
         app.add_event::<AttackIntent>();
-        app.add_systems(
-            PreUpdate,
-            hunt_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, hunt_action_system);
         app
     }
 
@@ -1491,10 +1485,7 @@ mod tests {
 
     fn build_protect_young_action_app() -> App {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            protect_young_action_system.in_set(big_brain::prelude::BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, protect_young_action_system);
         app
     }
 

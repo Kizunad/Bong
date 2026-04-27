@@ -35,6 +35,7 @@ pub struct NpcLodConfig {
     pub near_radius: f64,
     pub far_radius: f64,
     pub far_skip_interval: u32,
+    #[allow(dead_code)]
     pub dormant_skip_interval: u32,
     /// 每 N tick 重新评估一次 tier（避免每 tick O(npc × player)）。
     pub reassess_interval: u32,
@@ -153,6 +154,7 @@ pub fn is_dormant(tier: Option<&NpcLodTier>) -> bool {
 
 /// 与 scorer 系统配合：给 `Actor(npc)` 上挂的 scorer 查 actor 的 LOD tier。
 /// 供 brain.rs / territory.rs 等共享使用的极简 helper。
+#[allow(dead_code)]
 pub fn actor_lod_tier<'a>(
     npc_tiers: &'a Query<'_, '_, &'a NpcLodTier, With<NpcMarker>>,
     actor: Entity,
@@ -161,6 +163,7 @@ pub fn actor_lod_tier<'a>(
 }
 
 /// 统计每个 tier 的 NPC 数量（debug / 监控用）。
+#[allow(dead_code)]
 pub fn count_by_tier(
     npcs: &Query<Option<&NpcLodTier>, With<NpcMarker>>,
 ) -> HashMap<NpcLodTier, usize> {

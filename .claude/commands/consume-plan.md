@@ -1,11 +1,11 @@
 ---
-description: 开 worktree → 实施 docs/plan-<name>.md → PR → 等 CI+Claude review → merge → 清理。线性、测试/CI 失败允许有限修复（≤2 轮）、Claude review 异议即停。
+description: 开 worktree → 实施 docs/plan-<name>.md → PR → 查 merge conflict → 等 CI+Claude review → merge → 清理。线性、测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断要不要采纳。
 argument-hint: <plan-name>
 ---
 
 # consume-plan $ARGUMENTS
 
-线性消费 `docs/plan-$ARGUMENTS.md`。实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；Claude review 出现任何修改意见一律**即停交人工**。不自动跳过失败 TODO。
+线性消费 `docs/plan-$ARGUMENTS.md`。实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；Claude review 意见**自行判断要不要采纳**（严重 bug / 安全问题应修，风格 nit 可忽略，写明理由即可）；PR 创建后立即查 merge conflict，冲突直接交人工。不自动跳过失败 TODO。
 
 ---
 
@@ -114,6 +114,39 @@ echo "PR: $PR_URL (#$PR_NUM)"
 
 **不加 `--auto`**——需要先看 Claude review 评论再决定是否合。
 
+### 4.1 检查 merge conflict
+
+PR 创建后**立即**查 mergeable 状态，避免后续 step 浪费时间在已知冲突的 PR 上：
+
+```bash
+cd "$WT_ABS"
+# GitHub 异步计算 mergeable，最多等 30 秒
+MERGE_STATUS="UNKNOWN"
+for i in 1 2 3 4 5 6; do
+  MERGE_STATUS=$(gh pr view "$PR_NUM" --json mergeable --jq '.mergeable')
+  [ "$MERGE_STATUS" != "UNKNOWN" ] && break
+  sleep 5
+done
+echo "[mergeable] $MERGE_STATUS"
+
+case "$MERGE_STATUS" in
+  MERGEABLE)
+    echo "[ok] 无冲突，进 step 5"
+    ;;
+  CONFLICTING)
+    echo "❌ PR 与 origin/main 有冲突，停交人工"
+    gh pr view "$PR_NUM" --json url,mergeStateStatus,headRefName,baseRefName
+    echo "WT: $WT_ABS"
+    exit 1
+    ;;
+  UNKNOWN)
+    echo "[warn] GitHub 仍在计算 mergeable（30s 超时），CI 阶段会再次校验"
+    ;;
+esac
+```
+
+冲突时**不**自动 rebase / force push——可能涉及业务判断（哪边逻辑保留），交人工更安全。
+
 ## 5. 等 CI 跑完
 
 ```bash
@@ -154,30 +187,49 @@ bash .claude/skills/pr-watch/watch.sh "$PR_NUM" --timeout 540 --interval 60
   - 若拉到 Claude 相关评论/review → 按 step 7 判定
   - 若确实一条没有 → 报告 "Claude review 超时未反馈"、**停，不 merge**
 
-## 7. 判定评审意见（严格门槛）
+## 7. 评审意见处理（自行判断）
 
-能 merge 的**充分条件**（必须全部满足）：
+读 step 6 拿到的所有评论 + 行内评论 + review state，**自行评估严重性**，决定采纳/修复/忽略，不要照单全改也不要凡异议必停。
 
-- CI（step 5）全绿
-- Claude review 评论是**纯肯定或纯总结性**内容：
-  - "✅ LGTM" / "整体没问题" / "符合 CLAUDE.md 约定"
-  - 只描述改动做了什么，不提任何修改方向
-  - 或 workflow 跑完完全无评论
+### 7.1 无需处理 → 直接进 step 8
 
-**以下任何一种形式的反馈都视为"修改要求"，一律停、不 merge、交人工**：
+- 没有任何 review/评论
+- 评论是纯肯定或纯描述："✅ LGTM" / "整体没问题" / "符合 CLAUDE.md 约定" / 只复述改动
+- 评论与本 PR 改动无关（闲聊、未来规划、其他 PR）
 
-- 明确反对："❌" / "request changes" / "有 bug" / "必须修改" / "不对"
-- 建议性语气："建议" / "可以考虑" / "推荐" / "最好" / "参考" / "更好的做法是" / "不如"
-- 疑问性语气："这里为什么…" / "这个是否需要…" / "担心…" / "确定…吗"
-- 任何行内评论（review comment on file:line）—— 行内评论本身就是"这里要改"的信号
-- 任何 `state: "CHANGES_REQUESTED"` 的 review
+### 7.2 自行评估，按严重性分桶
 
-停的时候输出给用户：
+- **严重（bug / 安全 / 破坏运行时 / 严重违反 CLAUDE.md / 与 plan 目标矛盾 / 与 worldview.md 冲突）**：必须修
+  - 走 step 3 的"有限修复循环（≤2 轮）"：atomic fix commit + 跑对应子项目测试 + `cd "$WT_ABS" && git push`
+  - 修完直接进 step 8（不再重等 Claude review，避免循环）
+- **中等（明确质量问题但不影响功能：错误处理缺失、命名误导、文档与代码不符、明显的边界 case 未处理）**：自行决定
+  - 决定修 → 同上有限修复
+  - 决定不修 → 最终输出里写一行"未采纳：<理由，例如范围超出本 plan / 后续 plan 处理>"，进 step 8
+- **轻微（nit / style / 主观偏好 / "可以考虑"/"建议"语气 / "更好的做法是"）**：通常忽略
+  - 最终输出里写一行"已评估 N 条 nit，未采纳"，进 step 8
 
-1. 一句话判定结论："检测到 X 条修改建议，暂不 merge"
-2. 分 reviewer 原文列出所有评论 + 行内评论的 `file:line`
-3. PR URL + `$WT_ABS`
-4. **不要擅自处理评论、不要改代码**（与 step 3/5 修复不同：review 异议是质量判断，必须交人工）
+判断原则：
+
+- 不确定严重性时往严重靠（宁可多修一轮）
+- 但单纯偏好/风格/"也许更好"类建议不采纳是合法选择，**写一行理由**就行
+- 修复范围严格限于"评论指向的具体问题"——禁止顺手重构、扩大改动面
+- 行内评论不再视为强制信号——按内容严重性走分桶
+
+### 7.3 交人工
+
+下列情况停下交人工，不要硬撑：
+
+- 修改建议涉及超出当前 plan 范围的结构性改动（跨模块重构、新增 plan 才能完成）
+- 评论指向 plan 本身设计问题（不是 patch 实现问题）——人来决定要不要回炉
+- 走了 ≥2 轮修复仍跑不过测试
+- 自己确实读不懂评论在说什么，且无法在 worktree 上下文里定位
+
+### 7.4 最终输出（无论走哪条路径都要给）
+
+1. 一句话判定："收到 X 条意见，处理结果：已修 N / 未采纳 N / 交人工 N"
+2. 分桶列出原文 + 处理方式（含未采纳的一行理由）
+3. 已修的 atomic fix commit hash
+4. PR URL + `$WT_ABS`
 
 ## 8. Merge
 
@@ -213,6 +265,6 @@ git branch -D "$BRANCH" 2>/dev/null || true
 - 输出：哪一步挂的、错误原文、**`$WT_ABS` 路径**、PR URL（若已开）
 - **不**自动重试（超出 step 3 / step 5 中明确允许的 ≤2 轮修复）
 - **不**清理 worktree / 分支 / PR
-- **不**试图自己改代码处理 Claude review 评审意见（step 7 异议一律交人工）
+- 处理 review 评审意见的边界见 step 7（自行判断采纳/修复/忽略；范围外、设计层、反复修不过才交人工）
 - **不** `cd` 回主仓库根目录（除非已到 step 9）
 - 把控制权完全交给人

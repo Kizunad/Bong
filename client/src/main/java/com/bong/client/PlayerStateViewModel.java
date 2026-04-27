@@ -101,10 +101,6 @@ public record PlayerStateViewModel(
         }
 
         String normalized = trimmed.toLowerCase(Locale.ROOT);
-        if ("mortal".equals(normalized)) {
-            return "凡体";
-        }
-
         return switch (normalized) {
             case "awaken" -> "醒灵";
             case "induce" -> "引气";
@@ -167,7 +163,7 @@ public record PlayerStateViewModel(
 
     private static double realmProgressScore(String realmKey) {
         String normalized = PlayerStateState.normalizeRealmKey(realmKey).trim().toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty() || "mortal".equals(normalized)) {
+        if (normalized.isEmpty()) {
             return 0.05d;
         }
 

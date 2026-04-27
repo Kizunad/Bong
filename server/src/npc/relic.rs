@@ -35,6 +35,8 @@ pub const TRIAL_EVAL_SCORE_PEAK: f32 = 0.8;
 /// TrialAction stub 退出延时（tick）。
 pub const TRIAL_STUB_COOLDOWN_TICKS: u32 = 20;
 
+// plan-npc-ai-v1 scaffolding: GuardianRelic NPC AI is not wired into the live
+// thinker set yet, but the components and helpers are kept for follow-up PRs.
 /// 绑定遗迹 ID + 守护半径。`relic_id` 由 worldgen 或 agent 产生，NPC 自身不管；
 /// 仅用半径 + alarm_center 判入侵。
 #[derive(Clone, Debug, Component)]
@@ -411,8 +413,7 @@ fn trial_action_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use big_brain::prelude::BigBrainSet;
-    use valence::prelude::{App, IntoSystemConfigs, PreUpdate};
+    use valence::prelude::{App, PreUpdate};
 
     fn spawn_guardian(app: &mut App, duty: GuardianDuty) -> Entity {
         app.world_mut()
@@ -627,7 +628,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameTick(500));
         app.add_event::<AttackIntent>();
-        app.add_systems(PreUpdate, guard_action_system.in_set(BigBrainSet::Actions));
+        app.add_systems(PreUpdate, guard_action_system);
         app
     }
 
@@ -706,7 +707,7 @@ mod tests {
     fn build_trial_action_app() -> App {
         let mut app = App::new();
         app.insert_resource(GameTick(1000));
-        app.add_systems(PreUpdate, trial_action_system.in_set(BigBrainSet::Actions));
+        app.add_systems(PreUpdate, trial_action_system);
         app
     }
 

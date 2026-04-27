@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, Resource};
 
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::inventory::PlayerInventory;
 use crate::persistence::DEFAULT_DATABASE_PATH;
+use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::PlayerPowerBreakdown;
 use crate::skill::components::SkillSet;
@@ -16,33 +18,19 @@ use crate::world::dimension::DimensionKind;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
-const DEFAULT_REALM: &str = "mortal";
-const DEFAULT_SPIRIT_QI_MAX: f64 = 100.0;
-const REALM_SCORE_QI_REFINING_DIVISOR: f64 = 12.0;
-const REALM_SCORE_FOUNDATION_BASE: f64 = 0.7;
-const REALM_SCORE_FOUNDATION_STEP: f64 = 0.08;
-const EXPERIENCE_SCORE_DIVISOR: f64 = 10_000.0;
 const PLAYER_ROW_SCHEMA_VERSION: i32 = 1;
 const DEFAULT_INVENTORY_JSON: &str = "null";
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
-    pub realm: String,
-    pub spirit_qi: f64,
-    pub spirit_qi_max: f64,
     pub karma: f64,
-    pub experience: u64,
     pub inventory_score: f64,
 }
 
 impl Default for PlayerState {
     fn default() -> Self {
         Self {
-            realm: DEFAULT_REALM.to_string(),
-            spirit_qi: 0.0,
-            spirit_qi_max: DEFAULT_SPIRIT_QI_MAX,
             karma: 0.0,
-            experience: 0,
             inventory_score: 0.0,
         }
     }
@@ -78,29 +66,16 @@ pub struct PlayerExportBundle {
 
 impl PlayerState {
     pub fn normalized(&self) -> Self {
-        let spirit_qi_max = self.spirit_qi_max.max(1.0);
-        let realm = if self.realm.trim().is_empty() {
-            DEFAULT_REALM.to_string()
-        } else {
-            self.realm.trim().to_string()
-        };
-
         Self {
-            realm,
-            spirit_qi: self.spirit_qi.clamp(0.0, spirit_qi_max),
-            spirit_qi_max,
             karma: self.karma.clamp(-1.0, 1.0),
-            experience: self.experience,
             inventory_score: clamp_unit(self.inventory_score),
         }
     }
 
-    pub fn power_breakdown(&self) -> PlayerPowerBreakdown {
+    pub fn power_breakdown(&self, cultivation: &Cultivation) -> PlayerPowerBreakdown {
         let normalized = self.normalized();
-        let realm_score = realm_progress_score(normalized.realm.as_str());
-        let qi_ratio = ratio_score(normalized.spirit_qi, normalized.spirit_qi_max);
-        let experience_score =
-            (normalized.experience as f64 / EXPERIENCE_SCORE_DIVISOR).clamp(0.0, 1.0);
+        let realm_score = realm_progress_score(cultivation.realm);
+        let qi_ratio = ratio_score(cultivation.qi_current, cultivation.qi_max);
         let wealth = clamp_unit(normalized.inventory_score);
         let karma_alignment = ((normalized.karma + 1.0) * 0.5).clamp(0.0, 1.0);
         let karma_influence = normalized.karma.abs().clamp(0.0, 1.0);
@@ -108,14 +83,14 @@ impl PlayerState {
         PlayerPowerBreakdown {
             combat: clamp_unit(realm_score * 0.6 + qi_ratio * 0.4),
             wealth,
-            social: clamp_unit(experience_score * 0.6 + karma_alignment * 0.4),
+            social: clamp_unit(realm_score * 0.6 + karma_alignment * 0.4),
             karma: karma_influence,
-            territory: clamp_unit(experience_score * 0.5 + wealth * 0.5),
+            territory: clamp_unit(realm_score * 0.5 + wealth * 0.5),
         }
     }
 
-    pub fn composite_power(&self) -> f64 {
-        let breakdown = self.power_breakdown();
+    pub fn composite_power(&self, cultivation: &Cultivation) -> f64 {
+        let breakdown = self.power_breakdown(cultivation);
 
         clamp_unit(
             breakdown.combat * 0.4
@@ -126,16 +101,29 @@ impl PlayerState {
         )
     }
 
-    pub fn server_payload(&self, player: Option<String>, zone: impl Into<String>) -> ServerDataV1 {
+    pub fn server_payload(
+        &self,
+        cultivation: &Cultivation,
+        player: Option<String>,
+        zone: impl Into<String>,
+    ) -> ServerDataV1 {
         let normalized = self.normalized();
+        let breakdown = normalized.power_breakdown(cultivation);
+        let composite_power = clamp_unit(
+            breakdown.combat * 0.4
+                + breakdown.wealth * 0.15
+                + breakdown.social * 0.15
+                + breakdown.karma * 0.15
+                + breakdown.territory * 0.15,
+        );
 
         ServerDataV1::new(ServerDataPayloadV1::PlayerState {
             player,
-            realm: normalized.realm.clone(),
-            spirit_qi: normalized.spirit_qi,
+            realm: realm_to_string(cultivation.realm).to_string(),
+            spirit_qi: cultivation.qi_current,
             karma: normalized.karma,
-            composite_power: normalized.composite_power(),
-            breakdown: normalized.power_breakdown(),
+            composite_power,
+            breakdown,
             zone: zone.into(),
         })
     }
@@ -385,16 +373,6 @@ pub fn save_player_slow_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
-pub fn save_player_progression_slice(
-    persistence: &PlayerStatePersistence,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<PathBuf> {
-    let mut connection = open_player_connection(persistence)?;
-    persist_player_progression_slice_in_sqlite(&mut connection, username, state)?;
-    Ok(persistence.db_path().to_path_buf())
-}
-
 pub fn save_player_inventory_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -471,7 +449,6 @@ pub fn import_player_bundle(
     let inventory_json = serialize_inventory_json(bundle.inventory.as_ref())?;
     let skill_set_json = serialize_skill_set_json(&bundle.skill_set)?;
     let normalized = bundle.state.normalized();
-    let experience = experience_to_sql(normalized.experience)?;
     let [pos_x, pos_y, pos_z] = bundle.position;
     let last_updated_wall = current_unix_seconds();
     let mut connection = open_player_connection(persistence)?;
@@ -483,22 +460,14 @@ pub fn import_player_bundle(
             INSERT INTO player_core (
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(username) DO UPDATE SET
                 current_char_id = excluded.current_char_id,
-                realm = excluded.realm,
-                spirit_qi = excluded.spirit_qi,
-                spirit_qi_max = excluded.spirit_qi_max,
                 karma = excluded.karma,
-                experience = excluded.experience,
                 inventory_score = excluded.inventory_score,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -506,11 +475,7 @@ pub fn import_player_bundle(
             params![
                 bundle.username,
                 bundle.current_char_id,
-                normalized.realm,
-                normalized.spirit_qi,
-                normalized.spirit_qi_max,
                 normalized.karma,
-                experience,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
@@ -630,40 +595,26 @@ fn load_player_state_from_sqlite(
     connection: &Connection,
     username: &str,
 ) -> io::Result<Option<PlayerState>> {
-    let row: Option<(String, f64, f64, f64, i64, f64)> = connection
+    let row: Option<(f64, f64)> = connection
         .query_row(
             "
-            SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+            SELECT karma, inventory_score
             FROM player_core
             WHERE username = ?1
             ",
             params![username],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some((realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score)) = row else {
+    let Some((karma, inventory_score)) = row else {
         return Ok(None);
     };
 
     Ok(Some(
         PlayerState {
-            realm,
-            spirit_qi,
-            spirit_qi_max,
             karma,
-            experience: u64::try_from(experience)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
             inventory_score,
         }
         .normalized(),
@@ -767,16 +718,14 @@ fn persist_player_core_slice_in_sqlite(
         .execute(
             "
             UPDATE player_core
-            SET spirit_qi = ?2,
-                karma = ?3,
-                inventory_score = ?4,
-                schema_version = ?5,
-                last_updated_wall = ?6
+            SET karma = ?2,
+                inventory_score = ?3,
+                schema_version = ?4,
+                last_updated_wall = ?5
             WHERE username = ?1
             ",
             params![
                 username,
-                normalized.spirit_qi,
                 normalized.karma,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
@@ -874,51 +823,6 @@ fn persist_player_slow_slice_in_sqlite(
     Ok(())
 }
 
-fn persist_player_progression_slice_in_sqlite(
-    connection: &mut Connection,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<()> {
-    let normalized = state.normalized();
-    let experience = experience_to_sql(normalized.experience)?;
-    let last_updated_wall = current_unix_seconds();
-    let updated = connection
-        .execute(
-            "
-            UPDATE player_core
-            SET realm = ?2,
-                spirit_qi_max = ?3,
-                experience = ?4,
-                schema_version = ?5,
-                last_updated_wall = ?6
-            WHERE username = ?1
-            ",
-            params![
-                username,
-                normalized.realm,
-                normalized.spirit_qi_max,
-                experience,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-
-    if updated == 0 {
-        persist_player_slices_in_sqlite(
-            connection,
-            username,
-            state,
-            crate::player::spawn_position(),
-            DimensionKind::default(),
-            None,
-            &SkillSet::default(),
-        )?;
-    }
-
-    Ok(())
-}
-
 fn persist_player_inventory_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
@@ -997,11 +901,7 @@ fn persist_player_slices_in_sqlite(
     skill_set: &SkillSet,
 ) -> io::Result<()> {
     let normalized = state.normalized();
-    let realm = normalized.realm;
-    let spirit_qi = normalized.spirit_qi;
-    let spirit_qi_max = normalized.spirit_qi_max;
     let karma = normalized.karma;
-    let experience = experience_to_sql(normalized.experience)?;
     let inventory_score = normalized.inventory_score;
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
@@ -1026,22 +926,14 @@ fn persist_player_slices_in_sqlite(
             INSERT INTO player_core (
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(username) DO UPDATE SET
                 current_char_id = excluded.current_char_id,
-                realm = excluded.realm,
-                spirit_qi = excluded.spirit_qi,
-                spirit_qi_max = excluded.spirit_qi_max,
                 karma = excluded.karma,
-                experience = excluded.experience,
                 inventory_score = excluded.inventory_score,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -1049,11 +941,7 @@ fn persist_player_slices_in_sqlite(
             params![
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
@@ -1296,10 +1184,6 @@ fn serialize_skill_set_json(skill_set: &SkillSet) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn experience_to_sql(experience: u64) -> io::Result<i64> {
-    i64::try_from(experience).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
 fn dimension_kind_to_sql(kind: DimensionKind) -> &'static str {
     match kind {
         DimensionKind::Overworld => "overworld",
@@ -1317,7 +1201,6 @@ fn dimension_kind_from_sql(value: &str) -> io::Result<DimensionKind> {
         )),
     }
 }
-
 fn current_unix_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1337,34 +1220,16 @@ fn clamp_unit(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
-fn realm_progress_score(realm: &str) -> f64 {
-    let normalized = realm.trim().to_ascii_lowercase();
-
-    if normalized == DEFAULT_REALM {
-        return 0.05;
-    }
-
-    if let Some(stage) = normalized
-        .strip_prefix("qi_refining_")
-        .and_then(|value| value.parse::<u8>().ok())
-    {
-        return clamp_unit(stage as f64 / REALM_SCORE_QI_REFINING_DIVISOR);
-    }
-
-    if let Some(stage) = normalized
-        .strip_prefix("foundation_establishment_")
-        .or_else(|| normalized.strip_prefix("foundation_"))
-        .and_then(|value| value.parse::<u8>().ok())
-    {
-        return clamp_unit(
-            REALM_SCORE_FOUNDATION_BASE + stage as f64 * REALM_SCORE_FOUNDATION_STEP,
-        );
-    }
-
-    match normalized.as_str() {
-        "golden_core" => 0.92,
-        "nascent_soul" => 1.0,
-        _ => 0.0,
+fn realm_progress_score(realm: Realm) -> f64 {
+    // Realm score is only used for coarse power estimation in player/world snapshots.
+    // Keep the mapping stable and monotonic across the six realms.
+    match realm {
+        Realm::Awaken => 0.05,
+        Realm::Induce => 0.25,
+        Realm::Condense => 0.4,
+        Realm::Solidify => 0.55,
+        Realm::Spirit => 0.75,
+        Realm::Void => 1.0,
     }
 }
 
@@ -1417,11 +1282,7 @@ mod player_state_tests {
         let autosave_interval_ticks = 60 * TICKS_PER_SECOND;
 
         let persisted = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
             karma: 0.2,
-            experience: 1_200,
             inventory_score: 0.4,
         };
 
@@ -1482,11 +1343,7 @@ mod player_state_tests {
     fn player_export_bundle_roundtrips_back_into_sqlite() {
         let (source_persistence, source_data_dir) = sqlite_persistence("export-bundle-source");
         let exported_state = PlayerState {
-            realm: "qi_refining_4".to_string(),
-            spirit_qi: 88.0,
-            spirit_qi_max: 120.0,
             karma: 0.25,
-            experience: 2_400,
             inventory_score: 0.7,
         };
         save_player_slices(
@@ -1516,31 +1373,15 @@ mod player_state_tests {
                 |row| row.get(0),
             )
             .expect("player_core row should exist after import");
-        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score): (
-            String,
-            f64,
-            f64,
-            f64,
-            i64,
-            f64,
-        ) = connection
+        let (karma, inventory_score): (f64, f64) = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params!["Azure"],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("player_core payload should exist after import");
         let (pos_x, pos_y, pos_z, last_dimension_text): (f64, f64, f64, String) = connection
@@ -1567,11 +1408,7 @@ mod player_state_tests {
 
         assert_eq!(bundle.kind, "player_export_v1");
         assert_eq!(current_char_id, bundle.current_char_id);
-        assert_eq!(realm, "qi_refining_4");
-        assert_eq!(spirit_qi, 88.0);
-        assert_eq!(spirit_qi_max, 120.0);
         assert_eq!(karma, 0.25);
-        assert_eq!(experience, 2_400);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
         assert_eq!(last_dimension_text, "tsy");
@@ -1599,11 +1436,7 @@ mod player_state_tests {
             username: "Azure".to_string(),
             current_char_id: "not-a-uuid".to_string(),
             state: PlayerState {
-                realm: "qi_refining_4".to_string(),
-                spirit_qi: 88.0,
-                spirit_qi_max: 120.0,
                 karma: 0.25,
-                experience: 2_400,
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
@@ -1669,11 +1502,7 @@ mod player_state_tests {
             username: "Azure".to_string(),
             current_char_id: Uuid::now_v7().to_string(),
             state: PlayerState {
-                realm: "qi_refining_4".to_string(),
-                spirit_qi: 88.0,
-                spirit_qi_max: 120.0,
                 karma: 0.25,
-                experience: 2_400,
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
@@ -1734,34 +1563,45 @@ mod player_state_tests {
     #[test]
     fn computes_composite_power() {
         let state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 60.0,
-            spirit_qi_max: 100.0,
             karma: 0.25,
-            experience: 2_000,
             inventory_score: 0.4,
         };
 
-        let breakdown = state.power_breakdown();
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let breakdown = state.power_breakdown(&cultivation);
         approx_eq(breakdown.combat, 0.39);
         approx_eq(breakdown.wealth, 0.4);
-        approx_eq(breakdown.social, 0.37);
+        approx_eq(breakdown.social, 0.4);
         approx_eq(breakdown.karma, 0.25);
-        approx_eq(breakdown.territory, 0.3);
-        approx_eq(state.composite_power(), 0.354);
+        approx_eq(breakdown.territory, 0.325);
+        approx_eq(state.composite_power(&cultivation), 0.36225);
     }
 
     #[test]
     fn serializes_player_state_payload() {
         let state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
             karma: 0.2,
-            experience: 1_200,
             inventory_score: 0.4,
         };
-        let payload = state.server_payload(Some(canonical_player_id("Steve")), "blood_valley");
+
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 78.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let payload = state.server_payload(
+            &cultivation,
+            Some(canonical_player_id("Steve")),
+            "blood_valley",
+        );
         let bytes =
             serialize_server_data_payload(&payload).expect("PlayerState payload should serialize");
         let json: serde_json::Value =
@@ -1773,7 +1613,7 @@ mod player_state_tests {
             json.get("player"),
             Some(&serde_json::json!("offline:Steve"))
         );
-        assert_eq!(json.get("realm"), Some(&serde_json::json!("qi_refining_3")));
+        assert_eq!(json.get("realm"), Some(&serde_json::json!("Induce")));
         assert_eq!(json.get("spirit_qi"), Some(&serde_json::json!(78.0)));
         assert_eq!(json.get("karma"), Some(&serde_json::json!(0.2)));
         assert_eq!(json.get("zone"), Some(&serde_json::json!("blood_valley")));
@@ -1784,12 +1624,15 @@ mod player_state_tests {
                 breakdown,
                 ..
             } => {
-                approx_eq(composite_power, state.composite_power());
-                approx_eq(breakdown.combat, state.power_breakdown().combat);
-                approx_eq(breakdown.wealth, state.power_breakdown().wealth);
-                approx_eq(breakdown.social, state.power_breakdown().social);
-                approx_eq(breakdown.karma, state.power_breakdown().karma);
-                approx_eq(breakdown.territory, state.power_breakdown().territory);
+                approx_eq(composite_power, state.composite_power(&cultivation));
+                approx_eq(breakdown.combat, state.power_breakdown(&cultivation).combat);
+                approx_eq(breakdown.wealth, state.power_breakdown(&cultivation).wealth);
+                approx_eq(breakdown.social, state.power_breakdown(&cultivation).social);
+                approx_eq(breakdown.karma, state.power_breakdown(&cultivation).karma);
+                approx_eq(
+                    breakdown.territory,
+                    state.power_breakdown(&cultivation).territory,
+                );
             }
             other => panic!("expected PlayerState payload, got {other:?}"),
         }
@@ -1798,12 +1641,27 @@ mod player_state_tests {
     #[test]
     fn migrate_legacy_player_json_to_sqlite_once() {
         let (persistence, data_dir) = sqlite_persistence("legacy-migrate");
-        let legacy_state = PlayerState {
-            realm: "qi_refining_3".to_string(),
+
+        #[derive(serde::Serialize)]
+        struct LegacyPlayerStateV0 {
+            realm: String,
+            spirit_qi: f64,
+            spirit_qi_max: f64,
+            karma: f64,
+            experience: u64,
+            inventory_score: f64,
+        }
+
+        let legacy_state = LegacyPlayerStateV0 {
+            realm: "Induce".to_string(),
             spirit_qi: 78.0,
             spirit_qi_max: 100.0,
             karma: 0.2,
             experience: 1_200,
+            inventory_score: 0.4,
+        };
+        let expected_state = PlayerState {
+            karma: 0.2,
             inventory_score: 0.4,
         };
         let save_path = persistence.path_for_username("CorruptCultivator");
@@ -1834,8 +1692,8 @@ mod player_state_tests {
             )
             .expect("reloaded player_core row should exist");
 
-        assert_eq!(migrated, legacy_state.normalized());
-        assert_eq!(reloaded, legacy_state.normalized());
+        assert_eq!(migrated, expected_state.normalized());
+        assert_eq!(reloaded, expected_state.normalized());
         assert!(
             !save_path.exists(),
             "legacy json should be renamed after migration"
@@ -1863,11 +1721,7 @@ mod player_state_tests {
         let corrupted_path = persistence.path_for_username(corrupted_username);
         let corrupted_migrated_path = persistence.migrated_path_for_username(corrupted_username);
         let healthy_state = PlayerState {
-            realm: "foundation_2".to_string(),
-            spirit_qi: 64.0,
-            spirit_qi_max: 128.0,
             karma: -0.3,
-            experience: 2_400,
             inventory_score: 0.55,
         };
 
@@ -1893,67 +1747,41 @@ mod player_state_tests {
         );
 
         let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let corrupted_row: Option<(String, f64, f64, f64, i64, f64)> = connection
+        let corrupted_row: Option<(f64, f64)> = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params![corrupted_username],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .expect("corrupted player_core row query should succeed");
-        let healthy_row: (String, f64, f64, f64, i64, f64) = connection
+        let healthy_row: (f64, f64) = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params![healthy_username],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("healthy player_core row should exist");
 
         assert_eq!(
             corrupted_row,
             Some((
-                PlayerState::default().realm,
-                PlayerState::default().spirit_qi,
-                PlayerState::default().spirit_qi_max,
                 PlayerState::default().karma,
-                PlayerState::default().experience as i64,
                 PlayerState::default().inventory_score,
             ))
         );
         assert_eq!(
             healthy_row,
             (
-                healthy_state.normalized().realm,
-                healthy_state.normalized().spirit_qi,
-                healthy_state.normalized().spirit_qi_max,
                 healthy_state.normalized().karma,
-                healthy_state.normalized().experience as i64,
                 healthy_state.normalized().inventory_score,
             )
         );
@@ -1966,11 +1794,7 @@ mod player_state_tests {
         let (persistence, data_dir) = sqlite_persistence("core-slice-concurrency");
         let writer_count = 50usize;
         let baseline_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
 
@@ -1992,11 +1816,7 @@ mod player_state_tests {
                 std::thread::spawn(move || {
                     let username = format!("Player{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 20.0 + index as f64,
-                        spirit_qi_max: 140.0,
                         karma: ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 2_000 + index as u64,
                         inventory_score: (index as f64 / writer_count as f64).clamp(0.0, 1.0),
                     };
 
@@ -2026,43 +1846,23 @@ mod player_state_tests {
 
         for index in 0..writer_count {
             let username = format!("Player{index}");
-            let (spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience): (
-                f64,
-                f64,
-                f64,
-                String,
-                f64,
-                i64,
-            ) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
                     "
-                    SELECT spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience
+                    SELECT karma, inventory_score
                     FROM player_core
                     WHERE username = ?1
                     ",
                     params![username.as_str()],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                        ))
-                    },
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("updated player_core row should exist");
 
-            assert_eq!(spirit_qi, 20.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
                 (index as f64 / writer_count as f64).clamp(0.0, 1.0)
             );
-            assert_eq!(realm, baseline_state.realm);
-            assert_eq!(spirit_qi_max, baseline_state.spirit_qi_max);
-            assert_eq!(experience, baseline_state.experience as i64);
         }
 
         let _ = fs::remove_dir_all(&data_dir);

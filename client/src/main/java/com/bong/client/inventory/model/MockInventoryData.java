@@ -74,7 +74,7 @@ public final class MockInventoryData {
                 "边角焦黑，仍可辨识回元丹方"), 4, 1)
             // Stats
             .weight(12.4, 50.0)
-            .cultivation("炼气三层", 78.0, 100.0, 0.45)
+            .cultivation("引气", 78.0, 100.0, 0.45)
             .build();
     }
 }

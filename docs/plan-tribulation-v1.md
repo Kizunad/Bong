@@ -2,7 +2,7 @@
 
 **天劫专项**。HUD `TribulationLocked` / combat §10 都留了钩子，本 plan 定义：触发条件、阶段流程、奖励/代价、失败处理、截胡窗口、域崩与定向天罚。
 
-**世界观锚点**：`worldview.md §三` 明确末法世界**唯一**的境界天劫是 **渡虚劫**（通灵 → 化虚），其他境界突破靠静坐+事件触发，**不降天劫**。本 plan 不得引入"小雷劫/金丹劫/元婴劫"等上古/传统称呼。天道语调见 `worldview.md §八`（冷漠 / 古意 / 嘲讽）。
+**世界观锚点**：`worldview.md §三` 明确末法世界**唯一**的境界天劫是 **渡虚劫**（通灵 → 化虚），其他境界突破靠静坐+事件触发，**不降天劫**。本 plan 不得引入任何传统仙侠境界/天劫称呼。天道语调见 `worldview.md §八`（冷漠 / 古意 / 嘲讽）。
 
 **交叉引用**：`plan-combat-v1.md §10` · `plan-cultivation-v1.md` · `plan-HUD-v1.md §3.3` · `plan-death-lifecycle-v1.md §1`（渡虚劫失败不走 roll，退境即可）· `plan-npc-ai-v1`（化虚 NPC 可能触发）· `worldview.md §三/§七/§八`。
 

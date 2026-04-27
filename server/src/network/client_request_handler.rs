@@ -352,6 +352,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut combat_params,
                 );
             }
@@ -407,6 +408,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                 );
             }
             ClientRequestV1::InventoryDiscardItem {
@@ -420,6 +422,7 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
             }
@@ -434,6 +437,7 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
             }
@@ -450,6 +454,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                 );
             }
             ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
@@ -460,6 +465,7 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
             }
@@ -476,6 +482,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut combat_params,
                 );
             }
@@ -673,6 +680,7 @@ fn handle_learn_skill_scroll(
                 inventory,
                 clients,
                 player_states,
+                &skill_scroll_params.cultivations,
                 "skill_scroll_duplicate",
             );
         }
@@ -731,6 +739,9 @@ fn handle_learn_skill_scroll(
     let Ok(player_state) = player_states.get(entity) else {
         return;
     };
+    let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
+        return;
+    };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         if let Ok(inventory) = inventories.get(entity) {
             send_inventory_snapshot_to_client(
@@ -739,13 +750,11 @@ fn handle_learn_skill_scroll(
                 username.0.as_str(),
                 inventory,
                 player_state,
+                cultivation,
                 "skill_scroll_consumed",
             );
         }
         if let Ok(skill_set) = skill_scroll_params.skill_sets.get(entity) {
-            let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
-                return;
-            };
             send_skill_snapshot_to_client(
                 entity,
                 &mut client,
@@ -830,6 +839,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -1357,6 +1367,7 @@ fn handle_inventory_move(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
 ) {
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
@@ -1387,7 +1398,14 @@ fn handle_inventory_move(
             // Two ordered Moved events would have an intermediate inconsistent
             // state on the client (the first event would clobber the second
             // item). Push a fresh snapshot instead — correct, idempotent.
-            resync_snapshot(entity, &inventory, clients, player_states, "swap");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "swap",
+            );
         }
         Err(reason) => {
             tracing::warn!(
@@ -1395,7 +1413,14 @@ fn handle_inventory_move(
             );
             // Client did optimistic update but server didn't move. Resync to
             // overwrite the diverged client state with authoritative truth.
-            resync_snapshot(entity, &inventory, clients, player_states, "rejection");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "rejection",
+            );
         }
     }
 }
@@ -1442,6 +1467,7 @@ fn resync_snapshot(
     inventory: &PlayerInventory,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     reason: &str,
 ) {
     let player_state = match player_states.get(entity) {
@@ -1453,6 +1479,15 @@ fn resync_snapshot(
             return;
         }
     };
+    let cultivation = match cultivations.get(entity) {
+        Ok(cultivation) => cultivation,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
+            );
+            return;
+        }
+    };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         send_inventory_snapshot_to_client(
             entity,
@@ -1460,6 +1495,7 @@ fn resync_snapshot(
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             reason,
         );
     }
@@ -1484,6 +1520,7 @@ fn handle_inventory_discard(
     dropped_loot_registry: &mut DroppedLootRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
 ) {
     let player_pos = client_position(positions, entity);
@@ -1509,7 +1546,14 @@ fn handle_inventory_discard(
                 "[bong][network][inventory] discarded instance={instance_id} from {from:?} revision={}",
                 outcome.revision.0
             );
-            resync_snapshot(entity, &inventory, clients, player_states, "discard_item");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "discard_item",
+            );
             if let Ok((_username, mut client)) = clients.get_mut(entity) {
                 send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
             }
@@ -1523,12 +1567,14 @@ fn handle_inventory_discard(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "discard_rejection",
             );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_pickup_dropped_item(
     entity: Entity,
     instance_id: u64,
@@ -1536,6 +1582,7 @@ fn handle_pickup_dropped_item(
     dropped_loot_registry: &mut DroppedLootRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
 ) {
     let player_pos = client_position(positions, entity);
@@ -1565,6 +1612,7 @@ fn handle_pickup_dropped_item(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "pickup_dropped_item",
             );
             if let Ok((_username, mut client)) = clients.get_mut(entity) {
@@ -1580,12 +1628,14 @@ fn handle_pickup_dropped_item(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "pickup_rejection",
             );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_repair_weapon(
     entity: Entity,
     instance_id: u64,
@@ -1594,6 +1644,7 @@ fn handle_repair_weapon(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
 ) {
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
@@ -1615,7 +1666,14 @@ fn handle_repair_weapon(
                 station_pos[1],
                 station_pos[2]
             );
-            resync_snapshot(entity, &inventory, clients, player_states, "repair_weapon");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "repair_weapon",
+            );
         }
         Err(reason) => {
             tracing::warn!(
@@ -1626,6 +1684,7 @@ fn handle_repair_weapon(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "repair_rejection",
             );
         }
@@ -1641,6 +1700,7 @@ fn handle_apply_pill(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
 ) {
     let template_id = inventories
@@ -1663,6 +1723,7 @@ fn handle_apply_pill(
         inventories,
         clients,
         player_states,
+        cultivations,
         combat_params,
     );
 }
@@ -1770,6 +1831,7 @@ fn handle_alchemy_intervention(
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
 /// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
+#[allow(clippy::too_many_arguments)]
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
@@ -1777,6 +1839,7 @@ fn handle_alchemy_take_pill(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
 ) {
     let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
@@ -1830,7 +1893,14 @@ fn handle_alchemy_take_pill(
         }
     }
 
-    resync_snapshot(entity, &inventory, clients, player_states, "take_pill");
+    resync_snapshot(
+        entity,
+        &inventory,
+        clients,
+        player_states,
+        cultivations,
+        "take_pill",
+    );
 }
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
@@ -1903,6 +1973,7 @@ mod take_pill_tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 

@@ -38,12 +38,14 @@ pub struct TsySpawnRequested {
 }
 
 /// 命令处理结果（emit 给 chat 反馈）。
+#[allow(dead_code)] // chat bridge 后续消费字段；当前测试只匹配 outcome 形态
 #[derive(Event, Debug, Clone)]
 pub struct TsySpawnResult {
     pub player_entity: Entity,
     pub outcome: TsySpawnOutcome,
 }
 
+#[allow(dead_code)] // 字段由聊天反馈格式化逻辑后续接通时读取
 #[derive(Debug, Clone)]
 pub enum TsySpawnOutcome {
     Success {

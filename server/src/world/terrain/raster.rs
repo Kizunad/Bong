@@ -138,6 +138,7 @@ impl Resource for TerrainProvider {}
 /// becomes mandatory (§6 contract).
 pub struct TerrainProviders {
     pub overworld: TerrainProvider,
+    #[allow(dead_code)]
     pub tsy: Option<TerrainProvider>,
 }
 

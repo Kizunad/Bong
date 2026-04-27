@@ -640,9 +640,17 @@ pub fn resolve_attack_intents(
                 )
             })
         {
+            // plan-tsy-loot-v1 §6 — 攻击链路：attacker entity 来自 intent；
+            // attacker_player_id 仅在攻击者是 player 时填（canonical id 形如
+            // "offline:Foo"），NPC 攻击者保留 None。
+            let attacker_player_id = attacker_id
+                .starts_with("offline:")
+                .then(|| attacker_id.clone());
             death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
+                attacker: Some(intent.attacker),
+                attacker_player_id,
                 at_tick: clock.tick,
             });
         }
@@ -760,11 +768,11 @@ fn resolve_debug_target(
     npc_positions: &Query<(Entity, &Position), With<NpcMarker>>,
 ) -> Option<(Entity, DVec3, f64, String)> {
     if let Some(target) = intent.target {
-        if let Ok((_, position, username, player_state)) = clients.get(target) {
+        if let Ok((_, position, username, _player_state)) = clients.get(target) {
             return Some((
                 target,
                 position.get(),
-                player_state.spirit_qi_max,
+                0.0,
                 canonical_player_id(username.0.as_str()),
             ));
         }
@@ -785,7 +793,7 @@ fn resolve_debug_target(
     if let Some(player_match) =
         clients
             .iter()
-            .find_map(|(entity, position, username, player_state)| {
+            .find_map(|(entity, position, username, _player_state)| {
                 if entity == intent.attacker {
                     return None;
                 }
@@ -793,12 +801,7 @@ fn resolve_debug_target(
                 let canonical = canonical_player_id(username.0.as_str());
                 (username.0.eq_ignore_ascii_case(target_name)
                     || canonical.eq_ignore_ascii_case(target_name))
-                .then_some((
-                    entity,
-                    position.get(),
-                    player_state.spirit_qi_max,
-                    canonical,
-                ))
+                .then_some((entity, position.get(), 0.0, canonical))
             })
     {
         return Some(player_match);
@@ -895,11 +898,7 @@ mod tests {
                     ..Cultivation::default()
                 },
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 60.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 0,
                     inventory_score: 0.0,
                 },
                 MeridianSystem::default(),
@@ -1047,6 +1046,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             )]),
             hotbar: Default::default(),
@@ -2559,6 +2559,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             )]),
             hotbar: Default::default(),
@@ -2691,6 +2692,7 @@ mod tests {
                         durability: 0.04,
                         freshness: None,
                         mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),
@@ -2816,6 +2818,7 @@ mod tests {
                             durability: 1.0,
                             freshness: None,
                             mineral_id: None,
+                            charges: None,
                         },
                     }],
                 }],
@@ -2835,6 +2838,7 @@ mod tests {
                         durability: 0.04,
                         freshness: None,
                         mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),

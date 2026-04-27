@@ -559,9 +559,7 @@ fn planar_distance_sq(left: DVec3, right: DVec3) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use big_brain::prelude::BigBrainSet;
     use serde_json::json;
-    use valence::prelude::IntoSystemConfigs;
 
     #[test]
     fn default_store_bootstraps_exactly_three_stable_factions() {
@@ -913,10 +911,7 @@ mod tests {
 
     fn build_exec_app() -> App {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            mission_execute_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, mission_execute_action_system);
         app
     }
 

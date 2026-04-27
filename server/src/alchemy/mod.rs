@@ -39,6 +39,7 @@ use valence::prelude::{
     EventReader, EventWriter, Query, Update, Username, With, Without,
 };
 
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -238,6 +239,7 @@ pub fn handle_alchemy_furnace_place(
                 username.0.as_str(),
                 &inv,
                 player_state,
+                &Cultivation::default(),
                 "alchemy_furnace_place_consumed",
             );
         }
@@ -392,6 +394,7 @@ mod integration_tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 

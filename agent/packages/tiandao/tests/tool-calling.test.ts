@@ -242,7 +242,7 @@ describe("tool-calling loop", () => {
         {
           uuid: "offline:Veteran",
           name: "Veteran",
-          realm: "qi_refining_1",
+          realm: "Awaken",
           composite_power: 0.82,
           breakdown: {
             combat: 0.8,

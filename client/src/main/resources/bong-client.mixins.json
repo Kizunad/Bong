@@ -11,6 +11,7 @@
     "MixinInGameHud",
     "MixinMinecraftClient",
     "MixinMouse",
+    "MixinPlayerEntityDrop",
     "MixinPlayerEntityHeldItem"
   ],
   "injectors": {

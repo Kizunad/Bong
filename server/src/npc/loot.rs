@@ -11,6 +11,8 @@ use valence::prelude::{bevy_ecs, Component};
 
 use crate::npc::lifecycle::NpcArchetype;
 
+// plan-npc-ai-v1 scaffolding: this module is referenced by design documents
+// but not yet wired into the live death/drop pipeline.
 /// 单条掉落条目：模板 ID + 基础掉率（0..=1）+ 数量范围。
 /// 每次 roll 独立判定：`roll < chance` 命中 → 产出 `min..=max` 堆叠数。
 #[derive(Clone, Debug, PartialEq)]

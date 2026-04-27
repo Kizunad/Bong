@@ -112,6 +112,8 @@ pub fn wound_bleed_tick(
             deaths.send(DeathEvent {
                 target: entity,
                 cause: "bleed_out".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: clock.tick,
             });
         }
@@ -780,6 +782,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 100,
         });
         app.update();
@@ -876,6 +880,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "first".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 10,
         });
         app.update();
@@ -891,6 +897,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "second".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 200,
         });
         app.update();
@@ -966,6 +974,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "bleed_out".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 90,
         });
         app.update();

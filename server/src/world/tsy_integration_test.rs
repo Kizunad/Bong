@@ -15,8 +15,8 @@ mod tests {
 
     use crate::combat::events::DeathEvent;
     use crate::combat::CombatClock;
+    use crate::cultivation::components::Cultivation;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
-    use crate::player::state::PlayerState;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::dimension_transfer::DimensionTransferRequest;
     use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftPortal, TsyPresence};
@@ -89,6 +89,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         PlayerInventory {
             revision: InventoryRevision(1),
@@ -100,10 +101,10 @@ mod tests {
         }
     }
 
-    fn make_player_state(spirit_qi: f64, spirit_qi_max: f64) -> PlayerState {
-        PlayerState {
-            spirit_qi,
-            spirit_qi_max,
+    fn make_cultivation(qi_current: f64, qi_max: f64) -> Cultivation {
+        Cultivation {
+            qi_current,
+            qi_max,
             ..Default::default()
         }
     }
@@ -134,7 +135,7 @@ mod tests {
             .spawn((
                 Position::new([0.5, 64.0, 0.0]),
                 make_player_inventory_with_qi_item(),
-                make_player_state(50.0, 50.0),
+                make_cultivation(50.0, 50.0),
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
@@ -183,7 +184,7 @@ mod tests {
     }
 
     /// B. plan §1.2 drain_after_entry:
-    /// 玩家持 TsyPresence + 在 TSY shallow zone 内 + Tsy dim → spirit_qi 按 §2.1 公式衰减。
+    /// 玩家持 TsyPresence + 在 TSY shallow zone 内 + Tsy dim → qi_current 按 §2.1 公式衰减。
     #[test]
     fn b_drain_after_entry_decreases_spirit_qi_per_tick() {
         let mut app = fresh_app();
@@ -194,7 +195,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([shallow_center.x, shallow_center.y, shallow_center.z]),
-                make_player_state(50.0, 50.0),
+                make_cultivation(50.0, 50.0),
                 CurrentDimension(DimensionKind::Tsy),
                 TsyPresence {
                     family_id: "tsy_lingxu_01".to_string(),
@@ -216,9 +217,9 @@ mod tests {
         let qi_after = app
             .world()
             .entity(player)
-            .get::<PlayerState>()
+            .get::<Cultivation>()
             .unwrap()
-            .spirit_qi;
+            .qi_current;
 
         // §2.1 公式：rate = |qi=-0.4| * (50/100)^1.5 * 0.5 = 0.4 * 0.354 * 0.5 ≈ 0.0707/tick
         // n=10 ticks → 期望降幅 ≈ 0.707，下界给 0.5 留容差
@@ -237,14 +238,14 @@ mod tests {
         let mut app = fresh_app();
         let shallow_center = register_lingxu_subzones(&mut app);
 
-        // spirit_qi 故意调小 + 池子大让 drain rate 高 → 1 tick 即可归零
+        // qi_current 故意调小 + 池子大让 drain rate 高 → 1 tick 即可归零
         let _player = app
             .world_mut()
             .spawn((
                 Position::new([shallow_center.x, 80.0, shallow_center.z]),
-                PlayerState {
-                    spirit_qi: 0.001,
-                    spirit_qi_max: 500.0, // 化虚，rate 巨大
+                Cultivation {
+                    qi_current: 0.001,
+                    qi_max: 500.0, // 化虚，rate 巨大
                     ..Default::default()
                 },
                 CurrentDimension(DimensionKind::Tsy),
@@ -304,7 +305,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([exit_pos.x + 0.5, exit_pos.y, exit_pos.z]),
-                make_player_state(50.0, 50.0),
+                make_cultivation(50.0, 50.0),
                 CurrentDimension(DimensionKind::Tsy),
                 TsyPresence {
                     family_id: "tsy_lingxu_01".to_string(),
@@ -316,7 +317,7 @@ mod tests {
             .id();
 
         // 跑一 tick：tsy_exit_portal_tick 命中 + 同 tick tsy_drain_tick 还能再抽一次
-        // （drain 把 spirit_qi 减一点，之后 exit 触发 + 移除 TsyPresence）
+        // （drain 把 qi_current 减一点，之后 exit 触发 + 移除 TsyPresence）
         app.world_mut().resource_mut::<CombatClock>().tick = 200;
         app.update();
 

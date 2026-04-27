@@ -211,6 +211,9 @@ pub const fn rarity_base_price(rarity: ItemRarity) -> u64 {
         ItemRarity::Rare => 40,
         ItemRarity::Epic => 150,
         ItemRarity::Legendary => 600,
+        // plan-tsy-loot-v1 §1.3：上古遗物"无灵 + 易碎"，市场上无定价（修真者捡到即用）。
+        // 暂以 Common 估价占位，避免 NPC 估价器 panic；真实交易禁用由 P3 商人系统决定。
+        ItemRarity::Ancient => 4,
     }
 }
 
@@ -241,8 +244,7 @@ mod tests {
     use super::*;
     use crate::inventory::ItemInstance;
     use crate::npc::faction::{FactionId, FactionRank, MissionQueue, Reputation};
-    use big_brain::prelude::BigBrainSet;
-    use valence::prelude::{App, DVec3, IntoSystemConfigs, PreUpdate};
+    use valence::prelude::{App, DVec3, PreUpdate};
 
     fn make_item(rarity: ItemRarity, stack: u32, quality: f64, durability: f64) -> ItemInstance {
         ItemInstance {
@@ -259,6 +261,7 @@ mod tests {
             durability,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -328,6 +331,7 @@ mod tests {
             durability: 0.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         assert!(estimate_item_price(&weird) >= 1);
     }
@@ -524,10 +528,7 @@ mod tests {
     #[test]
     fn socialize_action_success_when_no_same_faction_peer() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let npc = app
             .world_mut()
             .spawn((
@@ -552,10 +553,7 @@ mod tests {
     #[test]
     fn socialize_action_records_partner_and_succeeds_on_timeout() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let peer = app
             .world_mut()
             .spawn((
@@ -595,10 +593,7 @@ mod tests {
     #[test]
     fn socialize_action_stops_navigator_on_partner_found() {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            socialize_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, socialize_action_system);
         let mut nav = Navigator::new();
         nav.set_goal(DVec3::new(100.0, 64.0, 100.0), 1.0);
         let _peer = app
