@@ -190,6 +190,40 @@ pub fn canonical_player_id(username: &str) -> String {
     format!("offline:{username}")
 }
 
+pub fn player_character_id(username: &str, current_char_id: &str) -> String {
+    if current_char_id.trim().is_empty() {
+        canonical_player_id(username)
+    } else {
+        format!("{}:{current_char_id}", canonical_player_id(username))
+    }
+}
+
+pub fn player_username_from_character_id(character_id: &str) -> Option<&str> {
+    let rest = character_id.strip_prefix("offline:")?;
+    let username = rest.split_once(':').map_or(rest, |(username, _)| username);
+    if username.is_empty() {
+        None
+    } else {
+        Some(username)
+    }
+}
+
+pub fn load_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<String>> {
+    let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
+    connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)
+}
+
 pub fn load_player_state(persistence: &PlayerStatePersistence, username: &str) -> PlayerState {
     let mut connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
@@ -437,17 +471,25 @@ pub fn rotate_current_character_id(
     username: &str,
 ) -> io::Result<String> {
     let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
     let next_char_id = Uuid::now_v7().to_string();
     let last_updated_wall = current_unix_seconds();
 
-    let updated = connection
+    connection
         .execute(
             "
-            UPDATE player_core
-            SET current_char_id = ?2,
-                schema_version = ?3,
-                last_updated_wall = ?4
-            WHERE username = ?1
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                karma,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, 0.0, 0.0, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
             ",
             params![
                 username,
@@ -458,14 +500,24 @@ pub fn rotate_current_character_id(
         )
         .map_err(io::Error::other)?;
 
-    if updated == 0 {
+    Ok(next_char_id)
+}
+
+fn ensure_player_schema(connection: &Connection) -> io::Result<()> {
+    let has_player_core: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_core'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(io::Error::other)?;
+    if has_player_core == 0 {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("player_core row missing for `{username}`"),
+            "player_core table is missing; bootstrap sqlite before loading character ids",
         ));
     }
-
-    Ok(next_char_id)
+    Ok(())
 }
 
 pub fn save_player_skill_slice(

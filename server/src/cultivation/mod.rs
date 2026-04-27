@@ -100,8 +100,10 @@ use crate::cultivation::components::Realm;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
 };
-use crate::player::state::canonical_player_id;
-use crate::player::state::PlayerState;
+use crate::player::state::{
+    canonical_player_id, load_current_character_id, player_character_id, PlayerState,
+    PlayerStatePersistence,
+};
 use crate::skill::events::SkillCapChanged;
 
 pub fn register(app: &mut App) {
@@ -203,6 +205,7 @@ type CultivationAttachQueryItem<'a> = (
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (entity, username, player_state, restored_lifespan) in &joined_clients {
@@ -224,7 +227,16 @@ fn attach_cultivation_to_joined_clients(
         let mut karma = Karma::default();
         let mut practice_log = PracticeLog::default();
         let mut contamination = Contamination::default();
-        let mut life_record = LifeRecord::new(canonical_player_id(username.0.as_str()));
+        let canonical_id = player_persistence
+            .as_deref()
+            .and_then(|persistence| {
+                load_current_character_id(persistence, username.0.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
+            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+        let mut life_record = LifeRecord::new(canonical_id.clone());
         let mut insight_quota = InsightQuota::default();
         let mut unlocked_perceptions = UnlockedPerceptions::default();
         let mut insight_modifiers = InsightModifiers::new();
@@ -312,7 +324,6 @@ fn attach_cultivation_to_joined_clients(
             );
         }
 
-        let canonical_id = canonical_player_id(username.0.as_str());
         let active_tribulation = match load_active_tribulation(&settings, canonical_id.as_str()) {
             Ok(record) => record,
             Err(error) => {

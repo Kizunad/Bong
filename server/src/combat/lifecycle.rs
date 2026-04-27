@@ -36,8 +36,8 @@ use crate::persistence::{
     persist_termination_transition_with_death_context, LifespanEventRecord, PersistenceSettings,
 };
 use crate::player::state::{
-    rotate_current_character_id, save_player_shrine_anchor_slice, save_player_slices, PlayerState,
-    PlayerStatePersistence,
+    player_character_id, rotate_current_character_id, save_player_shrine_anchor_slice,
+    save_player_slices, PlayerState, PlayerStatePersistence,
 };
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::death_insight::{
@@ -1359,6 +1359,7 @@ fn reset_for_new_character(
     default_loadout: Option<&DefaultLoadout>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
 ) {
+    let mut next_character_id = None;
     if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
         if let Ok(next_char_id) =
             rotate_current_character_id(player_persistence, username.0.as_str())
@@ -1367,6 +1368,7 @@ fn reset_for_new_character(
                 "[bong][combat] rotated current_char_id for `{}` to {next_char_id}",
                 username.0
             );
+            next_character_id = Some(player_character_id(username.0.as_str(), &next_char_id));
         }
 
         // 新角色与前角色无机制关联；灵龛归属同样不继承。
@@ -1378,6 +1380,10 @@ fn reset_for_new_character(
                 username.0
             );
         }
+    }
+
+    if let Some(next_character_id) = next_character_id {
+        lifecycle.character_id = next_character_id;
     }
 
     lifecycle.death_count = 0;
@@ -1724,6 +1730,7 @@ mod tests {
     use crate::persistence::{
         bootstrap_sqlite, DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
     };
+    use crate::player::state::player_character_id;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use rusqlite::{params, Connection};
     use std::fs;
@@ -3032,6 +3039,18 @@ mod tests {
             .expect("inventory should be reinitialized for new character");
 
         assert_eq!(lifecycle.state, LifecycleState::Alive);
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let current_char_id: String = connection
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params![username.0.as_str()],
+                |row| row.get(0),
+            )
+            .expect("current_char_id should persist");
+        assert_eq!(
+            lifecycle.character_id,
+            player_character_id(username.0.as_str(), &current_char_id)
+        );
         assert_eq!(lifecycle.death_count, 0);
         assert_eq!(lifecycle.fortune_remaining, 3);
         assert_eq!(death_registry.death_count, 0);
@@ -3063,6 +3082,151 @@ mod tests {
         assert!(persisted_lifespan.years_lived >= 0.0);
         assert!(persisted_lifespan.years_lived < 0.01);
         assert_eq!(persisted_lifespan.offline_pause_tick, None);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_new_character_uses_distinct_character_ids_for_deceased_exports() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("new-character-deceased-unique");
+        let data_dir = root.join("data");
+        app.insert_resource(settings.clone());
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            &data_dir,
+            settings.db_path(),
+        ));
+        app.insert_resource(CombatClock { tick: 800 });
+
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let username = Username("Azure".to_string());
+        save_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            &PlayerState::default(),
+            crate::player::spawn_position(),
+            DimensionKind::default(),
+            None,
+            None,
+            &SkillSet::default(),
+        )
+        .expect("initial player slices should persist");
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Ancestor".to_string(),
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Ancestor"),
+                DeathRegistry::new("offline:Ancestor"),
+                LifespanComponent::new(LifespanCapTable::MORTAL),
+                PlayerState::default(),
+                Position::new(crate::player::spawn_position()),
+                username.clone(),
+                SkillSet::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.update();
+        let first_character_id = app
+            .world()
+            .entity(entity)
+            .get::<Lifecycle>()
+            .unwrap()
+            .character_id
+            .clone();
+
+        {
+            let mut lifecycle = app.world_mut().entity_mut(entity);
+            *lifecycle.get_mut::<Lifecycle>().unwrap() = Lifecycle {
+                character_id: first_character_id.clone(),
+                state: LifecycleState::Terminated,
+                ..Default::default()
+            };
+            *lifecycle.get_mut::<LifeRecord>().unwrap() =
+                LifeRecord::new(first_character_id.clone());
+        }
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 801,
+        });
+        app.update();
+        let second_character_id = app
+            .world()
+            .entity(entity)
+            .get::<Lifecycle>()
+            .unwrap()
+            .character_id
+            .clone();
+
+        assert_ne!(first_character_id, second_character_id);
+
+        let mut first_lifecycle = Lifecycle {
+            character_id: first_character_id.clone(),
+            state: LifecycleState::Terminated,
+            ..Default::default()
+        };
+        let mut first_life_record = LifeRecord::new(first_character_id.clone());
+        first_life_record.push(BiographyEntry::Terminated {
+            cause: "voluntary_retire".to_string(),
+            tick: 900,
+        });
+        first_lifecycle.terminate(900);
+        persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
+            .expect("first terminated character should export");
+
+        let mut second_lifecycle = Lifecycle {
+            character_id: second_character_id.clone(),
+            state: LifecycleState::Terminated,
+            ..Default::default()
+        };
+        let mut second_life_record = LifeRecord::new(second_character_id.clone());
+        second_life_record.push(BiographyEntry::Terminated {
+            cause: "voluntary_retire".to_string(),
+            tick: 901,
+        });
+        second_lifecycle.terminate(901);
+        persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
+            .expect("second terminated character should export");
+
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index file should exist"),
+        )
+        .expect("index file should decode");
+
+        assert_eq!(index.len(), 2);
+        assert!(index
+            .iter()
+            .any(|entry| entry.char_id == first_character_id));
+        assert!(index
+            .iter()
+            .any(|entry| entry.char_id == second_character_id));
+        assert_ne!(index[0].path, index[1].path);
 
         let _ = fs::remove_dir_all(root);
     }

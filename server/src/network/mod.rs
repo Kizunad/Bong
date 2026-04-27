@@ -1673,7 +1673,15 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
     if stripped.is_empty() {
         return None;
     }
-    Some(stripped.to_ascii_lowercase())
+    let username = stripped
+        .split_once(':')
+        .map_or(stripped, |(username, _)| username)
+        .trim();
+    if username.is_empty() {
+        None
+    } else {
+        Some(username.to_ascii_lowercase())
+    }
 }
 
 fn process_single_narration(

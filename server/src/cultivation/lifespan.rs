@@ -11,7 +11,9 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::persistence::{persist_lifespan_event, LifespanEventRecord, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::player::state::{PlayerState, PlayerStatePersistence};
+use crate::player::state::{
+    player_username_from_character_id, PlayerState, PlayerStatePersistence,
+};
 use crate::schema::common::NarrationStyle;
 use crate::schema::death_lifecycle::{
     AgingEventKindV1, AgingEventV1, LifespanEventKindV1, LifespanEventV1,
@@ -111,7 +113,7 @@ impl ExtensionContract for PillExtensionContract {
     }
 
     fn qi_cap_cost_factor(&self) -> f64 {
-        self.years as f64 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR
+        LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR
     }
 }
 
@@ -591,7 +593,7 @@ pub fn process_lifespan_extension_intents(
         }
         if let (Some(player_persistence), Some(char_id)) = (player_persistence, char_id.as_deref())
         {
-            if let Some(username) = char_id.strip_prefix("offline:") {
+            if let Some(username) = player_username_from_character_id(char_id) {
                 if let Err(error) = crate::player::state::save_player_lifespan_slice(
                     player_persistence,
                     username,
@@ -1151,6 +1153,44 @@ mod tests {
         assert_eq!(payload.source, "life_extension_pill");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lifespan_extension_pill_reduces_qi_max_linearly() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1 });
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_systems(Update, process_lifespan_extension_intents);
+
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        lifespan.years_lived = 70.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                lifespan,
+                LifespanExtensionLedger::default(),
+                Cultivation {
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                PlayerState::default(),
+                LifeRecord::new("offline:Azure"),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<LifespanExtensionIntent>>()
+            .send(LifespanExtensionIntent {
+                entity,
+                requested_years: 10,
+                source: "life_extension_pill".to_string(),
+            });
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!((cultivation.qi_max - 90.0).abs() < 1e-9);
+        assert_eq!(cultivation.qi_current, 80.0);
     }
 
     #[test]

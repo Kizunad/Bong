@@ -23,7 +23,8 @@ mod tests;
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
-    canonical_player_id, load_player_shrine_anchor_slice, PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, load_player_shrine_anchor_slice,
+    player_character_id, PlayerStatePersistence,
 };
 
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
@@ -59,11 +60,20 @@ fn attach_combat_bundle_to_joined_clients(
     player_persistence: Option<valence::prelude::Res<PlayerStatePersistence>>,
 ) {
     for (entity, username) in &joined_clients {
-        let spawn_anchor = player_persistence.as_deref().and_then(|persistence| {
+        let persistence = player_persistence.as_deref();
+        let spawn_anchor = persistence.and_then(|persistence| {
             load_player_shrine_anchor_slice(persistence, username.0.as_str())
                 .ok()
                 .flatten()
         });
+        let character_id = persistence
+            .and_then(|persistence| {
+                load_current_character_id(persistence, username.0.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
+            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
@@ -71,7 +81,7 @@ fn attach_combat_bundle_to_joined_clients(
             StatusEffects::default(),
             DerivedAttrs::default(),
             Lifecycle {
-                character_id: canonical_player_id(username.0.as_str()),
+                character_id,
                 spawn_anchor,
                 ..Default::default()
             },
@@ -141,7 +151,9 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::Intent),
+            attach_combat_bundle_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients)
+                .in_set(CombatSystemSet::Intent),
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
             resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
