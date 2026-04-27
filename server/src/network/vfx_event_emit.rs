@@ -742,6 +742,51 @@ mod tests {
         assert_eq!(out.len(), 18);
     }
 
+    #[test]
+    fn particle_stress_100_500_1000_stays_bounded_by_coalesce_and_chunk_cap() {
+        for total in [100usize, 500, 1000] {
+            let reqs: Vec<VfxEventRequest> = (0..total)
+                .map(|i| {
+                    let bin = i % 12;
+                    make_particle_request("bong:sword_qi_slash", [bin as f64, 64.0, 0.25], 1)
+                })
+                .collect();
+
+            let coalesced = coalesce_requests(reqs);
+            assert_eq!(
+                coalesced.len(),
+                12,
+                "{total} same-tick particle requests should coalesce to one per 1m bin"
+            );
+
+            for req in &coalesced {
+                if let VfxEventPayloadV1::SpawnParticle { count, .. } = &req.payload {
+                    assert!(
+                        count.unwrap_or(1) <= VFX_PARTICLE_COUNT_MAX,
+                        "{total} stress requests should never exceed merged count cap"
+                    );
+                }
+            }
+
+            let capped = enforce_per_chunk_cap(coalesced);
+            assert_eq!(
+                capped.len(),
+                VFX_PER_CHUNK_PER_TICK_MAX as usize,
+                "{total} coalesced requests in one chunk should stay under per-chunk cap"
+            );
+        }
+
+        let saturated = coalesce_requests(
+            (0..100)
+                .map(|_| make_particle_request("bong:sword_qi_slash", [0.0, 64.0, 0.0], 1))
+                .collect(),
+        );
+        assert_eq!(saturated.len(), 1);
+        if let VfxEventPayloadV1::SpawnParticle { count, .. } = &saturated[0].payload {
+            assert_eq!(*count, Some(VFX_PARTICLE_COUNT_MAX));
+        }
+    }
+
     // ========== §2.5 合批 ==========
 
     #[test]
