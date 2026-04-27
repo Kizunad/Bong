@@ -7,7 +7,7 @@
 
 use valence::prelude::{Added, Client, Entity, Query, Res, Username, With};
 
-use crate::forge::blueprint::{BlueprintRegistry};
+use crate::forge::blueprint::BlueprintRegistry;
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSession, ForgeSessions, ForgeStep, StepState};
 use crate::forge::station::WeaponForgeStation;
@@ -23,7 +23,10 @@ use crate::skill::components::SkillSet;
 type JoinedClientQueryItem<'a> = (Entity, &'a mut Client, &'a Username);
 
 pub fn emit_join_forge_snapshots(
-    #[allow(unused)] mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
+    #[allow(unused)] mut joined_clients: Query<
+        JoinedClientQueryItem<'_>,
+        (With<Client>, Added<PlayerInventory>),
+    >,
     _registry: Res<BlueprintRegistry>,
     _stations: Query<&WeaponForgeStation>,
     _sessions: Res<ForgeSessions>,
@@ -48,7 +51,8 @@ pub fn send_forge_snapshots_to_player(
         let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeStation(Box::new(
             build_station_data(station, owner_name),
         )));
-        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) else {
+        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload)
+        else {
             return;
         };
         send_server_data_payload(client, bytes.as_slice());
@@ -59,7 +63,8 @@ pub fn send_forge_snapshots_to_player(
         let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeSession(Box::new(
             build_session_data(session, bp_name),
         )));
-        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) else {
+        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload)
+        else {
             return;
         };
         send_server_data_payload(client, bytes.as_slice());
@@ -70,7 +75,8 @@ pub fn send_forge_snapshots_to_player(
         let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeBlueprintBook(Box::new(
             build_blueprint_book(lb, registry),
         )));
-        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) else {
+        let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload)
+        else {
             return;
         };
         send_server_data_payload(client, bytes.as_slice());
@@ -156,7 +162,7 @@ fn build_step_state(session: &ForgeSession) -> ForgeStepStateDataV1 {
                 deviation: state.deviation,
                 qi_spent: state.qi_spent,
             }
-        },
+        }
         StepState::Inscription(state) => ForgeStepStateDataV1::Inscription {
             filled_slots: state.filled_slots as u32,
             max_slots: state.filled_slots as u32,
