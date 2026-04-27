@@ -121,6 +121,36 @@ public class BongParticleGeometryTest {
         assertEquals(2.5f, maxZ, EPS);
     }
 
+    @Test
+    void groundDecalFitChoosesHighestNearbySurface() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            64.2,
+            new double[] { Double.NaN, 64.0, 63.5 }
+        );
+
+        assertEquals(64.0, fitted, EPS, "decal should snap down to the nearest visible block top");
+    }
+
+    @Test
+    void groundDecalFitAllowsSmallUpwardSnapForThinShapes() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            63.45,
+            new double[] { 63.5 }
+        );
+
+        assertEquals(63.5, fitted, EPS, "thin block shapes may sit slightly above the event origin");
+    }
+
+    @Test
+    void groundDecalFitIgnoresDistantOrInvalidSurfaces() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            64.0,
+            new double[] { Double.NaN, 67.0, 60.0 }
+        );
+
+        assertEquals(64.0, fitted, EPS, "far ceilings/pits should not pull the decal away from origin");
+    }
+
     // ---------- buildRibbonSegment ----------
 
     @Test
