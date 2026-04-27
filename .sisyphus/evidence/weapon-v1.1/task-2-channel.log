@@ -1,0 +1,39 @@
+Task 2 channel contract evidence
+Date: 2026-04-28
+Worktree: /home/kiz/Code/Bong/.worktree/plan-weapon-v1.1
+
+Decision verified:
+- Physical CustomPayload channel: bong:server_data
+- Logical JSON payload types: weapon_equipped, weapon_broken, treasure_equipped
+- No independent bong:combat/weapon_equipped, bong:combat/weapon_broken, or bong:combat/treasure_equipped channel is registered by v1.1.
+
+Command from plan: cd server && cargo test weapon_equipped weapon_broken -- --nocapture
+Result: INVALID COMMAND
+Relevant output:
+- error: unexpected argument 'weapon_broken' found
+- cargo test accepts a single TESTNAME filter, so the filters were run separately.
+
+Command: cd server && cargo test weapon_equipped -- --nocapture
+Result: PASS
+Relevant output:
+- network::weapon_equipped_emit::tests::weapon_equipped_uses_server_data_channel_and_type ... ok
+- network::weapon_equipped_emit::tests::weapon_broken_uses_server_data_channel_and_type ... ok
+- network::weapon_equipped_emit::tests::weapon_equipped_payload_label_matches_wire_type ... ok
+- test result: ok. 6 passed; 0 failed; 0 ignored
+
+Command: cd server && cargo test weapon_broken -- --nocapture
+Result: PASS
+Relevant output:
+- network::weapon_equipped_emit::tests::weapon_broken_uses_server_data_channel_and_type ... ok
+- test result: ok. 2 passed; 0 failed; 0 ignored
+
+Command: cd server && cargo test treasure_equipped -- --nocapture
+Result: PASS
+Relevant output:
+- network::treasure_equipped_emit::tests::treasure_equipped_uses_server_data_channel_and_type ... ok
+- test result: ok. 2 passed; 0 failed; 0 ignored
+
+Code anchors:
+- server/src/network/weapon_equipped_emit.rs module doc states weapon payloads use bong:server_data + JSON type dispatch.
+- server/src/network/treasure_equipped_emit.rs module doc states treasure payloads use bong:server_data + JSON type dispatch.
+- Tests decode valence CustomPayloadS2c and assert packet.channel.as_str() == SERVER_DATA_CHANNEL.

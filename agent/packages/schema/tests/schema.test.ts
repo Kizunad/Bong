@@ -297,6 +297,30 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.weapon-equipped.sample.json", () => {
+    const data = loadSample("server-data.weapon-equipped.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.weapon-equipped-empty.sample.json", () => {
+    const data = loadSample("server-data.weapon-equipped-empty.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.weapon-broken.sample.json", () => {
+    const data = loadSample("server-data.weapon-broken.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.treasure-equipped.sample.json", () => {
+    const data = loadSample("server-data.treasure-equipped.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.alchemy-feed-slot.sample.json", () => {
     const data = loadSample("client-request.alchemy-feed-slot.sample.json");
     const result = validate(ClientRequestV1, data);
@@ -543,6 +567,13 @@ describe("negative sample files fail schema validation", () => {
   it("client-request.forge-station-place.invalid-missing-tier.sample.json", () => {
     const data = loadSample("client-request.forge-station-place.invalid-missing-tier.sample.json");
     const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects extra weapon payload fields", () => {
+    const data = loadObjectSample("server-data.weapon-equipped.sample.json");
+    data.unexpected = true;
+    const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });
 

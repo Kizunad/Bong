@@ -920,6 +920,30 @@ mod tests {
     fn weapon_test_registry() -> ItemRegistry {
         ItemRegistry::from_map(std::collections::HashMap::from([
             (
+                "iron_sword".to_string(),
+                ItemTemplate {
+                    id: "iron_sword".to_string(),
+                    display_name: "铁剑".to_string(),
+                    category: ItemCategory::Weapon,
+                    grid_w: 1,
+                    grid_h: 2,
+                    base_weight: 1.2,
+                    rarity: ItemRarity::Common,
+                    spirit_quality_initial: 1.0,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: 0,
+                    cooldown_ms: 0,
+                    weapon_spec: Some(WeaponSpec {
+                        weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                        base_attack: 12.0,
+                        quality_tier: 0,
+                        durability_max: 200.0,
+                        qi_cost_mul: 1.0,
+                    }),
+                },
+            ),
+            (
                 "strong_sword".to_string(),
                 ItemTemplate {
                     id: "strong_sword".to_string(),
@@ -2647,6 +2671,140 @@ mod tests {
         assert!(
             inventory.equipped[crate::inventory::EQUIP_SLOT_MAIN_HAND].durability < 1.0,
             "inventory durability should persist the runtime wear"
+        );
+    }
+
+    #[test]
+    fn iron_sword_increases_damage_by_at_least_20_percent_vs_unarmed() {
+        use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1420 });
+        app.insert_resource(weapon_test_registry());
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let unarmed = spawn_player(
+            &mut app,
+            "UnarmedIronBaseline",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let armed = spawn_player(
+            &mut app,
+            "IronSwordUser",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(armed).insert(PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: std::collections::HashMap::from([(
+                crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                ItemInstance {
+                    instance_id: 120,
+                    template_id: "iron_sword".to_string(),
+                    display_name: "铁剑".to_string(),
+                    grid_w: 1,
+                    grid_h: 2,
+                    weight: 1.2,
+                    rarity: crate::inventory::ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        });
+        app.world_mut().entity_mut(armed).insert(Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 120,
+            template_id: "iron_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 12.0,
+            quality_tier: 0,
+            durability: 200.0,
+            durability_max: 200.0,
+        });
+        let unarmed_target = spawn_player(
+            &mut app,
+            "IronBaselineTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let armed_target = spawn_player(
+            &mut app,
+            "IronSwordTarget",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: unarmed,
+            target: Some(unarmed_target),
+            issued_at_tick: 1419,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: armed,
+            target: Some(armed_target),
+            issued_at_tick: 1419,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        let unarmed_damage = events[0].damage;
+        let iron_sword_damage = events[1].damage;
+        let ratio = iron_sword_damage / unarmed_damage;
+        println!(
+            "iron_sword_damage_check unarmed={unarmed_damage:.3} iron_sword={iron_sword_damage:.3} ratio={ratio:.3}"
+        );
+        assert!(
+            ratio >= 1.2,
+            "iron_sword damage {iron_sword_damage} should be >= unarmed {unarmed_damage} x 1.2; ratio={ratio}"
+        );
+        assert!(
+            (iron_sword_damage - unarmed_damage * 1.2).abs() < 0.001,
+            "expected full-durability iron_sword to land exactly at 1.2x baseline"
         );
     }
 

@@ -135,6 +135,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_snapshot"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
+  Type.Literal("weapon_equipped"),
+  Type.Literal("weapon_broken"),
+  Type.Literal("treasure_equipped"),
   Type.Literal("rift_portal_state"),
   Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
@@ -582,6 +585,91 @@ export const ServerDataTechniquesSnapshotV1 = Type.Object(
 );
 export type ServerDataTechniquesSnapshotV1 = Static<typeof ServerDataTechniquesSnapshotV1>;
 
+// plan-weapon-v1 §8.2：装备槽推送走 bong:server_data + type 分发。
+export const WeaponViewV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    template_id: Type.String({ minLength: 1, maxLength: 128 }),
+    weapon_kind: Type.String({ minLength: 1, maxLength: 64 }),
+    durability_current: Type.Number({ minimum: 0 }),
+    durability_max: Type.Number({ minimum: 0 }),
+    quality_tier: Type.Integer({ minimum: 0, maximum: 255 }),
+  },
+  { additionalProperties: false },
+);
+export type WeaponViewV1 = Static<typeof WeaponViewV1>;
+
+export const WeaponEquippedV1 = Type.Object(
+  {
+    slot: Type.String({ minLength: 1, maxLength: 64 }),
+    weapon: Type.Optional(Type.Union([WeaponViewV1, Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+export type WeaponEquippedV1 = Static<typeof WeaponEquippedV1>;
+
+export const WeaponBrokenV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    template_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type WeaponBrokenV1 = Static<typeof WeaponBrokenV1>;
+
+export const TreasureViewV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    template_id: Type.String({ minLength: 1, maxLength: 128 }),
+    display_name: Type.String({ minLength: 1, maxLength: 256 }),
+  },
+  { additionalProperties: false },
+);
+export type TreasureViewV1 = Static<typeof TreasureViewV1>;
+
+export const TreasureEquippedV1 = Type.Object(
+  {
+    slot: Type.String({ minLength: 1, maxLength: 64 }),
+    treasure: Type.Optional(Type.Union([TreasureViewV1, Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+export type TreasureEquippedV1 = Static<typeof TreasureEquippedV1>;
+
+export const ServerDataWeaponEquippedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("weapon_equipped"),
+    ...WeaponEquippedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataWeaponEquippedV1 = Static<
+  typeof ServerDataWeaponEquippedV1
+>;
+
+export const ServerDataWeaponBrokenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("weapon_broken"),
+    ...WeaponBrokenV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataWeaponBrokenV1 = Static<typeof ServerDataWeaponBrokenV1>;
+
+export const ServerDataTreasureEquippedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("treasure_equipped"),
+    ...TreasureEquippedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTreasureEquippedV1 = Static<
+  typeof ServerDataTreasureEquippedV1
+>;
+
 export const ServerDataRiftPortalStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -738,6 +826,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillSnapshotV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataWeaponEquippedV1,
+  ServerDataWeaponBrokenV1,
+  ServerDataTreasureEquippedV1,
   ServerDataRiftPortalStateV1,
   ServerDataRiftPortalRemovedV1,
   ServerDataExtractStartedV1,

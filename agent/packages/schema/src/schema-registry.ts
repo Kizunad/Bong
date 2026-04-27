@@ -136,12 +136,20 @@ import {
   ServerDataSkillScrollUsedV1,
   ServerDataSkillXpGainV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataTreasureEquippedV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
+  ServerDataWeaponBrokenV1,
+  ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  TreasureEquippedV1,
+  TreasureViewV1,
+  WeaponBrokenV1,
+  WeaponEquippedV1,
+  WeaponViewV1,
 } from "./server-data.js";
 import {
   DaoxiangSpawnedV1,
@@ -240,6 +248,14 @@ export const SCHEMA_REGISTRY = {
   techniquesSnapshotV1: TechniquesSnapshotV1,
   serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
   serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
+  weaponViewV1: WeaponViewV1,
+  weaponEquippedV1: WeaponEquippedV1,
+  weaponBrokenV1: WeaponBrokenV1,
+  treasureViewV1: TreasureViewV1,
+  treasureEquippedV1: TreasureEquippedV1,
+  serverDataWeaponEquippedV1: ServerDataWeaponEquippedV1,
+  serverDataWeaponBrokenV1: ServerDataWeaponBrokenV1,
+  serverDataTreasureEquippedV1: ServerDataTreasureEquippedV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -421,6 +437,17 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataSkillBarConfigV1,
   "server-data-techniques-snapshot-v1.json":
     SCHEMA_REGISTRY.serverDataTechniquesSnapshotV1,
+  "weapon-view-v1.json": SCHEMA_REGISTRY.weaponViewV1,
+  "weapon-equipped-v1.json": SCHEMA_REGISTRY.weaponEquippedV1,
+  "weapon-broken-v1.json": SCHEMA_REGISTRY.weaponBrokenV1,
+  "treasure-view-v1.json": SCHEMA_REGISTRY.treasureViewV1,
+  "treasure-equipped-v1.json": SCHEMA_REGISTRY.treasureEquippedV1,
+  "server-data-weapon-equipped-v1.json":
+    SCHEMA_REGISTRY.serverDataWeaponEquippedV1,
+  "server-data-weapon-broken-v1.json":
+    SCHEMA_REGISTRY.serverDataWeaponBrokenV1,
+  "server-data-treasure-equipped-v1.json":
+    SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
