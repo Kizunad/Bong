@@ -1,0 +1,17 @@
+Scenario: unarmed first-person render path
+
+Harness:
+  com.bong.client.weapon.WeaponVisualEvidenceHarnessTest.unarmedStateDoesNotInjectWeaponFakeStack
+
+Inputs:
+  WeaponEquippedStore reset; no main_hand/two_hand/off_hand equipped weapon.
+
+Assertions:
+  WeaponEquippedStore.mainHandRenderWeapon() == null
+  WeaponVanillaIconMap.createStackFor("missing_weapon_template") == null
+
+Evidence line:
+  visual_evidence unarmed render_weapon=null fake_stack_injected=false
+
+Interpretation:
+  With no Bong weapon equipped, the weapon render decision has no fake stack to inject; vanilla empty-hand rendering remains available for the first-person hand path.

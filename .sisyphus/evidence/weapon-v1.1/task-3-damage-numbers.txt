@@ -1,0 +1,18 @@
+Iron sword damage numbers
+
+Formula anchors:
+- Unarmed baseline has no Weapon component, so weapon_multiplier = 1.0.
+- Full durability iron_sword uses base_attack = 12.0, quality_tier = 0, durability = 200.0 / 200.0.
+- weapon_attack_multiplier = max(1.0, 12.0 / 10.0) = 1.2.
+- quality_multiplier = 1.0.
+- durability_factor = 1.0.
+- final weapon_multiplier = 1.2.
+
+Observed test output:
+- unarmed_damage = 4.160
+- iron_sword_damage = 4.992
+- ratio = 1.200
+
+Acceptance:
+- iron_sword_damage >= unarmed_damage * 1.2
+- 4.992 >= 4.160 * 1.2

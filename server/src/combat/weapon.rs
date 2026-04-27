@@ -266,7 +266,8 @@ mod tests {
         let mut low = sample_weapon(0, 200.0);
         low.base_attack = 3.0; // 3/10=0.3 → floor 1.0
         assert_eq!(low.attack_multiplier(), 1.0);
-        let mid = sample_weapon(0, 200.0); // 8/10=0.8 → 1.0
+        let mut mid = sample_weapon(0, 200.0);
+        mid.base_attack = 8.0; // 8/10=0.8 → 1.0
         assert_eq!(mid.attack_multiplier(), 1.0);
         let mut hi = sample_weapon(0, 200.0);
         hi.base_attack = 22.0; // 2.2
@@ -332,7 +333,7 @@ mod tests {
                 cooldown_ms: 0,
                 weapon_spec: Some(WeaponSpec {
                     weapon_kind: WeaponKind::Sword,
-                    base_attack: 8.0,
+                    base_attack: 12.0,
                     quality_tier: 0,
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
@@ -431,7 +432,7 @@ mod tests {
             .expect("Weapon inserted");
         assert_eq!(w.instance_id, 42);
         assert_eq!(w.weapon_kind, WeaponKind::Sword);
-        assert!((w.base_attack - 8.0).abs() < 1e-6);
+        assert!((w.base_attack - 12.0).abs() < 1e-6);
         assert_eq!(w.quality_tier, 0);
         assert!((w.durability_max - 200.0).abs() < 1e-6);
         assert!((w.durability - 200.0).abs() < 1e-6); // ratio 1.0 × max

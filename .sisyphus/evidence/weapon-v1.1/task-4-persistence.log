@@ -1,0 +1,37 @@
+Task 4: weapon equip state persists through SQLite player inventory slice reload
+
+Worktree: /home/kiz/Code/Bong/.worktree/plan-weapon-v1.1
+Server cwd: /home/kiz/Code/Bong/.worktree/plan-weapon-v1.1/server
+
+Code path under test:
+- save_player_slices(..., Some(&PlayerInventory), ...)
+- save_player_inventory_slice(..., Some(&PlayerInventory))
+- load_player_slices(...).inventory
+- SQLite inventories.inventory_json
+
+Command:
+  cargo fmt --check && cargo test equipped_weapon_persists_across_player_reload -- --nocapture && cargo test unequipped_weapon_persists_empty_main_hand_across_reload -- --nocapture && cargo test broken_weapon_state_persists_after_inventory_slice_flush -- --nocapture
+
+Result:
+  PASS
+
+Output summary:
+  running 1 test
+  weapon_persistence_snapshot equipped={"bone_coins":17,"containers":[{"cols":7,"id":"main_pack","items":[],"name":"Main Pack","rows":5}],"equipped":{"main_hand":{"description":"weapon persistence fixture","display_name":"Iron Sword","durability":0.87,"freshness":null,"grid_h":2,"grid_w":1,"instance_id":9001,"rarity":"Common","spirit_quality":1.0,"stack_count":1,"template_id":"iron_sword","weight":1.2}},"hotbar":[null,null,null,null,null,null,null,null,null],"max_weight":45.0,"revision":41}
+  test player::state::player_state_tests::equipped_weapon_persists_across_player_reload ... ok
+  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1566 filtered out; finished in 0.14s
+
+  running 1 test
+  weapon_persistence_snapshot unequipped={"bone_coins":17,"containers":[{"cols":7,"id":"main_pack","items":[{"col":0,"instance":{"description":"weapon persistence fixture","display_name":"Iron Sword","durability":0.62,"freshness":null,"grid_h":2,"grid_w":1,"instance_id":9001,"rarity":"Common","spirit_quality":1.0,"stack_count":1,"template_id":"iron_sword","weight":1.2},"row":0}],"name":"Main Pack","rows":5}],"equipped":{},"hotbar":[null,null,null,null,null,null,null,null,null],"max_weight":45.0,"revision":42}
+  test player::state::player_state_tests::unequipped_weapon_persists_empty_main_hand_across_reload ... ok
+  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1566 filtered out; finished in 0.14s
+
+  running 1 test
+  weapon_persistence_snapshot broken={"bone_coins":17,"containers":[{"cols":7,"id":"main_pack","items":[{"col":0,"instance":{"description":"weapon persistence fixture","display_name":"Iron Sword","durability":0.0,"freshness":null,"grid_h":2,"grid_w":1,"instance_id":9001,"rarity":"Common","spirit_quality":1.0,"stack_count":1,"template_id":"iron_sword","weight":1.2},"row":0}],"name":"Main Pack","rows":5}],"equipped":{},"hotbar":[null,null,null,null,null,null,null,null,null],"max_weight":45.0,"revision":43}
+  test player::state::player_state_tests::broken_weapon_state_persists_after_inventory_slice_flush ... ok
+  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1566 filtered out; finished in 0.14s
+
+Acceptance mapping:
+- Equipped main_hand iron_sword survives full player slice save/load.
+- Unequipped main_hand remains empty after save/load, while the same iron_sword instance is in main_pack.
+- Broken durability=0.0 survives immediate inventory slice flush and reload after the item is moved out of main_hand.

@@ -1,4 +1,8 @@
 //! plan-weapon-v1 §8：Treasure 装备槽变更推送。
+//!
+//! v1.1 channel 契约：物理 CustomPayload channel 固定为 `bong:server_data`，
+//! 再由 JSON `type=treasure_equipped` 分发；不注册独立
+//! `bong:combat/treasure_equipped` channel。
 
 use valence::prelude::{Changed, Client, Entity, Query, Res, With};
 
@@ -83,5 +87,140 @@ pub fn emit_treasure_equipped_payloads(
                 send_treasure_equipped(&mut client, &slot, view);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemRarity, ItemTemplate, WeaponSpec,
+    };
+
+    fn treasure_template() -> ItemTemplate {
+        ItemTemplate {
+            id: "starter_talisman".to_string(),
+            display_name: "启程护符".to_string(),
+            category: ItemCategory::Treasure,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.2,
+            rarity: ItemRarity::Uncommon,
+            spirit_quality_initial: 0.76,
+            description: String::new(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None::<WeaponSpec>,
+        }
+    }
+
+    fn treasure_instance(instance_id: u64) -> crate::inventory::ItemInstance {
+        crate::inventory::ItemInstance {
+            instance_id,
+            template_id: "starter_talisman".to_string(),
+            display_name: "启程护符".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.2,
+            rarity: ItemRarity::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.76,
+            durability: 0.93,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+        }
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+    }
+
+    fn collect_server_data_frames(
+        helper: &mut MockClientHelper,
+    ) -> Vec<(String, serde_json::Value)> {
+        let mut frames = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            let value: serde_json::Value = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data custom payload should decode as JSON");
+            frames.push((packet.channel.as_str().to_string(), value));
+        }
+        frames
+    }
+
+    #[test]
+    fn treasure_equipped_uses_server_data_channel_and_type() {
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "starter_talisman".to_string(),
+            treasure_template(),
+        )])));
+        app.add_systems(Update, emit_treasure_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_TREASURE_BELT_0.to_string(),
+            treasure_instance(88),
+        );
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (channel, payload) = frames
+            .iter()
+            .find(|(_, payload)| {
+                payload.get("type").and_then(|v| v.as_str()) == Some("treasure_equipped")
+                    && payload.get("slot").and_then(|v| v.as_str())
+                        == Some(EQUIP_SLOT_TREASURE_BELT_0)
+            })
+            .expect("treasure_equipped payload should be sent");
+        assert_eq!(channel, SERVER_DATA_CHANNEL);
+        assert_eq!(
+            payload.get("slot").and_then(|v| v.as_str()),
+            Some(EQUIP_SLOT_TREASURE_BELT_0)
+        );
+        assert_eq!(
+            payload
+                .get("treasure")
+                .and_then(|v| v.get("template_id"))
+                .and_then(|v| v.as_str()),
+            Some("starter_talisman")
+        );
     }
 }

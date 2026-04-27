@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "weapon_equipped",
+  "slot": "main_hand",
+  "weapon": {
+    "instance_id": 42,
+    "template_id": "iron_sword",
+    "weapon_kind": "sword",
+    "durability_current": 185,
+    "durability_max": 200,
+    "quality_tier": 1
+  }
+}

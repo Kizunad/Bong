@@ -1,0 +1,37 @@
+Task 5: weapon resource path contract is registry-driven and test-covered
+
+Worktree: /home/kiz/Code/Bong/.worktree/plan-weapon-v1.1
+Client cwd: /home/kiz/Code/Bong/.worktree/plan-weapon-v1.1/client
+
+Canonical path under test:
+  template_id
+    -> BongWeaponModelRegistry.Entry
+    -> assets/minecraft/models/item/<host>.json
+    -> parent: sml:builtin/obj
+    -> model: bong:models/item/<template_id>/<template_id>.obj
+    -> assets/bong/models/item/<template_id>/<template_id>.mtl
+    -> assets/bong/textures/item/<template_id>/*.png
+
+Command:
+  JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test --tests "com.bong.client.weapon.*"
+
+Result:
+  PASS
+
+Output summary:
+  openjdk version "17.0.16" 2025-07-15
+  > Task :compileJava
+  > Task :processResources UP-TO-DATE
+  > Task :classes
+  > Task :compileTestJava
+  > Task :processTestResources UP-TO-DATE
+  > Task :testClasses
+  > Task :test
+  BUILD SUCCESSFUL in 6s
+  5 actionable tasks: 3 executed, 2 up-to-date
+
+Acceptance mapping:
+- BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS covers exactly the 7 v1 weapon templates.
+- rusted_blade remains registered as legacy but is not counted in the v1 seven-weapon acceptance set.
+- Every v1 entry has host JSON, OBJ, MTL, and at least one PNG texture.
+- Every v1 host JSON has parent=sml:builtin/obj and model equal to the registry OBJ path.

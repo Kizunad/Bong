@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "instance_id",
+    "template_id",
+    "weapon_kind",
+    "durability_current",
+    "durability_max",
+    "quality_tier"
+  ],
+  "properties": {
+    "instance_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "template_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "weapon_kind": {
+      "minLength": 1,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "durability_current": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "durability_max": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "quality_tier": {
+      "minimum": 0,
+      "maximum": 255,
+      "type": "integer"
+    }
+  }
+}

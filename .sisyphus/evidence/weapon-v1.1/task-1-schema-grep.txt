@@ -1,0 +1,18 @@
+Generated schema grep evidence
+File: agent/packages/schema/generated/server-data-v1.json
+
+grep pattern: weapon_equipped|weapon_broken|treasure_equipped
+
+Line 5920: "const": "weapon_equipped"
+Line 5993: "const": "weapon_broken"
+Line 6021: "const": "treasure_equipped"
+
+Generated individual schema files:
+- agent/packages/schema/generated/weapon-view-v1.json
+- agent/packages/schema/generated/weapon-equipped-v1.json
+- agent/packages/schema/generated/weapon-broken-v1.json
+- agent/packages/schema/generated/treasure-view-v1.json
+- agent/packages/schema/generated/treasure-equipped-v1.json
+- agent/packages/schema/generated/server-data-weapon-equipped-v1.json
+- agent/packages/schema/generated/server-data-weapon-broken-v1.json
+- agent/packages/schema/generated/server-data-treasure-equipped-v1.json

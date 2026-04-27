@@ -1,0 +1,34 @@
+{
+  "physical_channel": "bong:server_data",
+  "payload_examples": [
+    {
+      "v": 1,
+      "type": "weapon_equipped",
+      "slot": "main_hand",
+      "weapon": {
+        "instance_id": 42,
+        "template_id": "iron_sword",
+        "weapon_kind": "sword",
+        "durability_current": 185.0,
+        "durability_max": 200.0,
+        "quality_tier": 1
+      }
+    },
+    {
+      "v": 1,
+      "type": "weapon_broken",
+      "instance_id": 77,
+      "template_id": "iron_sword"
+    },
+    {
+      "v": 1,
+      "type": "treasure_equipped",
+      "slot": "treasure_belt_0",
+      "treasure": {
+        "instance_id": 88,
+        "template_id": "starter_talisman",
+        "display_name": "启程护符"
+      }
+    }
+  ]
+}
