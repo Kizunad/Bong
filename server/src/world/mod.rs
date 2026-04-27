@@ -9,6 +9,8 @@ pub mod tsy_filter;
 #[cfg(test)]
 mod tsy_integration_test;
 pub mod tsy_lifecycle;
+#[cfg(test)]
+mod tsy_lifecycle_integration_test;
 pub mod tsy_poi_consumer;
 pub mod tsy_portal;
 pub mod zone;
