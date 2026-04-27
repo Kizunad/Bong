@@ -306,6 +306,11 @@ fn apply_item_effect(
                 "[bong][network][cast] BreakthroughBonus magnitude={magnitude} for `{username}` ({entity:?}) — no-op (buff state TODO)"
             );
         }
+        ItemEffect::LifespanExtension { years, source } => {
+            tracing::info!(
+                "[bong][network][cast] LifespanExtension years={years} source={source} for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
     }
 }
 

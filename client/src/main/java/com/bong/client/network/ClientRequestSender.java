@@ -170,6 +170,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
     }
 
+    public static void sendDuoSheRequest(String targetId) {
+        dispatch(ClientRequestProtocol.encodeDuoSheRequest(targetId));
+    }
+
+    public static void sendUseLifeCore(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeUseLifeCore(instanceId));
+    }
+
     public static void sendLearnSkillScroll(long instanceId) {
         dispatch(ClientRequestProtocol.encodeLearnSkillScroll(instanceId));
     }

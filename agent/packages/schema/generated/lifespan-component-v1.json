@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "born_at_tick",
+    "years_lived",
+    "cap_by_realm"
+  ],
+  "properties": {
+    "born_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "years_lived": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "cap_by_realm": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "offline_pause_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

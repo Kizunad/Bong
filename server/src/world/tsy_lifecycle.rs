@@ -43,8 +43,12 @@ use crate::inventory::corpse::CorpseEmbalmed;
 use crate::inventory::tsy_loot_spawn::source_class_from_family_id;
 use crate::inventory::DroppedLootRegistry;
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
-use crate::npc::spawn::NpcMarker;
-use crate::world::dimension::{DimensionLayers, TsyLayer};
+use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
+use crate::npc::navigator::Navigator;
+use crate::npc::patrol::NpcPatrol;
+use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+use crate::npc::tsy_hostile::TsyHostileMarker;
+use crate::world::dimension::{DimensionKind, DimensionLayers, TsyLayer};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, TsyPresence};
 use crate::world::zone::{TsyDepth, ZoneRegistry};
@@ -424,9 +428,11 @@ pub fn tsy_collapse_completed_cleanup(
         // 能在塌缩时确定性蒸发。AABB 命中作为额外 sanity（同 family 多次实例化时区分）。
         let spawn_prefix = format!("tsy_spawn:{family}");
         let corpse_prefix = format!("tsy_corpse:{family}/");
+        let npc_drop_prefix = format!("tsy_npc_drop:{family}:");
         loot_registry.entries.retain(|_, entry| {
             let belongs_to_family = entry.source_container_id == spawn_prefix
-                || entry.source_container_id.starts_with(&corpse_prefix);
+                || entry.source_container_id.starts_with(&corpse_prefix)
+                || entry.source_container_id.starts_with(&npc_drop_prefix);
             if !belongs_to_family {
                 return true;
             }
@@ -450,8 +456,14 @@ pub fn tsy_collapse_completed_cleanup(
             // 加速激活：与自然激活同样 spawn，但立刻进 Roll 决定喷不喷。
             if let Some(layer) = layer_entity {
                 let spawn_pos = pos.0;
-                let new_entity =
-                    spawn_daoxiang_from_corpse(&mut commands, layer, corpse, spawn_pos, clock.tick);
+                let new_entity = spawn_daoxiang_from_corpse(
+                    &mut commands,
+                    layer,
+                    &zones,
+                    corpse,
+                    spawn_pos,
+                    clock.tick,
+                );
                 let (decision, next_seed) = collapse_roll(rng_seed);
                 rng_seed = next_seed;
                 if decision {
@@ -523,6 +535,7 @@ pub fn tsy_corpse_to_daoxiang_tick(
     mut commands: Commands,
     corpse_q: Query<(Entity, &Position, &CorpseEmbalmed)>,
     state_reg: Res<TsyZoneStateRegistry>,
+    zones: Res<ZoneRegistry>,
     layers: Option<Res<DimensionLayers>>,
     clock: Res<CombatClock>,
 ) {
@@ -544,7 +557,7 @@ pub fn tsy_corpse_to_daoxiang_tick(
         if elapsed < DAOXIANG_NATURAL_TICKS {
             continue;
         }
-        spawn_daoxiang_from_corpse(&mut commands, layers.tsy, corpse, pos.0, clock.tick);
+        spawn_daoxiang_from_corpse(&mut commands, layers.tsy, &zones, corpse, pos.0, clock.tick);
         commands.entity(entity).insert(valence::prelude::Despawned);
     }
 }
@@ -570,6 +583,7 @@ pub struct DaoxiangOrigin {
 pub fn spawn_daoxiang_from_corpse(
     commands: &mut Commands,
     layer: Entity,
+    zones: &ZoneRegistry,
     corpse: &CorpseEmbalmed,
     pos: DVec3,
     tick: u64,
@@ -594,10 +608,73 @@ pub fn spawn_daoxiang_from_corpse(
             },
         ))
         .id();
+    let loadout = NpcCombatLoadout::new(
+        NpcMeleeArchetype::Brawler,
+        MovementCapabilities {
+            can_sprint: false,
+            can_dash: false,
+        },
+    );
+    let home_zone = daoxiang_home_zone(zones, &corpse.family_id, pos);
+    commands.entity(entity).insert((
+        NpcBlackboard::default(),
+        loadout.clone(),
+        loadout.melee_archetype,
+        loadout.melee_profile(),
+        Navigator::new(),
+        MovementController::new(),
+        loadout.movement_capabilities,
+        MovementCooldowns::default(),
+        NpcPatrol::new(home_zone, pos),
+        crate::npc::brain::WanderState::default(),
+        daoxiang_lifecycle_thinker(),
+        TsyHostileMarker {
+            family_id: corpse.family_id.clone(),
+        },
+    ));
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
     entity
+}
+
+fn daoxiang_home_zone(zones: &ZoneRegistry, family_id: &str, pos: DVec3) -> String {
+    zones
+        .find_zone(DimensionKind::Tsy, pos)
+        .filter(|zone| zone.tsy_family_id().as_deref() == Some(family_id))
+        .map(|zone| zone.name.clone())
+        .or_else(|| {
+            let deep = format!("{family_id}_deep");
+            zones.find_zone_by_name(&deep).map(|zone| zone.name.clone())
+        })
+        .unwrap_or_else(|| format!("{family_id}_deep"))
+}
+
+fn daoxiang_lifecycle_thinker() -> big_brain::prelude::ThinkerBuilder {
+    use big_brain::prelude::{FirstToScore, Thinker};
+
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(
+            crate::npc::brain::AgeingScorer,
+            crate::npc::brain::RetireAction,
+        )
+        .when(
+            crate::npc::tsy_hostile::DaoxiangInstinctScorer,
+            crate::npc::tsy_hostile::DaoxiangInstinctAction,
+        )
+        .when(
+            crate::npc::brain::MeleeRangeScorer,
+            crate::npc::brain::MeleeAttackAction,
+        )
+        .when(
+            crate::npc::brain::ChaseTargetScorer,
+            crate::npc::brain::ChaseAction,
+        )
+        .when(
+            crate::npc::brain::WanderScorer,
+            crate::npc::brain::WanderAction,
+        )
 }
 
 fn collect_family_aabbs(zones: &ZoneRegistry, family: &str) -> Vec<(DVec3, DVec3)> {
@@ -925,6 +1002,45 @@ mod tests {
         };
         let aabbs = collect_family_aabbs(&zones, "tsy_a");
         assert_eq!(aabbs.len(), 3);
+    }
+
+    #[test]
+    fn daoxiang_home_zone_uses_tsy_subzone_at_position() {
+        fn mk(name: &str, min: DVec3, max: DVec3) -> Zone {
+            Zone {
+                name: name.to_string(),
+                dimension: DimensionKind::Tsy,
+                bounds: (min, max),
+                spirit_qi: 0.0,
+                danger_level: 5,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }
+        }
+        let zones = ZoneRegistry {
+            zones: vec![
+                mk("tsy_lingxu_01_shallow", DVec3::ZERO, DVec3::splat(10.0)),
+                mk(
+                    "tsy_lingxu_01_mid",
+                    DVec3::new(0.0, 20.0, 0.0),
+                    DVec3::new(10.0, 30.0, 10.0),
+                ),
+            ],
+        };
+        assert_eq!(
+            daoxiang_home_zone(&zones, "tsy_lingxu_01", DVec3::new(1.0, 21.0, 1.0)),
+            "tsy_lingxu_01_mid"
+        );
+    }
+
+    #[test]
+    fn daoxiang_home_zone_falls_back_to_family_deep() {
+        let zones = ZoneRegistry::fallback();
+        assert_eq!(
+            daoxiang_home_zone(&zones, "tsy_lingxu_01", DVec3::new(999.0, 999.0, 999.0)),
+            "tsy_lingxu_01_deep"
+        );
     }
 
     #[test]

@@ -329,6 +329,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (sb.length() > 0) sb.append("  §8·  ");
                 sb.append(String.format("§d污染 §f%.1f", b.contaminationTotal()));
             }
+            if (b.hasLifespanPreview()) {
+                if (sb.length() > 0) sb.append("  §8·  ");
+                sb.append(String.format("§7寿元 §f%.1f/%d", b.yearsLived(), b.lifespanCapByRealm()));
+                sb.append(String.format(" §8(余%.1f 扣%d ×%.1f)",
+                    b.remainingYears(), b.deathPenaltyYears(), b.lifespanTickRateMultiplier()));
+                if (b.isWindCandle()) sb.append(" §c风烛");
+            }
             bodyStatusLabel.text(Text.literal(sb.toString()));
         };
         refreshBodyStatus.run();

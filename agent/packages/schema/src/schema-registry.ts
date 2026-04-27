@@ -33,17 +33,44 @@ import {
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
   BotanyHarvestRequestV1,
-  CancelExtractRequestV1,
   BreakthroughRequestV1,
+  CancelExtractRequestV1,
+  CombatCreateNewCharacterRequestV1,
+  CombatReincarnateRequestV1,
+  CombatTerminateRequestV1,
   ClientRequestV1,
+  DuoSheRequestV1,
   ForgeRequestV1,
+  ForgeStartSessionRequestV1,
+  ForgeTemperingHitRequestV1,
+  ForgeInscriptionScrollRequestV1,
+  ForgeConsecrationInjectRequestV1,
+  ForgeStepAdvanceRequestV1,
+  ForgeBlueprintTurnPageRequestV1,
+  ForgeLearnBlueprintRequestV1,
+  ForgeStationPlaceRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
   StartExtractRequestV1,
+  UseLifeCoreRequestV1,
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import { DeathInsightRequestV1 } from "./death-insight.js";
+import {
+  DeathRegistryV1,
+  AgingEventV1,
+  DeceasedIndexEntryV1,
+  DeceasedSnapshotV1,
+  DuoSheEventV1,
+  LifespanEventV1,
+  LifespanCapByRealmV1,
+  LifespanComponentV1,
+  LifespanPreviewV1,
+  RebirthChanceInputV1,
+  RebirthChanceResultV1,
+} from "./death-lifecycle.js";
 import {
   ExtractAbortedV1,
   ExtractCompletedV1,
@@ -55,6 +82,18 @@ import {
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
 import { ForgeEventV1 } from "./forge-event.js";
+import {
+  ForgeBlueprintBookDataV1,
+  ForgeBlueprintEntryV1,
+  ForgeOutcomeBucket,
+  ForgeOutcomeDataV1,
+  ForgeSessionDataV1,
+  ForgeStep,
+  ForgeStepState,
+  TemperBeat,
+  WeaponForgeStationDataV1,
+  WeaponTier,
+} from "./forge.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
@@ -66,6 +105,8 @@ import {
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemySessionV1,
+  ServerDataDeathScreenV1,
+  ServerDataTerminateScreenV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanySkillV1,
   ServerDataExtractAbortedV1,
@@ -82,6 +123,10 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
+  ServerDataForgeStationV1,
+  ServerDataForgeSessionV1,
+  ServerDataForgeOutcomeV1,
+  ServerDataForgeBlueprintBookV1,
 } from "./server-data.js";
 import {
   DaoxiangSpawnedV1,
@@ -92,6 +137,11 @@ import {
   TsyExitEventV1,
   TsyZoneActivatedV1,
 } from "./tsy.js";
+import {
+  TsyHostileArchetypeV1,
+  TsyNpcSpawnedV1,
+  TsySentinelPhaseChangedV1,
+} from "./tsy-hostile-v1.js";
 import {
   CancelSearchRequestV1,
   ContainerStateV1,
@@ -128,6 +178,18 @@ export const SCHEMA_REGISTRY = {
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
+  deathInsightRequestV1: DeathInsightRequestV1,
+  deathRegistryV1: DeathRegistryV1,
+  deceasedIndexEntryV1: DeceasedIndexEntryV1,
+  deceasedSnapshotV1: DeceasedSnapshotV1,
+  lifespanEventV1: LifespanEventV1,
+  agingEventV1: AgingEventV1,
+  duoSheEventV1: DuoSheEventV1,
+  lifespanCapByRealmV1: LifespanCapByRealmV1,
+  lifespanComponentV1: LifespanComponentV1,
+  lifespanPreviewV1: LifespanPreviewV1,
+  rebirthChanceInputV1: RebirthChanceInputV1,
+  rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
@@ -136,12 +198,19 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestDuoSheV1: DuoSheRequestV1,
+  clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
+  clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
+  clientRequestCombatTerminateV1: CombatTerminateRequestV1,
+  clientRequestCombatCreateNewCharacterV1: CombatCreateNewCharacterRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
+  serverDataDeathScreenV1: ServerDataDeathScreenV1,
+  serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
   serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
   serverDataSkillLvUpV1: ServerDataSkillLvUpV1,
   serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
@@ -204,6 +273,33 @@ export const SCHEMA_REGISTRY = {
   searchAbortedV1: SearchAbortedV1,
   clientRequestStartSearchV1: StartSearchRequestV1,
   clientRequestCancelSearchV1: CancelSearchRequestV1,
+  // plan-tsy-hostile-v1 §6 — TSY 敌对 NPC 分层
+  tsyHostileArchetypeV1: TsyHostileArchetypeV1,
+  tsyNpcSpawnedV1: TsyNpcSpawnedV1,
+  tsySentinelPhaseChangedV1: TsySentinelPhaseChangedV1,
+  // ─── 炼器（武器）（plan-forge-v1 §4） ──────────
+  forgeStep: ForgeStep,
+  weaponTier: WeaponTier,
+  temperBeat: TemperBeat,
+  forgeOutcomeBucket: ForgeOutcomeBucket,
+  forgeStepState: ForgeStepState,
+  forgeBlueprintEntryV1: ForgeBlueprintEntryV1,
+  weaponForgeStationDataV1: WeaponForgeStationDataV1,
+  forgeSessionDataV1: ForgeSessionDataV1,
+  forgeOutcomeDataV1: ForgeOutcomeDataV1,
+  forgeBlueprintBookDataV1: ForgeBlueprintBookDataV1,
+  serverDataForgeStationV1: ServerDataForgeStationV1,
+  serverDataForgeSessionV1: ServerDataForgeSessionV1,
+  serverDataForgeOutcomeV1: ServerDataForgeOutcomeV1,
+  serverDataForgeBlueprintBookV1: ServerDataForgeBlueprintBookV1,
+  clientRequestForgeStartSessionV1: ForgeStartSessionRequestV1,
+  clientRequestForgeTemperingHitV1: ForgeTemperingHitRequestV1,
+  clientRequestForgeInscriptionScrollV1: ForgeInscriptionScrollRequestV1,
+  clientRequestForgeConsecrationInjectV1: ForgeConsecrationInjectRequestV1,
+  clientRequestForgeStepAdvanceV1: ForgeStepAdvanceRequestV1,
+  clientRequestForgeBlueprintTurnPageV1: ForgeBlueprintTurnPageRequestV1,
+  clientRequestForgeLearnBlueprintV1: ForgeLearnBlueprintRequestV1,
+  clientRequestForgeStationPlaceV1: ForgeStationPlaceRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -230,6 +326,18 @@ export const GENERATED_SCHEMA_FILES = {
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
+  "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
+  "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
+  "deceased-index-entry-v1.json": SCHEMA_REGISTRY.deceasedIndexEntryV1,
+  "deceased-snapshot-v1.json": SCHEMA_REGISTRY.deceasedSnapshotV1,
+  "lifespan-event-v1.json": SCHEMA_REGISTRY.lifespanEventV1,
+  "aging-event-v1.json": SCHEMA_REGISTRY.agingEventV1,
+  "duo-she-event-v1.json": SCHEMA_REGISTRY.duoSheEventV1,
+  "lifespan-cap-by-realm-v1.json": SCHEMA_REGISTRY.lifespanCapByRealmV1,
+  "lifespan-component-v1.json": SCHEMA_REGISTRY.lifespanComponentV1,
+  "lifespan-preview-v1.json": SCHEMA_REGISTRY.lifespanPreviewV1,
+  "rebirth-chance-input-v1.json": SCHEMA_REGISTRY.rebirthChanceInputV1,
+  "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
@@ -240,9 +348,18 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
+  "client-request-use-life-core-v1.json":
+    SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
+  "client-request-combat-reincarnate-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatReincarnateV1,
+  "client-request-combat-terminate-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatTerminateV1,
+  "client-request-combat-create-new-character-v1.json":
+    SCHEMA_REGISTRY.clientRequestCombatCreateNewCharacterV1,
   "client-request-start-extract-v1.json":
     SCHEMA_REGISTRY.clientRequestStartExtractV1,
   "client-request-cancel-extract-v1.json":
@@ -251,6 +368,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
   "server-data-botany-skill-v1.json":
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
+  "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
+  "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
   "server-data-skill-xp-gain-v1.json":
     SCHEMA_REGISTRY.serverDataSkillXpGainV1,
   "server-data-skill-lv-up-v1.json":
@@ -341,6 +460,33 @@ export const GENERATED_SCHEMA_FILES = {
   "search-aborted-v1.json": SCHEMA_REGISTRY.searchAbortedV1,
   "client-request-start-search-v1.json": SCHEMA_REGISTRY.clientRequestStartSearchV1,
   "client-request-cancel-search-v1.json": SCHEMA_REGISTRY.clientRequestCancelSearchV1,
+  // plan-tsy-hostile-v1 §6
+  "tsy-hostile-archetype-v1.json": SCHEMA_REGISTRY.tsyHostileArchetypeV1,
+  "tsy-npc-spawned-v1.json": SCHEMA_REGISTRY.tsyNpcSpawnedV1,
+  "tsy-sentinel-phase-changed-v1.json": SCHEMA_REGISTRY.tsySentinelPhaseChangedV1,
+  // ─── 炼器（武器）（plan-forge-v1 §4） ──────────
+  "forge-step.json": SCHEMA_REGISTRY.forgeStep,
+  "weapon-tier.json": SCHEMA_REGISTRY.weaponTier,
+  "temper-beat.json": SCHEMA_REGISTRY.temperBeat,
+  "forge-outcome-bucket.json": SCHEMA_REGISTRY.forgeOutcomeBucket,
+  "forge-step-state.json": SCHEMA_REGISTRY.forgeStepState,
+  "forge-blueprint-entry-v1.json": SCHEMA_REGISTRY.forgeBlueprintEntryV1,
+  "weapon-forge-station-data-v1.json": SCHEMA_REGISTRY.weaponForgeStationDataV1,
+  "forge-session-data-v1.json": SCHEMA_REGISTRY.forgeSessionDataV1,
+  "forge-outcome-data-v1.json": SCHEMA_REGISTRY.forgeOutcomeDataV1,
+  "forge-blueprint-book-data-v1.json": SCHEMA_REGISTRY.forgeBlueprintBookDataV1,
+  "server-data-forge-station-v1.json": SCHEMA_REGISTRY.serverDataForgeStationV1,
+  "server-data-forge-session-v1.json": SCHEMA_REGISTRY.serverDataForgeSessionV1,
+  "server-data-forge-outcome-v1.json": SCHEMA_REGISTRY.serverDataForgeOutcomeV1,
+  "server-data-forge-blueprint-book-v1.json": SCHEMA_REGISTRY.serverDataForgeBlueprintBookV1,
+  "client-request-forge-start-session-v1.json": SCHEMA_REGISTRY.clientRequestForgeStartSessionV1,
+  "client-request-forge-tempering-hit-v1.json": SCHEMA_REGISTRY.clientRequestForgeTemperingHitV1,
+  "client-request-forge-inscription-scroll-v1.json": SCHEMA_REGISTRY.clientRequestForgeInscriptionScrollV1,
+  "client-request-forge-consecration-inject-v1.json": SCHEMA_REGISTRY.clientRequestForgeConsecrationInjectV1,
+  "client-request-forge-step-advance-v1.json": SCHEMA_REGISTRY.clientRequestForgeStepAdvanceV1,
+  "client-request-forge-blueprint-turn-page-v1.json": SCHEMA_REGISTRY.clientRequestForgeBlueprintTurnPageV1,
+  "client-request-forge-learn-blueprint-v1.json": SCHEMA_REGISTRY.clientRequestForgeLearnBlueprintV1,
+  "client-request-forge-station-place-v1.json": SCHEMA_REGISTRY.clientRequestForgeStationPlaceV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

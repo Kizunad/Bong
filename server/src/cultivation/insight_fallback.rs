@@ -17,6 +17,7 @@ pub fn fallback_for(trigger_id: &str) -> Vec<InsightChoice> {
         "meridian_forge_tier_milestone" => forge_milestone_set(),
         "first_tribulation_survived" => tribulation_survived_set(),
         "survived_negative_zone" => negative_zone_set(),
+        "wind_candle_lifespan_extension" => wind_candle_lifespan_extension_set(),
         "practice_dedication_milestone" => practice_milestone_set(),
         "chaotic_to_hunyuan_pivot" => color_pivot_set(),
         "witnessed_xuhua_tribulation"
@@ -25,6 +26,28 @@ pub fn fallback_for(trigger_id: &str) -> Vec<InsightChoice> {
         | "post_rebirth_clarity" => generic_set(),
         _ => Vec::new(),
     }
+}
+
+fn wind_candle_lifespan_extension_set() -> Vec<InsightChoice> {
+    vec![
+        InsightChoice {
+            category: InsightCategory::Perception,
+            effect: InsightEffect::LifespanExtensionEnlightenment,
+            flavor: "你把这一次顿悟压入命灯，余寿回涌，却从此少一重悟境天花。".into(),
+        },
+        InsightChoice {
+            category: InsightCategory::Composure,
+            effect: InsightEffect::ComposureRecover { mul: 1.06 },
+            flavor: "你看清寿火将熄，心湖反而沉定。".into(),
+        },
+        InsightChoice {
+            category: InsightCategory::Perception,
+            effect: InsightEffect::UnlockPerception {
+                kind: "wind_candle_warning".into(),
+            },
+            flavor: "你能听见自身寿火裂响，往后更早察觉风烛将至。".into(),
+        },
+    ]
 }
 
 fn breakthrough_first_set() -> Vec<InsightChoice> {
@@ -227,6 +250,7 @@ mod tests {
             "meridian_forge_tier_milestone",
             "first_tribulation_survived",
             "survived_negative_zone",
+            "wind_candle_lifespan_extension",
             "practice_dedication_milestone",
             "chaotic_to_hunyuan_pivot",
             "witnessed_xuhua_tribulation",
@@ -246,6 +270,7 @@ mod tests {
             "meridian_forge_tier_milestone",
             "first_tribulation_survived",
             "survived_negative_zone",
+            "wind_candle_lifespan_extension",
             "practice_dedication_milestone",
             "chaotic_to_hunyuan_pivot",
         ];
@@ -260,5 +285,13 @@ mod tests {
     #[test]
     fn unknown_trigger_yields_empty() {
         assert!(fallback_for("unknown_thing_xyz").is_empty());
+    }
+
+    #[test]
+    fn wind_candle_fallback_offers_lifespan_extension() {
+        let opts = fallback_for("wind_candle_lifespan_extension");
+        assert!(opts
+            .iter()
+            .any(|choice| matches!(choice.effect, InsightEffect::LifespanExtensionEnlightenment)));
     }
 }

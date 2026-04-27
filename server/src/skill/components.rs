@@ -26,6 +26,7 @@ pub enum SkillId {
 
 impl SkillId {
     /// plan §7 汇总表 source-of-truth string id，供 XpGainSource.Action::plan / Redis channel 派生使用。
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Herbalism => "herbalism",
@@ -41,10 +42,12 @@ impl SkillId {
 pub struct ScrollId(pub String);
 
 impl ScrollId {
+    #[allow(dead_code)]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.0
     }

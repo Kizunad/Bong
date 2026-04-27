@@ -33,6 +33,24 @@ export const CHANNELS = {
   /** Server → Agent: 修炼侧致死触发（plan-cultivation §4） (Pub/Sub) */
   CULTIVATION_DEATH: "bong:cultivation_death",
 
+  /** Server → Agent: 死亡触发（plan-death-lifecycle-v1 §7） */
+  DEATH: "bong:death",
+
+  /** Server → Agent: 重生结算（plan-death-lifecycle-v1 §7） */
+  REBIRTH: "bong:rebirth",
+
+  /** Server → Agent: 遗念生成请求（plan-death-lifecycle-v1 §7） */
+  DEATH_INSIGHT: "bong:death_insight",
+
+  /** Server → Agent: 老化 / 风烛 / tick rate 变化（plan-death-lifecycle-v1 §7） */
+  AGING: "bong:aging",
+
+  /** Server → Agent: 寿元事件公开流水（plan-death-lifecycle-v1 §7） */
+  LIFESPAN_EVENT: "bong:lifespan_event",
+
+  /** Server → Agent: 夺舍公开流水（plan-death-lifecycle-v1 §7） */
+  DUO_SHE_EVENT: "bong:duo_she_event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -64,6 +82,12 @@ export const CHANNELS = {
    *
    * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
   TSY_EVENT: "bong:tsy_event",
+
+  // ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────
+  /** Server → Agent: 锻造起炉（玩家起炉时推，供 agent 生成观察叙事） */
+  FORGE_START: "bong:forge/start",
+  /** Server → Agent: 锻造结果（结算推，供 agent 记录/叙事） */
+  FORGE_OUTCOME: "bong:forge/outcome",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -77,6 +101,12 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BREAKTHROUGH_EVENT,
   CHANNELS.FORGE_EVENT,
   CHANNELS.CULTIVATION_DEATH,
+  CHANNELS.DEATH,
+  CHANNELS.REBIRTH,
+  CHANNELS.DEATH_INSIGHT,
+  CHANNELS.AGING,
+  CHANNELS.LIFESPAN_EVENT,
+  CHANNELS.DUO_SHE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,
@@ -87,6 +117,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
   CHANNELS.TSY_EVENT,
+  CHANNELS.FORGE_START,
+  CHANNELS.FORGE_OUTCOME,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

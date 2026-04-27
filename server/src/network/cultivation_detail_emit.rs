@@ -6,16 +6,20 @@
 //!
 //! 节流：每 20 tick 最多发一次（~1s @ 20TPS）。
 
-use valence::prelude::{bevy_ecs, Client, Entity, Query, Res, ResMut, Resource, With};
+use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, Resource, With};
 
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::lifespan::{
+    lifespan_tick_rate_multiplier, LifespanCapTable, LifespanComponent,
+};
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::schema::cultivation::SkillMilestoneSnapshotV1;
-use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{LifespanPreviewV1, ServerDataPayloadV1, ServerDataV1};
+use crate::world::zone::ZoneRegistry;
 
 const EMIT_INTERVAL_TICKS: u64 = 20;
 
@@ -30,11 +34,14 @@ type CultivationDetailEmitQueryItem<'a> = (
     &'a MeridianSystem,
     &'a Cultivation,
     Option<&'a Contamination>,
+    Option<&'a LifespanComponent>,
+    Option<&'a Position>,
     Option<&'a LifeRecord>,
 );
 
 pub fn emit_cultivation_detail_payloads(
     clock: Res<CultivationClock>,
+    zones: Option<Res<ZoneRegistry>>,
     mut state: ResMut<CultivationDetailEmitState>,
     mut clients: Query<CultivationDetailEmitQueryItem<'_>, With<Client>>,
 ) {
@@ -43,7 +50,19 @@ pub fn emit_cultivation_detail_payloads(
     }
     state.last_emit_tick = clock.tick;
 
-    for (entity, mut client, meridians, cultivation, contamination, life_record) in &mut clients {
+    let zones = zones.as_deref();
+
+    for (
+        entity,
+        mut client,
+        meridians,
+        cultivation,
+        contamination,
+        lifespan,
+        position,
+        life_record,
+    ) in &mut clients
+    {
         let mut opened = Vec::with_capacity(20);
         let mut flow_rate = Vec::with_capacity(20);
         let mut flow_capacity = Vec::with_capacity(20);
@@ -66,6 +85,16 @@ pub fn emit_cultivation_detail_payloads(
         let contamination_total = contamination
             .map(|c| c.entries.iter().map(|e| e.amount).sum::<f64>())
             .unwrap_or(0.0);
+        let lifespan = lifespan.map(|lifespan| LifespanPreviewV1 {
+            years_lived: lifespan.years_lived,
+            cap_by_realm: lifespan.cap_by_realm,
+            remaining_years: lifespan.remaining_years(),
+            death_penalty_years: LifespanCapTable::death_penalty_years_for_cap(
+                lifespan.cap_by_realm,
+            ),
+            tick_rate_multiplier: lifespan_tick_rate_multiplier(position, zones),
+            is_wind_candle: lifespan.is_wind_candle(),
+        });
         let recent_skill_milestones_summary = life_record
             .map(|life| life.recent_skill_milestones_summary_text(3))
             .unwrap_or_default();
@@ -89,6 +118,7 @@ pub fn emit_cultivation_detail_payloads(
             open_progress,
             cracks_count,
             contamination_total,
+            lifespan,
             recent_skill_milestones_summary,
             skill_milestones,
         });

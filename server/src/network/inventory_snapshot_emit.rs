@@ -366,6 +366,24 @@ mod tests {
     };
     use crate::schema::inventory::InventoryEventV1;
 
+    use crate::alchemy::RecipeRegistry;
+    use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent};
+    use crate::combat::CombatClock;
+    use crate::cultivation::breakthrough::BreakthroughRequest;
+    use crate::cultivation::forging::ForgeRequest;
+    use crate::cultivation::insight::InsightChosen;
+    use crate::inventory::{DroppedLootEntry, DroppedLootRegistry, ItemRegistry};
+    use crate::lingtian::events::{
+        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+        StartReplenishRequest, StartTillRequest,
+    };
+    use crate::network::client_request_handler::AlchemyMockState;
+    use crate::network::dropped_loot_sync_emit;
+    use crate::schema::client_request::ClientRequestV1;
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use valence::custom_payload::CustomPayloadEvent;
+    use valence::prelude::{ident, IntoSystemConfigs};
+
     fn setup_app() -> App {
         let mut app = App::new();
         app.add_event::<DroppedItemEvent>();
@@ -379,6 +397,43 @@ mod tests {
                 crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
             ),
         );
+        app
+    }
+
+    fn setup_app_for_dropped_loot_pickup() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<crate::alchemy::PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+
+        // Run request handler, then broadcast dropped_loot_sync if the registry changed.
+        app.add_systems(
+            Update,
+            (
+                crate::network::client_request_handler::handle_client_request_payloads,
+                dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
+                dropped_loot_sync_emit::emit_changed_dropped_loot_syncs,
+            )
+                .chain(),
+        );
+
         app
     }
 
@@ -451,6 +506,30 @@ mod tests {
         }
 
         payloads
+    }
+
+    fn collect_dropped_loot_sync_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+
+            let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data payload should decode");
+            if matches!(payload.payload, ServerDataPayloadV1::DroppedLootSync(_)) {
+                payloads.push(payload);
+            }
+        }
+
+        payloads
+    }
+
+    fn clear_all_pending_frames(helper: &mut MockClientHelper) {
+        let _ = helper.collect_received();
     }
 
     fn make_item(
@@ -768,6 +847,122 @@ mod tests {
             }
             other => panic!("expected dropped inventory_event payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn dropped_loot_sync_allows_other_client_to_pickup_and_removes_from_registry() {
+        let mut app = setup_app_for_dropped_loot_pickup();
+
+        // Both players have inventories/state so the request handler can resync snapshots.
+        let state_a = PlayerState::default();
+        let state_b = PlayerState::default();
+        let inv_a = make_inventory(11, true);
+        let mut inv_b = make_inventory(22, false);
+        // Ensure B has at least one free slot.
+        inv_b.containers[0].items.clear();
+
+        let (_owner_entity, mut owner_helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Owner",
+            state_a,
+            Cultivation::default(),
+            Some(inv_a),
+        );
+        let (picker_entity, mut picker_helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Picker",
+            state_b,
+            Cultivation::default(),
+            Some(inv_b),
+        );
+
+        // Seed a single drop owned by Owner, placed near Picker.
+        {
+            let mut registry = app.world_mut().resource_mut::<DroppedLootRegistry>();
+            registry.entries.insert(
+                1004,
+                DroppedLootEntry {
+                    instance_id: 1004,
+                    source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos: [8.5, 66.0, 8.5],
+                    item: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
+                },
+            );
+        }
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // Both clients should see the global dropped_loot_sync on join/change.
+        let owner_syncs = collect_dropped_loot_sync_payloads(&mut owner_helper);
+        let picker_syncs = collect_dropped_loot_sync_payloads(&mut picker_helper);
+        assert!(
+            !owner_syncs.is_empty(),
+            "owner should receive dropped_loot_sync"
+        );
+        assert!(
+            !picker_syncs.is_empty(),
+            "other client should receive dropped_loot_sync"
+        );
+
+        // Clear any pending frames so subsequent assertions only see pickup effects.
+        clear_all_pending_frames(&mut owner_helper);
+        clear_all_pending_frames(&mut picker_helper);
+
+        // Picker sends pickup request.
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: picker_entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::PickupDroppedItem {
+                    v: 1,
+                    instance_id: 1004,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // Drop should be removed from registry.
+        let registry = app.world().resource::<DroppedLootRegistry>();
+        let remaining = registry.entries.len();
+        assert_eq!(remaining, 0, "picked up drop should be removed");
+
+        // Both clients should receive a sync showing no drops.
+        let owner_syncs = collect_dropped_loot_sync_payloads(&mut owner_helper);
+        let picker_syncs = collect_dropped_loot_sync_payloads(&mut picker_helper);
+        assert!(
+            owner_syncs.iter().any(|payload| {
+                matches!(
+                    &payload.payload,
+                    ServerDataPayloadV1::DroppedLootSync(sync) if sync.is_empty()
+                )
+            }),
+            "owner should receive empty dropped_loot_sync after pickup"
+        );
+        assert!(
+            picker_syncs.iter().any(|payload| {
+                matches!(
+                    &payload.payload,
+                    ServerDataPayloadV1::DroppedLootSync(sync) if sync.is_empty()
+                )
+            }),
+            "picker should receive empty dropped_loot_sync after pickup"
+        );
+
+        // Picker inventory should now contain the item.
+        let picker_inv = app.world().get::<PlayerInventory>(picker_entity).unwrap();
+        let has_item = picker_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 1004);
+        assert!(has_item, "picker inventory should contain picked-up item");
     }
 
     #[test]

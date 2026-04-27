@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "death_screen",
+  "visible": true,
+  "cause": "negative_zone",
+  "luck_remaining": 0.65,
+  "final_words": ["尘归尘，劫未尽。"],
+  "countdown_until_ms": 1712999999999,
+  "can_reincarnate": true,
+  "can_terminate": true,
+  "stage": "tribulation",
+  "death_number": 4,
+  "zone_kind": "negative",
+  "lifespan": {
+    "years_lived": 78.5,
+    "cap_by_realm": 80,
+    "remaining_years": 1.5,
+    "death_penalty_years": 4,
+    "tick_rate_multiplier": 2,
+    "is_wind_candle": true
+  }
+}

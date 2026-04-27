@@ -95,6 +95,14 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
             NpcLootEntry::new("item.daoxiang.tattered_scroll", 0.1),
             NpcLootEntry::new("item.bone_coin", 0.4).with_stack(1, 6),
         ],
+        NpcArchetype::Zhinian => vec![
+            NpcLootEntry::new("item.zhinian.elite_fragment", 0.7),
+            NpcLootEntry::new("item.zhinian.combat_memory", 0.25),
+        ],
+        NpcArchetype::Fuya => vec![
+            NpcLootEntry::new("item.fuya.mutated_core", 0.7),
+            NpcLootEntry::new("item.beast.hide", 0.4),
+        ],
     };
     NpcLootTable::new(archetype, entries)
 }
@@ -182,6 +190,9 @@ mod tests {
             NpcArchetype::Beast,
             NpcArchetype::Disciple,
             NpcArchetype::GuardianRelic,
+            NpcArchetype::Daoxiang,
+            NpcArchetype::Zhinian,
+            NpcArchetype::Fuya,
         ] {
             let table = default_loot_for_archetype(arch);
             assert_eq!(table.archetype, arch);

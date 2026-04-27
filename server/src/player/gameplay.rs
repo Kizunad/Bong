@@ -96,12 +96,13 @@ impl PendingGameplayNarrations {
         std::mem::take(&mut self.pending)
     }
 
-    fn push_player(&mut self, player: &str, text: impl Into<String>, style: NarrationStyle) {
+    pub fn push_player(&mut self, player: &str, text: impl Into<String>, style: NarrationStyle) {
         self.pending.push(Narration {
             scope: NarrationScope::Player,
             target: Some(player.to_string()),
             text: text.into(),
             style,
+            kind: None,
         });
     }
 }

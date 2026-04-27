@@ -75,6 +75,21 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    LifespanExtended {
+        source: String,
+        delta_years: i64,
+        tick: u64,
+    },
+    DuoShePerformed {
+        target_id: String,
+        host_prev_age: f64,
+        target_age: f64,
+        tick: u64,
+    },
+    PossessedBy {
+        host_id: String,
+        tick: u64,
+    },
     /// plan-alchemy-v1 §1.3 — 每次炼丹结算写一条（精确或残缺路径）。
     AlchemyAttempt {
         recipe_id: String,
@@ -128,6 +143,13 @@ pub struct TakenInsight {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeathInsightRecord {
+    pub tick: u64,
+    pub text: String,
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillMilestone {
     pub skill: SkillId,
     pub new_lv: u8,
@@ -143,6 +165,8 @@ pub struct LifeRecord {
     pub created_at: u64,
     pub biography: Vec<BiographyEntry>,
     pub insights_taken: Vec<TakenInsight>,
+    #[serde(default)]
+    pub death_insights: Vec<DeathInsightRecord>,
     #[serde(default)]
     pub skill_milestones: Vec<SkillMilestone>,
     pub spirit_root_first: Option<MeridianId>,
@@ -161,6 +185,7 @@ impl LifeRecord {
             created_at: 0,
             biography: Vec::new(),
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
         }
@@ -187,6 +212,33 @@ impl LifeRecord {
             .map(|e| format_entry(e))
             .collect::<Vec<_>>()
             .join(" | ")
+    }
+
+    pub fn push_death_insight(&mut self, text: impl Into<String>, style: impl Into<String>) {
+        let text = text.into();
+        let tick = self.latest_death_tick().unwrap_or(self.created_at);
+        if self
+            .death_insights
+            .last()
+            .is_some_and(|record| record.tick == tick && record.text == text)
+        {
+            return;
+        }
+
+        self.death_insights.push(DeathInsightRecord {
+            tick,
+            text,
+            style: style.into(),
+        });
+    }
+
+    fn latest_death_tick(&self) -> Option<u64> {
+        self.biography.iter().rev().find_map(|entry| match entry {
+            BiographyEntry::NearDeath { tick, .. } | BiographyEntry::Terminated { tick, .. } => {
+                Some(*tick)
+            }
+            _ => None,
+        })
     }
 
     pub fn push_skill_milestone(&mut self, milestone: SkillMilestone) {
@@ -253,6 +305,18 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
+        BiographyEntry::LifespanExtended {
+            source,
+            delta_years,
+            tick,
+        } => format!("t{tick}:lifespan_extended:{source}:{delta_years}"),
+        BiographyEntry::DuoShePerformed {
+            target_id,
+            host_prev_age,
+            target_age,
+            tick,
+        } => format!("t{tick}:duoshe:{target_id}:{host_prev_age:.1}->{target_age:.1}"),
+        BiographyEntry::PossessedBy { host_id, tick } => format!("t{tick}:possessed_by:{host_id}"),
         BiographyEntry::AlchemyAttempt {
             recipe_id,
             pill,
@@ -398,6 +462,23 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy life record should deserialize");
 
         assert_eq!(decoded.character_id, UNASSIGNED_CHARACTER_ID);
+        assert!(decoded.death_insights.is_empty());
+    }
+
+    #[test]
+    fn death_insight_records_latest_death_tick_and_dedupes_same_text() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::NearDeath {
+            cause: "combat:test".to_string(),
+            tick: 77,
+        });
+
+        lr.push_death_insight("你死前看见血谷东侧有灵气回流。", "perception");
+        lr.push_death_insight("你死前看见血谷东侧有灵气回流。", "perception");
+
+        assert_eq!(lr.death_insights.len(), 1);
+        assert_eq!(lr.death_insights[0].tick, 77);
+        assert_eq!(lr.death_insights[0].style, "perception");
     }
 
     #[test]

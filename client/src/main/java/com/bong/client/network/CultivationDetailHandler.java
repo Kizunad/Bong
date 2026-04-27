@@ -76,8 +76,9 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         if (cracksCount != null && cracksCount.size() != expected) cracksCount = null;
         String realm = readString(payload, "realm");
         double contaminationTotal = readDouble(payload, "contamination_total");
+        JsonObject lifespan = readObject(payload, "lifespan");
 
-        MeridianBody body = buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm, contaminationTotal);
+        MeridianBody body = buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm, contaminationTotal, lifespan);
         MeridianStateStore.replace(body);
         syncSkillCapsFromRealm(realm);
         SkillMilestoneStore.replace(
@@ -91,12 +92,12 @@ public final class CultivationDetailHandler implements ServerDataHandler {
     }
 
     static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity) {
-        return buildBody(opened, flowRate, flowCapacity, integrity, null, null, null, 0.0);
+        return buildBody(opened, flowRate, flowCapacity, integrity, null, null, null, 0.0, null);
     }
 
     static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
-                                  JsonArray openProgress, JsonArray cracksCount, String realm,
-                                  double contaminationTotal) {
+                                   JsonArray openProgress, JsonArray cracksCount, String realm,
+                                   double contaminationTotal, JsonObject lifespan) {
         EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
         for (int i = 0; i < CHANNEL_ORDER.length; i++) {
             MeridianChannel ch = CHANNEL_ORDER[i];
@@ -133,6 +134,16 @@ public final class CultivationDetailHandler implements ServerDataHandler {
             builder.cracksCount(map);
         }
         builder.contaminationTotal(Math.max(0.0, contaminationTotal));
+        if (lifespan != null) {
+            builder.lifespanPreview(
+                readDouble(lifespan, "years_lived"),
+                (int) Math.max(0, readDouble(lifespan, "cap_by_realm")),
+                readDouble(lifespan, "remaining_years"),
+                (int) Math.max(0, readDouble(lifespan, "death_penalty_years")),
+                readDouble(lifespan, "tick_rate_multiplier"),
+                readBoolean(lifespan, "is_wind_candle")
+            );
+        }
         return builder.build();
     }
 
@@ -149,6 +160,11 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         return (el != null && el.isJsonArray()) ? el.getAsJsonArray() : null;
     }
 
+    private static JsonObject readObject(JsonObject obj, String name) {
+        JsonElement el = obj.get(name);
+        return (el != null && el.isJsonObject()) ? el.getAsJsonObject() : null;
+    }
+
     private static double readDouble(JsonObject obj, String name) {
         JsonElement el = obj.get(name);
         if (el == null || !el.isJsonPrimitive() || !el.getAsJsonPrimitive().isNumber()) return 0.0;
@@ -160,6 +176,12 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         JsonElement el = obj.get(name);
         return (el != null && el.isJsonPrimitive() && el.getAsJsonPrimitive().isString())
             ? el.getAsString() : null;
+    }
+
+    private static boolean readBoolean(JsonObject obj, String name) {
+        JsonElement el = obj.get(name);
+        return el != null && el.isJsonPrimitive() && el.getAsJsonPrimitive().isBoolean()
+            && el.getAsBoolean();
     }
 
     private static boolean asBool(JsonElement el) {

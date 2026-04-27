@@ -46,6 +46,9 @@ use crate::player::state::{canonical_player_id, PlayerState};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
+type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
+
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 #[allow(unused_imports)]
@@ -260,7 +263,7 @@ pub fn handle_alchemy_furnace_place(
 #[allow(clippy::type_complexity)]
 pub(crate) fn attach_alchemy_to_joined_clients(
     mut commands: Commands,
-    joined: Query<(Entity, &Username), (Added<Username>, With<Client>, Without<LearnedRecipes>)>,
+    joined: Query<JoinedClientsWithoutRecipes<'_>, JoinedClientsWithoutRecipesFilter>,
 ) {
     for (entity, username) in &joined {
         let mut learned = LearnedRecipes::default();

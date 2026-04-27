@@ -5,12 +5,13 @@
 //! 触发条件：玩家有 `TsyPresence` + 当前 zone 是 TSY 系列。
 //! 真元归零 → 发 `DeathEvent { cause: "tsy_drain" }`，由 combat lifecycle 接管。
 
-use valence::prelude::{Entity, EventWriter, Position, Query, Res, Without};
+use valence::prelude::{Entity, EventWriter, Position, Query, Res, With, Without};
 
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::tsy_hostile::{compute_fuya_aura_drain_multiplier, FuyaAura};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::tsy::TsyPresence;
 use crate::world::tsy_container::SEARCH_DRAIN_MULTIPLIER;
@@ -80,6 +81,7 @@ pub fn tsy_drain_tick(
     zones: Res<ZoneRegistry>,
     mut deaths: EventWriter<DeathEvent>,
     mut players: TsyDrainPlayerQuery,
+    fuya_auras: Query<(&Position, &FuyaAura), With<NpcMarker>>,
 ) {
     for (entity, mut cultivation, pos, _presence, current_dim, searching) in &mut players {
         // 跨位面前 dim 兜底：缺 CurrentDimension 视为 TSY（presence 已经隐含玩家在内）
@@ -89,7 +91,9 @@ pub fn tsy_drain_tick(
         };
         // plan-tsy-container-v1 §2.3 — 搜刮中真元 ×1.5；非搜刮等价旧行为。
         let base = compute_drain_per_tick(zone, &cultivation);
-        let drain = base * compute_search_drain_multiplier(searching.is_some());
+        let drain = base
+            * compute_search_drain_multiplier(searching.is_some())
+            * compute_fuya_aura_drain_multiplier(pos.get(), fuya_auras.iter());
         if drain <= 0.0 {
             continue;
         }

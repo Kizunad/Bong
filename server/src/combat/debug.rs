@@ -1,6 +1,6 @@
 use valence::prelude::{EventReader, EventWriter, Query, Res, ResMut};
 
-use crate::combat::components::{Stamina, Wound, Wounds};
+use crate::combat::components::{Lifecycle, Stamina, Wound, Wounds};
 use crate::combat::events::{
     AttackIntent, CombatEvent, DebugCombatCommand, DebugCombatCommandKind,
 };
@@ -35,6 +35,7 @@ pub fn apply_debug_combat_commands(
     clock: Res<CombatClock>,
     mut wounds_q: Query<&mut Wounds>,
     mut stamina_q: Query<&mut Stamina>,
+    mut lifecycle_q: Query<&mut Lifecycle>,
 ) {
     for cmd in events.read() {
         match cmd.kind {
@@ -96,6 +97,21 @@ pub fn apply_debug_combat_commands(
                     "[bong][combat][debug] stamina={:.1}/{:.1} on entity={:?}",
                     stamina.current,
                     stamina.max,
+                    cmd.target
+                );
+            }
+            DebugCombatCommandKind::SetSpawnAnchor(anchor) => {
+                let Ok(mut lifecycle) = lifecycle_q.get_mut(cmd.target) else {
+                    tracing::warn!(
+                        "[bong][combat][debug] SetSpawnAnchor target {:?} has no Lifecycle component",
+                        cmd.target
+                    );
+                    continue;
+                };
+                lifecycle.spawn_anchor = anchor;
+                tracing::info!(
+                    "[bong][combat][debug] spawn_anchor={:?} on entity={:?}",
+                    lifecycle.spawn_anchor,
                     cmd.target
                 );
             }

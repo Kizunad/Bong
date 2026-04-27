@@ -52,6 +52,12 @@ pub enum NarrationStyle {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+pub enum NarrationKind {
+    DeathInsight,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum ChatIntent {
     Complaint,
     Boast,

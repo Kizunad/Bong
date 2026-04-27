@@ -391,3 +391,57 @@ pub struct LearnedBlueprints {
 ## §9 进度日志
 
 - 2026-04-25：P0 落地确认（server forge/ 2379 行 + 3 份测试 blueprint）。已实装范围：BlueprintRegistry JSON 加载、ForgeSessions 总表、四步状态机（Billet/Tempering/Inscription/Consecration）、纯函数解析层（resolve_billet / apply_tempering_hit / resolve_tempering / apply_scroll / resolve_inscription / inject_qi / resolve_consecration）、bucket 汇总、flawed_fallback + side_effect_pool 抽取、ForgeHistory（亡者博物馆前身）、skill_hook（Lv 加成 XP 桥）、station tier 校验 + integrity 损耗。**未落地**：BlockEntity 持久化、IPC schema/Channel（`bong:forge/*`）、客户端 UI（节奏轨道、铭文槽、真元注入、塔科夫背包面板复用）、装备 item 数据契约（quality / color / side_effects 字段，依赖 inventory plan）。
+
+## Finish Evidence
+
+### 落地清单
+
+| Phase | 内容 | 文件路径 |
+|---|---|---|
+| P0 | BlueprintRegistry + JSON 加载 | `server/src/forge/blueprint.rs` (已存在) |
+| P0 | IPC Schema（双端） | `server/src/schema/forge.rs` (新增) · `agent/packages/schema/src/forge.ts` (新增) |
+| P0 | Channel 常量 | `server/src/schema/channels.rs` + `agent/packages/schema/src/channels.ts` |
+| P0 | ClientRequest 变体 | `server/src/schema/client_request.rs` + `agent/packages/schema/src/client-request.ts` |
+| P0 | ServerData 变体 | `server/src/schema/server_data.rs` + `agent/packages/schema/src/server-data.ts` |
+| P0 | JSON Schema 生成 | `agent/packages/schema/generated/*.json`（+24 份 forge） |
+| P1 | 客户端 forge stores | `client/.../forge/state/{ForgeStation,ForgeSession,ForgeOutcome,BlueprintScroll}Store.java` |
+| P1 | 客户端 forge handlers | `client/.../network/forge/{ForgeStation,ForgeSession,ForgeOutcome,ForgeBlueprintBook}Handler.java` |
+| P1 | 客户端 forge UI 占位 | `client/.../forge/{ForgeScreen,ForgeScreenBootstrap}.java` |
+| P1 | 服务端 forge snapshot emit | `server/src/network/forge_snapshot_emit.rs` |
+| P2-P6 | 服务端核心逻辑（已存在） | `server/src/forge/{session,steps,events,history,fallback,skill_hook,learned,station,mod}.rs` |
+
+### 关键 commit
+
+| Hash | 日期 | 消息 |
+|---|---|---|
+| `510a9330` | 2026-04-27 | feat(forge-v1): P1 client 端 forge stores + handlers + 基础 UI 占位 |
+| `9e5590e3` | 2026-04-27 | feat(forge-v1): P0 IPC Schema — 炼器（武器）双端数据契约 |
+
+### 测试结果
+
+- **server**: `cargo test` → **1456 passed**, 0 failed
+- **client**: `./gradlew test build` → **BUILD SUCCESSFUL**
+- **agent/schema**: `npm test` → **137 passed**, 0 failed (6 test files)
+
+### 跨仓库核验
+
+| 层 | Symbol |
+|---|---|
+| server | `server/src/schema/forge.rs` — `WeaponForgeStationDataV1` / `ForgeSessionDataV1` / `ForgeOutcomeDataV1` / `ForgeBlueprintBookDataV1` |
+| server | `server/src/network/forge_snapshot_emit.rs` — `emit_join_forge_snapshots` / `send_forge_outcome_to_player` |
+| agent | `agent/packages/schema/src/forge.ts` — `ForgeStep` / `TemperBeat` / `ForgeOutcomeBucket` / `ForgeStepState` / `WeaponForgeStationDataV1` / `ForgeSessionDataV1` / `ForgeOutcomeDataV1` / `ForgeBlueprintBookDataV1` |
+| agent | channels — `CHANNELS.FORGE_START` (`bong:forge/start`) · `CHANNELS.FORGE_OUTCOME` (`bong:forge/outcome`) |
+| client | `ForgeStationStore` / `ForgeSessionStore` / `ForgeOutcomeStore` / `BlueprintScrollStore` |
+| client | `ServerDataRouter` 注册 `forge_station` / `forge_session` / `forge_outcome` / `forge_blueprint_book` |
+
+### 遗留 / 后续
+
+- **BlockEntity 持久化**（plan §1.3）：alchemy 同栈也未实现，待 inventory plan 落地区块 entity 注册机制后一并处理
+- **锻炉方块放置**（plan §1.2）：需 `ForgeStationPlace` 请求 handler + 放置校验（依赖 inventory plan 的锻造砧类 item）
+- **客户端节奏轨道 UI**（plan §3.3 Tempering 视图）：锻打节奏滚动条 + J/K/L 键映射，待 UI 专项
+- **客户端铭文槽 / 真元注入条 UI**（plan §3.3 Inscription/Consecration 视图）：同上
+- **装备 item 数据契约**（plan §6 plan-inventory-v1 钩子）：`quality` / `color` / `side_effects` / `tier` / `durability` 字段依赖 inventory plan 落地
+- **图谱残卷 / 铭文残卷 item**（plan §6 plan-inventory-v1 钩子）：同上
+- **combat 武器钩子**（plan §6 plan-combat-v1 §5）：攻击时读取武器 quality/color/side_effects
+- **`bong:forge/start` / `bong:forge/outcome` Redis 推送**：channel 常量已定义，实际 publish 逻辑待 forge 系统接入 agent bridge 后进行
+- **载材材料 item**（plan §6 plan-botany-v1 钩子）：灵木/异兽骨等 placeholder 待 botany plan

@@ -16,6 +16,7 @@
 //!   * heal             — 裂痕愈合
 //!   * negative_zone    — 负灵域反吸
 //!   * death_hooks      — 死亡触发 & 重生惩罚 & 终结清理
+//!   * lifespan         — 寿元 / 死亡登记 / 重生概率纯模型
 //!   * life_record      — 修炼生平卷
 //!   * karma            — 业力极慢衰减
 //!   * insight / insight_fallback / insight_apply — 顿悟系统
@@ -23,7 +24,7 @@
 //! 跨仓库 TODO：
 //!   * 客户端 inspect UI + 目标选择对话框（plan §7）
 //!   * agent LLM runtime（InsightRequest → InsightOffer 桥）
-//!   * 战斗 plan：消费 CultivationDeathTrigger / TribulationFailed / throughput 写入
+//!   * 战斗 plan：消费 CultivationDeathTrigger / throughput 写入，并在渡劫波次失败时发送 TribulationFailed
 
 pub mod breakthrough;
 pub mod color;
@@ -39,9 +40,11 @@ pub mod insight_fallback;
 pub mod insight_flow;
 pub mod karma;
 pub mod life_record;
+pub mod lifespan;
 pub mod meridian_open;
 pub mod negative_zone;
 pub mod overload;
+pub mod possession;
 pub mod qi_zero_decay;
 pub mod tick;
 pub mod topology;
@@ -69,13 +72,22 @@ use self::insight::{
 use self::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use self::insight_flow::{
     apply_insight_chosen, insight_trigger_on_breakthrough, insight_trigger_on_forge,
-    process_insight_request,
+    insight_trigger_on_wind_candle, process_insight_request,
 };
 use self::karma::karma_decay_tick;
 use self::life_record::LifeRecord;
+use self::lifespan::{
+    lifespan_aging_tick, process_lifespan_extension_intents, AgingEventEmitted, DeathRegistry,
+    LifespanCapTable, LifespanComponent, LifespanEventEmitted, LifespanExtensionIntent,
+    LifespanExtensionLedger,
+};
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::overload_detection_tick;
+use self::possession::{
+    process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
+    DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
+};
 use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
@@ -88,8 +100,10 @@ use crate::cultivation::components::Realm;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
 };
-use crate::player::state::canonical_player_id;
-use crate::player::state::PlayerState;
+use crate::player::state::{
+    canonical_player_id, load_current_character_id, player_character_id, PlayerState,
+    PlayerStatePersistence,
+};
 use crate::skill::events::SkillCapChanged;
 
 pub fn register(app: &mut App) {
@@ -97,6 +111,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
+    app.insert_resource(DuoSheCooldowns::default());
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
@@ -107,6 +122,13 @@ pub fn register(app: &mut App) {
     app.add_event::<CultivationDeathTrigger>();
     app.add_event::<PlayerRevived>();
     app.add_event::<PlayerTerminated>();
+    app.add_event::<LifespanEventEmitted>();
+    app.add_event::<AgingEventEmitted>();
+    app.add_event::<LifespanExtensionIntent>();
+    app.add_event::<DuoSheRequestEvent>();
+    app.add_event::<DuoSheEventEmitted>();
+    app.add_event::<DuoSheWarningEvent>();
+    app.add_event::<UseLifeCoreEvent>();
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<TribulationAnnounce>();
     app.add_event::<TribulationWaveCleared>();
@@ -123,6 +145,7 @@ pub fn register(app: &mut App) {
                 .after(crate::player::attach_player_state_to_joined_clients),
             // 核心 tick：回气/扣 zone → 打通 → 事务
             qi_regen_and_zone_drain_tick,
+            lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
             breakthrough_system.after(meridian_open_tick),
             forging_system.after(breakthrough_system),
@@ -150,25 +173,42 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            process_lifespan_extension_intents.after(lifespan_aging_tick),
+            process_duo_she_requests.after(lifespan_aging_tick),
+            process_life_core_requests.after(process_duo_she_requests),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             // plan §5.4 / §5.5 顿悟流水线
             insight_trigger_on_breakthrough.after(breakthrough_system),
             insight_trigger_on_forge.after(forging_system),
             process_insight_request
                 .after(insight_trigger_on_breakthrough)
-                .after(insight_trigger_on_forge),
+                .after(insight_trigger_on_forge)
+                .after(insight_trigger_on_wind_candle),
+            insight_trigger_on_wind_candle.after(lifespan_aging_tick),
             apply_insight_chosen.after(process_insight_request),
         ),
     );
 }
 
 type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
+type CultivationAttachQueryItem<'a> = (
+    Entity,
+    &'a Username,
+    Option<&'a PlayerState>,
+    Option<&'a LifespanComponent>,
+);
 
 fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
-    joined_clients: Query<(Entity, &Username, Option<&PlayerState>), CultivationAttachFilter>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state) in &joined_clients {
+    for (entity, username, player_state, restored_lifespan) in &joined_clients {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,
@@ -187,7 +227,16 @@ fn attach_cultivation_to_joined_clients(
         let mut karma = Karma::default();
         let mut practice_log = PracticeLog::default();
         let mut contamination = Contamination::default();
-        let mut life_record = LifeRecord::new(canonical_player_id(username.0.as_str()));
+        let canonical_id = player_persistence
+            .as_deref()
+            .and_then(|persistence| {
+                load_current_character_id(persistence, username.0.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
+            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+        let mut life_record = LifeRecord::new(canonical_id.clone());
         let mut insight_quota = InsightQuota::default();
         let mut unlocked_perceptions = UnlockedPerceptions::default();
         let mut insight_modifiers = InsightModifiers::new();
@@ -275,7 +324,6 @@ fn attach_cultivation_to_joined_clients(
             );
         }
 
-        let canonical_id = canonical_player_id(username.0.as_str());
         let active_tribulation = match load_active_tribulation(&settings, canonical_id.as_str()) {
             Ok(record) => record,
             Err(error) => {
@@ -297,6 +345,8 @@ fn attach_cultivation_to_joined_clients(
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
         }
+        let default_lifespan =
+            LifespanComponent::new(LifespanCapTable::for_realm(cultivation.realm));
 
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
@@ -307,10 +357,15 @@ fn attach_cultivation_to_joined_clients(
             practice_log,
             contamination,
             life_record,
+            DeathRegistry::new(canonical_id.clone()),
+            LifespanExtensionLedger::default(),
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
         ));
+        if restored_lifespan.is_none() {
+            entity_commands.insert(default_lifespan);
+        }
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
         }
@@ -349,6 +404,7 @@ mod tests {
     use super::*;
 
     use crate::combat::components::Lifecycle;
+    use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
         ActiveTribulationRecord, PersistenceSettings,
@@ -374,8 +430,81 @@ mod tests {
             .world()
             .get::<LifeRecord>(entity)
             .expect("joined client should receive a LifeRecord");
+        let death_registry = app
+            .world()
+            .get::<DeathRegistry>(entity)
+            .expect("joined client should receive a DeathRegistry");
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(life_record.character_id, canonical_player_id("Alice"));
+        assert_eq!(death_registry.char_id, canonical_player_id("Alice"));
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+    }
+
+    #[test]
+    fn joined_client_defaults_to_awaken_lifespan_cap() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Novice");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should receive a LifespanComponent");
+
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+    }
+
+    #[test]
+    fn joined_clients_keep_restored_lifespan_component() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let restored_lifespan = LifespanComponent {
+            born_at_tick: 120,
+            years_lived: 42.0,
+            cap_by_realm: LifespanCapTable::SPIRIT,
+            offline_pause_tick: Some(30),
+        };
+        let (client_bundle, _helper) = create_mock_client("Persisted");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                restored_lifespan.clone(),
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("joined client should keep a LifespanComponent");
+
+        assert_eq!(lifespan, &restored_lifespan);
     }
 
     #[test]
@@ -555,7 +684,10 @@ mod tests {
                     fortune_remaining: 1,
                     last_death_tick: None,
                     last_revive_tick: None,
+                    spawn_anchor: None,
                     near_death_deadline_tick: None,
+                    awaiting_decision: None,
+                    revival_decision_deadline_tick: None,
                     weakened_until_tick: None,
                     state: crate::combat::components::LifecycleState::Alive,
                 },

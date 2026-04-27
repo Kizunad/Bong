@@ -108,7 +108,21 @@ public final class ServerDataRouter {
         handlers.put("extract_aborted", extractServerDataHandler);
         handlers.put("extract_failed", extractServerDataHandler);
         handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
+        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
         handlers.put("lingtian_session", lingtianSessionHandler);
+        // plan-forge-v1 §4 — 炼器（武器）
+        com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =
+            new com.bong.client.network.forge.ForgeStationHandler();
+        com.bong.client.network.forge.ForgeSessionHandler forgeSessionHandler =
+            new com.bong.client.network.forge.ForgeSessionHandler();
+        com.bong.client.network.forge.ForgeOutcomeHandler forgeOutcomeHandler =
+            new com.bong.client.network.forge.ForgeOutcomeHandler();
+        com.bong.client.network.forge.ForgeBlueprintBookHandler forgeBlueprintBookHandler =
+            new com.bong.client.network.forge.ForgeBlueprintBookHandler();
+        handlers.put("forge_station", forgeStationHandler);
+        handlers.put("forge_session", forgeSessionHandler);
+        handlers.put("forge_outcome", forgeOutcomeHandler);
+        handlers.put("forge_blueprint_book", forgeBlueprintBookHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());

@@ -136,6 +136,14 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         target: ApplyPillTargetV1,
     },
+    DuoSheRequest {
+        v: u8,
+        target_id: String,
+    },
+    UseLifeCore {
+        v: u8,
+        instance_id: u64,
+    },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
     /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
     /// 并回推 `defense_window` payload 让 client 渲染红环。
@@ -155,6 +163,15 @@ pub enum ClientRequestV1 {
         v: u8,
         slot: u8,
         item_id: Option<String>,
+    },
+    CombatReincarnate {
+        v: u8,
+    },
+    CombatTerminate {
+        v: u8,
+    },
+    CombatCreateNewCharacter {
+        v: u8,
     },
     StartExtractRequest {
         v: u8,
@@ -214,6 +231,56 @@ pub enum ClientRequestV1 {
         x: i32,
         y: i32,
         z: i32,
+    },
+    // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
+    /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
+    ForgeStartSession {
+        v: u8,
+        station_id: String,
+        blueprint_id: String,
+        materials: Vec<(String, u32)>,
+    },
+    /// plan §1.3.2 — 淬炼击键上报。
+    ForgeTemperingHit {
+        v: u8,
+        session_id: u64,
+        beat: String,
+        ticks_remaining: u32,
+    },
+    /// plan §1.3.3 — 铭文残卷投入。
+    ForgeInscriptionScroll {
+        v: u8,
+        session_id: u64,
+        inscription_id: String,
+    },
+    /// plan §1.3.4 — 开光真元注入。
+    ForgeConsecrationInject {
+        v: u8,
+        session_id: u64,
+        qi_amount: f64,
+    },
+    /// plan §1.3 — 步骤推进（当前步骤完成，进下一步）。
+    ForgeStepAdvance {
+        v: u8,
+        session_id: u64,
+    },
+    /// plan §1.4 — 图谱书翻页。
+    ForgeBlueprintTurnPage {
+        v: u8,
+        delta: i32,
+    },
+    /// plan §1.4 — 学习图谱（客户端拖残卷到图谱区）。
+    ForgeLearnBlueprint {
+        v: u8,
+        blueprint_id: String,
+    },
+    /// plan §1.2 — 玩家手持砧类物品，客户端拦截右键放砧方块。
+    ForgeStationPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
     },
 }
 
@@ -344,6 +411,56 @@ mod tests {
             }
             other => panic!("expected ApplyPill, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn duo_she_request_roundtrip() {
+        let json = r#"{"type":"duo_she_request","v":1,"target_id":"npc_12v0"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::DuoSheRequest { v, target_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(target_id, "npc_12v0");
+            }
+            other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_life_core_roundtrip() {
+        let json = r#"{"type":"use_life_core","v":1,"instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::UseLifeCore { v, instance_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 4242);
+            }
+            other => panic!("expected UseLifeCore, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn combat_reincarnate_roundtrip() {
+        let json = r#"{"type":"combat_reincarnate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatReincarnate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_terminate_roundtrip() {
+        let json = r#"{"type":"combat_terminate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatTerminate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_create_new_character_roundtrip() {
+        let json = r#"{"type":"combat_create_new_character","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CombatCreateNewCharacter { v: 1 }
+        ));
     }
 
     #[test]

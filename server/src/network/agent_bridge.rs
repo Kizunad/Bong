@@ -73,6 +73,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::WeaponBroken => "weapon_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::LingtianSession => "lingtian_session",
+        ServerDataType::DeathScreen => "death_screen",
+        ServerDataType::TerminateScreen => "terminate_screen",
         ServerDataType::RiftPortalState => "rift_portal_state",
         ServerDataType::RiftPortalRemoved => "rift_portal_removed",
         ServerDataType::ExtractStarted => "extract_started",
@@ -86,6 +88,10 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SkillCapChanged => "skill_cap_changed",
         ServerDataType::SkillScrollUsed => "skill_scroll_used",
         ServerDataType::SkillSnapshot => "skill_snapshot",
+        ServerDataType::ForgeStation => "forge_station",
+        ServerDataType::ForgeSession => "forge_session",
+        ServerDataType::ForgeOutcome => "forge_outcome",
+        ServerDataType::ForgeBlueprintBook => "forge_blueprint_book",
     }
 }
 
@@ -400,6 +406,7 @@ mod server_data_tests {
                         target: None,
                         text: "血谷上空乌云翻涌，一道紫雷正在酝酿。".to_string(),
                         style: NarrationStyle::SystemWarning,
+                        kind: None,
                     }],
                 }),
                 json!({

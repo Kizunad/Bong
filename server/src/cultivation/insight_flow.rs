@@ -6,7 +6,7 @@
 //! 触发点与 Apply 子系统可完全复用。
 
 use valence::prelude::{
-    bevy_ecs, Commands, Component, EventReader, EventWriter, Position, Query, Res,
+    bevy_ecs, Commands, Component, Entity, EventReader, EventWriter, Position, Query, Res,
 };
 
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -16,11 +16,13 @@ use super::breakthrough::{BreakthroughError, BreakthroughOutcome};
 use super::components::{Cultivation, MeridianSystem, QiColor, Realm};
 use super::forging::{ForgeAxis, ForgeOutcome, P1_MAX_TIER};
 use super::insight::{
-    validate_offer, InsightChoice, InsightChosen, InsightOffer, InsightQuota, InsightRequest,
+    validate_offer, InsightChoice, InsightChosen, InsightEffect, InsightOffer, InsightQuota,
+    InsightRequest,
 };
 use super::insight_apply::{apply_choice, InsightModifiers, UnlockedPerceptions};
 use super::insight_fallback::fallback_for;
 use super::life_record::LifeRecord;
+use super::lifespan::{LifespanComponent, LifespanExtensionIntent};
 use super::tick::CultivationClock;
 
 /// 服务器缓存的顿悟 offer（component 形式挂在玩家实体上）。
@@ -120,6 +122,27 @@ pub fn insight_trigger_on_forge(
     }
 }
 
+pub fn insight_trigger_on_wind_candle(
+    mut requests: EventWriter<InsightRequest>,
+    mut players: Query<(Entity, &Cultivation, &LifespanComponent, &mut InsightQuota)>,
+) {
+    let trigger = "wind_candle_lifespan_extension";
+    for (entity, cultivation, lifespan, mut quota) in &mut players {
+        if !lifespan.is_wind_candle()
+            || !quota.has_quota(cultivation.realm)
+            || quota.fired_triggers.iter().any(|seen| seen == trigger)
+        {
+            continue;
+        }
+        quota.fired_triggers.push(trigger.to_string());
+        requests.send(InsightRequest {
+            entity,
+            trigger_id: trigger.to_string(),
+            realm: cultivation.realm,
+        });
+    }
+}
+
 /// Agent 端经 Redis 下发的 offer → 服务器 PendingInsightOffer 的桥。
 ///
 /// 当前 DTO (`InsightChoiceV1`) 仅携带 `effect_kind` + `magnitude`，而服务器
@@ -187,6 +210,7 @@ pub fn apply_insight_chosen(
     clock: Res<CultivationClock>,
     mut commands: Commands,
     mut events: EventReader<InsightChosen>,
+    mut lifespan_extension_tx: EventWriter<LifespanExtensionIntent>,
     mut players: Query<(
         &PendingInsightOffer,
         &mut Cultivation,
@@ -271,6 +295,13 @@ pub fn apply_insight_chosen(
             &pending.trigger_id,
             now,
         );
+        if matches!(choice.effect, InsightEffect::LifespanExtensionEnlightenment) {
+            lifespan_extension_tx.send(LifespanExtensionIntent {
+                entity: ev.entity,
+                requested_years: 0,
+                source: "enlightenment_extension".to_string(),
+            });
+        }
         quota.apply_accumulation(choice);
 
         if let Some(mut e) = commands.get_entity(ev.entity) {

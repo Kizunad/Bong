@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod forge_snapshot_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -40,27 +41,30 @@ use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventWriter,
+    ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventReader, EventWriter,
     IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
+use crate::combat::components::Lifecycle;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
-    world_model_snapshot_to_mirror_fields, AgentWorldModelCommandRecord,
-    AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord, AgentWorldModelSnapshotRecord,
-    PersistenceSettings, WORLD_MODEL_STATE_KEY,
+    persist_life_record_death_insight, world_model_snapshot_to_mirror_fields,
+    AgentWorldModelCommandRecord, AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord,
+    AgentWorldModelSnapshotRecord, PersistenceSettings, WORLD_MODEL_STATE_KEY,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
 use crate::schema::common::{
-    CommandType, EventKind, NarrationScope, NarrationStyle, NpcStateKind, PlayerTrend,
+    CommandType, EventKind, NarrationKind, NarrationScope, NarrationStyle, NpcStateKind,
+    PlayerTrend,
 };
 use crate::schema::cultivation::{
     realm_from_string, realm_to_string, CultivationSnapshotV1, LifeRecordSnapshotV1,
@@ -91,6 +95,13 @@ const DEFAULT_PLAYER_RECENT_DEATHS: u32 = 0;
 const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
 const NARRATION_DEDUPE_CAPACITY: usize = 512;
 const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
+
+type ClientLifeRecordQueryItem<'a> = (
+    Option<&'a Username>,
+    Option<&'a Lifecycle>,
+    &'a mut LifeRecord,
+);
+type ClientLifeRecordQueryFilter = With<Client>;
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -230,6 +241,8 @@ pub fn register(app: &mut App) {
             process_redis_inbound,
             reconcile_world_model_runtime_mirror_system.after(process_redis_inbound),
             execute_agent_commands.after(process_redis_inbound),
+            enqueue_duo_she_warning_narrations
+                .after(crate::cultivation::possession::process_duo_she_requests),
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
@@ -248,6 +261,8 @@ pub fn register(app: &mut App) {
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
                 .after(crate::combat::resolve::resolve_attack_intents),
+            combat_bridge::publish_death_insight_requests
+                .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
         ),
     );
@@ -258,7 +273,13 @@ pub fn register(app: &mut App) {
             cultivation_bridge::publish_forge_events,
             cultivation_bridge::publish_cultivation_death_events,
             cultivation_bridge::publish_insight_requests,
-            client_request_handler::handle_client_request_payloads,
+            cultivation_bridge::publish_lifespan_events
+                .after(crate::cultivation::lifespan::lifespan_aging_tick)
+                .after(crate::combat::lifecycle::death_arbiter_tick),
+            cultivation_bridge::publish_duo_she_events
+                .after(crate::cultivation::possession::process_duo_she_requests),
+            cultivation_bridge::publish_aging_events
+                .after(crate::cultivation::lifespan::lifespan_aging_tick),
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
@@ -266,7 +287,16 @@ pub fn register(app: &mut App) {
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
             tsy_event_bridge::publish_tsy_exit_events,
+            tsy_event_bridge::publish_tsy_npc_spawned_events
+                .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
+            tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            forge_snapshot_emit::emit_join_forge_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::handle_client_request_payloads,
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(
@@ -293,6 +323,7 @@ pub fn register(app: &mut App) {
             inventory_event_emit::emit_durability_changed_inventory_events
                 .after(crate::combat::resolve::resolve_attack_intents),
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
+            dropped_loot_sync_emit::emit_changed_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
             unlocks_sync_emit::emit_unlocks_sync_payloads,
             // After resolve so we read freshly-emitted CombatEvents the same tick.
@@ -614,6 +645,26 @@ fn emit_gameplay_narrations(
         zone_registry.as_deref(),
         narrations.as_slice(),
     );
+}
+
+fn enqueue_duo_she_warning_narrations(
+    mut warnings: EventReader<DuoSheWarningEvent>,
+    pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+) {
+    let Some(mut pending_narrations) = pending_narrations else {
+        return;
+    };
+
+    for warning in warnings.read() {
+        pending_narrations.push_player(
+            warning.target_id.as_str(),
+            format!(
+                "夺舍业记已成：{} 于本劫夺取此身，真名公开。",
+                warning.host_id
+            ),
+            NarrationStyle::SystemWarning,
+        );
+    }
 }
 
 fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry {
@@ -1107,11 +1158,11 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
-    mut player_life_records: Query<&mut LifeRecord>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
+    mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
@@ -1150,13 +1201,15 @@ fn process_redis_inbound(
             }
             RedisInbound::AgentNarration(narr) => {
                 backfill_skill_milestone_narrations_from_batch(
-                    &mut player_life_records,
+                    &mut life_records,
                     narr.narrations.as_slice(),
                 );
                 process_agent_narrations_with_dedupe(
                     &mut clients,
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
+                    &mut life_records,
+                    persistence_settings.as_deref(),
                     narr.narrations.as_slice(),
                 );
             }
@@ -1491,6 +1544,8 @@ fn process_agent_narrations_with_dedupe(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
+    life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    persistence_settings: Option<&PersistenceSettings>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
@@ -1504,12 +1559,13 @@ fn process_agent_narrations_with_dedupe(
             continue;
         }
 
+        archive_death_insight_narration(life_records, persistence_settings, narration);
         process_single_narration(clients, zone_registry, narration);
     }
 }
 
 fn backfill_skill_milestone_narrations_from_batch(
-    players: &mut Query<&mut LifeRecord>,
+    players: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
@@ -1519,7 +1575,7 @@ fn backfill_skill_milestone_narrations_from_batch(
         let Some((entity, skill, new_lv)) = parse_skill_milestone_narration_target(target) else {
             continue;
         };
-        let Ok(mut life_record) = players.get_mut(entity) else {
+        let Ok((_, _, mut life_record)) = players.get_mut(entity) else {
             continue;
         };
         if let Some(milestone) = life_record
@@ -1566,12 +1622,100 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
 
 fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
     format!(
-        "scope={:?}|target={}|style={:?}|text={}",
+        "scope={:?}|target={}|style={:?}|kind={:?}|text={}",
         narration.scope,
         narration.target.as_deref().unwrap_or_default(),
         narration.style,
+        narration.kind,
         narration.text
     )
+}
+
+fn archive_death_insight_narration(
+    life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    persistence_settings: Option<&PersistenceSettings>,
+    narration: &crate::schema::narration::Narration,
+) {
+    if narration.kind != Some(NarrationKind::DeathInsight)
+        || narration.scope != NarrationScope::Player
+    {
+        return;
+    }
+
+    let Some(target) = narration.target.as_deref() else {
+        return;
+    };
+    let Some((_, _, mut life_record)) =
+        life_records
+            .iter_mut()
+            .find(|(username, lifecycle, record)| {
+                death_insight_target_matches_life_record(target, *username, *lifecycle, record)
+            })
+    else {
+        tracing::debug!(
+            "[bong][network] death insight narration target {target:?} matched no active LifeRecord"
+        );
+        return;
+    };
+
+    life_record.push_death_insight(
+        narration.text.clone(),
+        narration_style_to_wire_value(&narration.style),
+    );
+
+    if let Some(settings) = persistence_settings {
+        if let Err(error) = persist_life_record_death_insight(settings, &life_record) {
+            tracing::warn!(
+                "[bong][network] failed to persist death insight for {}: {error}",
+                life_record.character_id
+            );
+        }
+    }
+}
+
+fn death_insight_target_matches_life_record(
+    target: &str,
+    username: Option<&Username>,
+    lifecycle: Option<&Lifecycle>,
+    life_record: &LifeRecord,
+) -> bool {
+    normalize_life_record_target(target).is_some_and(|target_key| {
+        normalize_life_record_target(life_record.character_id.as_str()).as_deref()
+            == Some(target_key.as_str())
+            || lifecycle
+                .and_then(|lifecycle| normalize_life_record_target(lifecycle.character_id.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+            || username
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .and_then(|canonical| normalize_life_record_target(canonical.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+            || username
+                .and_then(|username| normalize_life_record_target(username.0.as_str()))
+                .as_deref()
+                == Some(target_key.as_str())
+    })
+}
+
+fn normalize_life_record_target(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let stripped = trimmed.strip_prefix("offline:").unwrap_or(trimmed).trim();
+    if stripped.is_empty() {
+        return None;
+    }
+    let username = stripped
+        .split_once(':')
+        .map_or(stripped, |(username, _)| username)
+        .trim();
+    if username.is_empty() {
+        None
+    } else {
+        Some(username.to_ascii_lowercase())
+    }
 }
 
 fn process_single_narration(
@@ -2230,6 +2374,7 @@ mod tests {
                     target: None,
                     text: "天地震荡，灵气翻涌。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2289,6 +2434,7 @@ mod tests {
                     target: Some("blood_valley".to_string()),
                     text: "血谷雷云聚集。".to_string(),
                     style: NarrationStyle::SystemWarning,
+                    kind: None,
                 },
             );
 
@@ -2330,6 +2476,7 @@ mod tests {
                     target: Some("Steve".to_string()),
                     text: "第一段单人叙事。".to_string(),
                     style: NarrationStyle::Perception,
+                    kind: None,
                 },
             );
 
@@ -2362,6 +2509,7 @@ mod tests {
                     target: Some("offline:Steve".to_string()),
                     text: "第二段单人叙事。".to_string(),
                     style: NarrationStyle::Perception,
+                    kind: None,
                 },
             );
 
@@ -2403,6 +2551,7 @@ mod tests {
                     target: Some(format!("char:{}", azure.to_bits())),
                     text: "第三段单人叙事。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2440,6 +2589,7 @@ mod tests {
                 created_at: 0,
                 biography: Vec::new(),
                 insights_taken: Vec::new(),
+                death_insights: Vec::new(),
                 skill_milestones: vec![SkillMilestone {
                     skill: SkillId::Herbalism,
                     new_lv: 4,
@@ -2457,6 +2607,7 @@ mod tests {
                     target: Some(format!("char:{}|skill:herbalism|lv:4", azure.to_bits())),
                     text: "你摘辨草木渐熟，今又进一层，已至Lv.4。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2488,6 +2639,7 @@ mod tests {
                     target: Some("offline:Ghost".to_string()),
                     text: "不存在目标，不应泄露。".to_string(),
                     style: NarrationStyle::Narration,
+                    kind: None,
                 },
             );
 
@@ -2528,6 +2680,7 @@ mod tests {
                 target: None,
                 text: "重复叙事只应投递一次。".to_string(),
                 style: NarrationStyle::Narration,
+                kind: None,
             };
 
             enqueue_single_narration(&tx_inbound, narration.clone());
@@ -3327,6 +3480,7 @@ mod tests {
                 created_at: 0,
                 biography: Vec::new(),
                 insights_taken: Vec::new(),
+                death_insights: Vec::new(),
                 skill_milestones: vec![SkillMilestone {
                     skill: SkillId::Herbalism,
                     new_lv: 3,

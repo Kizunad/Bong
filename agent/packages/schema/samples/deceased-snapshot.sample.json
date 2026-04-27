@@ -1,0 +1,25 @@
+{
+  "char_id": "offline:Ancestor",
+  "died_at_tick": 84000,
+  "termination_category": "善终",
+  "lifecycle": {
+    "character_id": "offline:Ancestor",
+    "death_count": 5,
+    "fortune_remaining": 0,
+    "last_death_tick": 84000,
+    "last_revive_tick": 72000,
+    "state": "Terminated"
+  },
+  "life_record": {
+    "character_id": "offline:Ancestor",
+    "created_at": 0,
+    "biography": [
+      { "NearDeath": { "cause": "cultivation:NaturalAging", "tick": 84000 } },
+      { "Terminated": { "cause": "natural_end", "tick": 84000 } }
+    ],
+    "insights_taken": [],
+    "death_insights": [
+      { "tick": 84000, "text": "寿火已尽，生平至此合卷。", "style": "perception" }
+    ]
+  }
+}

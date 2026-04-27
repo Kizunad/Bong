@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "request_id": "death_insight:offline:Azure:84000:3",
+  "character_id": "offline:Azure",
+  "at_tick": 84000,
+  "cause": "cultivation:NaturalAging",
+  "category": "natural",
+  "realm": "Condense",
+  "player_realm": "qi_refining_6",
+  "zone_kind": "ordinary",
+  "death_count": 3,
+  "lifespan_remaining_years": 0,
+  "recent_biography": [
+    "t83100:reach:Condense",
+    "t83980:near_death:cultivation:NaturalAging"
+  ],
+  "position": {
+    "x": 8,
+    "y": 150,
+    "z": 8
+  },
+  "context": {
+    "will_terminate": true,
+    "fortune_remaining": 0
+  }
+}

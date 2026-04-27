@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "death_number",
+    "stage",
+    "chance",
+    "guaranteed",
+    "fortune_charge_cost",
+    "skip_fortune_due_to_zone",
+    "no_recent_death",
+    "low_karma",
+    "has_shrine"
+  ],
+  "properties": {
+    "death_number": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "stage": {
+      "description": "运数期 / 劫数期",
+      "anyOf": [
+        {
+          "const": "fortune",
+          "type": "string"
+        },
+        {
+          "const": "tribulation",
+          "type": "string"
+        }
+      ]
+    },
+    "chance": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "guaranteed": {
+      "type": "boolean"
+    },
+    "fortune_charge_cost": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skip_fortune_due_to_zone": {
+      "type": "boolean"
+    },
+    "no_recent_death": {
+      "type": "boolean"
+    },
+    "low_karma": {
+      "type": "boolean"
+    },
+    "has_shrine": {
+      "type": "boolean"
+    }
+  }
+}
