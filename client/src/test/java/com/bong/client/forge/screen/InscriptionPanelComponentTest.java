@@ -69,6 +69,24 @@ public class InscriptionPanelComponentTest {
     }
 
     @Test
+    void optimistic_duplicate_scroll_drops_count_each_slot() {
+        install();
+        ForgeSessionStore.replace(snapshot(
+            "{\"step\":\"inscription\",\"max_slots\":2,\"filled_slots\":0,\"failed\":false}"
+        ));
+        InscriptionPanelComponent panel = new InscriptionPanelComponent();
+
+        assertTrue(panel.tryDropScroll(scroll("inscription_scroll_sharp_v0")));
+        assertTrue(panel.tryDropScroll(scroll("inscription_scroll_sharp_v0")));
+        assertFalse(panel.tryDropScroll(scroll("inscription_scroll_sharp_v0")));
+
+        assertEquals(2, sent.size());
+        assertEquals(2, panel.currentRenderState().filledCount());
+        assertEquals("sharp_v0", panel.currentRenderState().inscriptionAt(0));
+        assertEquals("sharp_v0", panel.currentRenderState().inscriptionAt(1));
+    }
+
+    @Test
     void rejects_non_scroll_item_drop() {
         install();
         ForgeSessionStore.replace(snapshot(

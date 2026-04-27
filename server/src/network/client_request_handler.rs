@@ -41,7 +41,7 @@ use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
-use crate::forge::session::ForgeSessionId;
+use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
     apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -170,6 +170,7 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
+    pub forge_sessions: Option<Res<'w, ForgeSessions>>,
 }
 
 const CHANNEL: &str = "bong:client_request";
@@ -866,6 +867,7 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &mut skill_scroll_params.inscription_scroll_tx,
+                    skill_scroll_params.forge_sessions.as_deref(),
                 );
             }
             ClientRequestV1::ForgeTemperingHit {
@@ -1151,9 +1153,37 @@ fn handle_forge_inscription_scroll(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
+    forge_sessions: Option<&ForgeSessions>,
 ) {
     let inscription_id = inscription_id.trim();
     if inscription_id.is_empty() {
+        return;
+    }
+    let Some(forge_sessions) = forge_sessions else {
+        tracing::warn!(
+            "[bong][network][forge] inscription_scroll rejected: ForgeSessions unavailable"
+        );
+        return;
+    };
+    let session = ForgeSessionId(session_id);
+    let Some(session_state) = forge_sessions.get(session) else {
+        tracing::warn!(
+            "[bong][network][forge] inscription_scroll rejected: missing session_id={session_id}"
+        );
+        return;
+    };
+    if session_state.current_step != ForgeStep::Inscription {
+        tracing::warn!(
+            "[bong][network][forge] inscription_scroll rejected: session_id={session_id} step={:?}",
+            session_state.current_step
+        );
+        return;
+    }
+    if session_state.caster != entity {
+        tracing::warn!(
+            "[bong][network][forge] inscription_scroll rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
+            session_state.caster
+        );
         return;
     }
     let Some(inscription_scroll_tx) = inscription_scroll_tx.as_deref_mut() else {
@@ -1201,7 +1231,7 @@ fn handle_forge_inscription_scroll(
     );
 
     inscription_scroll_tx.send(InscriptionScrollSubmit {
-        session: ForgeSessionId(session_id),
+        session,
         inscription_id: inscription_id.to_string(),
     });
 }
@@ -1339,6 +1369,7 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 mod tests {
     use super::*;
     use crate::combat::components::UnlockedStyles;
+    use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
         BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
         ItemCategory, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
@@ -1584,6 +1615,27 @@ mod tests {
             }
         }
         false
+    }
+
+    fn insert_test_forge_session(app: &mut App, session_id: u64, caster: Entity, step: ForgeStep) {
+        let station = app.world_mut().spawn_empty().id();
+        let mut sessions = ForgeSessions::new();
+        let mut session = ForgeSession::new(
+            ForgeSessionId(session_id),
+            "qing_feng_v0".to_string(),
+            station,
+            caster,
+        );
+        session.current_step = step;
+        session.step_state = match step {
+            ForgeStep::Inscription => StepState::Inscription(Default::default()),
+            ForgeStep::Tempering => StepState::Tempering(Default::default()),
+            ForgeStep::Consecration => StepState::Consecration(Default::default()),
+            ForgeStep::Billet => StepState::Billet(Default::default()),
+            ForgeStep::Done => StepState::None,
+        };
+        sessions.insert(session);
+        app.insert_resource(sessions);
     }
 
     fn register_request_app(app: &mut App) {
@@ -2138,6 +2190,7 @@ mod tests {
                 UnlockedStyles::default(),
             ))
             .id();
+        insert_test_forge_session(&mut app, 9, entity, ForgeStep::Inscription);
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -2156,6 +2209,71 @@ mod tests {
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
+    }
+
+    #[test]
+    fn forge_inscription_scroll_rejects_invalid_session_before_consuming_item() {
+        let mut app = App::new();
+        app.insert_resource(CapturedInscriptionScrolls::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(test_forge_template_registry());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<InscriptionScrollSubmit>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_inscription_scrolls).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(43, "inscription_scroll_sharp_v0")),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        insert_test_forge_session(&mut app, 9, entity, ForgeStep::Tempering);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_inscription_scroll","v":1,"session_id":9,"inscription_id":"sharp_v0"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        let captured = app.world().resource::<CapturedInscriptionScrolls>();
+        assert!(captured.0.is_empty());
     }
 
     #[test]

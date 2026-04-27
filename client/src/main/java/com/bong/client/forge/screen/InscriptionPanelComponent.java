@@ -56,7 +56,7 @@ public class InscriptionPanelComponent extends BaseComponent {
 
         List<String> merged = new ArrayList<>(base.filledSlots());
         for (String id : acceptedInscriptionIds) {
-            if (id != null && !id.isBlank() && !merged.contains(id)) merged.add(id);
+            if (id != null && !id.isBlank()) merged.add(id);
         }
         int maxSlots = Math.max(base.maxSlots(), merged.size());
         return new RenderState(maxSlots, merged, base.failed(), base.failChanceRemaining());
