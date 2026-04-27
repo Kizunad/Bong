@@ -521,6 +521,7 @@ fn beast_npc_thinker() -> ThinkerBuilder {
 /// Rogue 行为链，行为和 `rogue_npc_thinker` 等价（保留独立 fn 是为了
 /// 让 spawn_disciple_npc_at 的 FactionMembership 组件仍有唯一入口，
 /// 等任务行为接入时从此处扩展）。
+#[allow(dead_code)]
 fn disciple_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
@@ -535,9 +536,10 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
 
 /// GuardianRelic thinker（plan §2）：完整行为是 `GuardianDuty` 追入侵者
 /// + `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
-/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander
-/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
-/// 不走 AgeingScorer —— GuardianRelic 不老。
+///   的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander
+///   兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
+///   不走 AgeingScorer —— GuardianRelic 不老。
+#[allow(dead_code)]
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
@@ -724,6 +726,7 @@ pub fn spawn_beast_npc_at(
 /// `faction_id` 决定所属派系（Attack / Defend / Neutral）。`master_id` 可选
 /// 挂师承；缺省表示无师父。
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn spawn_disciple_npc_at(
     commands: &mut Commands,
     layer: Entity,
@@ -794,6 +797,7 @@ pub fn spawn_disciple_npc_at(
 }
 
 /// Spawn 仙家遗种守护者（绑定遗迹 ID + 警戒范围）。外观复用 Villager。
+#[allow(dead_code)]
 pub fn spawn_relic_guard_npc_at(
     commands: &mut Commands,
     layer: Entity,

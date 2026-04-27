@@ -1,14 +1,20 @@
 pub mod gameplay;
-mod progression;
 pub mod state;
 
 use self::state::{
     load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_progression_slice, save_player_skill_slice, save_player_slices,
-    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_skill_slice, save_player_slices, save_player_slow_slice, PlayerState,
+    PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::combat::components::TICKS_PER_SECOND;
+use crate::cultivation::color::PracticeLog;
+use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
+use crate::cultivation::insight::InsightQuota;
+use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
+use crate::cultivation::life_record::LifeRecord;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
+use crate::persistence::persist_player_cultivation_bundle;
+use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use valence::message::SendMessage;
@@ -24,7 +30,7 @@ const WELCOME_MESSAGE: &str =
     "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
-const PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS: u64 = 90 * TICKS_PER_SECOND;
+const CULTIVATION_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -48,6 +54,19 @@ type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
+type CultivationBundleQueryItem<'a> = (
+    &'a Username,
+    &'a Cultivation,
+    &'a MeridianSystem,
+    &'a QiColor,
+    &'a Karma,
+    &'a PracticeLog,
+    &'a Contamination,
+    &'a LifeRecord,
+    &'a InsightQuota,
+    &'a UnlockedPerceptions,
+    &'a InsightModifiers,
+);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
@@ -63,8 +82,8 @@ pub fn register(app: &mut App) {
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
-            autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
-            flush_changed_player_skills.after(autosave_player_progression_slices),
+            autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
+            flush_changed_player_skills.after(autosave_player_cultivation_bundles),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_skills),
@@ -147,12 +166,11 @@ pub(crate) fn attach_player_state_to_joined_clients(
         &mut joined_clients
     {
         let persisted = load_player_slices(&persistence, username.0.as_str());
-        let realm = persisted.state.realm.clone();
-        let composite_power = persisted.state.composite_power();
         let restored_inventory = persisted.inventory.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
         let last_dimension = persisted.last_dimension;
+        let composite_power = persisted.state.composite_power(&Cultivation::default());
 
         if let Some(layers) = dimension_layers.as_deref() {
             let target_layer = layers.entity_for(last_dimension);
@@ -176,9 +194,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
         }
         entity_commands.insert(persisted.skill_set);
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (realm={}, composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
             username.0,
-            realm,
         );
     }
 }
@@ -212,13 +229,26 @@ fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     mut disconnected_clients: RemovedComponents<Client>,
-    persisted_players: Query<(
+    settings: Res<PersistenceSettings>,
+    core_players: Query<(
         &Username,
         &PlayerState,
         &Position,
         Option<&CurrentDimension>,
         Option<&PlayerInventory>,
         Option<&SkillSet>,
+    )>,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
     )>,
 ) {
     for entity in disconnected_clients.read() {
@@ -229,11 +259,45 @@ fn despawn_disconnected_clients(
             current_dimension,
             player_inventory,
             skill_set,
-        )) = persisted_players.get(entity)
+        )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
                 .map(|cd| cd.0)
                 .unwrap_or(DimensionKind::default());
+
+            if let Ok((
+                cultivation,
+                meridians,
+                qi_color,
+                karma,
+                practice_log,
+                contamination,
+                life_record,
+                insight_quota,
+                unlocked_perceptions,
+                insight_modifiers,
+            )) = cultivation_bundle.get(entity)
+            {
+                if let Err(error) = persist_player_cultivation_bundle(
+                    &settings,
+                    username.0.as_str(),
+                    cultivation,
+                    meridians,
+                    qi_color,
+                    karma,
+                    contamination,
+                    life_record,
+                    practice_log,
+                    insight_quota,
+                    unlocked_perceptions,
+                    insight_modifiers,
+                ) {
+                    tracing::warn!(
+                        "[bong][player] failed to persist cultivation bundle for disconnected client `{}`: {error}",
+                        username.0,
+                    );
+                }
+            }
             match save_player_slices(
                 &persistence,
                 username.0.as_str(),
@@ -270,8 +334,10 @@ fn despawn_disconnected_clients(
 fn flush_connected_players_on_shutdown(
     persistence: Res<PlayerStatePersistence>,
     mut app_exit: EventReader<AppExit>,
+    settings: Res<PersistenceSettings>,
     players: Query<
         (
+            Entity,
             &Username,
             &PlayerState,
             &Position,
@@ -281,17 +347,70 @@ fn flush_connected_players_on_shutdown(
         ),
         With<Client>,
     >,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
+    )>,
 ) {
     if app_exit.read().next().is_none() {
         return;
     }
 
-    for (username, player_state, position, current_dimension, player_inventory, skill_set) in
-        &players
+    for (
+        entity,
+        username,
+        player_state,
+        position,
+        current_dimension,
+        player_inventory,
+        skill_set,
+    ) in &players
     {
         let last_dimension = current_dimension
             .map(|cd| cd.0)
             .unwrap_or(DimensionKind::default());
+
+        if let Ok((
+            cultivation,
+            meridians,
+            qi_color,
+            karma,
+            practice_log,
+            contamination,
+            life_record,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+        )) = cultivation_bundle.get(entity)
+        {
+            if let Err(error) = persist_player_cultivation_bundle(
+                &settings,
+                username.0.as_str(),
+                cultivation,
+                meridians,
+                qi_color,
+                karma,
+                contamination,
+                life_record,
+                practice_log,
+                insight_quota,
+                unlocked_perceptions,
+                insight_modifiers,
+            ) {
+                tracing::warn!(
+                    "[bong][player] failed to persist cultivation bundle during shutdown flush for `{}`: {error}",
+                    username.0,
+                );
+            }
+        }
         match save_player_slices(
             &persistence,
             username.0.as_str(),
@@ -377,32 +496,55 @@ fn autosave_player_slow_and_ui_slices(
     );
 }
 
-fn autosave_player_progression_slices(
-    persistence: Res<PlayerStatePersistence>,
+fn autosave_player_cultivation_bundles(
+    settings: Res<PersistenceSettings>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &PlayerState), With<Client>>,
+    players: Query<CultivationBundleQueryItem<'_>, With<Client>>,
 ) {
-    if !timer
-        .ticks
-        .is_multiple_of(PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS)
-    {
+    if !timer.ticks.is_multiple_of(CULTIVATION_FLUSH_INTERVAL_TICKS) {
         return;
     }
 
     let mut saved_count = 0usize;
 
-    for (username, player_state) in &players {
-        match save_player_progression_slice(&persistence, username.0.as_str(), player_state) {
-            Ok(_) => saved_count += 1,
+    for (
+        username,
+        cultivation,
+        meridians,
+        qi_color,
+        karma,
+        practice_log,
+        contamination,
+        life_record,
+        insight_quota,
+        unlocked_perceptions,
+        insight_modifiers,
+    ) in &players
+    {
+        match persist_player_cultivation_bundle(
+            &settings,
+            username.0.as_str(),
+            cultivation,
+            meridians,
+            qi_color,
+            karma,
+            contamination,
+            life_record,
+            practice_log,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+        ) {
+            Ok(()) => saved_count += 1,
             Err(error) => tracing::warn!(
-                "[bong][player] 90s progression flush failed for `{}`: {error}",
+                "[bong][player] 60s cultivation flush failed for `{}`: {error}",
                 username.0,
             ),
         }
     }
 
     tracing::info!(
-        "[bong][player] flushed {saved_count} progression player slice(s) after {PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS} ticks"
+        "[bong][player] flushed {saved_count} cultivation bundle(s) after {CULTIVATION_FLUSH_INTERVAL_TICKS} ticks"
     );
 }
 
@@ -545,26 +687,17 @@ mod tests {
         }
     }
 
-    fn read_core_snapshot(db_path: &PathBuf) -> (String, f64, f64, f64, i64, f64) {
+    fn read_core_snapshot(db_path: &PathBuf) -> (f64, f64) {
         let connection = Connection::open(db_path).expect("sqlite db should open");
         connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params!["Azure"],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("player_core row should exist")
     }
@@ -602,6 +735,17 @@ mod tests {
             .expect("player_ui_prefs row should exist")
     }
 
+    fn read_cultivation_json(db_path: &PathBuf) -> String {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_cultivation row should exist")
+    }
+
     #[test]
     fn player_flushes_core_slow_inventory_and_ui_slices() {
         let (persistence, data_dir, db_path) = sqlite_persistence("flush-slices");
@@ -618,8 +762,7 @@ mod tests {
                 tick_player_persistence_timer,
                 autosave_player_core_slices.after(tick_player_persistence_timer),
                 autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
-                autosave_player_progression_slices.after(autosave_player_slow_and_ui_slices),
-                flush_changed_player_inventories.after(autosave_player_progression_slices),
+                flush_changed_player_inventories.after(autosave_player_slow_and_ui_slices),
             ),
         );
 
@@ -627,28 +770,19 @@ mod tests {
         client_bundle.player.position = Position::new([42.0, 77.0, -3.5]);
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert(PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
             karma: 0.2,
-            experience: 1_200,
             inventory_score: 0.4,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
 
         app.update();
 
-        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score) =
-            read_core_snapshot(&db_path);
+        let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
         let prefs_json = read_ui_prefs_json(&db_path);
 
-        assert_eq!(realm, "mortal");
-        assert_eq!(spirit_qi, 78.0);
-        assert_eq!(spirit_qi_max, 100.0);
         assert_eq!(karma, 0.2);
-        assert_eq!(experience, 0);
         assert_eq!(inventory_score, 0.4);
         assert_eq!((pos_x, pos_y, pos_z), (8.0, 150.0, 8.0));
         assert_ne!(
@@ -666,35 +800,70 @@ mod tests {
             .ticks = SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS - 1;
         app.update();
 
-        let (realm_after_slow, _, _, _, experience_after_slow, _) = read_core_snapshot(&db_path);
+        let (karma_after_slow, inventory_score_after_slow) = read_core_snapshot(&db_path);
         let (pos_x_after_slow, pos_y_after_slow, pos_z_after_slow) =
             read_position_snapshot(&db_path);
 
-        assert_eq!(realm_after_slow, "mortal");
-        assert_eq!(experience_after_slow, 0);
+        assert_eq!(karma_after_slow, 0.2);
+        assert_eq!(inventory_score_after_slow, 0.4);
         assert_eq!(
             (pos_x_after_slow, pos_y_after_slow, pos_z_after_slow),
             (42.0, 77.0, -3.5)
         );
 
-        app.world_mut()
-            .resource_mut::<PlayerStateAutosaveTimer>()
-            .ticks = PROGRESSION_SLICE_FLUSH_INTERVAL_TICKS - 1;
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn cultivation_bundle_flushes_periodically() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("cultivation-flush");
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-cultivation-flush",
+        ));
+        app.insert_resource(PlayerStateAutosaveTimer {
+            ticks: CULTIVATION_FLUSH_INTERVAL_TICKS - 1,
+        });
+        app.add_systems(
+            Update,
+            (
+                tick_player_persistence_timer,
+                autosave_player_cultivation_bundles.after(tick_player_persistence_timer),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 42.0,
+                qi_max: 88.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            QiColor::default(),
+            Karma::default(),
+            PracticeLog::default(),
+            Contamination::default(),
+            LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
+            InsightQuota::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::new(),
+        ));
+
         app.update();
 
-        let (
-            realm_after_progression,
-            _,
-            spirit_qi_max_after_progression,
-            _,
-            experience_after_progression,
-            _,
-        ) = read_core_snapshot(&db_path);
+        let cultivation_json = read_cultivation_json(&db_path);
+        let bundle: serde_json::Value =
+            serde_json::from_str(&cultivation_json).expect("cultivation bundle should deserialize");
+        assert_eq!(bundle["cultivation"]["realm"].as_str(), Some("Condense"));
+        assert_eq!(bundle["cultivation"]["qi_current"].as_f64(), Some(42.0));
+        assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(88.0));
 
-        assert_eq!(realm_after_progression, "qi_refining_3");
-        assert_eq!(spirit_qi_max_after_progression, 100.0);
-        assert_eq!(experience_after_progression, 1_200);
-
+        let _ = persistence;
         let _ = fs::remove_dir_all(&data_dir);
     }
 
@@ -706,17 +875,18 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-disconnect-flush",
+        ));
         app.add_systems(Update, despawn_disconnected_clients);
 
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([42.0, 77.0, -3.5]);
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert(PlayerState {
-            realm: "qi_refining_4".to_string(),
-            spirit_qi: 88.0,
-            spirit_qi_max: 120.0,
             karma: -0.15,
-            experience: 2_400,
             inventory_score: 0.7,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
@@ -724,16 +894,11 @@ mod tests {
         app.world_mut().entity_mut(entity).remove::<Client>();
         app.update();
 
-        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score) =
-            read_core_snapshot(&db_path);
+        let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
 
-        assert_eq!(realm, "qi_refining_4");
-        assert_eq!(spirit_qi, 88.0);
-        assert_eq!(spirit_qi_max, 120.0);
         assert_eq!(karma, -0.15);
-        assert_eq!(experience, 2_400);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (42.0, 77.0, -3.5));
         assert_ne!(
@@ -757,17 +922,18 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-shutdown-flush",
+        ));
         app.add_systems(Last, flush_connected_players_on_shutdown);
 
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert(PlayerState {
-            realm: "qi_refining_5".to_string(),
-            spirit_qi: 91.0,
-            spirit_qi_max: 140.0,
             karma: 0.33,
-            experience: 3_200,
             inventory_score: 0.85,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
@@ -775,16 +941,11 @@ mod tests {
         app.world_mut().send_event(AppExit::Success);
         app.update();
 
-        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score) =
-            read_core_snapshot(&db_path);
+        let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
 
-        assert_eq!(realm, "qi_refining_5");
-        assert_eq!(spirit_qi, 91.0);
-        assert_eq!(spirit_qi_max, 140.0);
         assert_eq!(karma, 0.33);
-        assert_eq!(experience, 3_200);
         assert_eq!(inventory_score, 0.85);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
         assert_ne!(

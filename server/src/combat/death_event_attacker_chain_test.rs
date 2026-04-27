@@ -64,7 +64,6 @@ mod tests {
     #[test]
     fn tsy_drain_death_has_no_attacker() {
         use crate::cultivation::tick::CultivationClock;
-        use crate::player::state::PlayerState;
         use crate::world::dimension::DimensionKind;
         use crate::world::tsy::DimensionAnchor;
         use crate::world::tsy::TsyPresence;
@@ -91,9 +90,10 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_systems(Update, tsy_drain_tick);
 
-        let player_state = PlayerState {
-            spirit_qi: 1.0,
-            spirit_qi_max: 100.0,
+        // PR #48 reform：真元归一到 Cultivation.qi_current/qi_max。
+        let cultivation = Cultivation {
+            qi_current: 1.0,
+            qi_max: 100.0,
             ..Default::default()
         };
         let _player = app
@@ -101,8 +101,7 @@ mod tests {
             .spawn((
                 Position::new([50.0, 50.0, 50.0]),
                 CurrentDimension(DimensionKind::Tsy),
-                player_state,
-                Cultivation::default(),
+                cultivation,
                 MeridianSystem::default(),
                 TsyPresence {
                     family_id: "tsy_test_01".into(),

@@ -1,8 +1,9 @@
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
+#![allow(dead_code)]
+
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, IntoSystemConfigs, Position, PreUpdate,
-    Query, Res, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Position, Query, Res, Resource, Update, With,
 };
 
 use crate::npc::navigator::Navigator;
@@ -852,7 +853,7 @@ mod tests {
             .id();
         app.update();
         let got = app.world().get::<Score>(scorer).unwrap().get();
-        assert!(got >= 0.0 && got <= 1.0);
+        assert!((0.0..=1.0).contains(&got));
     }
 
     fn build_mq_app() -> App {
@@ -910,10 +911,7 @@ mod tests {
 
     fn build_exec_app() -> App {
         let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            mission_execute_action_system.in_set(BigBrainSet::Actions),
-        );
+        app.add_systems(PreUpdate, mission_execute_action_system);
         app
     }
 

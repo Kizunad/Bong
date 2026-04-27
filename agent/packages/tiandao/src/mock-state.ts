@@ -13,7 +13,7 @@ export function createMockWorldState(): WorldStateV1 {
       {
         uuid: "offline:Steve",
         name: "Steve",
-        realm: "qi_refining_3",
+        realm: "Induce",
         composite_power: 0.85,
         breakdown: { combat: 0.92, wealth: 0.60, social: 0.45, karma: -0.45, territory: 0.20 },
         trend: "rising",
@@ -26,7 +26,7 @@ export function createMockWorldState(): WorldStateV1 {
       {
         uuid: "offline:Alex",
         name: "Alex",
-        realm: "foundation_1",
+        realm: "Condense",
         composite_power: 0.35,
         breakdown: { combat: 0.20, wealth: 0.40, social: 0.65, karma: 0.30, territory: 0.10 },
         trend: "stable",
@@ -39,7 +39,7 @@ export function createMockWorldState(): WorldStateV1 {
       {
         uuid: "offline:NewPlayer1",
         name: "NewPlayer1",
-        realm: "mortal",
+        realm: "Awaken",
         composite_power: 0.08,
         breakdown: { combat: 0.05, wealth: 0.10, social: 0.05, karma: 0.00, territory: 0.00 },
         trend: "rising",

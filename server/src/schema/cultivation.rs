@@ -203,6 +203,19 @@ pub fn realm_to_string(r: Realm) -> &'static str {
     }
 }
 
+/// 辅助：snapshot -> domain
+pub fn realm_from_string(name: &str) -> Realm {
+    match name {
+        "Awaken" => Realm::Awaken,
+        "Induce" => Realm::Induce,
+        "Condense" => Realm::Condense,
+        "Solidify" => Realm::Solidify,
+        "Spirit" => Realm::Spirit,
+        "Void" => Realm::Void,
+        _ => Realm::Awaken,
+    }
+}
+
 pub fn meridian_id_to_string(id: MeridianId) -> &'static str {
     use MeridianId::*;
     match id {

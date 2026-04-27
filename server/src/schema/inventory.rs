@@ -670,7 +670,7 @@ mod tests {
         assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
         assert_eq!(snapshot.hotbar.len(), HOTBAR_SLOT_COUNT);
         assert_eq!(snapshot.bone_coins, 57);
-        assert_eq!(snapshot.realm, "qi_refining_1");
+        assert_eq!(snapshot.realm, "Awaken");
     }
 
     #[test]

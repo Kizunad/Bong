@@ -16,7 +16,7 @@ mod tests {
 
     use valence::prelude::{App, DVec3, Events, Position, Update};
 
-    use crate::combat::{events::DeathEvent, CombatClock};
+    use crate::combat::CombatClock;
     use crate::cultivation::death_hooks::PlayerRevived;
     use crate::inventory::{
         ancient_relics::AncientRelicPool,

@@ -39,7 +39,7 @@ export function createTestWorldState(): WorldStateV1 {
       {
         uuid: "offline:test-player",
         name: "TestPlayer",
-        realm: "qi_refining_1",
+        realm: "Awaken",
         composite_power: 0.2,
         breakdown: {
           combat: 0.2,

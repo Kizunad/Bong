@@ -83,7 +83,7 @@ public class CultivationScreenTest {
     @Test
     void disconnectResetClearsStaleSnapshotBeforeNextScreenBuild() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
-            "core_formation_2",
+            "Spirit",
             88.0,
             100.0,
             0.45,

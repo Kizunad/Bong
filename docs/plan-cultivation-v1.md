@@ -465,7 +465,7 @@ Server 检查：
   - meridian.opened == true？
   - meridian.integrity > 0.6？        // 受损经脉拒绝淬炼
   - qi_current >= forge_qi_cost？
-  - 玩家在炼气炉/灵眼/特定地形（淬炼必须在合适环境）？
+  - 玩家在淬脉炉/灵眼/特定地形（淬炼必须在合适环境）？
 
 若满足：
   enter ForgingState (3-10min, 不可移动)

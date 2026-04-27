@@ -4,17 +4,17 @@ import java.util.EnumMap;
 import java.util.List;
 
 /**
- * 模拟经脉状态 — 一个使用爆脉流后受伤的炼气三层修士。
+ * 模拟经脉状态 — 一个使用爆脉流后受伤的引气修士。
  * 覆盖 12 正经 + 8 奇经，呈现各种损伤/污染/恢复状态。
  */
 public final class MockMeridianData {
     private MockMeridianData() {}
 
     public static MeridianBody create() {
-        double baseCap = 30.0; // 炼气期基础流量
+        double baseCap = 30.0; // 引气境基础流量
         double oddCap = baseCap * 1.4; // 奇经容量更大
 
-        MeridianBody.Builder b = MeridianBody.builder().realm("炼气三层");
+        MeridianBody.Builder b = MeridianBody.builder().realm("引气");
 
         // ===== 12 正经 =====
         // 手三阴 — 左臂主辅助，整体偏弱

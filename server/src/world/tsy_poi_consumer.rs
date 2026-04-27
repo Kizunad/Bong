@@ -28,7 +28,7 @@ use crate::world::tsy::{
     DimensionAnchor, LootContainer, NpcAnchor, PortalDirection, RelicCoreSlot, RiftPortal,
 };
 use valence::prelude::{
-    bevy_ecs, App, Commands, DVec3, EntityLayerId, IntoSystemConfigs, Position, Res, Startup,
+    App, Commands, DVec3, EntityLayerId, IntoSystemConfigs, Position, Res, Startup,
 };
 
 const DEFAULT_TRIGGER_RADIUS: f64 = 1.5;

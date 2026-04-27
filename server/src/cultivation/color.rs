@@ -12,12 +12,13 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Query};
 
 use super::components::{ColorKind, QiColor};
 
 /// 玩家修习累积日志 — 权重值可由 gameplay 系统增加，tick 会慢慢衰减。
-#[derive(Debug, Default, Clone, Component)]
+#[derive(Debug, Default, Clone, Component, Serialize, Deserialize)]
 pub struct PracticeLog {
     pub weights: HashMap<ColorKind, f64>,
     pub decay_per_tick: f64,
