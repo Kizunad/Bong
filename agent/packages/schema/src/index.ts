@@ -41,3 +41,6 @@ export * from "./skill.js";
 
 // 活坍缩渊 (plan-tsy-zone-v1 §1.4)
 export * from "./tsy.js";
+
+// 活坍缩渊容器搜刮 (plan-tsy-container-v1 §5.1)
+export * from "./container-interaction.js";

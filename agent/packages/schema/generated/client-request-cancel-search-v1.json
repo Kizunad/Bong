@@ -1,0 +1,13 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    }
+  }
+}

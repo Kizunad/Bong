@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_id",
+    "container_entity_id",
+    "elapsed_ticks",
+    "required_ticks"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "container_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "elapsed_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "required_ticks": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  }
+}

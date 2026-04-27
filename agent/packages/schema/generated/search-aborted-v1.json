@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_id",
+    "container_entity_id",
+    "reason",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "container_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "const": "moved",
+          "type": "string"
+        },
+        {
+          "const": "combat",
+          "type": "string"
+        },
+        {
+          "const": "damaged",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "type": "string"
+        }
+      ]
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
