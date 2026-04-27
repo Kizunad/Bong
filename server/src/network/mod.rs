@@ -251,8 +251,6 @@ pub fn register(app: &mut App) {
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
-            forge_snapshot_emit::emit_join_forge_snapshots
-                .after(crate::inventory::attach_inventory_to_joined_clients),
             skill_snapshot_emit::emit_join_skill_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             skill_emit::emit_skill_xp_gain_payloads.after(crate::skill::consume_skill_xp_gain),
@@ -292,6 +290,8 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_npc_spawned_events
                 .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            forge_snapshot_emit::emit_join_forge_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
     );
     app.add_systems(

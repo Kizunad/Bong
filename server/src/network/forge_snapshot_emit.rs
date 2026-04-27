@@ -3,6 +3,8 @@
 //! 从真实 ECS `BlueprintRegistry` / `WeaponForgeStation` / `ForgeSessions`
 //! 读取数据构建 snapshot（非 mock）。
 
+#![allow(dead_code)]
+
 use valence::prelude::{Added, Client, Entity, Query, Res, Username, With};
 
 use crate::forge::blueprint::{BlueprintRegistry};
@@ -21,35 +23,16 @@ use crate::skill::components::SkillSet;
 type JoinedClientQueryItem<'a> = (Entity, &'a mut Client, &'a Username);
 
 pub fn emit_join_forge_snapshots(
-    mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
-    registry: Res<BlueprintRegistry>,
-    stations: Query<&WeaponForgeStation>,
-    sessions: Res<ForgeSessions>,
-    learned_q: Query<&LearnedBlueprints>,
-    caster_names: Query<&Username>,
+    #[allow(unused)] mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
+    _registry: Res<BlueprintRegistry>,
+    _stations: Query<&WeaponForgeStation>,
+    _sessions: Res<ForgeSessions>,
+    _learned_q: Query<&LearnedBlueprints>,
+    _caster_names: Query<&Username>,
     _skill_q: Query<&SkillSet>,
 ) {
-    for (_entity, mut client, username) in &mut joined_clients {
-        // Use client's own entity for queries — at join time only "self" matters.
-        // For multi-station support, we'd iterate all stations owned by this player.
-
-        // ── blueprint book snapshot ──────────
-        // This is player-bound (LearnedBlueprints on player entity).
-        // We send it regardless of whether there's an active station.
-
-        // Note: at join time, player is the client entity. We cannot easily query
-        // LearnedBlueprints because the system annotation doesn't support `entity` lookup
-        // from the query item. For now emit station/session based on what's available.
-        // Blueprint book will be sent when the player opens the forge screen.
-
-        for station_entity in stations.iter().map(|_| ()) {
-            // placeholder — iterate stations owned by this player
-            let _ = station_entity;
-        }
-
-        // For MVP: emit empty blueprint book (client will show default)
-        // Real blueprint book will be pushed when ForgeOpenStation is handled.
-    }
+    // join hydration placeholder — real snapshots sent via send_forge_snapshots_to_player
+    // when the player opens the forge screen.
 }
 
 /// Send forge snapshots for a specific player when they open a forge screen.
