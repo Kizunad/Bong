@@ -241,6 +241,68 @@ export const CombatCreateNewCharacterRequestV1 = Type.Object(
 );
 export type CombatCreateNewCharacterRequestV1 = Static<typeof CombatCreateNewCharacterRequestV1>;
 
+export const UseQuickSlotRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("use_quick_slot"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+  },
+  { additionalProperties: false },
+);
+export type UseQuickSlotRequestV1 = Static<typeof UseQuickSlotRequestV1>;
+
+export const QuickSlotBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("quick_slot_bind"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    item_id: Type.Union([Type.Null(), Type.String({ minLength: 1 })]),
+  },
+  { additionalProperties: false },
+);
+export type QuickSlotBindRequestV1 = Static<typeof QuickSlotBindRequestV1>;
+
+export const SkillBarCastRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_bar_cast"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    target: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type SkillBarCastRequestV1 = Static<typeof SkillBarCastRequestV1>;
+
+export const SkillBarBindingV1 = Type.Union([
+  Type.Null(),
+  Type.Object(
+    {
+      kind: Type.Literal("item"),
+      template_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("skill"),
+      skill_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type SkillBarBindingV1 = Static<typeof SkillBarBindingV1>;
+
+export const SkillBarBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_bar_bind"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    binding: SkillBarBindingV1,
+  },
+  { additionalProperties: false },
+);
+export type SkillBarBindRequestV1 = Static<typeof SkillBarBindRequestV1>;
+
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
 export const AlchemyOpenFurnaceRequestV1 = Type.Object(
@@ -483,6 +545,10 @@ export const ClientRequestV1 = Type.Union([
   CombatReincarnateRequestV1,
   CombatTerminateRequestV1,
   CombatCreateNewCharacterRequestV1,
+  UseQuickSlotRequestV1,
+  QuickSlotBindRequestV1,
+  SkillBarCastRequestV1,
+  SkillBarBindRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

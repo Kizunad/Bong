@@ -10,7 +10,8 @@ use super::forge::{
 };
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
-    TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
+    SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1,
+    WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::cultivation::SkillMilestoneSnapshotV1;
@@ -83,6 +84,8 @@ pub enum ServerDataType {
     DefenseWindow,
     CastSync,
     QuickSlotConfig,
+    SkillBarConfig,
+    TechniquesSnapshot,
     UnlocksSync,
     EventStreamPush,
     WeaponEquipped,
@@ -201,6 +204,8 @@ pub enum ServerDataPayloadV1 {
     DefenseWindow(DefenseWindowV1),
     CastSync(CastSyncV1),
     QuickSlotConfig(QuickSlotConfigV1),
+    SkillBarConfig(SkillBarConfigV1),
+    TechniquesSnapshot(TechniquesSnapshotV1),
     UnlocksSync(UnlocksSyncV1),
     EventStreamPush(EventStreamPushV1),
     WeaponEquipped(WeaponEquippedV1),
@@ -381,6 +386,15 @@ enum ServerDataPayloadWireV1 {
     QuickSlotConfig {
         #[serde(flatten)]
         config: QuickSlotConfigV1,
+    },
+    #[serde(rename = "skillbar_config")]
+    SkillBarConfig {
+        #[serde(flatten)]
+        config: SkillBarConfigV1,
+    },
+    TechniquesSnapshot {
+        #[serde(flatten)]
+        snapshot: TechniquesSnapshotV1,
     },
     UnlocksSync {
         #[serde(flatten)]
@@ -874,6 +888,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::QuickSlotConfig { config } => {
                 Ok(Self::QuickSlotConfig(config))
             }
+            ServerDataPayloadWireV1::SkillBarConfig { config } => {
+                Ok(Self::SkillBarConfig(config))
+            }
+            ServerDataPayloadWireV1::TechniquesSnapshot { snapshot } => {
+                Ok(Self::TechniquesSnapshot(snapshot))
+            }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
             ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
             ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
@@ -1138,6 +1158,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::QuickSlotConfig(config) => Self::QuickSlotConfig {
                 config: config.clone(),
             },
+            ServerDataPayloadV1::SkillBarConfig(config) => Self::SkillBarConfig {
+                config: config.clone(),
+            },
+            ServerDataPayloadV1::TechniquesSnapshot(snapshot) => Self::TechniquesSnapshot {
+                snapshot: snapshot.clone(),
+            },
             ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
             ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
                 event: event.clone(),
@@ -1355,6 +1381,8 @@ impl ServerDataPayloadV1 {
             Self::DefenseWindow(..) => ServerDataType::DefenseWindow,
             Self::CastSync(..) => ServerDataType::CastSync,
             Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
+            Self::SkillBarConfig(..) => ServerDataType::SkillBarConfig,
+            Self::TechniquesSnapshot(..) => ServerDataType::TechniquesSnapshot,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
@@ -1418,6 +1446,11 @@ mod tests {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
             }),
+            ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            }),
+            ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
             ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
             ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
                 channel: EventChannelV1::Combat,
@@ -1621,6 +1654,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.skill-snapshot.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skillbar-config.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.techniques-snapshot.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"

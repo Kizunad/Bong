@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "type": "skillbar_config",
+  "slots": [
+    {
+      "kind": "skill",
+      "skill_id": "burst_meridian.beng_quan",
+      "display_name": "崩拳",
+      "cast_duration_ms": 400,
+      "cooldown_ms": 3000,
+      "icon_texture": "bong:textures/gui/skill/beng_quan.png"
+    },
+    {
+      "kind": "item",
+      "template_id": "iron_sword",
+      "display_name": "铁剑",
+      "cast_duration_ms": 0,
+      "cooldown_ms": 0,
+      "icon_texture": "bong:textures/item/iron_sword.png"
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cooldown_until_ms": [1700000003000, 0, 0, 0, 0, 0, 0, 0, 0]
+}

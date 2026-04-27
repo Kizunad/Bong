@@ -7,6 +7,10 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
+import {
+  SkillBarConfigV1,
+  TechniquesSnapshotV1,
+} from "./combat-hud.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
@@ -129,6 +133,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("skillbar_config"),
+  Type.Literal("techniques_snapshot"),
   Type.Literal("rift_portal_state"),
   Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
@@ -556,6 +562,26 @@ export const ServerDataSkillSnapshotV1 = Type.Object(
 );
 export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
 
+export const ServerDataSkillBarConfigV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skillbar_config"),
+    ...SkillBarConfigV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillBarConfigV1 = Static<typeof ServerDataSkillBarConfigV1>;
+
+export const ServerDataTechniquesSnapshotV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("techniques_snapshot"),
+    ...TechniquesSnapshotV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTechniquesSnapshotV1 = Static<typeof ServerDataTechniquesSnapshotV1>;
+
 export const ServerDataRiftPortalStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -710,6 +736,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  ServerDataSkillBarConfigV1,
+  ServerDataTechniquesSnapshotV1,
   ServerDataRiftPortalStateV1,
   ServerDataRiftPortalRemovedV1,
   ServerDataExtractStartedV1,

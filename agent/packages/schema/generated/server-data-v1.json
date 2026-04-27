@@ -5684,6 +5684,231 @@
       "required": [
         "v",
         "type",
+        "slots",
+        "cooldown_until_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "skillbar_config",
+          "type": "string"
+        },
+        "slots": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "template_id",
+                      "display_name",
+                      "cast_duration_ms",
+                      "cooldown_ms",
+                      "icon_texture"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "item",
+                        "type": "string"
+                      },
+                      "template_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "cast_duration_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cooldown_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "icon_texture": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "skill_id",
+                      "display_name",
+                      "cast_duration_ms",
+                      "cooldown_ms",
+                      "icon_texture"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "skill",
+                        "type": "string"
+                      },
+                      "skill_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "cast_duration_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cooldown_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "icon_texture": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "cooldown_until_ms": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entries"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "techniques_snapshot",
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "grade",
+              "proficiency",
+              "active",
+              "description",
+              "required_realm",
+              "required_meridians",
+              "qi_cost",
+              "cast_ticks",
+              "cooldown_ticks",
+              "range"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "grade": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "proficiency": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string"
+              },
+              "required_realm": {
+                "type": "string"
+              },
+              "required_meridians": {
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "channel",
+                    "min_health"
+                  ],
+                  "properties": {
+                    "channel": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "min_health": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "qi_cost": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cast_ticks": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cooldown_ticks": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "range": {
+                "minimum": 0,
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "entity_id",
         "kind",
         "direction",
