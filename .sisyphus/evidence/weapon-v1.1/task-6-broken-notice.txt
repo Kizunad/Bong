@@ -1,0 +1,19 @@
+Scenario: weapon_broken HUD notice path
+
+Harness:
+  com.bong.client.weapon.WeaponVisualEvidenceHarnessTest.brokenWeaponPayloadProducesToastAndBreakFlash
+  com.bong.client.network.WeaponBrokenHandlerTest
+
+Input payload:
+  {"v":1,"type":"weapon_broken","instance_id":42,"template_id":"iron_sword"}
+
+Assertions:
+  dispatch.handled() == true
+  dispatch.alertToast().text == "武器损坏：iron_sword"
+  dispatch.alertToast().durationMillis == 2800
+  dispatch.visualEffectState().effectType == WEAPON_BREAK_FLASH
+  dispatch.visualEffectState().durationMillis == 260
+  dispatch.visualEffectState().intensity == 1.0
+
+Evidence line:
+  visual_evidence broken toast="武器损坏：iron_sword" duration_ms=2800 effect=WEAPON_BREAK_FLASH effect_duration_ms=260
