@@ -363,6 +363,19 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeForgeConsecrationInject(long sessionId, double qiAmount) {
+        if (sessionId < 0) {
+            throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
+        }
+        if (!Double.isFinite(qiAmount) || qiAmount < 0.0) {
+            throw new IllegalArgumentException("qiAmount must be finite and >= 0, got " + qiAmount);
+        }
+        JsonObject obj = envelope("forge_consecration_inject");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("qi_amount", qiAmount);
+        return obj.toString();
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static String encodeUseQuickSlot(int slot) {

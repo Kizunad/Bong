@@ -118,6 +118,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeInscriptionScroll(sessionId, inscriptionId));
     }
 
+    public static void sendForgeConsecrationInject(long sessionId, double qiAmount) {
+        dispatch(ClientRequestProtocol.encodeForgeConsecrationInject(sessionId, qiAmount));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

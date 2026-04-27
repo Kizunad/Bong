@@ -5,6 +5,7 @@ import com.bong.client.forge.state.ForgeOutcomeStore;
 import com.bong.client.forge.state.ForgeSessionStore;
 import com.bong.client.forge.state.ForgeStationStore;
 import com.bong.client.forge.input.TemperingInputHandler;
+import com.bong.client.forge.screen.ConsecrationPanelComponent;
 import com.bong.client.forge.screen.InscriptionPanelComponent;
 import com.bong.client.forge.screen.TemperingTrackComponent;
 import com.bong.client.inventory.component.GridSlotComponent;
@@ -33,6 +34,7 @@ public final class ForgeScreen extends Screen {
 
     private final TemperingTrackComponent temperingTrack = new TemperingTrackComponent();
     private final InscriptionPanelComponent inscriptionPanel = new InscriptionPanelComponent();
+    private final ConsecrationPanelComponent consecrationPanel = new ConsecrationPanelComponent();
     private final DragState dragState = new DragState();
     private int forgeGridX = -1;
     private int forgeGridY = -1;
@@ -81,6 +83,13 @@ public final class ForgeScreen extends Screen {
                     left + InscriptionPanelComponent.PANEL_WIDTH + 12, panelY);
                 y += Math.max(InscriptionPanelComponent.PANEL_HEIGHT,
                     FORGE_GRID_ROWS * GridSlotComponent.CELL_SIZE + FORGE_GRID_PAD) + 10;
+            } else if ("consecration".equals(session.currentStep())) {
+                OwoUIDrawContext owoContext = OwoUIDrawContext.of(context);
+                int panelY = y + 4;
+                consecrationPanel.placeAt(left, panelY);
+                ConsecrationPanelComponent.drawPanel(owoContext, consecrationPanel.currentRenderState(),
+                    left, panelY, consecrationPanel.isOverInjectButton(mouseX, mouseY));
+                y += ConsecrationPanelComponent.PANEL_HEIGHT + 10;
             }
         }
 
@@ -162,7 +171,18 @@ public final class ForgeScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        super.tick();
+        long tick = client == null || client.world == null ? System.currentTimeMillis() / 50L : client.world.getTime();
+        consecrationPanel.tickInject(tick);
+    }
+
+    @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && isConsecrationStep()
+            && consecrationPanel.isOverInjectButton(mouseX, mouseY)) {
+            return consecrationPanel.beginInject();
+        }
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && isInscriptionStep() && !dragState.isDragging()) {
             InventoryModel.GridEntry entry = forgeGridEntryAt(mouseX, mouseY);
             if (entry != null && entry.item() != null) {
@@ -185,6 +205,10 @@ public final class ForgeScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && consecrationPanel.isInjecting()) {
+            consecrationPanel.endInject();
+            return true;
+        }
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && dragState.isDragging()) {
             InventoryItem dragged = dragState.draggedItem();
             if (inscriptionPanel.isInBoundingBox(mouseX, mouseY)
@@ -220,6 +244,10 @@ public final class ForgeScreen extends Screen {
 
     private boolean isInscriptionStep() {
         return "inscription".equals(ForgeSessionStore.snapshot().currentStep());
+    }
+
+    private boolean isConsecrationStep() {
+        return "consecration".equals(ForgeSessionStore.snapshot().currentStep());
     }
 
     private List<InventoryModel.GridEntry> primaryGridItems() {

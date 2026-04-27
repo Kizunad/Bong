@@ -183,6 +183,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeConsecrationInject() {
+        String json = ClientRequestProtocol.encodeForgeConsecrationInject(7L, 2.5);
+        assertEquals(
+            "{\"type\":\"forge_consecration_inject\",\"v\":1,\"session_id\":7,\"qi_amount\":2.5}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(
