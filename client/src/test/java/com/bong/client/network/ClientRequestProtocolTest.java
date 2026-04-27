@@ -174,6 +174,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeInscriptionScroll() {
+        String json = ClientRequestProtocol.encodeForgeInscriptionScroll(7L, "sharp_v0");
+        assertEquals(
+            "{\"type\":\"forge_inscription_scroll\",\"v\":1,\"session_id\":7,\"inscription_id\":\"sharp_v0\"}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(

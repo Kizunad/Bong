@@ -175,6 +175,7 @@ public class GridSlotComponent extends BaseComponent {
         return itemId.startsWith("skill_scroll_")
             || itemId.startsWith("recipe_scroll_")
             || itemId.startsWith("blueprint_scroll_")
+            || itemId.startsWith("inscription_scroll_")
             || itemId.endsWith("_scroll");
     }
 

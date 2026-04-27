@@ -114,6 +114,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeTemperingHit(sessionId, beat, ticksRemaining));
     }
 
+    public static void sendForgeInscriptionScroll(long sessionId, String inscriptionId) {
+        dispatch(ClientRequestProtocol.encodeForgeInscriptionScroll(sessionId, inscriptionId));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

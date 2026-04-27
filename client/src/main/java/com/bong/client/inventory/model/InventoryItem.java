@@ -302,6 +302,19 @@ public final class InventoryItem {
         return "skill_scroll".equals(scrollKind);
     }
 
+    public boolean isInscriptionScroll() {
+        return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
+    }
+
+    public String inscriptionId() {
+        if (!isInscriptionScroll()) return "";
+        String prefix = "inscription_scroll_";
+        if (itemId.startsWith(prefix) && itemId.length() > prefix.length()) {
+            return itemId.substring(prefix.length()).trim();
+        }
+        return scrollSkillId.trim();
+    }
+
     public boolean isEmpty() {
         return itemId.isEmpty();
     }
