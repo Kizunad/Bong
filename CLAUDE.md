@@ -83,3 +83,14 @@ bash scripts/smoke-test.sh
 - docs/ 目录存放架构设计文档和路线图，修改前可参考
 - Python 文件保存后自动 ruff 格式化（PostToolUse hook，见 `.claude/settings.local.json`）
 - 跑会开 worktree 的外部 orchestrator（Codex / Sisyphus 等）之前，先 `git commit -m "WIP"` 把 worktree 改动落盘；跑完 `git stash list` 检查孤儿 `WIP before inspecting ...` / `WIP: stash before inspecting ...`，有就 `git stash pop` 回来（那类 agent 会 auto-stash + `reset --hard` 但不 auto-pop）
+
+## Testing — 饱和化测试
+
+**核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
+
+- **饱和覆盖**：每个新加的函数 / 组件 / 协议都要测 ① happy path ② 所有边界（empty / max / boundary off-by-one）③ 所有错误分支（invalid input、权限、状态前置）④ 所有状态转换（enum 变体、生命周期阶段）。覆盖到"想不出还能加什么 case"为止
+- **测契约不测实现**：断言外部可观察的行为（IO、协议、副作用、payload 结构），不要绑死内部调用次数 / 私有字段 / 中间步骤。重构内部不应让测试红
+- **mock 顶位时接口必须完整**：当下游模块未实装（plan A 依赖 plan B 的 P0），mock 暴露的接口要和真实最终形态一致；测试要覆盖 mock 的全部行为分支，让真实 impl 接入时"只换 impl 不改测试"。**接口先于实现锁定，测试同时锁定接口**
+- **schema / enum / 状态机有专属 pin 测试**：每个 TypeBox / serde variant 都要有正反 sample 对拍；每个 enum 变体至少一条专属 case；每个 state transition (A→B、A→C、A→A) 都有命中用例。schema 改动连同 sample 一起改
+- **集成测试走完整链路**：单元测试不能替代集成测试。client 发请求 → server 处理 → emit payload → client 收到 这种端到端路径要有专门的 e2e 用例，不要假设单元拼起来就是对的
+- **失败信息带修复线索**：assert 写清"期望是 X 因为 Y，实际是 Z"，而不是 `assertEq(a, b)` 一行带过。撞红时不需要 git blame 才能理解为什么

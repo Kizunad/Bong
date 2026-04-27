@@ -4,7 +4,9 @@
 
 **世界观锚点**：无（纯 UX/交互设计 plan）
 
-**交叉引用**：`plan-HUD-v1.md §2.2` · `plan-combat-ui_impl.md` · `plan-skill-v1.md` · `plan-baomai-v1.md`（首个接入的战斗流派）
+**交叉引用**：`plan-HUD-v1.md §2.2` · `plan-combat-ui_impl.md` · `plan-skill-v1.md` · `plan-baomai-v1.md`（首个接入的战斗流派 — **P0 不依赖**：本 plan P0 用 mock skill consumer 顶位即可，但接口必须按真实最终形态完整定义；P2 才换真实 impl）
+
+**测试方针**（CLAUDE.md 饱和化测试）：本 plan 所有新协议 / Component / handler / 状态转换都要饱和覆盖 — happy + 边界 + 错误分支 + 状态转换全到位。mock skill consumer 同样要测全部分支（Skill 路由命中 / cooldown / cast 中断 / 虚脱期），让 plan-baomai-v1 真实 consumer 接入时只换 fn pointer 不改测试。
 
 **依赖现有实现**（重点：现网 F1–F9 是 *运行时* 已实装但 *持久化* 未接通）：
 - 运行时绑定：`server/src/combat/components.rs:303` `QuickSlotBindings` Component（`slots: [Option<u64>; 9]` instance_id + `cooldown_until_tick: [u64; 9]`）
@@ -243,36 +245,38 @@ pub enum SkillBarBindingV1 {
 
 **单 tab 五区联动工作台**，避免"配技能时要在 修仙/技艺/战斗 多 tab 间反复切"的视图割裂。所有与「绑战斗技能」相关的信息——已学功法、技艺等级、当前选中功法所需经脉、修士全局状态、目标 Hotbar——同框可见。
 
-**视觉设计稿**：`docs/plans-skeleton/plan-hotbar-modify-v1.svg`（800×540 mockup，含五区 + 拖拽流向标注）。实装走 owo-lib `FlowLayout` + 现有 `GridSlotComponent` / `BodyInspectComponent` / `StatusBarsPanel` + 新增组件，不引入 runtime SVG 渲染（client 端无 batik，全部 PNG icon + `DrawContext`）。
+**视觉设计稿**：`docs/plans-skeleton/plan-hotbar-modify-v1.svg`（v2 · 920×580 mockup，按现网 `outerRow` 真实结构对齐：左 hotbarStrip+quickUseStrip 双竖条 / 中 mainPanel `战斗·修炼` tab / 右 discardStrip；含拖拽流向 ① 列表→左侧 hotbar slot 标注）。实装走 owo-lib `FlowLayout` + 现有 `GridSlotComponent` / `BodyInspectComponent` / `StatusBarsPanel` + 新增组件，不引入 runtime SVG 渲染（client 端无 batik，全部 PNG icon + `DrawContext`）。
 
-### 4.1 五区布局
+### 4.1 整体布局（按现网 InspectScreen.outerRow 真实结构）
+
+**关键事实**：现网 `InspectScreen.outerRow` 是 `horizontalFlow`（line 163），三段式 `[hotbarStrip 34px 竖条][quickUseStrip 34px 竖条][mainPanel 中央][discardStrip 34px 竖条]`；hotbar / quickUse / discard 全部是 `verticalFlow`（line 530/547/610），9 槽竖排，**不是底部横排**。「战斗·修炼」tab 是 mainPanel 内新增的第 4 个 tab。
 
 ```
-┌── InspectScreen · 「战斗 · 修炼」 tab ─────────────────────────────┐
-│ tab: 装备 | 修仙 | 技艺 | [战斗·修炼]              境界 凝脉一层 XP▰▰▱│
-├──────────────────────────────────┬────────────────────────────────┤
-│ ① 已学列表（拖源）                │ ② 功法详情卡                    │
-│   ─ 功法 ─                       │   [icon] 崩拳 · 黄阶 · 0.85    │
-│   [崩] 崩拳   黄阶 ▰▰▰▰▰▰▰░ 0.85│   描述 / 需求 / 招式数值        │
-│   [靠] 贴山靠 黄阶 ▰▰▰▰▰▰░░ 0.62│   ▸ 真元 30/360 · cast 8t      │
-│   [步] 血崩步 玄阶 ░░ 🔒 锁     │   ▸ cd 60t · 射程 1.8m         │
-│   [逆] 逆脉护体 ⊙ 维持中          │   ─ 已绑定槽 1（→ 出招）        │
-│   ─ 技艺 ─                       │                                │
-│   采药 lv2 30%  炼丹 lv4 60%     ├────────────────────────────────┤
-│   锻造 lv1 0%  (不可入战斗 Hotbar)│ ④ 修士状态                      │
-│                                  │   真元 ▰▰▰▰▰▰▰░ 280/360         │
-├──────────────────────────────────┤   体力 ▰▰▰▰▰▰▰▰ 92/100          │
-│ ③ 经脉视图（联动选中功法高亮）     │   因果 +0.32 · 综合 1240        │
-│   [人体剪影 + 高亮所需经脉]       │   区域 青云脉                    │
-│   ▰ 手阳明大肠经 LI · 健康        │                                │
-│   ▰ 手少阳三焦经 TE · 健康        │                                │
-│   污染 0.12/1.00                 │                                │
-├──────────────────────────────────┴────────────────────────────────┤
-│ ⑤ 1–9 战斗 Hotbar （拖目标 / 当前编辑层）                          │
-│ [1崩][2靠 cd2.1s][3逆 ⊙][4剑][5空][6空][7空][8空][9空+] | F1丹 F2绷│
-│ 拖入功法 = 绑技能 · 拖入物品 = server-driven 切手持 · 右键 = 清空   │
-└────────────────────────────────────────────────────────────────────┘
+┌── InspectScreen · outerRow horizontalFlow（gap=2，vAlign=CENTER）─────────────────┐
+│ ┌─1-9─┐ ┌─F1-9─┐ ┌── mainPanel (verticalFlow, padding 4) ────────────┐ ┌─丢弃─┐│
+│ │  1崩│ │  F1丹│ │ tab: 装备 修仙 技艺 [战斗·修炼]   境界 凝脉一层 XP▰▰▱│ │  丢 ││
+│ │  2靠│ │  F2绷│ ├────────────────────────────────────────────────────┤ │  弃 ││
+│ │ cd  │ │  F3 ░│ │ ① 已学列表（拖源）         │ ② 功法详情卡          │ │     ││
+│ │  3逆│ │  F4 ░│ │   ─ 功法 ─                │   [崩] 崩拳 · 黄阶     │ │     ││
+│ │  ⊙  │ │  F5 ░│ │   [崩] 崩拳   ★选中态     │   描述 / 需求 / 招式  │ │     ││
+│ │  4剑│ │  F6 ░│ │   [靠] 贴山靠 黄阶 0.62   │   ▸ 真元 30/360       │ │     ││
+│ │  5 ░│ │  F7 ░│ │   [步] 血崩步 🔒境界锁   │   ▸ cast 8t · cd 60t  │ │     ││
+│ │  6 ░│ │  F8 ░│ │   [逆] 逆脉护体 ⊙        │   ▸ 射程近身 1.8m     │ │     ││
+│ │  7 ░│ │  F9 ░│ │   ─ 技艺 ─                │   ▶ 已绑定 · 左侧槽 1 │ │     ││
+│ │  8 ░│ │      │ │   采药/炼丹/锻造（不入栏）│                       │ │     ││
+│ │  9＋│ │      │ ├────────────────────────────┼───────────────────────┤ │     ││
+│ │     │ │      │ │ ③ 经脉缩略图               │ ④ 修士状态            │ │     ││
+│ │ ↑   │ │      │ │   [人体剪影]              │   真元 280/360         │ │     ││
+│ │ 拖目│ │      │ │   ▰ LI 健康  ▰ TE 健康   │   体力 92/100          │ │     ││
+│ │ 标  │ │      │ │   污染 0.12/1.00         │   因果+0.32 实力1240   │ │     ││
+│ │     │ │      │ ├────────────────────────────┴───────────────────────┤ │     ││
+│ │     │ │      │ │ BottomInfoBar （现网持有，不动）                    │ │     ││
+│ └─────┘ └──────┘ └─────────────────────────────────────────────────────┘ └─────┘│
+└────────────────────────────────────────────────────────────────────────────────┘
+拖拽流向：mainPanel ① 列表 ─→ 左侧 hotbarStrip 槽 N（同侧为绑技能；同槽右键清空）
 ```
+
+**⑤ 区不在 mainPanel 内**：避免双份 1–9 — `⑤ 1–9 战斗 strip = 左侧已存在的 hotbarStrip` 复用，本 tab 内 ①②③④ 选中态联动时通过 `markBoundSlots(skill_id)` 给左侧 strip 已绑该功法的槽描金边做回路视觉提示。F1–F9 同理（quickUseStrip 为镜像，不动）。
 
 ### 4.2 区域职责
 
@@ -282,7 +286,7 @@ pub enum SkillBarBindingV1 {
 | **② 详情卡** | 选中态功法的完整信息：描述、需求（境界 + 经脉）、招式数值（消耗/cast/cd/射程）、已绑定 slot 反查 | `TechniquesSnapshotV1`（详见 §7）+ `SkillBarStore` 反查 | — | `TechniqueDetailCard` |
 | **③ 经脉缩略图** | 简化人体剪影 + 高亮"所选功法 `required_meridians`"对应经脉 + legend 列出健康度 | `MeridianBody`（已有完整 20 经数据）+ 详情卡 selected.required_meridians | `BodyInspectComponent` 加 compactMode | `MeridianChannel` 高亮集合参数 |
 | **④ 修士状态** | 真元 / 体力 / 因果 / 综合实力 / 区域，紧凑横向条 | `PlayerStateViewModel`（spiritQiCurrent/Max、karma、compositePower、zoneId） | `StatusBarsPanel` 紧凑变体 | — |
-| **⑤ 1-9 Hotbar** | 9 槽：技能（黄边）/ 物品（蓝边）/ 空（虚线）/ 冷却蒙灰 / toggle on（绿边小圆点）；右侧只读镜像 F1-F9 | `SkillBarStore`（新）+ `QuickUseSlotStore`（已有） | `GridSlotComponent` 拖拽事件 | `CombatHotbarStrip` · 与 `SkillBarHudPlanner` 共享渲染 |
+| **⑤ 1-9 Hotbar** | **不在 tab 内**：直接复用 outerRow 远左 `hotbarStrip`（9 槽竖排 verticalFlow，width=cs+6=34）；技能（黄边）/ 物品（蓝边）/ 空（虚线）/ 冷却蒙灰 / toggle on（绿边小圆点）；左侧第二条 `quickUseStrip` 为 F1–F9 不动 | `SkillBarStore`（新）+ `QuickUseSlotStore`（已有） | `GridSlotComponent` 拖拽事件 + 现网 `buildHotbarStrip()`（line 528） | `SkillBarHudPlanner`（HUD 端共享渲染） |
 
 ### 4.3 选中态联动
 
@@ -461,7 +465,7 @@ InspectScreen「战斗·修炼」tab（§4 五区工作台）
 | `client/src/main/java/com/bong/client/combat/inspect/CombatTrainingPanel.java`（新文件） | §4 五区工作台主容器（owo `FlowLayout`）；持有 `selectedTechniqueId` 状态 + `selectionChanged` 事件总线；负责 ① 列表 / ② 详情 / ③ 经脉 / ④ 状态 / ⑤ Hotbar 五区拼装与跨区联动 |
 | `client/src/main/java/com/bong/client/combat/inspect/TechniqueDetailCard.java`（新文件） | ② 详情卡（描述 / 需求 / 招式数值四宫格 / 已绑定提示），订阅 `selectionChanged` 刷新；从 `TechniquesSnapshotV1` entry 渲染 |
 | `client/src/main/java/com/bong/client/combat/inspect/MeridianMiniView.java`（新文件 / 或扩展 `BodyInspectComponent.compactMode`） | ③ 经脉缩略图（compact 模式）：人体剪影 + `highlightChannels(Set<MeridianChannel>)` 接受联动参数；右下角"详情"链接跳转到「修仙」tab 完整经脉视图 |
-| `client/src/main/java/com/bong/client/combat/inspect/CombatHotbarStrip.java`（新文件） | ⑤ 1-9 槽渲染 + 镜像 F1-F9（只读）+ 拖目标判定；与 `SkillBarHudPlanner` 共享一份槽位绘制逻辑（抽到 `SkillSlotRenderer` util） |
+| ~~`client/.../combat/inspect/CombatHotbarStrip.java`~~ | ~~新文件~~ —— **取消**：⑤ 复用现网 `InspectScreen.buildHotbarStrip()` 产物（`outerRow` 远左 `hotbarStrip`），扩 `GridSlotComponent` 拖目标 kind = `SKILL_BAR(slot)` 即可。F1–F9 镜像也无需新增——左侧第二条 `quickUseStrip` 是同源现网组件 |
 | `client/src/main/java/com/bong/client/network/TechniquesSnapshotHandler.java`（新文件） | 接收 `TechniquesSnapshotV1` → 调 `TechniquesListPanel.replace(...)`；entry 字段扩展为含 `description` / `required_realm` / `required_meridians` / `qi_cost` / `cast_ticks` / `cooldown_ticks` / `range`（同步扩展 `TechniquesListPanel.Technique` record） |
 | `client/src/main/java/com/bong/client/inventory/state/DragState.java` | 扩展 `SourceKind.TECHNIQUE`（带 `skill_id`）/ `TargetKind.SKILL_BAR(slot)`；技艺行为 `SourceKind.SKILL_LV` 但 drop 即 reject（不可入战斗 Hotbar） |
 
@@ -483,7 +487,7 @@ Server：
   - [ ] PlayerUiPrefs 改 pub(crate) + 新增 skill_bar: [SkillSlotPersist; 9] 字段
   - [ ] handle_skill_bar_bind：解析 binding union → 写 SkillBarBindings.slots[slot]（Skill: skill_id 注册校验；Item: template_id → 背包首个匹配 instance；None: Empty）
   - [ ] handle_skill_bar_cast：读 slots[slot] → Skill 路由到 skill system / Item 视为 nop / Empty 视为 nop
-  - [ ] 路由表：skill_id → system fn pointer（初期 mock，真实 burst_meridian.beng_quan 由 plan-baomai-v1 P0 接入）
+  - [ ] 路由表：skill_id → system fn pointer（**接口完整 + mock 顶位**：fn 签名按真实最终形态定义 `fn(&mut World, EntityId, slot, target) -> CastResult`；mock 实现走完整 cast→cooldown→complete 状态机，仅伤害结算/经脉消耗用占位常量；plan-baomai-v1 接入时只替换 fn pointer 不改路由层）
   - [ ] network/skillbar_config_emit.rs 新增 emit_skillbar_config_payloads（mirror quickslot_config_emit.rs）
   - [ ] 持久化：登录时读 prefs_json.skill_bar → 注入 SkillBarBindings；handle_skill_bar_bind 写 Component 时同步 mark prefs dirty
   - [ ] 顺手补（P0 必做）：现网 PlayerUiPrefs.quick_slots dead field 修复——
@@ -495,11 +499,29 @@ Server：
         Skill → 发 SkillBarCast + cancel keypress；Item/Empty → 不 cancel，让 MC server-driven hotbar 切换继续
   - [ ] hud/SkillBarHudPlanner.java：渲染 1–9 槽（测试用崩拳图标 + 冷却蒙灰；参考 QuickBarHudPlanner）
   - [ ] network/SkillBarConfigHandler.java：接收 SkillBarConfigV1 → 更新 SkillBarStore（参考 QuickSlotConfigHandler）
-测试：
-  - [ ] 按 1 → client 发 SkillBarCast { slot: 0 } → server 路由到 mock handler
-  - [ ] SkillBarBind { slot: 0, binding: { kind: "skill", skill_id: "..." } } → 重启进程不丢（先验证 prefs 持久化，再验证登录恢复 SkillBarBindings）
-  - [ ] 回归：F1–F9 quick slot 重启后不丢（验证顺手补的 quick_slots 持久化）
-  - [ ] TS↔Rust schema 对称：UseQuickSlot/QuickSlotBind/SkillBarBind/SkillBarCast 双端 sample 对拍
+测试（**饱和化**：见 CLAUDE.md "Testing — 饱和化测试"，每条 case 都要把"目标行为"锁死，回归立刻撞红）：
+  Schema 双端对拍：
+  - [ ] TS↔Rust sample 对拍：UseQuickSlot / QuickSlotBind / SkillBarBind / SkillBarCast 全协议 happy + invalid（多余字段 / 类型错 / slot 越界 / binding union 缺 kind）
+  - [ ] SkillBarBindingV1 union：null / item / skill 三 variant 各有正反 sample
+  按键路由（mixin + handle_skill_bar_cast）饱和分支：
+  - [ ] slot Empty → 按 1 nop（不发 SkillBarCast，server 收到也 drop 并日志告警）
+  - [ ] slot Item → 按 1 走 server-driven hotbar 切换（不 cancel keypress、不发 SkillBarCast）
+  - [ ] slot Skill → 按 1 发 SkillBarCast → mock consumer 走完整 cast→cooldown→complete
+  - [ ] cooldown 期内按 1 → client 蒙灰挡住；server 兜底 drop（双层防御都测）
+  - [ ] cast 期内受击中断 / 控制中断 / 移动 >0.3m 中断三种各一条 case（共用 tick_casts_or_interrupt 路径）
+  绑定持久化（每条 transition 一条 case）：
+  - [ ] SkillBarBind Empty → Skill：写 SkillBarBindings + 写 prefs.skill_bar + emit SkillBarConfigV1
+  - [ ] SkillBarBind Skill → Empty（binding=null）：清空双层 + emit
+  - [ ] SkillBarBind Skill → 不同 Skill：覆盖且 cooldown 重置
+  - [ ] 重启进程：prefs 落盘 → 登录读 prefs → 注入 SkillBarBindings；与重启前完全一致
+  - [ ] 边界：slot 越界（10 / -1）reject；skill_id 不在 skill_registry reject
+  顺手补 quick_slots 死字段（同款饱和）：
+  - [ ] handle_quick_slot_bind 写 Component 同步 mark prefs dirty + 落盘
+  - [ ] 登录读 prefs.quick_slots → 注入 QuickSlotBindings；F1–F9 重启不丢
+  - [ ] 回归：现网 UseQuickSlot 行为不变（cast / cooldown / 中断三路径）
+  Mock skill consumer 接口锁定（让 plan-baomai-v1 接入时不改测试）：
+  - [ ] 路由 fn 签名 pin 测试：fn(&mut World, EntityId, slot, target) -> CastResult 各分支命中
+  - [ ] CastResult enum 全 variant（Started / Rejected{reason} / Interrupted）各有 case
 ```
 
 ### P1 · InspectScreen 五区联动工作台（目标：1.5 周）
@@ -548,22 +570,23 @@ Server：
 **P1.e · ⑤ 1-9 Hotbar 拖入 + ④ 状态条**
 ```
   - [ ] DragState 扩展 SourceKind.TECHNIQUE / TargetKind.SKILL_BAR(slot) / SourceKind.SKILL_LV (drop reject)
-  - [ ] CombatHotbarStrip.java（9 槽 + 镜像 F1-F9 只读）
+  - [ ] **不新建 CombatHotbarStrip** —— ⑤ = 现网 outerRow 远左 hotbarStrip（line 528），通过 GridSlotComponent dropTargetKind 接受 SKILL_BAR(slot) 类型即可
   - [ ] 拖入校验：境界不足 / 经脉 SEVERED → reject + 灰显反馈 + toast 提示
   - [ ] 命中：乐观更新 SkillBarStore + 发 SkillBarBind；server reject 由 SkillBarConfigHandler 回滚
-  - [ ] 右键槽位 = 清空（发 SkillBarBind { binding: null }）
+  - [ ] 右键左侧 strip 槽位 = 清空（发 SkillBarBind { binding: null }）
   - [ ] StatusBarsPanel 紧凑变体（真元 + 体力 + 因果 + 综合实力 + 区域），④ 区横向条
-  - [ ] markBoundSlots(skill_id) — 选中功法时，⑤ 中已绑定该功法的槽描金边联动
-  - [ ] 抽 SkillSlotRenderer util，CombatHotbarStrip + SkillBarHudPlanner 共享绘制
+  - [ ] markBoundSlots(skill_id) — 选中功法时，左侧 hotbarStrip 中已绑定该功法的槽描金边（GridSlotComponent.setHighlight）
+  - [ ] 抽 SkillSlotRenderer util，hotbarStrip 槽渲染 + SkillBarHudPlanner（HUD 端）共享绘制
 ```
 
-### P2 · 完整集成（随 plan-baomai-v1 P0 同步）
+### P2 · 完整集成（随 plan-baomai-v1 P0 同步 — 仅替换 mock fn pointer，路由 / handler / 协议 / 测试都不改）
 
 ```
-  - [ ] 崩拳绑定 + 按 1 出招全链路贯通
+  - [ ] 崩拳绑定 + 按 1 出招全链路贯通（替换 mock skill consumer = plan-baomai-v1 真实 resolve_beng_quan）
   - [ ] BurstMeridianEvent → 客户端播放动画 + 沉重色粒子
   - [ ] 冷却同步（SkillBarConfigV1，含 cooldown_until_ms）→ SkillBarHudPlanner 倒计时蒙灰
   - [ ] 虚脱期感知：1–9 槽位红色锁定覆盖
+  - [ ] **回归**：P0 全部饱和化测试通过率 100%（任何一条红就证明接口或路由层不该改而被改了）
 ```
 
 ---
@@ -591,7 +614,17 @@ Server：
   (6) `TechniquesListPanel.java` 空骨架已存在但未挂上 InspectScreen
   同时统一 cooldown 同步通道为 `SkillBarConfigV1`（不再引入 `SkillBarSyncV1`），binding 用 union 而非字符串前缀。补全所有依赖文件行号。
 - 2026-04-26（UI 优化 v2）：把 §4 配置流程从"加新 tab + 仅功法列表 + 1-9 槽"升级为「**战斗 · 修炼**」**五区联动工作台**——一个 tab 内同框：① 已学列表（功法 + 技艺 lv+xp）/ ② 功法详情卡（描述 + 需求 + 招式数值）/ ③ 经脉缩略图（高亮所选功法所需经脉）/ ④ 修士状态条（真元/体力/因果/综合）/ ⑤ 1-9 战斗 Hotbar（拖目标 + 镜像 F1-F9）。核心增益是**选中态联动**：① 选项 → ② 详情刷新 + ③ 经脉高亮变更 + ⑤ 已绑槽位描金边。
-  - SVG 设计稿落库：`docs/plans-skeleton/plan-hotbar-modify-v1.svg`（800×540 mockup，含拖拽流向标注 + 五区色板对齐 `Grade.color()` 与 `MeridianChannel.baseColor()`）。client 端无 runtime SVG 渲染（无 batik），实装走 owo `FlowLayout` + `GridSlotComponent` + `BodyInspectComponent` + PNG icon + `DrawContext`。
+  - SVG 设计稿落库：`docs/plans-skeleton/plan-hotbar-modify-v1.svg`（v1 · 800×540 mockup，含拖拽流向标注 + 五区色板对齐 `Grade.color()` 与 `MeridianChannel.baseColor()`）。client 端无 runtime SVG 渲染（无 batik），实装走 owo `FlowLayout` + `GridSlotComponent` + `BodyInspectComponent` + PNG icon + `DrawContext`。
   - 落定 §9 开放问题：客户端「已学功法列表」走 server push 路线 → 新增 `TechniquesSnapshotV1` payload + 服务端 `KnownTechniques` Component + `skill_registry.rs` 静态注册表（§7.2 新增三文件）。
   - §1.2 缺失清单补四项：功法详情卡 / 经脉与功法选中联动 / 技艺与战斗工作台同框 / 全局状态在配置面板可见。
   - §8 P1 拆为五子任务（a 数据链路 / b 列表 / c 详情卡 / d 经脉缩略图 / e Hotbar+状态条），每子任务独立可见效便于阶段性 review。
+- 2026-04-27（设计稿修订 v2 · hotbar 位置纠偏）：v1 SVG 把 ⑤ 1–9 Hotbar 画在 InspectScreen 底部横排（800×48），实地考察 `client/src/main/java/com/bong/client/inventory/InspectScreen.java:163-476` 发现现网 `outerRow` 是 `horizontalFlow`，三段式 `[hotbarStrip(34) | quickUseStrip(34) | mainPanel | discardStrip(34)]`，hotbar / quickUse / discard 全是 `verticalFlow` 9 槽竖排（line 530/547/610），**v1 设计稿与现网完全错位**。
+  - 重绘 `plan-hotbar-modify-v1.svg`（v2 · 920×580），按现网 `outerRow` 真实结构画：左侧两条 strip 竖排 + 中央 mainPanel 显示「战斗·修炼」tab + 右侧 discardStrip。
+  - 修订 §4.1 五区布局 ASCII 图：⑤ 不再是 mainPanel 内独立区，而是**复用左侧已有 hotbarStrip 当拖目标**，避免双份 1–9。
+  - §4.2 区域职责表 ⑤ 行：取消"新增 `CombatHotbarStrip`"，改为扩 `GridSlotComponent.dropTargetKind = SKILL_BAR(slot)`；§7.3 客户端表对应文件删除（保留 `SkillBarHudPlanner` 用于 HUD 渲染）。
+  - §8 P1.e 子任务相应调整：去掉 CombatHotbarStrip 行，加左侧 strip 拖目标接入 + `GridSlotComponent.setHighlight` 联动。
+- 2026-04-27（依赖解耦 + 测试方针）：原 P0 / P1.a 描述把 mock skill consumer 写得像"应付占位"，与 plan-baomai-v1 P0 时序绑死。修订为 **mock 顶位 + 完整接口 + 饱和化测试** 方针：
+  - 头部「测试方针」段落新增，引 CLAUDE.md "Testing — 饱和化测试"。
+  - 路由表 fn 签名按真实最终形态定义 `fn(&mut World, EntityId, slot, target) -> CastResult`；mock 实现完整走 cast→cooldown→complete 状态机；plan-baomai-v1 接入时只换 fn pointer 不改路由层。
+  - §8 P0 测试章节重写为饱和清单：schema 双端对拍 / 按键路由 4 分支 / 中断 3 路径 / 绑定 transition 4 状态 / 持久化 / 边界 reject / quick_slots 死字段补救 / mock consumer 接口 pin —— 每条都把"目标行为"锁死，回归即撞红。
+  - P2 标注为"仅替换 mock fn pointer"，并加回归条 = P0 测试全绿。

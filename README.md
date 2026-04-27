@@ -16,10 +16,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-04-27 · 共 56 份 plan_
 
 ```
-总进度  ██████████████████░░░░░░░░░░░░  58.9%
+总进度  ██████████████████░░░░░░░░░░░░  59.2%
 ```
 
-**分布**：`merged` 20 · `wip` 11 · `design` 7 · `skeleton` 9 · `done` 9
+**分布**：`merged` 20 · `wip` 11 · `design` 9 · `skeleton` 7 · `done` 9
 
 ### 坍缩渊（TSY）
 _搜打撤独立位面玩法（10 子 plan） · 10 份 · 组均 71%_
@@ -38,7 +38,7 @@ _搜打撤独立位面玩法（10 子 plan） · 10 份 · 组均 71%_
 | `design` | **TSY 敌对 NPC（道伥/执念/守灵）** <br/><sub>`plan-tsy-hostile-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-27 |
 
 ### 战斗 / HUD / 视觉
-_战斗 ECS、流派、HUD、粒子、动画、Iris · 8 份 · 组均 68%_
+_战斗 ECS、流派、HUD、粒子、动画、Iris · 10 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -49,6 +49,8 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 8 份 · 组均 68%_
 | `wip` | **PlayerAnimator 玩家动画系统** <br/><sub>`plan-player-animation-v1.md`</sub> | `█████████░░░`  75% | — | 2026-04-27 |
 | `merged` | **粒子/世界内 VFX 系统** <br/><sub>`plan-particle-system-v1.md`</sub> | `█████████░░░`  72% | #17 | 2026-04-27 |
 | `merged` | **战斗 ECS（伤害/流派/状态/死亡）** <br/><sub>`plan-combat-no_ui.md`</sub> | `██████░░░░░░`  52% | #10 #16 #30 | 2026-04-27 |
+| `design` | **快捷栏双行重构（1-9 战斗 / F1-F9 物品快捷）** <br/><sub>`plan-hotbar-modify-v1.md`</sub> | `██░░░░░░░░░░`  18% | — | 2026-04-27 |
+| `design` | **体修·爆脉流（崩拳示范）** <br/><sub>`plan-baomai-v1.md`</sub> | `█░░░░░░░░░░░`  12% | — | 2026-04-27 |
 | `design` | **Iris 光影集成（修仙状态驱动）** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-27 |
 
 ### 修炼 / 经济
@@ -90,14 +92,12 @@ _IPC schema、持久化、工作流、内容、音效 · 5 份 · 组均 50%_
 | `design` | **零自制资源 vanilla 音效层叠** <br/><sub>`plan-audio-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-27 |
 
 ### 骨架 plan
-_战斗流派 + 快捷栏，等待开工 · 9 份 · 组均 6%_
+_战斗流派 + 快捷栏，等待开工 · 7 份 · 组均 6%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
 | `skeleton` | **天道叙事内容侧** <br/><sub>`plan-narrative-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | — |
-| `skeleton` | **快捷栏双行重构** <br/><sub>`plan-hotbar-modify-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | — |
 | `skeleton` | **器修·暗器流** <br/><sub>`plan-anqi-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
-| `skeleton` | **体修·爆脉流** <br/><sub>`plan-baomai-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **毒蛊流** <br/><sub>`plan-dugu-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **替尸·蜕壳流** <br/><sub>`plan-tuike-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **绝灵·涡流流** <br/><sub>`plan-woliu-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |

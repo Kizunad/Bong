@@ -223,6 +223,26 @@ plans:
     blocking_on: []
     summary: "20 动画 JSON 全部落地、BongAnimationRegistry/Player/Bridge + BongAnimCommand 就绪、server vfx_event_emit.rs PlayAnim/StopAnim 广播器已实装；combat/cultivation 自动映射 + §4.4 inline JSON 注入(天道生成) 未启动"
 
+  - file: plan-hotbar-modify-v1.md
+    group: combat-vfx
+    title: "快捷栏双行重构（1-9 战斗 / F1-F9 物品快捷）"
+    state: active-design
+    percent: 18
+    last_updated: "2026-04-27"
+    pr_refs: []
+    blocking_on: []
+    summary: "设计已锁：v2 SVG 对齐现网 outerRow 真实结构（左 hotbarStrip+quickUseStrip 双竖条 / 中 mainPanel 战斗·修炼 tab / 右 discardStrip）；P0 不依赖 plan-baomai-v1（mock skill consumer 顶位 + 完整接口），§8 测试章节按 CLAUDE.md 饱和化清单重写；零代码，可立即开工"
+
+  - file: plan-baomai-v1.md
+    group: combat-vfx
+    title: "体修·爆脉流（崩拳示范）"
+    state: active-design
+    percent: 12
+    last_updated: "2026-04-27"
+    pr_refs: []
+    blocking_on: ["plan-hotbar-modify-v1"]
+    summary: "P0 收紧到仅崩拳（引气期最低级，项目首个落地战斗功法示范）；§3 重写为对接 hotbar plan skill_registry fn pointer 替换 mock；§13 新增饱和化测试清单 12+ 条；4 招/虚脱期/染色加成下沉 P1+；阻塞在 hotbar plan P0 merged 后"
+
   # ============================================================
   # Group: cultivation-economy
   # ============================================================
@@ -445,16 +465,6 @@ plans:
     blocking_on: []
     summary: "骨架，等四论挂点"
 
-  - file: plan-baomai-v1.md
-    group: skeleton
-    title: "体修·爆脉流"
-    state: skeleton
-    percent: 5
-    last_updated: ""
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架，等四论挂点"
-
   - file: plan-dugu-v1.md
     group: skeleton
     title: "毒蛊流"
@@ -504,16 +514,6 @@ plans:
     pr_refs: []
     blocking_on: []
     summary: "骨架，等四论挂点"
-
-  - file: plan-hotbar-modify-v1.md
-    group: skeleton
-    title: "快捷栏双行重构"
-    state: skeleton
-    percent: 8
-    last_updated: ""
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架（含现网代码坐标调研）"
 
   - file: plan-narrative-v1.md
     group: skeleton
