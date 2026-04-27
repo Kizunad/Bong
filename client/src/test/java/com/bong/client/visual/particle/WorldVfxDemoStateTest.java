@@ -4,6 +4,7 @@ import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class WorldVfxDemoStateTest {
@@ -37,7 +38,10 @@ public class WorldVfxDemoStateTest {
         FormationCoreDemoState state = new FormationCoreDemoState(Vec3d.ZERO, 120, 0.9, 0xC4E0FF);
         assertTrue(state.shouldPulse(), "new formation demo should emit an initial pulse");
 
-        for (int i = 0; i < 15; i++) {
+        state.tick();
+        assertFalse(state.shouldPulse(), "age 1 should not double-emit the initial pulse");
+
+        for (int i = 1; i < 15; i++) {
             state.tick();
         }
         assertTrue(!state.shouldPulse(), "age 15 is not a pulse frame");

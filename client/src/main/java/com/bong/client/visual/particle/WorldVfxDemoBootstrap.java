@@ -64,7 +64,6 @@ public final class WorldVfxDemoBootstrap {
         ensureWorld(world);
         FormationCoreDemoState state = new FormationCoreDemoState(origin, durationTicks, strength, colorRgb);
         FORMATION_CORES.add(state);
-        spawnFormationPulse(world, state);
     }
 
     private static void tick(MinecraftClient client) {
