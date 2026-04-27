@@ -8,8 +8,8 @@ import java.util.function.Consumer;
  * plan-skill-v1 §8 客户端 skill 全局快照。网络 handler 调用 {@link #replace} /
  * {@link #updateEntry}；UI 组件订阅变更。
  *
- * <p>同时是 {@code BotanySkillStore} 的派生源：P2 将 botany 单项视图改为读取本 store 的
- * {@link SkillId#HERBALISM} 条目（见 {@code BotanySkillStore}）。
+ * <p>botany/lingtian 的采药单项视图也从本 store 的 {@link SkillId#HERBALISM} 条目派生，
+ * 不再维护独立 skill 状态。
  */
 public final class SkillSetStore {
     private static volatile SkillSetSnapshot snapshot = SkillSetSnapshot.empty();

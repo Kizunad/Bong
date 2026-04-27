@@ -23,8 +23,8 @@ import java.util.regex.Pattern;
  * 何时同步向 client 推送此 4 类 CustomPayload 由各 plan 触发点接入决定（P3+）。本 handler
  * 先注册好分发路径，等 server 端触发上线即可零改动吃数据。
  *
- * <p>Server 侧同时保留老的 {@code botany_skill} 通道（P2 不移除，兼容）—— 该 handler 同时
- * 把 herbalism 镜像到本 store（见 {@link BotanySkillHandler}）。
+ * <p>Server 侧同时保留老的 {@code botany_skill} 通道（P2 不移除，兼容）—— 由
+ * {@link BotanySkillHandler} 镜像到本 store 的 herbalism 条目。
  */
 public final class SkillEventHandler {
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
