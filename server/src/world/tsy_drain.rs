@@ -13,6 +13,8 @@ use crate::cultivation::components::Cultivation;
 use crate::npc::spawn::NpcMarker;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::tsy::TsyPresence;
+use crate::world::tsy_container::SEARCH_DRAIN_MULTIPLIER;
+use crate::world::tsy_container_search::IsSearching;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 引气满池基准（qi_max = 100 → pool_ratio = 1.0）。
@@ -31,11 +33,15 @@ type TsyDrainPlayerQuery<'w, 's> = Query<
         &'static Position,
         &'static TsyPresence,
         Option<&'static CurrentDimension>,
+        Option<&'static IsSearching>,
     ),
     Without<NpcMarker>,
 >;
 
-/// 纯函数：单 tick 抽取量（点）。非 TSY zone 返回 0；空池返回 0。
+/// 纯函数：单 tick 基础抽取量（点）。非 TSY zone 返回 0；空池返回 0。
+///
+/// **注意**：本函数不含搜刮 1.5× 乘数；调 [`compute_search_drain_multiplier`]
+/// 拿乘数自己叠（`tsy_drain_tick` 已经走整合路径）。
 pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
     if !zone.is_tsy() {
         return 0.0;
@@ -47,6 +53,16 @@ pub fn compute_drain_per_tick(zone: &Zone, cultivation: &Cultivation) -> f64 {
     let pool_ratio = pool / REFERENCE_POOL;
     let nonlinear = pool_ratio.powf(NONLINEAR_EXPONENT);
     zone.spirit_qi.abs() * nonlinear * BASE_DRAIN_PER_TICK
+}
+
+/// plan-tsy-container-v1 §2.3 — 搜刮中真元抽取乘数。
+/// 搜刮是主动暴露行为：抽吸速率在 baseline 上 ×1.5。
+pub fn compute_search_drain_multiplier(in_search: bool) -> f64 {
+    if in_search {
+        SEARCH_DRAIN_MULTIPLIER
+    } else {
+        1.0
+    }
 }
 
 /// plan-tsy-zone-v1 §2.2 — 抽真元 tick system。
@@ -65,13 +81,15 @@ pub fn tsy_drain_tick(
     mut deaths: EventWriter<DeathEvent>,
     mut players: TsyDrainPlayerQuery,
 ) {
-    for (entity, mut cultivation, pos, _presence, current_dim) in &mut players {
+    for (entity, mut cultivation, pos, _presence, current_dim, searching) in &mut players {
         // 跨位面前 dim 兜底：缺 CurrentDimension 视为 TSY（presence 已经隐含玩家在内）
         let dim = current_dim.map(|c| c.0).unwrap_or(DimensionKind::Tsy);
         let Some(zone) = zones.find_zone(dim, pos.0) else {
             continue;
         };
-        let drain = compute_drain_per_tick(zone, &cultivation);
+        // plan-tsy-container-v1 §2.3 — 搜刮中真元 ×1.5；非搜刮等价旧行为。
+        let base = compute_drain_per_tick(zone, &cultivation);
+        let drain = base * compute_search_drain_multiplier(searching.is_some());
         if drain <= 0.0 {
             continue;
         }
@@ -196,6 +214,26 @@ mod tests {
         let mid = compute_drain_per_tick(&tsy_zone("tsy_a_mid", -0.7), &p);
         let deep = compute_drain_per_tick(&tsy_zone("tsy_a_deep", -1.1), &p);
         assert!(shallow < mid && mid < deep);
+    }
+
+    #[test]
+    fn search_drain_multiplier_is_one_when_not_searching() {
+        assert_eq!(compute_search_drain_multiplier(false), 1.0);
+    }
+
+    #[test]
+    fn search_drain_multiplier_is_one_point_five_when_searching() {
+        assert_eq!(compute_search_drain_multiplier(true), 1.5);
+    }
+
+    #[test]
+    fn search_multiplier_scales_baseline_drain_one_point_five_x() {
+        // baseline 与搜刮中应严格 1.5× 关系
+        let z = tsy_zone("tsy_lingxu_01_mid", -0.7);
+        let p = player(100.0);
+        let base = compute_drain_per_tick(&z, &p);
+        let with_search = base * compute_search_drain_multiplier(true);
+        assert!((with_search - base * 1.5).abs() < 1e-9);
     }
 
     #[test]
