@@ -3976,6 +3976,16 @@ fn should_export_public_snapshot(char_id: &str) -> bool {
     char_id.starts_with("offline:")
 }
 
+fn sanitize_deceased_snapshot_stem(char_id: &str) -> String {
+    char_id
+        .chars()
+        .map(|character| match character {
+            ':' | '/' | '\\' => '_',
+            _ => character,
+        })
+        .collect()
+}
+
 fn default_termination_category() -> String {
     "横死".to_string()
 }
@@ -4002,15 +4012,16 @@ fn stage_public_deceased_export(
 ) -> io::Result<StagedDeceasedExport> {
     fs::create_dir_all(settings.deceased_public_dir())?;
 
+    let snapshot_stem = sanitize_deceased_snapshot_stem(char_id);
     let snapshot_path = settings
         .deceased_public_dir()
-        .join(format!("{char_id}.json"));
+        .join(format!("{snapshot_stem}.json"));
     let index_path = settings.deceased_public_dir().join("_index.json");
     let previous_snapshot = fs::read(&snapshot_path).ok();
     let previous_index = fs::read(&index_path).ok();
     fs::write(&snapshot_path, snapshot_json.as_bytes())?;
 
-    let relative_snapshot_path = format!("deceased/{char_id}.json");
+    let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
     let mut entries = read_deceased_index(&index_path)?;
     entries.retain(|entry| entry.char_id != char_id);
     entries.push(DeceasedIndexEntry {
@@ -4372,6 +4383,14 @@ mod persistence_tests {
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
     use valence::prelude::{App, DVec3, EntityKind, Position};
+
+    #[test]
+    fn sanitize_deceased_snapshot_stem_replaces_windows_invalid_separators() {
+        assert_eq!(
+            sanitize_deceased_snapshot_stem("offline:Ancestor/Shard\\Echo"),
+            "offline_Ancestor_Shard_Echo"
+        );
+    }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -6015,7 +6034,7 @@ mod persistence_tests {
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
         let index_path = settings.deceased_public_dir().join("_index.json");
         let snapshot: DeceasedSnapshot = serde_json::from_str(
             &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
@@ -6065,9 +6084,9 @@ mod persistence_tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
         assert_eq!(index[0].termination_category, "横死");
-        assert_eq!(public_path, "deceased/offline:Ancestor.json");
+        assert_eq!(public_path, "deceased/offline_Ancestor.json");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6114,7 +6133,7 @@ mod persistence_tests {
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
         let public_snapshot: DeceasedSnapshot = serde_json::from_str(
             &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
         )
@@ -6210,7 +6229,7 @@ mod persistence_tests {
         persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
             .expect("second terminated snapshot should overwrite export");
 
-        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
         let index_path = settings.deceased_public_dir().join("_index.json");
         let snapshot: DeceasedSnapshot = serde_json::from_str(
             &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
@@ -6239,10 +6258,10 @@ mod persistence_tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 99);
-        assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
         assert_eq!(index[0].termination_category, "横死");
         assert_eq!(died_at_tick, 99);
-        assert_eq!(public_path, "deceased/offline:Ancestor.json");
+        assert_eq!(public_path, "deceased/offline_Ancestor.json");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6299,17 +6318,17 @@ mod persistence_tests {
         assert_eq!(index.len(), 3);
         assert_eq!(index[0].char_id, "offline:Bronze");
         assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline:Bronze.json");
+        assert_eq!(index[0].path, "deceased/offline_Bronze.json");
         assert_eq!(index[0].termination_category, "横死");
 
         assert_eq!(index[1].char_id, "offline:Azure");
         assert_eq!(index[1].died_at_tick, 90);
-        assert_eq!(index[1].path, "deceased/offline:Azure.json");
+        assert_eq!(index[1].path, "deceased/offline_Azure.json");
         assert_eq!(index[1].termination_category, "横死");
 
         assert_eq!(index[2].char_id, "offline:Crimson");
         assert_eq!(index[2].died_at_tick, 90);
-        assert_eq!(index[2].path, "deceased/offline:Crimson.json");
+        assert_eq!(index[2].path, "deceased/offline_Crimson.json");
         assert_eq!(index[2].termination_category, "横死");
 
         let _ = fs::remove_dir_all(root);
@@ -6358,7 +6377,7 @@ mod persistence_tests {
                 &fs::read_to_string(
                     settings
                         .deceased_public_dir()
-                        .join(format!("{char_id}.json")),
+                        .join(format!("{}.json", sanitize_deceased_snapshot_stem(char_id))),
                 )
                 .expect("snapshot json should exist"),
             )

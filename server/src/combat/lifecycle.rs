@@ -2531,7 +2531,7 @@ mod tests {
             &fs::read_to_string(
                 settings
                     .deceased_public_dir()
-                    .join("offline:ShortLived.json"),
+                    .join("offline_ShortLived.json"),
             )
             .expect("deceased snapshot should exist"),
         )
@@ -2749,7 +2749,7 @@ mod tests {
         });
         app.update();
 
-        let snapshot_path = settings.deceased_public_dir().join("offline:Ancestor.json");
+        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
         let index_path = settings.deceased_public_dir().join("_index.json");
         let snapshot: DeceasedSnapshot = serde_json::from_str(
             &fs::read_to_string(&snapshot_path).expect("snapshot file should exist"),
@@ -2770,7 +2770,7 @@ mod tests {
         ));
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
         assert_eq!(index[0].termination_category, "自主归隐");
 
         let _ = fs::remove_dir_all(root);

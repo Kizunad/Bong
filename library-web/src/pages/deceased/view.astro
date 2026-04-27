@@ -149,7 +149,7 @@ import Base from "../../layouts/Base.astro";
     function safeSnapshotPath(rawPath) {
       if (!rawPath) return "";
       var path = rawPath.replace(/^\/+/, "");
-      if (!path.startsWith("deceased/") || !path.endsWith(".json") || path.indexOf("..") !== -1) {
+      if (!path.startsWith("deceased/") || !path.endsWith(".json") || /[\\:]/.test(path) || path.indexOf("..") !== -1) {
         return "";
       }
       return path;

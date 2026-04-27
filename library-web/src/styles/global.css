@@ -164,7 +164,7 @@ body::before {
 .site-nav-links {
   display: flex;
   align-items: baseline;
-  gap: 1rem;
+  gap: 1.2rem;
 }
 .site-nav a {
   color: rgba(192, 184, 168, 0.5);
@@ -184,12 +184,6 @@ body::before {
   font-size: 0.72rem;
   letter-spacing: 0.2em;
 }
-.site-nav-links {
-  display: flex;
-  align-items: baseline;
-  gap: 1.2rem;
-}
-
 /* ══════════════════════════════════════
    页脚
    ══════════════════════════════════════ */
@@ -399,34 +393,11 @@ body::before {
   display: inline-block;
 }
 
-/* ══════════════════════════════════════
-   亡者博物馆
-   ══════════════════════════════════════ */
-.museum-shell {
-  max-width: 48rem;
-  margin: 0 auto;
-}
-
 .museum-kicker {
   color: #96804a;
   font-size: 0.72rem;
   letter-spacing: 0.24em;
   margin-bottom: 0.8rem;
-}
-
-.museum-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.museum-stats {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  color: #a09486;
-  font-size: 0.78rem;
 }
 
 .museum-status {
@@ -458,86 +429,12 @@ body::before {
   background: rgba(44, 40, 35, 0.05);
 }
 
-.deceased-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.9rem;
-  margin-top: 1.2rem;
-}
-
-.deceased-card {
-  display: block;
-  text-decoration: none;
-  color: inherit;
-  border: 1px solid rgba(44, 40, 35, 0.07);
-  border-radius: 4px;
-  background: rgba(44, 40, 35, 0.015);
-  padding: 1.15rem 1.3rem;
-  transition: transform 0.25s ease, border-color 0.25s ease, background 0.25s ease;
-}
-
-.deceased-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(150, 58, 30, 0.18);
-  background: rgba(44, 40, 35, 0.03);
-}
-
-.deceased-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.deceased-name {
-  font-family: "Noto Serif SC", serif;
-  font-size: 1.02rem;
-  font-weight: 700;
-  color: #2c2823;
-  letter-spacing: 0.04em;
-}
-
-.deceased-prefix {
-  color: #a09486;
-  font-size: 0.75rem;
-  margin-right: 0.3rem;
-}
-
-.deceased-subtitle {
-  margin-top: 0.28rem;
-  color: #8a7e70;
-  font-size: 0.82rem;
-}
-
 .deceased-card-meta {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
   margin-top: 0.8rem;
-}
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.14rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(150, 128, 74, 0.12);
-  color: #8a6734;
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
-}
-
-.deceased-mono {
-  font-family: monospace;
-  font-size: 0.68rem;
-  color: rgba(44, 40, 35, 0.42);
-}
-
-.deceased-chevron {
-  color: #a09486;
-  font-size: 1.1rem;
-  line-height: 1;
 }
 
 .museum-breadcrumb {
@@ -972,10 +869,6 @@ body::before {
   .hall-desc { display: none; }
   .site-nav-links {
     gap: 0.6rem;
-  }
-  .museum-topbar {
-    flex-direction: column;
-    align-items: flex-start;
   }
   .deceased-panels {
     grid-template-columns: 1fr;
