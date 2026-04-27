@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "family_id",
+    "at_tick",
+    "remaining_ticks",
+    "collapse_tear_entity_ids"
+  ],
+  "properties": {
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "remaining_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "collapse_tear_entity_ids": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

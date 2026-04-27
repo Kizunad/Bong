@@ -295,6 +295,25 @@ export const LearnSkillScrollRequestV1 = Type.Object(
 );
 export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
 
+export const StartExtractRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("start_extract_request"),
+    portal_entity_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type StartExtractRequestV1 = Static<typeof StartExtractRequestV1>;
+
+export const CancelExtractRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("cancel_extract_request"),
+  },
+  { additionalProperties: false },
+);
+export type CancelExtractRequestV1 = Static<typeof CancelExtractRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -317,5 +336,7 @@ export const ClientRequestV1 = Type.Union([
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
   LearnSkillScrollRequestV1,
+  StartExtractRequestV1,
+  CancelExtractRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

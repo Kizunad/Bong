@@ -19,6 +19,15 @@ import {
 } from "./inventory.js";
 import { Narration } from "./narration.js";
 import {
+  ExtractAbortedV1,
+  ExtractCompletedV1,
+  ExtractFailedV1,
+  ExtractProgressV1,
+  ExtractStartedV1,
+  RiftPortalStateV1,
+  TsyCollapseStartedIpcV1,
+} from "./extract-v1.js";
+import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
   SkillScrollUsedPayloadV1,
@@ -88,6 +97,13 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("rift_portal_state"),
+  Type.Literal("extract_started"),
+  Type.Literal("extract_progress"),
+  Type.Literal("extract_completed"),
+  Type.Literal("extract_aborted"),
+  Type.Literal("extract_failed"),
+  Type.Literal("tsy_collapse_started_ipc"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -469,6 +485,78 @@ export const ServerDataSkillSnapshotV1 = Type.Object(
 );
 export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
 
+export const ServerDataRiftPortalStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("rift_portal_state"),
+    ...RiftPortalStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRiftPortalStateV1 = Static<typeof ServerDataRiftPortalStateV1>;
+
+export const ServerDataExtractStartedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_started"),
+    ...ExtractStartedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractStartedV1 = Static<typeof ServerDataExtractStartedV1>;
+
+export const ServerDataExtractProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_progress"),
+    ...ExtractProgressV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractProgressV1 = Static<typeof ServerDataExtractProgressV1>;
+
+export const ServerDataExtractCompletedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_completed"),
+    ...ExtractCompletedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractCompletedV1 = Static<typeof ServerDataExtractCompletedV1>;
+
+export const ServerDataExtractAbortedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_aborted"),
+    ...ExtractAbortedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractAbortedV1 = Static<typeof ServerDataExtractAbortedV1>;
+
+export const ServerDataExtractFailedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_failed"),
+    ...ExtractFailedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractFailedV1 = Static<typeof ServerDataExtractFailedV1>;
+
+export const ServerDataTsyCollapseStartedIpcV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("tsy_collapse_started_ipc"),
+    ...TsyCollapseStartedIpcV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTsyCollapseStartedIpcV1 = Static<
+  typeof ServerDataTsyCollapseStartedIpcV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -494,5 +582,12 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  ServerDataRiftPortalStateV1,
+  ServerDataExtractStartedV1,
+  ServerDataExtractProgressV1,
+  ServerDataExtractCompletedV1,
+  ServerDataExtractAbortedV1,
+  ServerDataExtractFailedV1,
+  ServerDataTsyCollapseStartedIpcV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

@@ -41,3 +41,4 @@ export * from "./skill.js";
 
 // 活坍缩渊 (plan-tsy-zone-v1 §1.4)
 export * from "./tsy.js";
+export * from "./extract-v1.js";

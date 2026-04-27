@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "entity_id",
+    "kind",
+    "family_id",
+    "world_pos",
+    "current_extract_ticks"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "rift_portal_state",
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "number"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "main_rift",
+          "type": "string"
+        },
+        {
+          "const": "deep_rift",
+          "type": "string"
+        },
+        {
+          "const": "collapse_tear",
+          "type": "string"
+        }
+      ]
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "world_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "current_extract_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "activation_window_end": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}
