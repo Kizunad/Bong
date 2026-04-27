@@ -38,6 +38,7 @@ import {
   ClientRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
+  MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
   StartExtractRequestV1,
 } from "./client-request.js";
@@ -89,6 +90,15 @@ import {
   TsyExitEventV1,
   TsyZoneActivatedV1,
 } from "./tsy.js";
+import {
+  CancelSearchRequestV1,
+  ContainerStateV1,
+  SearchAbortedV1,
+  SearchCompletedV1,
+  SearchProgressV1,
+  SearchStartedV1,
+  StartSearchRequestV1,
+} from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -124,6 +134,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
@@ -181,6 +192,14 @@ export const SCHEMA_REGISTRY = {
   serverDataExtractAbortedV1: ServerDataExtractAbortedV1,
   serverDataExtractFailedV1: ServerDataExtractFailedV1,
   serverDataTsyCollapseStartedIpcV1: ServerDataTsyCollapseStartedIpcV1,
+  // plan-tsy-container-v1 §5.1 — TSY 容器搜刮
+  containerStateV1: ContainerStateV1,
+  searchStartedV1: SearchStartedV1,
+  searchProgressV1: SearchProgressV1,
+  searchCompletedV1: SearchCompletedV1,
+  searchAbortedV1: SearchAbortedV1,
+  clientRequestStartSearchV1: StartSearchRequestV1,
+  clientRequestCancelSearchV1: CancelSearchRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -217,6 +236,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "client-request-start-extract-v1.json":
@@ -306,6 +326,14 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataExtractFailedV1,
   "server-data-tsy-collapse-started-ipc-v1.json":
     SCHEMA_REGISTRY.serverDataTsyCollapseStartedIpcV1,
+  // plan-tsy-container-v1 §5.1
+  "container-state-v1.json": SCHEMA_REGISTRY.containerStateV1,
+  "search-started-v1.json": SCHEMA_REGISTRY.searchStartedV1,
+  "search-progress-v1.json": SCHEMA_REGISTRY.searchProgressV1,
+  "search-completed-v1.json": SCHEMA_REGISTRY.searchCompletedV1,
+  "search-aborted-v1.json": SCHEMA_REGISTRY.searchAbortedV1,
+  "client-request-start-search-v1.json": SCHEMA_REGISTRY.clientRequestStartSearchV1,
+  "client-request-cancel-search-v1.json": SCHEMA_REGISTRY.clientRequestCancelSearchV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

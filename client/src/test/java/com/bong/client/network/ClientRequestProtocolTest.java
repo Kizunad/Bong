@@ -114,6 +114,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesMineralProbe() {
+        String json = ClientRequestProtocol.encodeMineralProbe(8, 32, 8);
+        assertEquals(
+            "{\"type\":\"mineral_probe\",\"v\":1,\"x\":8,\"y\":32,\"z\":8}",
+            json
+        );
+    }
+
+    @Test
     void encodesInventoryDiscardItem() {
         String json = ClientRequestProtocol.encodeInventoryDiscardItem(
             1001L,

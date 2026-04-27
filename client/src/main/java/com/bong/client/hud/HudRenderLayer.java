@@ -16,6 +16,7 @@ public enum HudRenderLayer {
     EDGE_FEEDBACK,
     STATUS_EFFECTS,
     STAMINA_BAR,
+    SEARCH_PROGRESS,
     DAMAGE_FLOATER,
     FLIGHT_HUD,
     TRIBULATION,

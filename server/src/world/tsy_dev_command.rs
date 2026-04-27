@@ -18,13 +18,20 @@ use std::path::Path;
 
 use serde::Deserialize;
 use valence::prelude::{
-    bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
+    bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query, Res,
     ResMut, Update,
 };
 
+use crate::combat::CombatClock;
 use crate::world::dimension::DimensionKind;
 use crate::world::tsy::{DimensionAnchor, RiftKind, RiftPortal};
-use crate::world::zone::{Zone, ZoneRegistry};
+use crate::world::tsy_container::{ContainerKind, LootContainer};
+use crate::world::tsy_container_search::TsyZoneInitialized;
+use crate::world::tsy_container_spawn::{
+    apply_origin_multiplier, origin_multiplier_for_family, sample_position_avoiding_blocks,
+    TsyContainerSpawnRegistry,
+};
+use crate::world::zone::{TsyDepth, Zone, ZoneRegistry};
 
 /// chat_collector → tsy_dev_command 桥事件。
 #[derive(Event, Debug, Clone)]
@@ -138,13 +145,18 @@ fn build_zone(z: &BlueprintZone) -> Zone {
     }
 }
 
-/// 系统：消费 TsySpawnRequested 事件 → 注册 TSY subzone + spawn Entry/Exit portals。
+/// 系统：消费 TsySpawnRequested 事件 → 注册 TSY subzone + spawn Entry/Exit portals
+/// + plan-tsy-container-v1 §4.1 同步撒 LootContainer 实体。
+#[allow(clippy::too_many_arguments)]
 pub fn apply_tsy_spawn_requests(
     mut commands: Commands,
     mut requests: EventReader<TsySpawnRequested>,
     mut results: EventWriter<TsySpawnResult>,
+    mut zone_init: EventWriter<TsyZoneInitialized>,
     zones: Option<ResMut<ZoneRegistry>>,
     portals: Query<&RiftPortal>,
+    container_specs: Option<Res<TsyContainerSpawnRegistry>>,
+    clock: Option<Res<CombatClock>>,
 ) {
     let Some(mut zones) = zones else {
         return;
@@ -257,7 +269,101 @@ pub fn apply_tsy_spawn_requests(
                 portal_pos: req.player_pos,
             },
         });
+
+        // plan-tsy-container-v1 §4.1 — portal 就位后撒容器（如果配置 + clock 都在）
+        if let (Some(specs), Some(clk)) = (container_specs.as_ref(), clock.as_ref()) {
+            let relic_count =
+                spawn_containers_for_family(&req.family_id, specs, &zones, clk.tick, &mut commands);
+            zone_init.send(TsyZoneInitialized {
+                family_id: req.family_id.clone(),
+                relic_count,
+                at_tick: clk.tick,
+            });
+        }
     }
+}
+
+/// 在已注册的 TSY family（3 个 subzone）内撒 LootContainer 实体；返回 RelicCore 总数。
+///
+/// - origin modifier 按 family_id 前缀决定（plan §4.2 表）
+/// - 每个 spec.count 撒点 N 次（应用乘数后向上取整）
+/// - 撞 blocked_tiles 的位置自动跳过（最多 20 次重试）
+fn spawn_containers_for_family(
+    family_id: &str,
+    specs: &TsyContainerSpawnRegistry,
+    zones: &ZoneRegistry,
+    tick: u64,
+    commands: &mut Commands,
+) -> u32 {
+    let Some(family_specs) = specs.get(family_id) else {
+        // 未配置容器 → 静默 skip（不算错误，可能 family 是 ad-hoc 测试用）
+        return 0;
+    };
+    let mult = origin_multiplier_for_family(family_id);
+    let mut relic_count: u32 = 0;
+
+    for depth in [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep] {
+        let layer_specs = family_specs.for_depth(depth);
+        if layer_specs.is_empty() {
+            continue;
+        }
+        let zone_name = format!("{family_id}_{}", depth_suffix(depth));
+        let Some(zone) = zones.find_zone_by_name(&zone_name) else {
+            continue;
+        };
+        let bounds = zone.bounds;
+        let blocked = zone.blocked_tiles.clone();
+
+        for (spec_idx, spec) in layer_specs.iter().enumerate() {
+            let final_count = apply_origin_multiplier(spec.count, spec.kind, mult);
+            for i in 0..final_count {
+                // seed 混入 family / depth / spec_idx / i，让同一次 spawn 内每个容器位置不同
+                let seed = stable_seed(family_id, depth, spec_idx as u32, i, tick);
+                let Some(pos) = sample_position_avoiding_blocks(bounds, &blocked, seed, 20) else {
+                    tracing::debug!(
+                        family = %family_id,
+                        depth = ?depth,
+                        kind = ?spec.kind,
+                        "[bong][tsy-container] no spawn position found in bounds; skipping"
+                    );
+                    continue;
+                };
+                commands.spawn((
+                    Position::new([pos.x, pos.y, pos.z]),
+                    LootContainer::new(
+                        spec.kind,
+                        family_id.to_string(),
+                        depth,
+                        spec.loot_pool_id.clone(),
+                        tick,
+                    ),
+                ));
+                if spec.kind == ContainerKind::RelicCore {
+                    relic_count = relic_count.saturating_add(1);
+                }
+            }
+        }
+    }
+    relic_count
+}
+
+fn depth_suffix(d: TsyDepth) -> &'static str {
+    match d {
+        TsyDepth::Shallow => "shallow",
+        TsyDepth::Mid => "mid",
+        TsyDepth::Deep => "deep",
+    }
+}
+
+fn stable_seed(family_id: &str, depth: TsyDepth, spec_idx: u32, i: u32, tick: u64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    family_id.hash(&mut h);
+    (depth as u8).hash(&mut h);
+    spec_idx.hash(&mut h);
+    i.hash(&mut h);
+    tick.hash(&mut h);
+    h.finish()
 }
 
 pub fn register(app: &mut App) {
@@ -277,6 +383,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
+        app.add_event::<TsyZoneInitialized>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -353,6 +460,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
+        app.add_event::<TsyZoneInitialized>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -399,6 +507,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
+        app.add_event::<TsyZoneInitialized>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -442,5 +551,61 @@ mod tests {
             "second outcome should be AlreadySpawned, got: {:?}",
             out[1]
         );
+    }
+
+    /// plan-tsy-container-v1 §4.1 — /tsy-spawn 成功后应同步撒 LootContainer 实体，
+    /// 数量与 tsy_containers.json 配置一致（按 deep 层 relic_core=3 校验），并
+    /// 发出 TsyZoneInitialized 事件。
+    #[test]
+    fn known_family_spawns_loot_containers_and_emits_zone_initialized() {
+        use crate::combat::CombatClock;
+        use crate::world::tsy_container_spawn::load_tsy_container_spawn_registry;
+
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(CombatClock { tick: 100 });
+        let spawn_reg =
+            load_tsy_container_spawn_registry().expect("default tsy_containers.json loads");
+        app.insert_resource(spawn_reg);
+        app.add_event::<TsySpawnRequested>();
+        app.add_event::<TsySpawnResult>();
+        app.add_event::<TsyZoneInitialized>();
+        app.add_systems(Update, apply_tsy_spawn_requests);
+
+        let player = app.world_mut().spawn(()).id();
+        {
+            let mut tx = app.world_mut().resource_mut::<Events<TsySpawnRequested>>();
+            tx.send(TsySpawnRequested {
+                player_entity: player,
+                player_pos: DVec3::new(8.0, 64.0, 8.0),
+                family_id: "tsy_lingxu_01".to_string(),
+            });
+        }
+        app.update();
+
+        // 1) 应 spawn LootContainer 实体；按 lingxu_01 配置（origin = neutral）：
+        //    shallow=22 + mid=12 + deep=7 = 41 个
+        let mut q = app.world_mut().query::<&LootContainer>();
+        let containers: Vec<_> = q.iter(app.world()).cloned().collect();
+        let total: u32 = containers.len() as u32;
+        assert_eq!(
+            total, 41,
+            "expected 41 containers across 3 layers (12+8+2 + 6+4+2 + 3+1+3), got {total}"
+        );
+
+        // 2) RelicCore 数量恰为 3，与 P2 lifecycle 对齐
+        let relic_count = containers
+            .iter()
+            .filter(|c| c.kind == ContainerKind::RelicCore)
+            .count() as u32;
+        assert_eq!(relic_count, 3);
+
+        // 3) TsyZoneInitialized 事件发出，relic_count = 3
+        let inits = app.world().resource::<Events<TsyZoneInitialized>>();
+        let inits_collected: Vec<_> = inits.get_reader().read(inits).cloned().collect();
+        assert_eq!(inits_collected.len(), 1);
+        assert_eq!(inits_collected[0].family_id, "tsy_lingxu_01");
+        assert_eq!(inits_collected[0].relic_count, 3);
+        assert_eq!(inits_collected[0].at_tick, 100);
     }
 }

@@ -115,6 +115,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendMineralProbeUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendMineralProbe(8, 32, 8);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"mineral_probe\",\"v\":1,\"x\":8,\"y\":32,\"z\":8}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendInventoryDiscardItemUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendInventoryDiscardItem(

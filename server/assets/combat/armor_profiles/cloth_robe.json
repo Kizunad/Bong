@@ -1,0 +1,16 @@
+{
+  "template_id": "cloth_robe",
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.10,
+      "blunt": 0.20,
+      "pierce": 0.05,
+      "burn": 0.00,
+      "concussion": 0.10
+    },
+    "durability_max": 5,
+    "broken_multiplier": 0.3
+  }
+}

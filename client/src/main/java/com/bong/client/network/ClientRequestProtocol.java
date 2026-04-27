@@ -257,6 +257,14 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeMineralProbe(int x, int y, int z) {
+        JsonObject obj = envelope("mineral_probe");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
     public static String encodeInventoryDiscardItem(long instanceId, InvLocation from) {
         JsonObject obj = envelope("inventory_discard_item");
         obj.addProperty("instance_id", instanceId);

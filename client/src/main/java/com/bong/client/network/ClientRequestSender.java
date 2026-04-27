@@ -86,6 +86,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }
 
+    public static void sendMineralProbe(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
+    }
+
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }

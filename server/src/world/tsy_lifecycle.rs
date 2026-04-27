@@ -682,10 +682,39 @@ pub fn register(app: &mut App) {
                     .after(tsy_lifecycle_tick)
                     .after(crate::world::extract_system::on_tsy_collapse_completed)
                     .before(DimensionTransferSet),
+                // plan-tsy-container-v1 §6.2 — RelicCore 容器搜空时的 informational
+                // hook。当前不动状态机（lifecycle 仍由 source_container_id 路径
+                // 自给追踪），仅日志 + 留 IPC bridge 接入点。
+                log_relic_extracted_hook,
             ),
         );
     // TsyLayer 由 dimension 模块注册；这里仅引用类型保证没人误删。
     let _ = std::any::TypeId::of::<TsyLayer>();
+}
+
+/// plan-tsy-container-v1 §6.2 — RelicCore 容器搜空 informational hook。
+///
+/// **设计漂移注**：plan 字面要求"P3 发 RelicExtracted → P2 lifecycle
+/// `relics_remaining -= 1`"。但 P2 lifecycle 已落地"通过
+/// `DroppedLootRegistry.entries[id].source_container_id` 是否仍以
+/// `tsy_spawn:{family}` 开头来判定 remaining_skeleton"路径，运行时已自给
+/// 自足。本 hook 仅日志兼 IPC bridge 接入点，不引入双轨追踪。
+///
+/// 后续 P2 plan 修订若选择 RelicExtracted 路径，应在此处替换为
+/// `state.remaining_skeleton.remove(...)` 类的状态变更。
+fn log_relic_extracted_hook(
+    mut events: EventReader<crate::world::tsy_container_search::RelicExtracted>,
+    state_reg: Res<TsyZoneStateRegistry>,
+) {
+    for ev in events.read() {
+        let known = state_reg.by_family.contains_key(&ev.family_id);
+        tracing::info!(
+            family = %ev.family_id,
+            tick = ev.at_tick,
+            family_known_to_lifecycle = known,
+            "[bong][tsy-container] relic extracted (RelicCore container searched)"
+        );
+    }
 }
 
 #[cfg(test)]

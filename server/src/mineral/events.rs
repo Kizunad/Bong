@@ -3,6 +3,7 @@
 use valence::prelude::{bevy_ecs, BlockPos, Entity, Event};
 
 use super::types::MineralId;
+use crate::world::dimension::DimensionKind;
 
 /// 玩家神识感知触发（plan §3）— 修为 ≥ 凝脉 时右键矿块。
 ///
@@ -11,7 +12,37 @@ use super::types::MineralId;
 #[derive(Debug, Clone, Copy, Event)]
 pub struct MineralProbeIntent {
     pub player: Entity,
+    pub dimension: DimensionKind,
     pub position: BlockPos,
+}
+
+/// 神识感知回执（plan §3）— 由 server 侧 resolver 产出，网络层后续可转 chat/HUD。
+#[derive(Debug, Clone, Event)]
+pub struct MineralProbeResponse {
+    pub player: Entity,
+    pub position: BlockPos,
+    pub result: MineralProbeResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MineralProbeResult {
+    Denied {
+        reason: MineralProbeDenialReason,
+    },
+    Found {
+        mineral_id: MineralId,
+        remaining_units: u32,
+        display_name_zh: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MineralProbeDenialReason {
+    RealmTooLow,
+    OutOfRange,
+    NotMineralOre,
+    StaleOreIndex,
+    MineralNotRegistered,
 }
 
 /// 矿脉单方块耗尽 — `BlockBreakEvent` 处理后，若剩余储量降至 0 则触发。
@@ -57,6 +88,7 @@ mod tests {
         // 单独跑确保 Event derive macro 正常 + register 路径 OK
         let mut app = App::new();
         app.add_event::<MineralProbeIntent>()
+            .add_event::<MineralProbeResponse>()
             .add_event::<MineralExhaustedEvent>()
             .add_event::<KarmaFlagIntent>()
             .add_event::<MineralDropEvent>();

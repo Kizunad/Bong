@@ -124,6 +124,13 @@ pub enum ClientRequestV1 {
         v: u8,
         instance_id: u64,
     },
+    /// plan-mineral-v1 §3 — 凝脉+ 右键矿块，server 反查 MineralOreIndex。
+    MineralProbe {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     ApplyPill {
         v: u8,
         instance_id: u64,
@@ -349,6 +356,19 @@ mod tests {
                 assert_eq!(instance_id, 3003);
             }
             other => panic!("expected PickupDroppedItem, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mineral_probe_roundtrip() {
+        let json = r#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MineralProbe { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 32, 8));
+            }
+            other => panic!("expected MineralProbe, got {other:?}"),
         }
     }
 

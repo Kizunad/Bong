@@ -2,9 +2,13 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
 pub mod extract_system;
+pub mod loot_pool;
 pub mod rift_portal;
 pub mod terrain;
 pub mod tsy;
+pub mod tsy_container;
+pub mod tsy_container_search;
+pub mod tsy_container_spawn;
 pub mod tsy_dev_command;
 pub mod tsy_drain;
 pub mod tsy_filter;
@@ -109,6 +113,19 @@ pub fn register(app: &mut App) {
     tsy_lifecycle::register(app);
     // plan-tsy-extract-v1 — TSY 定点撤离倒计时 + race-out 裂口。
     extract_system::register(app);
+    // plan-tsy-container-v1 §2 — 搜刮 system + event 总线
+    tsy_container_search::register(app);
+    // plan-tsy-container-v1 §1.4 / §1.5 — loot pool + 容器 spawn 配置 resource
+    let loot_pools = match loot_pool::load_loot_pool_registry() {
+        Ok(reg) => reg,
+        Err(err) => panic!("[bong][tsy-container] failed to load loot pools: {err}"),
+    };
+    let spawn_reg = match tsy_container_spawn::load_tsy_container_spawn_registry() {
+        Ok(reg) => reg,
+        Err(err) => panic!("[bong][tsy-container] failed to load tsy_containers.json: {err}"),
+    };
+    app.insert_resource(loot_pools);
+    app.insert_resource(spawn_reg);
     app.add_systems(Startup, setup_world);
 }
 
