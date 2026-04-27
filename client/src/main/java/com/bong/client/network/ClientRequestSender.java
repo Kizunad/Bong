@@ -132,6 +132,22 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
     }
 
+    public static void sendSkillBarCast(int slot) {
+        dispatch(ClientRequestProtocol.encodeSkillBarCast(slot));
+    }
+
+    public static void sendSkillBarBindClear(int slot) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindClear(slot));
+    }
+
+    public static void sendSkillBarBindSkill(int slot, String skillId) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindSkill(slot, skillId));
+    }
+
+    public static void sendSkillBarBindItem(int slot, String templateId) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
+    }
+
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }

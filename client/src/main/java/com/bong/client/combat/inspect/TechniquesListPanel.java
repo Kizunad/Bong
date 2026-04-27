@@ -2,6 +2,8 @@ package com.bong.client.combat.inspect;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
  * Data provider for the "已学功法" inspect list (plan §U-parallel / §2.2).
@@ -48,7 +50,14 @@ public final class TechniquesListPanel {
         Grade grade,
         float proficiency,     // 0..1
         boolean active,         // maintainable toggle
-        String castKey          // which quick slot, or ""
+        String castKey,         // which quick slot, or ""
+        String description,
+        String requiredRealm,
+        List<RequiredMeridian> requiredMeridians,
+        int qiCost,
+        int castTicks,
+        int cooldownTicks,
+        float range
     ) {
         public Technique {
             id = id == null ? "" : id;
@@ -57,10 +66,28 @@ public final class TechniquesListPanel {
             if (proficiency < 0f) proficiency = 0f;
             if (proficiency > 1f) proficiency = 1f;
             castKey = castKey == null ? "" : castKey;
+            description = description == null ? "" : description;
+            requiredRealm = requiredRealm == null ? "" : requiredRealm;
+            requiredMeridians = requiredMeridians == null
+                ? List.of()
+                : List.copyOf(requiredMeridians);
+            qiCost = Math.max(0, qiCost);
+            castTicks = Math.max(0, castTicks);
+            cooldownTicks = Math.max(0, cooldownTicks);
+            if (!Float.isFinite(range) || range < 0f) range = 0f;
+        }
+    }
+
+    public record RequiredMeridian(String channel, float minHealth) {
+        public RequiredMeridian {
+            channel = channel == null ? "" : channel;
+            if (!Float.isFinite(minHealth) || minHealth < 0f) minHealth = 0f;
+            if (minHealth > 1f) minHealth = 1f;
         }
     }
 
     private static volatile List<Technique> snapshot = Collections.emptyList();
+    private static final List<Consumer<List<Technique>>> listeners = new CopyOnWriteArrayList<>();
 
     private TechniquesListPanel() {}
 
@@ -70,9 +97,23 @@ public final class TechniquesListPanel {
         snapshot = (next == null || next.isEmpty())
             ? Collections.emptyList()
             : Collections.unmodifiableList(new java.util.ArrayList<>(next));
+        for (Consumer<List<Technique>> listener : listeners) listener.accept(snapshot);
+    }
+
+    public static void addListener(Consumer<List<Technique>> listener) {
+        listeners.add(listener);
+    }
+
+    public static void removeListener(Consumer<List<Technique>> listener) {
+        listeners.remove(listener);
+    }
+
+    public static void clearListenersForTests() {
+        listeners.clear();
     }
 
     public static void resetForTests() {
         snapshot = Collections.emptyList();
+        listeners.clear();
     }
 }

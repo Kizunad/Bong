@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, Resource};
 
+use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
@@ -40,8 +41,98 @@ impl Default for PlayerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-struct PlayerUiPrefs {
-    quick_slots: [Option<String>; 9],
+pub(crate) struct PlayerUiPrefs {
+    #[serde(default)]
+    pub quick_slots: [Option<String>; 9],
+    #[serde(default)]
+    pub skill_bar: [SkillSlotPersist; 9],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum SkillSlotPersist {
+    #[default]
+    Empty,
+    Item {
+        template_id: String,
+    },
+    Skill {
+        skill_id: String,
+    },
+}
+
+impl PlayerUiPrefs {
+    pub(crate) fn quick_slot_bindings(
+        &self,
+        inventory: Option<&PlayerInventory>,
+    ) -> QuickSlotBindings {
+        let mut bindings = QuickSlotBindings::default();
+        let Some(inventory) = inventory else {
+            return bindings;
+        };
+
+        for (slot, template_id) in self.quick_slots.iter().enumerate() {
+            let Some(template_id) = template_id.as_deref() else {
+                continue;
+            };
+            if let Some(instance_id) = first_inventory_instance_for_template(inventory, template_id)
+            {
+                bindings.set(slot as u8, Some(instance_id));
+            }
+        }
+        bindings
+    }
+
+    pub(crate) fn skill_bar_bindings(
+        &self,
+        inventory: Option<&PlayerInventory>,
+    ) -> SkillBarBindings {
+        let mut bindings = SkillBarBindings::default();
+        for (slot, persist) in self.skill_bar.iter().enumerate() {
+            let slot_value = match persist {
+                SkillSlotPersist::Empty => SkillSlot::Empty,
+                SkillSlotPersist::Item { template_id } => inventory
+                    .and_then(|inventory| {
+                        first_inventory_instance_for_template(inventory, template_id)
+                    })
+                    .map(|instance_id| SkillSlot::Item { instance_id })
+                    .unwrap_or_default(),
+                SkillSlotPersist::Skill { skill_id } => SkillSlot::Skill {
+                    skill_id: skill_id.clone(),
+                },
+            };
+            bindings.set(slot as u8, slot_value);
+        }
+        bindings
+    }
+}
+
+fn first_inventory_instance_for_template(
+    inventory: &PlayerInventory,
+    template_id: &str,
+) -> Option<u64> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == template_id)
+        {
+            return Some(placed.instance.instance_id);
+        }
+    }
+    if let Some(item) = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+    {
+        return Some(item.instance_id);
+    }
+    inventory
+        .equipped
+        .values()
+        .find(|item| item.template_id == template_id)
+        .map(|item| item.instance_id)
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +143,7 @@ pub struct LoadedPlayerSlices {
     pub inventory: Option<PlayerInventory>,
     pub lifespan: Option<LifespanComponent>,
     pub skill_set: SkillSet,
+    pub(crate) ui_prefs: PlayerUiPrefs,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,6 +397,7 @@ pub fn load_player_slices(
                 inventory: None,
                 lifespan: None,
                 skill_set: SkillSet::default(),
+                ui_prefs: PlayerUiPrefs::default(),
             };
         }
     };
@@ -354,6 +447,17 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
+    let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
+        Ok(ui_prefs) => ui_prefs,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted UI prefs for `{}` from sqlite {}: {error}; using default UI prefs",
+                username,
+                persistence.db_path().display()
+            );
+            PlayerUiPrefs::default()
+        }
+    };
 
     LoadedPlayerSlices {
         state,
@@ -362,6 +466,7 @@ pub fn load_player_slices(
         inventory,
         lifespan,
         skill_set,
+        ui_prefs,
     }
 }
 
@@ -527,6 +632,21 @@ pub fn save_player_skill_slice(
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_skill_slice_in_sqlite(&mut connection, username, skill_set)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub(crate) fn update_player_ui_prefs<F>(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    update: F,
+) -> io::Result<PathBuf>
+where
+    F: FnOnce(&mut PlayerUiPrefs),
+{
+    let mut connection = open_player_connection(persistence)?;
+    let mut ui_prefs = load_player_ui_prefs_from_sqlite(&connection, username)?;
+    update(&mut ui_prefs);
+    persist_player_ui_prefs_slice_in_sqlite(&mut connection, username, &ui_prefs)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -817,6 +937,66 @@ fn load_player_inventory_from_sqlite(
     serde_json::from_str::<PlayerInventory>(&inventory_json)
         .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn load_player_ui_prefs_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<PlayerUiPrefs> {
+    let prefs_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT prefs_json
+            FROM player_ui_prefs
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(prefs_json) = prefs_json else {
+        return Ok(PlayerUiPrefs::default());
+    };
+
+    serde_json::from_str::<PlayerUiPrefs>(&prefs_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn persist_player_ui_prefs_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    prefs: &PlayerUiPrefs,
+) -> io::Result<()> {
+    let prefs_json = serde_json::to_string(prefs)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_ui_prefs (
+                username,
+                prefs_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                prefs_json = excluded.prefs_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
 }
 
 fn load_player_lifespan_from_sqlite(
@@ -1882,6 +2062,87 @@ mod player_state_tests {
         assert_eq!(loaded_lifespan.years_lived, 12.0);
 
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
+        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "quick_slots": ["tea", null, null, null, null, null, null, null, null]
+        }))
+        .expect("legacy prefs should decode with default skill_bar");
+
+        assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
+        assert!(prefs
+            .skill_bar
+            .iter()
+            .all(|slot| matches!(slot, SkillSlotPersist::Empty)));
+    }
+
+    #[test]
+    fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
+        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "quick_slots": ["tea", null, null, null, null, null, null, null, null],
+            "skill_bar": [
+                {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
+                {"kind":"item","template_id":"tea"},
+                {"kind":"item","template_id":"missing"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"}
+            ]
+        }))
+        .expect("prefs should decode");
+        let inventory = PlayerInventory {
+            revision: crate::inventory::InventoryRevision(0),
+            containers: vec![crate::inventory::ContainerState {
+                id: "main".to_string(),
+                name: "main".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![crate::inventory::PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: crate::inventory::ItemInstance {
+                        instance_id: 42,
+                        template_id: "tea".to_string(),
+                        display_name: "tea".to_string(),
+                        grid_w: 1,
+                        grid_h: 1,
+                        weight: 0.1,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                    },
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+
+        let quick = prefs.quick_slot_bindings(Some(&inventory));
+        let skill_bar = prefs.skill_bar_bindings(Some(&inventory));
+
+        assert_eq!(quick.slots[0], Some(42));
+        assert!(matches!(
+            &skill_bar.slots[0],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        assert_eq!(skill_bar.slots[1], SkillSlot::Item { instance_id: 42 });
+        assert_eq!(skill_bar.slots[2], SkillSlot::Empty);
     }
 
     #[test]

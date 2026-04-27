@@ -13,6 +13,7 @@ export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";
 export * from "./client-request.js";
+export * from "./combat-hud.js";
 export * from "./combat-event.js";
 export * from "./inventory.js";
 export * from "./narration.js";

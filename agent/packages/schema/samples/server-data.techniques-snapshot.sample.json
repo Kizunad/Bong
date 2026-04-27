@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "techniques_snapshot",
+  "entries": [
+    {
+      "id": "burst_meridian.beng_quan",
+      "display_name": "崩拳",
+      "grade": "yellow",
+      "proficiency": 0.5,
+      "active": true,
+      "description": "以臂经爆发短劲，近身破防。",
+      "required_realm": "Condense",
+      "required_meridians": [
+        { "channel": "Lung", "min_health": 0.45 },
+        { "channel": "TripleEnergizer", "min_health": 0.35 }
+      ],
+      "qi_cost": 30,
+      "cast_ticks": 8,
+      "cooldown_ticks": 60,
+      "range": 1.8
+    }
+  ]
+}

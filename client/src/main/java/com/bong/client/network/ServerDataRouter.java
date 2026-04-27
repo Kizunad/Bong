@@ -55,6 +55,8 @@ public final class ServerDataRouter {
         DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
         CastSyncHandler castSyncHandler = new CastSyncHandler();
         QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
+        SkillBarConfigHandler skillBarConfigHandler = new SkillBarConfigHandler();
+        TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
@@ -95,6 +97,8 @@ public final class ServerDataRouter {
         handlers.put("defense_window", defenseWindowHandler);
         handlers.put("cast_sync", castSyncHandler);
         handlers.put("quickslot_config", quickSlotConfigHandler);
+        handlers.put("skillbar_config", skillBarConfigHandler);
+        handlers.put("techniques_snapshot", techniquesSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);

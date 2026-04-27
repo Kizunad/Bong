@@ -16,7 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{Client, Commands, Entity, Position, Query, Res, Username};
 
-use crate::combat::components::{Casting, QuickSlotBindings, StatusEffects, Wounds};
+use crate::combat::components::{
+    CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
+};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
@@ -47,6 +49,7 @@ type CastTickQueryItem<'a> = (
     &'a mut PlayerInventory,
     &'a PlayerState,
     &'a mut QuickSlotBindings,
+    &'a mut SkillBarBindings,
     Option<&'a StatusEffects>,
     Option<&'a mut MeridianSystem>,
     Option<&'a mut Contamination>,
@@ -68,6 +71,7 @@ pub fn tick_casts_or_interrupt(
         mut inventory,
         player_state,
         mut bindings,
+        mut skillbar_bindings,
         status_effects,
         meridians,
         contamination,
@@ -81,7 +85,10 @@ pub fn tick_casts_or_interrupt(
         });
         if stunned {
             commands.entity(entity).remove::<Casting>();
-            bindings.set_cooldown(
+            set_cast_cooldown(
+                casting,
+                &mut bindings,
+                &mut skillbar_bindings,
                 casting.slot,
                 clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
             );
@@ -111,7 +118,10 @@ pub fn tick_casts_or_interrupt(
             .any(|w| w.created_at_tick == clock.tick);
         if damaged_this_tick {
             commands.entity(entity).remove::<Casting>();
-            bindings.set_cooldown(
+            set_cast_cooldown(
+                casting,
+                &mut bindings,
+                &mut skillbar_bindings,
                 casting.slot,
                 clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
             );
@@ -133,7 +143,10 @@ pub fn tick_casts_or_interrupt(
         let moved_distance = position.get().distance(casting.start_position);
         if moved_distance > CAST_MOVEMENT_INTERRUPT_THRESHOLD_M {
             commands.entity(entity).remove::<Casting>();
-            bindings.set_cooldown(
+            set_cast_cooldown(
+                casting,
+                &mut bindings,
+                &mut skillbar_bindings,
                 casting.slot,
                 clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
             );
@@ -160,25 +173,34 @@ pub fn tick_casts_or_interrupt(
         // 自然完成
         if clock.tick >= casting.started_at_tick + casting.duration_ticks {
             commands.entity(entity).remove::<Casting>();
-            // 1) 消耗：找到绑定 instance_id，stack -= 1；归零则移除。
+            // 1) 消耗：物品快捷槽找到绑定 instance_id，stack -= 1；技能栏只进入冷却。
             let mut effect_to_apply: Option<ItemEffect> = None;
-            if let Some(id) = casting.bound_instance_id {
-                if let Some(template_id) = lookup_template_id(&inventory, id) {
-                    if let Some(template) = item_registry.get(&template_id) {
-                        effect_to_apply = template.effect.clone();
+            if casting.source == CastSource::QuickSlot {
+                if let Some(id) = casting.bound_instance_id {
+                    if let Some(template_id) = lookup_template_id(&inventory, id) {
+                        if let Some(template) = item_registry.get(&template_id) {
+                            effect_to_apply = template.effect.clone();
+                        }
                     }
                 }
             }
-            let consumed = casting
-                .bound_instance_id
-                .map(|id| consume_one_stack(&mut inventory, id))
-                .unwrap_or(false);
+            let consumed = if casting.source == CastSource::QuickSlot {
+                casting
+                    .bound_instance_id
+                    .map(|id| consume_one_stack(&mut inventory, id))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
             // 2) 应用效果
             if let Some(effect) = effect_to_apply.as_ref() {
                 apply_item_effect(effect, meridians, contamination, &username.0, entity);
             }
             // 3) 设置完成冷却（来自 ItemTemplate.cooldown_ms 折算后的 ticks）
-            bindings.set_cooldown(
+            set_cast_cooldown(
+                casting,
+                &mut bindings,
+                &mut skillbar_bindings,
                 casting.slot,
                 clock.tick.saturating_add(casting.complete_cooldown_ticks),
             );
@@ -208,6 +230,19 @@ pub fn tick_casts_or_interrupt(
                 );
             }
         }
+    }
+}
+
+fn set_cast_cooldown(
+    casting: &Casting,
+    quick_bindings: &mut QuickSlotBindings,
+    skillbar_bindings: &mut SkillBarBindings,
+    slot: u8,
+    until_tick: u64,
+) {
+    match casting.source {
+        CastSource::QuickSlot => quick_bindings.set_cooldown(slot, until_tick),
+        CastSource::SkillBar => skillbar_bindings.set_cooldown(slot, until_tick),
     }
 }
 

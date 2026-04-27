@@ -3,6 +3,8 @@ package com.bong.client.inventory;
 import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
@@ -60,10 +62,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // Tabs (left panel)
     private int activeTab = 0;
     // plan-skill-v1 §5.1 第三个 tab "技艺"
-    private final LabelComponent[] tabLabels = new LabelComponent[3];
+    private final LabelComponent[] tabLabels = new LabelComponent[4];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
     private FlowLayout skillTabContent;
+    private com.bong.client.combat.inspect.CombatTrainingPanel combatTrainingPanel;
+    private FlowLayout combatTrainingTabContent;
     private FlowLayout skillScrollDropZone;
     private LabelComponent skillScrollDropTitle;
     private LabelComponent skillScrollDropHint;
@@ -148,6 +152,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             com.bong.client.skill.SkillSetStore.removeListener(skillListener);
             skillListener = null;
         }
+        if (combatTrainingPanel != null) {
+            combatTrainingPanel.close();
+            combatTrainingPanel = null;
+        }
         super.removed();
     }
 
@@ -192,7 +200,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         tabBar.gap(6);
         tabBar.padding(Insets.of(1, 2, 1, 2));
-        String[] tabNames = {"装备", "修仙", "技艺"};
+        String[] tabNames = {"装备", "修仙", "技艺", "战斗·修炼"};
         for (int i = 0; i < tabNames.length; i++) {
             final int idx = i;
             var label = Components.label(Text.literal(tabNames[i]));
@@ -409,6 +417,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(skillTabContent);
         skillTabContent.positioning(Positioning.absolute(-9999, -9999));
 
+        // Tab 3: 战斗·修炼（plan-hotbar-modify-v1 §4）
+        combatTrainingPanel = new com.bong.client.combat.inspect.CombatTrainingPanel();
+        combatTrainingTabContent = combatTrainingPanel.component();
+        leftCol.child(combatTrainingTabContent);
+        combatTrainingTabContent.positioning(Positioning.absolute(-9999, -9999));
+
         middle.child(leftCol);
 
         // 经脉详情直接绘制在 body 画布内部（见 BodyInspectComponent.drawMeridianDetailInline）
@@ -586,6 +600,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
+    private void hydrateSkillBarFromStore() {
+        var config = SkillBarStore.snapshot();
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            SkillBarEntry entry = config.slot(i);
+            if (entry == null || entry.kind() != SkillBarEntry.Kind.SKILL) {
+                if (hotbarSlots[i] != null) {
+                    if (hotbarItems[i] != null) hotbarSlots[i].setItem(hotbarItems[i], true);
+                    else hotbarSlots[i].clearItem();
+                }
+                continue;
+            }
+            if (hotbarSlots[i] != null) {
+                hotbarSlots[i].setItem(InventoryItem.simple("skill_scroll_" + safeSkillIconId(entry.id()), entry.displayName()), true);
+            }
+        }
+    }
+
+    private static String safeSkillIconId(String skillId) {
+        if (skillId == null || skillId.isBlank()) return "unknown";
+        return skillId.replace('.', '_').replace(':', '_').replace('/', '_');
+    }
+
     private InventoryItem findItemInModel(String itemId) {
         if (itemId == null || itemId.isEmpty()) return null;
         for (InventoryItem h : model.hotbar()) {
@@ -639,7 +675,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchTab(int idx) {
         if (idx == activeTab) return;
         activeTab = idx;
-        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, skillTabContent};
+        FlowLayout[] tabs = {equipTabContent, cultivationTabContent, skillTabContent, combatTrainingTabContent};
         for (int i = 0; i < tabs.length; i++) {
             tabLabels[i].color(Color.ofArgb(i == idx ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
             if (tabs[i] != null) {
@@ -649,6 +685,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
         if (idx == 2) {
             refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
+        } else if (idx == 3 && combatTrainingPanel != null) {
+            combatTrainingPanel.refreshFromStores();
+            hydrateSkillBarFromStore();
         }
     }
 
@@ -1119,6 +1158,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
+        hydrateSkillBarFromStore();
+
         hydrateQuickUseFromStore();
     }
 
@@ -1310,6 +1351,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
             // Hotbar
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            if (button == 0 && activeTab == 3 && hIdx >= 0 && combatTrainingPanel != null
+                    && combatTrainingPanel.selectedTechnique() != null) {
+                if (combatTrainingPanel.bindSelectedTechniqueToSlot(hIdx)) {
+                    hydrateSkillBarFromStore();
+                    return true;
+                }
+            }
+            if (button == 1 && activeTab == 3 && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
+                if (combatTrainingPanel != null && combatTrainingPanel.clearSkillSlot(hIdx)) {
+                    hydrateSkillBarFromStore();
+                    return true;
+                }
+            }
             if (hIdx >= 0 && hotbarItems[hIdx] != null) {
                 InventoryItem item = hotbarItems[hIdx];
                 if (shift) quickMoveHotbarToGrid(hIdx);

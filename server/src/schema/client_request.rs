@@ -22,7 +22,7 @@ pub enum ApplyPillTargetV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub enum ClientRequestV1 {
     SetMeridianTarget {
         v: u8,
@@ -155,14 +155,31 @@ pub enum ClientRequestV1 {
     /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。
     UseQuickSlot {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
     },
     /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
     /// `item_id` 为 None 表示清空槽位。
     QuickSlotBind {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         item_id: Option<String>,
+    },
+    /// plan-hotbar-modify-v1 §3.2：触发 1-9 技能栏槽位。
+    SkillBarCast {
+        v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
+        slot: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
+    /// plan-hotbar-modify-v1 §3.2：配置 1-9 技能栏；None 表示清空槽位。
+    SkillBarBind {
+        v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
+        slot: u8,
+        binding: Option<SkillBarBindingV1>,
     },
     CombatReincarnate {
         v: u8,
@@ -283,6 +300,25 @@ pub enum ClientRequestV1 {
         item_instance_id: u64,
         station_tier: u8,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum SkillBarBindingV1 {
+    Item { template_id: String },
+    Skill { skill_id: String },
+}
+
+fn deserialize_slot_index<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let slot = u8::deserialize(deserializer)?;
+    if slot < 9 {
+        Ok(slot)
+    } else {
+        Err(serde::de::Error::custom("slot must be between 0 and 8"))
+    }
 }
 
 #[cfg(test)]
@@ -411,6 +447,125 @@ mod tests {
                 );
             }
             other => panic!("expected ApplyPill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_quick_slot_roundtrip() {
+        let json = r#"{"type":"use_quick_slot","v":1,"slot":3}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }
+        ));
+    }
+
+    #[test]
+    fn quick_slot_bind_roundtrip_and_clear() {
+        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::QuickSlotBind {
+                v: 1,
+                slot: 1,
+                item_id: Some(ref item_id),
+            } if item_id == "kai_mai_pill"
+        ));
+
+        let clear_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null}"#;
+        let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::QuickSlotBind {
+                v: 1,
+                slot: 1,
+                item_id: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn skill_bar_cast_roundtrip_with_optional_target() {
+        let json = r#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"entity:42"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SkillBarCast { v, slot, target } => {
+                assert_eq!(v, 1);
+                assert_eq!(slot, 0);
+                assert_eq!(target.as_deref(), Some("entity:42"));
+            }
+            other => panic!("expected SkillBarCast, got {other:?}"),
+        }
+
+        let no_target = ClientRequestV1::SkillBarCast {
+            v: 1,
+            slot: 2,
+            target: None,
+        };
+        let serialized = serde_json::to_string(&no_target).unwrap();
+        assert!(
+            !serialized.contains("target"),
+            "target None should be omitted: {serialized}"
+        );
+    }
+
+    #[test]
+    fn skill_bar_bind_roundtrip_for_null_item_and_skill() {
+        let clear_json = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":null}"#;
+        let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 0,
+                binding: None,
+            }
+        ));
+
+        let item_json = r#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"item","template_id":"iron_sword"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(item_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 1,
+                binding: Some(SkillBarBindingV1::Item { ref template_id }),
+            } if template_id == "iron_sword"
+        ));
+
+        let skill_json = r#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(skill_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 2,
+                binding: Some(SkillBarBindingV1::Skill { ref skill_id }),
+            } if skill_id == "burst_meridian.beng_quan"
+        ));
+    }
+
+    #[test]
+    fn skill_bar_binding_rejects_unknown_kind_and_extra_fields() {
+        let wrong_kind = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"unknown","skill_id":"x"}}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(wrong_kind).is_err());
+
+        let extra_field = r#"{"type":"skill_bar_cast","v":1,"slot":0,"extra":1}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(extra_field).is_err());
+    }
+
+    #[test]
+    fn hotbar_slot_indices_reject_out_of_range_values() {
+        for json in [
+            r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null}"#,
+            r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
+            r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
+        ] {
+            let error = serde_json::from_str::<ClientRequestV1>(json)
+                .expect_err("slot 9 should be rejected by schema");
+            assert!(error.to_string().contains("slot must be between 0 and 8"));
         }
     }
 

@@ -39,6 +39,7 @@ pub mod insight_apply;
 pub mod insight_fallback;
 pub mod insight_flow;
 pub mod karma;
+pub mod known_techniques;
 pub mod life_record;
 pub mod lifespan;
 pub mod meridian_open;

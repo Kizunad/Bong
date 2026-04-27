@@ -219,6 +219,26 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSkillBarRequests() {
+        assertEquals(
+            "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}",
+            ClientRequestProtocol.encodeSkillBarCast(0)
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",
+            ClientRequestProtocol.encodeSkillBarBindSkill(1, "burst_meridian.beng_quan")
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":2,\"binding\":{\"kind\":\"item\",\"template_id\":\"kai_mai_pill_v0\"}}",
+            ClientRequestProtocol.encodeSkillBarBindItem(2, "kai_mai_pill_v0")
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":3,\"binding\":null}",
+            ClientRequestProtocol.encodeSkillBarBindClear(3)
+        );
+    }
+
+    @Test
     void encodesExtractRequests() {
         assertEquals(
             "{\"type\":\"start_extract_request\",\"v\":1,\"portal_entity_id\":42}",

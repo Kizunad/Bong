@@ -51,10 +51,19 @@ import {
   ForgeStationPlaceRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
+  QuickSlotBindRequestV1,
   SetMeridianTargetRequestV1,
+  SkillBarBindRequestV1,
+  SkillBarCastRequestV1,
   StartExtractRequestV1,
+  UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
 } from "./client-request.js";
+import {
+  SkillBarConfigV1,
+  SkillBarEntryV1,
+  TechniquesSnapshotV1,
+} from "./combat-hud.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
@@ -121,10 +130,12 @@ import {
   ServerDataRiftPortalRemovedV1,
   ServerDataRiftPortalStateV1,
   ServerDataSkillCapChangedV1,
+  ServerDataSkillBarConfigV1,
   ServerDataSkillLvUpV1,
   ServerDataSkillSnapshotV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillXpGainV1,
+  ServerDataTechniquesSnapshotV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
   ServerDataForgeStationV1,
@@ -209,6 +220,10 @@ export const SCHEMA_REGISTRY = {
   clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
   clientRequestCombatTerminateV1: CombatTerminateRequestV1,
   clientRequestCombatCreateNewCharacterV1: CombatCreateNewCharacterRequestV1,
+  clientRequestUseQuickSlotV1: UseQuickSlotRequestV1,
+  clientRequestQuickSlotBindV1: QuickSlotBindRequestV1,
+  clientRequestSkillBarCastV1: SkillBarCastRequestV1,
+  clientRequestSkillBarBindV1: SkillBarBindRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
@@ -220,6 +235,11 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
+  skillBarEntryV1: SkillBarEntryV1,
+  skillBarConfigV1: SkillBarConfigV1,
+  techniquesSnapshotV1: TechniquesSnapshotV1,
+  serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
+  serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -366,6 +386,14 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestCombatTerminateV1,
   "client-request-combat-create-new-character-v1.json":
     SCHEMA_REGISTRY.clientRequestCombatCreateNewCharacterV1,
+  "client-request-use-quick-slot-v1.json":
+    SCHEMA_REGISTRY.clientRequestUseQuickSlotV1,
+  "client-request-quick-slot-bind-v1.json":
+    SCHEMA_REGISTRY.clientRequestQuickSlotBindV1,
+  "client-request-skill-bar-cast-v1.json":
+    SCHEMA_REGISTRY.clientRequestSkillBarCastV1,
+  "client-request-skill-bar-bind-v1.json":
+    SCHEMA_REGISTRY.clientRequestSkillBarBindV1,
   "client-request-start-extract-v1.json":
     SCHEMA_REGISTRY.clientRequestStartExtractV1,
   "client-request-cancel-extract-v1.json":
@@ -386,6 +414,13 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataSkillSnapshotV1,
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
+  "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
+  "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
+  "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,
+  "server-data-skill-bar-config-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillBarConfigV1,
+  "server-data-techniques-snapshot-v1.json":
+    SCHEMA_REGISTRY.serverDataTechniquesSnapshotV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)

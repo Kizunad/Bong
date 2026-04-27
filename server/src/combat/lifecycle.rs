@@ -11,6 +11,7 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
 };
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     calculate_rebirth_chance, lifespan_tick_rate_multiplier, tribulation_rebirth_chance,
@@ -52,10 +53,10 @@ use crate::world::zone::ZoneRegistry;
 
 use super::components::{
     CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings, RevivalDecision,
-    Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds, ATTACK_STAMINA_COST,
-    BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION,
-    REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS,
-    TICKS_PER_SECOND,
+    SkillBarBindings, Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds,
+    ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
+    NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION,
+    STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
 use super::events::{
     CombatEvent, DeathEvent, DeathInsightRequested, RevivalActionIntent, RevivalActionKind,
@@ -1451,7 +1452,8 @@ fn reset_for_new_character(
 
     let mut learned_recipes = LearnedRecipes::default();
     learned_recipes.learn("kai_mai_pill_v0".into());
-    commands.entity(entity).insert((
+    let mut entity_commands = commands.entity(entity);
+    entity_commands.insert((
         Cultivation::default(),
         MeridianSystem::default(),
         QiColor::default(),
@@ -1464,7 +1466,11 @@ fn reset_for_new_character(
         StatusEffects::default(),
         DerivedAttrs::default(),
         QuickSlotBindings::default(),
+    ));
+    entity_commands.insert((
+        SkillBarBindings::default(),
         UnlockedStyles::default(),
+        KnownTechniques::default(),
         learned_recipes,
     ));
     commands

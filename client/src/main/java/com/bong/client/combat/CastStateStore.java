@@ -24,11 +24,19 @@ public final class CastStateStore {
 
     /** Begin casting (Idle → Casting). No-op if already casting. */
     public static void beginCast(int slot, int durationMs, long startedAtMs) {
+        beginCast(CastState.Source.QUICK_SLOT, slot, durationMs, startedAtMs);
+    }
+
+    public static void beginSkillBarCast(int slot, int durationMs, long startedAtMs) {
+        beginCast(CastState.Source.SKILL_BAR, slot, durationMs, startedAtMs);
+    }
+
+    public static void beginCast(CastState.Source source, int slot, int durationMs, long startedAtMs) {
         CastState current = snapshot;
         if (current.isCasting()) {
             return;
         }
-        snapshot = CastState.casting(slot, durationMs, startedAtMs);
+        snapshot = CastState.casting(source, slot, durationMs, startedAtMs);
     }
 
     /** Casting → Complete when duration has elapsed. */

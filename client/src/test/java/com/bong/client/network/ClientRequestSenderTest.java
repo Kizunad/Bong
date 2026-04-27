@@ -190,4 +190,21 @@ public class ClientRequestSenderTest {
             sent.get(0).body()
         );
     }
+
+    @Test
+    void sendSkillBarRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSkillBarCast(0);
+        ClientRequestSender.sendSkillBarBindSkill(1, "burst_meridian.beng_quan");
+        ClientRequestSender.sendSkillBarBindClear(1);
+
+        assertEquals(3, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals("{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}", sent.get(0).body());
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",
+            sent.get(1).body()
+        );
+        assertEquals("{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":null}", sent.get(2).body());
+    }
 }

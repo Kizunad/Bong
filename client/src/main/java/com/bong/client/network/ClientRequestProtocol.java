@@ -396,6 +396,45 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSkillBarCast(int slot) {
+        JsonObject obj = envelope("skill_bar_cast");
+        obj.addProperty("slot", slot);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindClear(int slot) {
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        obj.add("binding", com.google.gson.JsonNull.INSTANCE);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindSkill(int slot, String skillId) {
+        if (skillId == null || skillId.isBlank()) {
+            throw new IllegalArgumentException("skillId must not be blank");
+        }
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        JsonObject binding = new JsonObject();
+        binding.addProperty("kind", "skill");
+        binding.addProperty("skill_id", skillId);
+        obj.add("binding", binding);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindItem(int slot, String templateId) {
+        if (templateId == null || templateId.isBlank()) {
+            throw new IllegalArgumentException("templateId must not be blank");
+        }
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        JsonObject binding = new JsonObject();
+        binding.addProperty("kind", "item");
+        binding.addProperty("template_id", templateId);
+        obj.add("binding", binding);
+        return obj.toString();
+    }
+
     public static String encodeJiemai() {
         return envelope("jiemai").toString();
     }

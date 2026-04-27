@@ -19,6 +19,8 @@ public final class BongParticleGeometry {
     }
 
     private static final double EPSILON = 1e-6;
+    private static final double GROUND_DECAL_MAX_SNAP_UP = 0.25;
+    private static final double GROUND_DECAL_MAX_SNAP_DOWN = 2.0;
     /** 速度数量级极小（近似静止）时的后备方向（世界 +X）。防止 normalize 出 NaN。 */
     private static final double[] FALLBACK_FORWARD = { 1.0, 0.0, 0.0 };
     /** 与 forward 平行时的次级参考（世界 +Y）。GroundDecal 用 +Z。 */
@@ -133,6 +135,26 @@ public final class BongParticleGeometry {
             out[i * 3 + 2] = (float)(center[2] + z);
         }
         return out;
+    }
+
+    /**
+     * Selects the best terrain surface for {@code BongGroundDecalParticle}.
+     *
+     * <p>Candidates are absolute world-space top Y values sampled from current / below block shapes.
+     * We choose the highest finite surface that is close to the particle origin: slightly above is
+     * allowed for half slabs / carpets, but far-away ceilings and deep pits are ignored.
+     */
+    public static double fitGroundDecalY(double currentY, double[] candidateTopYs) {
+        double best = Double.NEGATIVE_INFINITY;
+        double minY = currentY - GROUND_DECAL_MAX_SNAP_DOWN;
+        double maxY = currentY + GROUND_DECAL_MAX_SNAP_UP;
+        for (double topY : candidateTopYs) {
+            if (!Double.isFinite(topY) || topY < minY || topY > maxY) {
+                continue;
+            }
+            best = Math.max(best, topY);
+        }
+        return Double.isFinite(best) ? best : currentY;
     }
 
     /**

@@ -3,6 +3,8 @@ package com.bong.client.visual.particle;
 import net.minecraft.client.particle.ParticleTextureSheet;
 import net.minecraft.client.particle.SpriteBillboardParticle;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.render.LightmapTextureManager;
+import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.world.ClientWorld;
 
@@ -18,9 +20,8 @@ import net.minecraft.client.world.ClientWorld;
  *   <li>{@link #halfWidth} 独立控制宽度，不走 {@code scale} 通道</li>
  * </ul>
  *
- * <p>发光层由调用方通过 {@link #setAlpha}/{@link #setColor} 组合决定；这里统一走
- * {@link ParticleTextureSheet#PARTICLE_SHEET_TRANSLUCENT} 以获得 alpha blending（plan §1.1 发光层
- * 要求走 {@code RenderLayer.getEntityTranslucentEmissive} 的部分留到 Phase 2 自定义 sheet）。
+ * <p>走 {@code RenderLayer.getEntityTranslucentEmissive} 对应的自定义 sheet，避免剑气/雷弧受
+ * 世界光照压暗（plan §1.1）。
  */
 public class BongLineParticle extends SpriteBillboardParticle {
     /** 长度因子：{@code length = |velocity| * lengthFactor}。默认 1.0。 */
@@ -74,7 +75,7 @@ public class BongLineParticle extends SpriteBillboardParticle {
 
     @Override
     public ParticleTextureSheet getType() {
-        return ParticleTextureSheet.PARTICLE_SHEET_TRANSLUCENT;
+        return BongParticleSheets.LINE_EMISSIVE;
     }
 
     @Override
@@ -97,11 +98,26 @@ public class BongLineParticle extends SpriteBillboardParticle {
         float u1 = this.getMaxU();
         float v0 = this.getMinV();
         float v1 = this.getMaxV();
-        int light = this.getBrightness(tickDelta);
+        int light = LightmapTextureManager.MAX_LIGHT_COORDINATE;
 
-        vertexConsumer.vertex(quad[0],  quad[1],  quad[2]).texture(u1, v1).color(this.red, this.green, this.blue, this.alpha).light(light).next();
-        vertexConsumer.vertex(quad[3],  quad[4],  quad[5]).texture(u1, v0).color(this.red, this.green, this.blue, this.alpha).light(light).next();
-        vertexConsumer.vertex(quad[6],  quad[7],  quad[8]).texture(u0, v0).color(this.red, this.green, this.blue, this.alpha).light(light).next();
-        vertexConsumer.vertex(quad[9],  quad[10], quad[11]).texture(u0, v1).color(this.red, this.green, this.blue, this.alpha).light(light).next();
+        emitEmissiveVertex(vertexConsumer, quad[0],  quad[1],  quad[2],  u1, v1, light);
+        emitEmissiveVertex(vertexConsumer, quad[3],  quad[4],  quad[5],  u1, v0, light);
+        emitEmissiveVertex(vertexConsumer, quad[6],  quad[7],  quad[8],  u0, v0, light);
+        emitEmissiveVertex(vertexConsumer, quad[9],  quad[10], quad[11], u0, v1, light);
+    }
+
+    private void emitEmissiveVertex(
+        VertexConsumer vertexConsumer,
+        float x, float y, float z,
+        float u, float v,
+        int light
+    ) {
+        vertexConsumer.vertex(x, y, z)
+            .color(this.red, this.green, this.blue, this.alpha)
+            .texture(u, v)
+            .overlay(OverlayTexture.DEFAULT_UV)
+            .light(light)
+            .normal(0.0f, 1.0f, 0.0f)
+            .next();
     }
 }

@@ -16,14 +16,15 @@
 use valence::message::ChatMessageEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, ident, Client, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
-    UniqueId, Uuid, With,
+    bevy_ecs, ident, ChunkLayer, Client, DVec3, Entity, Event, EventReader, EventWriter, Particle,
+    Position, Query, Res, UniqueId, Uuid, Vec3, With,
 };
 
 use crate::schema::vfx_event::{
     VfxEventPayloadV1, VfxEventV1, VFX_ANIM_PRIORITY_MAX, VFX_ANIM_PRIORITY_MIN,
     VFX_FADE_TICKS_MAX, VFX_PARTICLE_COUNT_MAX,
 };
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 
 pub const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
 
@@ -49,6 +50,53 @@ pub struct VfxEventRequest {
 impl VfxEventRequest {
     pub fn new(origin: DVec3, payload: VfxEventPayloadV1) -> Self {
         Self { origin, payload }
+    }
+}
+
+/// Vanilla particle effects use Valence's `ParticleS2c` path instead of Bong's JSON
+/// `bong:vfx_event` channel (plan-particle-system-v1 §2.2 / §2.6).
+#[derive(Debug, Clone, Event)]
+pub struct VanillaVfxParticleRequest {
+    pub dimension: DimensionKind,
+    pub particle: Particle,
+    pub origin: DVec3,
+    pub offset: Vec3,
+    pub max_speed: f32,
+    pub count: i32,
+    pub long_distance: bool,
+}
+
+impl VanillaVfxParticleRequest {
+    pub fn new(dimension: DimensionKind, particle: Particle, origin: DVec3) -> Self {
+        Self {
+            dimension,
+            particle,
+            origin,
+            offset: Vec3::ZERO,
+            max_speed: 0.0,
+            count: 1,
+            long_distance: false,
+        }
+    }
+}
+
+/// Minimal id map for effects that vanilla already represents well. Bong-specific ids intentionally
+/// return `None` so they stay on the custom JSON channel.
+pub fn vanilla_particle_from_id(id: &str) -> Option<Particle> {
+    match id {
+        "minecraft:smoke" | "smoke" => Some(Particle::Smoke),
+        "minecraft:large_smoke" | "large_smoke" => Some(Particle::LargeSmoke),
+        "minecraft:flame" | "flame" => Some(Particle::Flame),
+        "minecraft:end_rod" | "end_rod" => Some(Particle::EndRod),
+        "minecraft:sweep_attack" | "sweep_attack" => Some(Particle::SweepAttack),
+        "minecraft:poof" | "poof" => Some(Particle::Poof),
+        "minecraft:cloud" | "cloud" => Some(Particle::Cloud),
+        "minecraft:crit" | "crit" => Some(Particle::Crit),
+        "minecraft:enchanted_hit" | "enchanted_hit" => Some(Particle::EnchantedHit),
+        "minecraft:electric_spark" | "electric_spark" => Some(Particle::ElectricSpark),
+        "minecraft:happy_villager" | "happy_villager" => Some(Particle::HappyVillager),
+        "minecraft:witch" | "witch" => Some(Particle::Witch),
+        _ => None,
     }
 }
 
@@ -268,6 +316,44 @@ pub fn emit_vfx_event_payloads(
     }
 }
 
+/// Flush vanilla particle requests through `ChunkLayer::play_particle`, which internally writes via
+/// `view_writer(position)` so Valence handles chunk-view filtering for free.
+pub fn emit_vanilla_vfx_particles(
+    mut reader: EventReader<VanillaVfxParticleRequest>,
+    mut layers: Query<&mut ChunkLayer>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+) {
+    let Some(dimension_layers) = dimension_layers else {
+        for request in reader.read() {
+            tracing::warn!(
+                "[bong][vfx_event] dropping vanilla particle {:?}: DimensionLayers missing",
+                request.particle
+            );
+        }
+        return;
+    };
+
+    for request in reader.read() {
+        let layer_entity = dimension_layers.entity_for(request.dimension);
+        let Ok(mut layer) = layers.get_mut(layer_entity) else {
+            tracing::warn!(
+                "[bong][vfx_event] dropping vanilla particle {:?}: layer {:?} missing",
+                request.particle,
+                layer_entity
+            );
+            continue;
+        };
+        layer.play_particle(
+            &request.particle,
+            request.long_distance,
+            request.origin,
+            request.offset,
+            request.max_speed,
+            request.count,
+        );
+    }
+}
+
 /// QA 辅助命令：`/bong-vfx play <anim_id> [priority] [fade_in_ticks]`
 /// → 构造 [`VfxEventRequest::PlayAnim`] 并派发。调用方玩家本身即 `target_player`，
 /// 用于独自测试某个动画能否正确触发与回显。
@@ -279,9 +365,10 @@ pub fn emit_vfx_event_payloads(
 ///  * priority/fade 超出 schema 合法区间时自动 clamp 到边界——dev 体验优先。
 pub fn handle_vfx_debug_commands(
     mut events: EventReader<ChatMessageEvent>,
-    players: Query<(Entity, &UniqueId, &Position), With<Client>>,
+    players: Query<(Entity, &UniqueId, &Position, Option<&CurrentDimension>), With<Client>>,
     mut clients: Query<&mut Client, With<Client>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    mut vanilla_particles: EventWriter<VanillaVfxParticleRequest>,
 ) {
     for ChatMessageEvent {
         client, message, ..
@@ -292,7 +379,7 @@ pub fn handle_vfx_debug_commands(
             continue;
         }
 
-        let Ok((_, unique_id, position)) = players.get(*client) else {
+        let Ok((_, unique_id, position, current_dimension)) = players.get(*client) else {
             continue;
         };
 
@@ -315,7 +402,27 @@ pub fn handle_vfx_debug_commands(
                     VfxEventPayloadV1::StopAnim { .. } => "stop",
                     VfxEventPayloadV1::SpawnParticle { .. } => "particle",
                 };
-                vfx_events.send(VfxEventRequest::new(origin, payload));
+                if let VfxEventPayloadV1::SpawnParticle {
+                    event_id,
+                    origin: particle_origin,
+                    count,
+                    ..
+                } = &payload
+                {
+                    if let Some(particle) = vanilla_particle_from_id(event_id) {
+                        let mut request = VanillaVfxParticleRequest::new(
+                            current_dimension.map(|d| d.0).unwrap_or_default(),
+                            particle,
+                            DVec3::new(particle_origin[0], particle_origin[1], particle_origin[2]),
+                        );
+                        request.count = i32::from(count.unwrap_or(DEFAULT_PARTICLE_COUNT));
+                        vanilla_particles.send(request);
+                    } else {
+                        vfx_events.send(VfxEventRequest::new(origin, payload));
+                    }
+                } else {
+                    vfx_events.send(VfxEventRequest::new(origin, payload));
+                }
                 if let Ok(mut c) = clients.get_mut(*client) {
                     c.send_chat_message(format!("/bong-vfx {kind} dispatched: {id}"));
                 }
@@ -472,9 +579,9 @@ fn anim_id_from_payload(payload: &VfxEventPayloadV1) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{App, Update};
-    use valence::protocol::packets::play::CustomPayloadS2c;
-    use valence::testing::{create_mock_client, MockClientHelper};
+    use valence::prelude::{App, OldPosition, Update, ViewDistance};
+    use valence::protocol::packets::play::{CustomPayloadS2c, ParticleS2c};
+    use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
 
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -495,6 +602,28 @@ mod tests {
                 duration_ticks: None,
             },
         )
+    }
+
+    #[derive(Debug)]
+    struct DecodedParticlePacket {
+        particle: Particle,
+        offset: Vec3,
+        count: i32,
+    }
+
+    fn count_particle_packets(helper: &mut MockClientHelper) -> Vec<DecodedParticlePacket> {
+        let mut packets = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<ParticleS2c>() else {
+                continue;
+            };
+            packets.push(DecodedParticlePacket {
+                particle: packet.particle.into_owned(),
+                offset: packet.offset,
+                count: packet.count,
+            });
+        }
+        packets
     }
 
     // ========== §2.5 优先级 / per-chunk 上限 ==========
@@ -525,6 +654,20 @@ mod tests {
             vfx_default_priority("bong:unknown_event"),
             VfxPriority::Normal
         );
+    }
+
+    #[test]
+    fn vanilla_particle_map_keeps_bong_custom_events_off_vanilla_channel() {
+        assert_eq!(
+            vanilla_particle_from_id("minecraft:smoke"),
+            Some(Particle::Smoke)
+        );
+        assert_eq!(vanilla_particle_from_id("smoke"), Some(Particle::Smoke));
+        assert_eq!(
+            vanilla_particle_from_id("minecraft:sweep_attack"),
+            Some(Particle::SweepAttack)
+        );
+        assert_eq!(vanilla_particle_from_id("bong:sword_qi_slash"), None);
     }
 
     #[test]
@@ -597,6 +740,51 @@ mod tests {
         let out = enforce_per_chunk_cap(reqs);
         // 10 PlayAnim 全过(不限流) + 8 SpawnParticle(chunk 限流) = 18
         assert_eq!(out.len(), 18);
+    }
+
+    #[test]
+    fn particle_stress_100_500_1000_stays_bounded_by_coalesce_and_chunk_cap() {
+        for total in [100usize, 500, 1000] {
+            let reqs: Vec<VfxEventRequest> = (0..total)
+                .map(|i| {
+                    let bin = i % 12;
+                    make_particle_request("bong:sword_qi_slash", [bin as f64, 64.0, 0.25], 1)
+                })
+                .collect();
+
+            let coalesced = coalesce_requests(reqs);
+            assert_eq!(
+                coalesced.len(),
+                12,
+                "{total} same-tick particle requests should coalesce to one per 1m bin"
+            );
+
+            for req in &coalesced {
+                if let VfxEventPayloadV1::SpawnParticle { count, .. } = &req.payload {
+                    assert!(
+                        count.unwrap_or(1) <= VFX_PARTICLE_COUNT_MAX,
+                        "{total} stress requests should never exceed merged count cap"
+                    );
+                }
+            }
+
+            let capped = enforce_per_chunk_cap(coalesced);
+            assert_eq!(
+                capped.len(),
+                VFX_PER_CHUNK_PER_TICK_MAX as usize,
+                "{total} coalesced requests in one chunk should stay under per-chunk cap"
+            );
+        }
+
+        let saturated = coalesce_requests(
+            (0..100)
+                .map(|_| make_particle_request("bong:sword_qi_slash", [0.0, 64.0, 0.0], 1))
+                .collect(),
+        );
+        assert_eq!(saturated.len(), 1);
+        if let VfxEventPayloadV1::SpawnParticle { count, .. } = &saturated[0].payload {
+            assert_eq!(*count, Some(VFX_PARTICLE_COUNT_MAX));
+        }
     }
 
     // ========== §2.5 合批 ==========
@@ -1164,5 +1352,112 @@ mod tests {
             payloads.is_empty(),
             "priority out of range should fail validation before send"
         );
+    }
+
+    fn setup_vanilla_particle_app() -> (App, Entity, Entity, MockClientHelper, MockClientHelper) {
+        let scenario = ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+        let mut near_helper = scenario.helper;
+
+        app.world_mut()
+            .entity_mut(layer)
+            .insert(crate::world::dimension::OverworldLayer);
+        app.insert_resource(DimensionLayers {
+            overworld: layer,
+            tsy: Entity::PLACEHOLDER,
+        });
+        app.add_event::<VanillaVfxParticleRequest>();
+        app.add_systems(Update, emit_vanilla_vfx_particles);
+
+        app.world_mut().entity_mut(scenario.client).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            OldPosition::new([0.0, 64.0, 0.0]),
+            ViewDistance::new(2),
+        ));
+
+        let (mut far_bundle, far_helper) = create_mock_client("Far");
+        far_bundle.player.position = Position::new([256.0, 64.0, 256.0]);
+        far_bundle.player.old_position = OldPosition::new([256.0, 64.0, 256.0]);
+        far_bundle.player.layer.0 = layer;
+        far_bundle.visible_chunk_layer.0 = layer;
+        far_bundle.visible_entity_layers.0.insert(layer);
+        far_bundle.view_distance = ViewDistance::new(2);
+        let far_client = app.world_mut().spawn(far_bundle).id();
+
+        app.update();
+        near_helper.clear_received();
+        let mut far_helper = far_helper;
+        far_helper.clear_received();
+
+        (app, scenario.client, far_client, near_helper, far_helper)
+    }
+
+    #[test]
+    fn vanilla_particles_use_chunk_layer_view_filtering() {
+        let (mut app, _near, _far, mut near_helper, mut far_helper) = setup_vanilla_particle_app();
+
+        app.world_mut().send_event(VanillaVfxParticleRequest {
+            dimension: DimensionKind::Overworld,
+            particle: Particle::Smoke,
+            origin: DVec3::new(0.0, 64.0, 0.0),
+            offset: Vec3::new(0.25, 0.5, 0.25),
+            max_speed: 0.1,
+            count: 6,
+            long_distance: false,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let near_packets = count_particle_packets(&mut near_helper);
+        let far_packets = count_particle_packets(&mut far_helper);
+
+        assert_eq!(
+            near_packets.len(),
+            1,
+            "near viewer should receive ParticleS2c"
+        );
+        assert!(
+            far_packets.is_empty(),
+            "far viewer outside chunk view should receive nothing"
+        );
+        assert_eq!(near_packets[0].particle, Particle::Smoke);
+        assert_eq!(near_packets[0].count, 6);
+        assert_eq!(near_packets[0].offset, Vec3::new(0.25, 0.5, 0.25));
+    }
+
+    #[test]
+    fn vanilla_particles_do_not_use_bong_custom_payload_channel() {
+        let (mut app, _near, _far, mut near_helper, _far_helper) = setup_vanilla_particle_app();
+
+        app.world_mut().send_event(VanillaVfxParticleRequest::new(
+            DimensionKind::Overworld,
+            Particle::SweepAttack,
+            DVec3::new(0.0, 64.0, 0.0),
+        ));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let custom_payloads = count_vfx_channel_packets(&mut near_helper);
+        assert!(
+            custom_payloads.is_empty(),
+            "vanilla particles must bypass bong:vfx_event JSON channel"
+        );
+    }
+
+    #[test]
+    fn vanilla_particle_drop_when_dimension_layers_missing() {
+        let mut app = App::new();
+        app.add_event::<VanillaVfxParticleRequest>();
+        app.add_systems(Update, emit_vanilla_vfx_particles);
+        app.world_mut().send_event(VanillaVfxParticleRequest::new(
+            DimensionKind::Overworld,
+            Particle::Smoke,
+            DVec3::ZERO,
+        ));
+
+        app.update();
     }
 }

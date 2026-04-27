@@ -20,6 +20,10 @@ pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
+pub mod skillbar_config_emit;
+#[cfg(test)]
+mod skillbar_config_emit_test;
+pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
@@ -269,6 +273,11 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
+            .after(crate::player::attach_player_state_to_joined_clients),
+    );
+    app.add_systems(
+        Update,
         (
             cultivation_bridge::publish_breakthrough_events,
             cultivation_bridge::publish_forge_events,
@@ -284,6 +293,8 @@ pub fn register(app: &mut App) {
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
+                .after(vfx_event_emit::handle_vfx_debug_commands),
+            vfx_event_emit::emit_vanilla_vfx_particles
                 .after(vfx_event_emit::handle_vfx_debug_commands),
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
@@ -314,6 +325,9 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
+            skillbar_config_emit::emit_skillbar_config_payloads
+                .after(cast_emit::tick_casts_or_interrupt),
+            techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
@@ -367,6 +381,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
+    app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
 }
 

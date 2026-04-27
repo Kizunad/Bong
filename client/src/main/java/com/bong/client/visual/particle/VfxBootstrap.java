@@ -20,5 +20,7 @@ public final class VfxBootstrap {
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());
         registry.register(FormationActivatePlayer.EVENT_ID,      new FormationActivatePlayer());
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
+        registry.register(FlyingSwordDemoPlayer.EVENT_ID,        new FlyingSwordDemoPlayer());
+        registry.register(FormationCoreDemoPlayer.EVENT_ID,      new FormationCoreDemoPlayer());
     }
 }

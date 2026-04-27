@@ -67,6 +67,20 @@ public class CastSyncHandlerTest {
         assertFalse(dispatch.handled());
     }
 
+    @Test
+    void completedSkillBarCastDoesNotRelabelNextQuickSlotCast() {
+        CastStateStore.beginSkillBarCast(2, 500, 1000L);
+        CastStateStore.complete(1500L);
+
+        ServerDataDispatch dispatch = new CastSyncHandler().handle(parseEnvelope("""
+            {"v":1,"type":"cast_sync","phase":"casting","slot":2,
+             "duration_ms":1500,"started_at_ms":1700000000000,"outcome":"none"}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertEquals(CastState.Source.QUICK_SLOT, CastStateStore.snapshot().source());
+    }
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
             json, json.getBytes(StandardCharsets.UTF_8).length);

@@ -20,7 +20,9 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry,
 };
-use crate::combat::components::{Casting, QuickSlotBindings};
+use crate::combat::components::{
+    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
+};
 use crate::combat::events::{
     ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
     StatusEffectKind,
@@ -30,6 +32,7 @@ use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
+use crate::cultivation::known_techniques::technique_definition;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
@@ -71,9 +74,10 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
-use crate::player::state::canonical_player_id;
-use crate::player::state::PlayerState;
-use crate::schema::client_request::ClientRequestV1;
+use crate::player::state::{
+    canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
+};
+use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -99,6 +103,7 @@ pub struct AlchemyMockState {
 pub struct CombatRequestParams<'w, 's> {
     pub casting_q: Query<'w, 's, &'static Casting>,
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
+    pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
@@ -180,6 +185,7 @@ pub fn handle_client_request_payloads(
     combat_clock: Res<CombatClock>,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
+    persistence: Option<Res<PlayerStatePersistence>>,
     mut alchemy_params: AlchemyRequestParams,
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
@@ -248,6 +254,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
+            | ClientRequestV1::SkillBarCast { v, .. }
+            | ClientRequestV1::SkillBarBind { v, .. }
             | ClientRequestV1::CombatReincarnate { v }
             | ClientRequestV1::CombatTerminate { v }
             | ClientRequestV1::CombatCreateNewCharacter { v }
@@ -626,6 +634,30 @@ pub fn handle_client_request_payloads(
                     item_id,
                     &mut combat_params.bindings_q,
                     &inventories,
+                    &clients,
+                    persistence.as_deref(),
+                );
+            }
+            ClientRequestV1::SkillBarCast { slot, target, .. } => {
+                handle_skill_bar_cast(
+                    ev.client,
+                    slot,
+                    target,
+                    &combat_clock,
+                    &mut commands,
+                    &mut clients,
+                    &mut combat_params,
+                );
+            }
+            ClientRequestV1::SkillBarBind { slot, binding, .. } => {
+                handle_skill_bar_bind(
+                    ev.client,
+                    slot,
+                    binding,
+                    &mut combat_params.skillbar_bindings_q,
+                    &inventories,
+                    &clients,
+                    persistence.as_deref(),
                 );
             }
             ClientRequestV1::CombatReincarnate { .. } => {
@@ -1509,6 +1541,23 @@ mod tests {
         }
     }
 
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
     fn flush_all_client_packets(app: &mut App) {
         let world = app.world_mut();
         let mut query = world.query::<&mut Client>();
@@ -1535,6 +1584,35 @@ mod tests {
             }
         }
         false
+    }
+
+    fn register_request_app(app: &mut App) {
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(Update, handle_client_request_payloads);
     }
 
     #[test]
@@ -2346,6 +2424,131 @@ mod tests {
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(12));
     }
+
+    #[test]
+    fn skill_bar_bind_skill_then_cast_starts_skillbar_cast() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"npc:1"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(
+            &bindings.slots[0],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        let casting = app.world().get::<Casting>(entity).unwrap();
+        assert_eq!(casting.source, CastSource::SkillBar);
+        assert_eq!(casting.slot, 0);
+        assert_eq!(casting.bound_instance_id, None);
+        assert_eq!(casting.duration_ticks, 8);
+        assert_eq!(casting.complete_cooldown_ticks, 60);
+    }
+
+    #[test]
+    fn skill_bar_cast_empty_item_or_cooldown_does_not_start_cast() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(1, SkillSlot::Item { instance_id: 7 }));
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        skill_bar.set_cooldown(2, 100);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        for slot in [0_u8, 1, 2] {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                        v: 1,
+                        slot,
+                        target: None,
+                    })
+                    .unwrap()
+                    .into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+    }
+
+    #[test]
+    fn skill_bar_bind_rejects_unknown_skill() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"unknown.skill"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+    }
 }
 
 fn parse_session_mode(raw: &str) -> SessionMode {
@@ -2380,42 +2583,16 @@ fn handle_use_quick_slot(
         );
         return;
     }
-    // plan §4.2: 已 cast 时——同 slot 静默忽略；不同 slot 视为 UserCancel + 启新 cast。
+    // plan §4.2: 已 cast 时——同来源同 slot 静默忽略；否则 UserCancel + 启新 cast。
     if let Ok(prev) = combat_params.casting_q.get(entity) {
-        if prev.slot == slot {
+        if prev.source == CastSource::QuickSlot && prev.slot == slot {
             tracing::debug!(
                 "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
             );
             return;
         }
-        // 不同 slot → 取消旧 cast。
-        let prev_slot = prev.slot;
-        let prev_duration_ms = prev.duration_ms;
-        let prev_started_at_ms = prev.started_at_ms;
-        commands.entity(entity).remove::<Casting>();
-        if let Ok(mut bindings) = combat_params.bindings_q.get_mut(entity) {
-            bindings.set_cooldown(
-                prev_slot,
-                clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
-            );
-        }
-        if let Ok((username, mut client)) = clients.get_mut(entity) {
-            push_cast_sync(
-                &mut client,
-                CastSyncV1 {
-                    phase: CastPhaseV1::Interrupt,
-                    slot: prev_slot,
-                    duration_ms: prev_duration_ms,
-                    started_at_ms: prev_started_at_ms,
-                    outcome: CastOutcomeV1::UserCancel,
-                },
-                username.0.as_str(),
-                entity,
-            );
-        }
-        tracing::info!(
-            "[bong][network][cast] user_cancel entity={entity:?} prev_slot={prev_slot} → switching to slot={slot}"
-        );
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
         // 继续到下面启动新 cast。
     }
     let (bound_instance_id, on_cooldown) = combat_params
@@ -2478,6 +2655,7 @@ fn handle_use_quick_slot(
         .map(|p| p.get())
         .unwrap_or(valence::prelude::DVec3::ZERO);
     commands.entity(entity).insert(Casting {
+        source: CastSource::QuickSlot,
         slot,
         started_at_tick: clock.tick,
         duration_ticks,
@@ -2535,6 +2713,8 @@ fn handle_quick_slot_bind(
     item_id: Option<String>,
     bindings_q: &mut Query<&mut QuickSlotBindings>,
     inventories: &Query<&mut PlayerInventory>,
+    clients: &Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
 ) {
     let mut bindings = match bindings_q.get_mut(entity) {
         Ok(b) => b,
@@ -2548,8 +2728,9 @@ fn handle_quick_slot_bind(
     // 把 item_id (template) 解析成实际持有的第一个 instance_id。
     // None / "" → 清空。Plan §10.4 wire 是 ItemId（template id），server 自己
     // 在 player inventory 里查匹配的 instance。
-    let instance_id = match item_id.as_deref() {
-        None | Some("") => None,
+    let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let instance_id = match persisted_item_id {
+        None => None,
         Some(template) => inventories.get(entity).ok().and_then(|inv| {
             for c in &inv.containers {
                 if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
@@ -2569,11 +2750,298 @@ fn handle_quick_slot_bind(
         );
         return;
     }
+    let persisted_item_id = persisted_item_id.map(str::to_string);
+    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
+        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+            prefs.quick_slots[slot as usize] = persisted_item_id.clone()
+        }) {
+            tracing::warn!(
+                "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
+                username.0
+            );
+        }
+    }
     tracing::info!(
         "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?}",
         item_id,
         instance_id
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_skill_bar_cast(
+    entity: valence::prelude::Entity,
+    slot: u8,
+    target: Option<String>,
+    clock: &CombatClock,
+    commands: &mut Commands,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &mut CombatRequestParams,
+) {
+    if slot >= SkillBarBindings::SLOT_COUNT as u8 {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} ignored: slot {slot} out of range"
+        );
+        return;
+    }
+    let bound_skill_id = combat_params
+        .skillbar_bindings_q
+        .get(entity)
+        .ok()
+        .and_then(|bindings| match bindings.get(slot) {
+            Some(SkillSlot::Skill { skill_id }) => Some(skill_id.clone()),
+            Some(SkillSlot::Item { .. }) | Some(SkillSlot::Empty) | None => None,
+        });
+    let Some(skill_id) = bound_skill_id else {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: empty or item binding"
+        );
+        return;
+    };
+    let Some(definition) = technique_definition(&skill_id) else {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: unknown skill `{skill_id}`"
+        );
+        return;
+    };
+    if combat_params
+        .skillbar_bindings_q
+        .get(entity)
+        .map(|bindings| bindings.is_on_cooldown(slot, clock.tick))
+        .unwrap_or(false)
+    {
+        tracing::debug!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} ignored: on cooldown"
+        );
+        return;
+    }
+
+    if let Ok(prev) = combat_params.casting_q.get(entity) {
+        if prev.source == CastSource::SkillBar && prev.slot == slot {
+            tracing::debug!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} ignored: same-slot during cast"
+            );
+            return;
+        }
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
+    }
+
+    let duration_ticks = u64::from(definition.cast_ticks).max(1);
+    let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
+    let duration_ms = definition.cast_ticks.saturating_mul(50);
+    let started_at_ms = current_unix_millis();
+    let start_position = combat_params
+        .positions
+        .get(entity)
+        .map(|position| position.get())
+        .unwrap_or(valence::prelude::DVec3::ZERO);
+    commands.entity(entity).insert(Casting {
+        source: CastSource::SkillBar,
+        slot,
+        started_at_tick: clock.tick,
+        duration_ticks,
+        started_at_ms,
+        duration_ms,
+        bound_instance_id: None,
+        start_position,
+        complete_cooldown_ticks,
+    });
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        push_cast_sync(
+            &mut client,
+            CastSyncV1 {
+                phase: CastPhaseV1::Casting,
+                slot,
+                duration_ms,
+                started_at_ms,
+                outcome: CastOutcomeV1::None,
+            },
+            username.0.as_str(),
+            entity,
+        );
+    }
+    tracing::info!(
+        "[bong][network] skill cast started entity={entity:?} slot={slot} skill={skill_id} target={target:?} duration_ticks={} cooldown_ticks={} tick={}",
+        definition.cast_ticks,
+        definition.cooldown_ticks,
+        clock.tick
+    );
+}
+
+fn cancel_previous_cast(
+    entity: valence::prelude::Entity,
+    prev: CastCancelSnapshot,
+    clock: &CombatClock,
+    commands: &mut Commands,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &mut CombatRequestParams,
+    next_slot: u8,
+) {
+    let prev_source = prev.source;
+    let prev_slot = prev.slot;
+    commands.entity(entity).remove::<Casting>();
+    match prev_source {
+        CastSource::QuickSlot => {
+            if let Ok(mut bindings) = combat_params.bindings_q.get_mut(entity) {
+                bindings.set_cooldown(
+                    prev_slot,
+                    clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+                );
+            }
+        }
+        CastSource::SkillBar => {
+            if let Ok(mut bindings) = combat_params.skillbar_bindings_q.get_mut(entity) {
+                bindings.set_cooldown(
+                    prev_slot,
+                    clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+                );
+            }
+        }
+    }
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        push_cast_sync(
+            &mut client,
+            CastSyncV1 {
+                phase: CastPhaseV1::Interrupt,
+                slot: prev_slot,
+                duration_ms: prev.duration_ms,
+                started_at_ms: prev.started_at_ms,
+                outcome: CastOutcomeV1::UserCancel,
+            },
+            username.0.as_str(),
+            entity,
+        );
+    }
+    tracing::info!(
+        "[bong][network][cast] user_cancel entity={entity:?} prev_source={prev_source:?} prev_slot={prev_slot} → switching to slot={next_slot}"
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CastCancelSnapshot {
+    source: CastSource,
+    slot: u8,
+    duration_ms: u32,
+    started_at_ms: u64,
+}
+
+impl From<&Casting> for CastCancelSnapshot {
+    fn from(casting: &Casting) -> Self {
+        Self {
+            source: casting.source,
+            slot: casting.slot,
+            duration_ms: casting.duration_ms,
+            started_at_ms: casting.started_at_ms,
+        }
+    }
+}
+
+fn handle_skill_bar_bind(
+    entity: valence::prelude::Entity,
+    slot: u8,
+    binding: Option<SkillBarBindingV1>,
+    bindings_q: &mut Query<&mut SkillBarBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
+) {
+    if slot >= SkillBarBindings::SLOT_COUNT as u8 {
+        tracing::warn!("[bong][network] skill_bar_bind entity={entity:?} slot={slot} out of range");
+        return;
+    }
+    let slot_value = match binding.as_ref() {
+        None => SkillSlot::Empty,
+        Some(SkillBarBindingV1::Item { template_id }) => {
+            let instance_id = inventories
+                .get(entity)
+                .ok()
+                .and_then(|inventory| first_instance_for_template(inventory, template_id));
+            let Some(instance_id) = instance_id else {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: item template `{template_id}` not in inventory"
+                );
+                return;
+            };
+            SkillSlot::Item { instance_id }
+        }
+        Some(SkillBarBindingV1::Skill { skill_id }) => {
+            if technique_definition(skill_id).is_none() {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            }
+            SkillSlot::Skill {
+                skill_id: skill_id.clone(),
+            }
+        }
+    };
+    let mut bindings = match bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] skill_bar_bind entity={entity:?} has no SkillBarBindings"
+            );
+            return;
+        }
+    };
+    if !bindings.set(slot, slot_value.clone()) {
+        tracing::warn!("[bong][network] skill_bar_bind entity={entity:?} slot={slot} out of range");
+        return;
+    }
+    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
+        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+            prefs.skill_bar[slot as usize] = binding_to_persist(binding.clone())
+        }) {
+            tracing::warn!(
+                "[bong][network] failed to persist skill_bar_bind for `{}` slot={slot}: {error}",
+                username.0
+            );
+        }
+    }
+    tracing::info!(
+        "[bong][network] skill_bar_bind entity={entity:?} slot={slot} binding={binding:?} → {slot_value:?}"
+    );
+}
+
+fn binding_to_persist(
+    binding: Option<SkillBarBindingV1>,
+) -> crate::player::state::SkillSlotPersist {
+    match binding {
+        None => crate::player::state::SkillSlotPersist::Empty,
+        Some(SkillBarBindingV1::Item { template_id }) => {
+            crate::player::state::SkillSlotPersist::Item { template_id }
+        }
+        Some(SkillBarBindingV1::Skill { skill_id }) => {
+            crate::player::state::SkillSlotPersist::Skill { skill_id }
+        }
+    }
+}
+
+fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -> Option<u64> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == template_id)
+        {
+            return Some(placed.instance.instance_id);
+        }
+    }
+    if let Some(item) = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+    {
+        return Some(item.instance_id);
+    }
+    inventory
+        .equipped
+        .values()
+        .find(|item| item.template_id == template_id)
+        .map(|item| item.instance_id)
 }
 
 #[allow(clippy::too_many_arguments)]
