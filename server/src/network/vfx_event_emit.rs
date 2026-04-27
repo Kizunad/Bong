@@ -24,7 +24,7 @@ use crate::schema::vfx_event::{
     VfxEventPayloadV1, VfxEventV1, VFX_ANIM_PRIORITY_MAX, VFX_ANIM_PRIORITY_MIN,
     VFX_FADE_TICKS_MAX, VFX_PARTICLE_COUNT_MAX,
 };
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 
 pub const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
 
@@ -365,9 +365,10 @@ pub fn emit_vanilla_vfx_particles(
 ///  * priority/fade 超出 schema 合法区间时自动 clamp 到边界——dev 体验优先。
 pub fn handle_vfx_debug_commands(
     mut events: EventReader<ChatMessageEvent>,
-    players: Query<(Entity, &UniqueId, &Position), With<Client>>,
+    players: Query<(Entity, &UniqueId, &Position, Option<&CurrentDimension>), With<Client>>,
     mut clients: Query<&mut Client, With<Client>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    mut vanilla_particles: EventWriter<VanillaVfxParticleRequest>,
 ) {
     for ChatMessageEvent {
         client, message, ..
@@ -378,7 +379,7 @@ pub fn handle_vfx_debug_commands(
             continue;
         }
 
-        let Ok((_, unique_id, position)) = players.get(*client) else {
+        let Ok((_, unique_id, position, current_dimension)) = players.get(*client) else {
             continue;
         };
 
@@ -401,7 +402,27 @@ pub fn handle_vfx_debug_commands(
                     VfxEventPayloadV1::StopAnim { .. } => "stop",
                     VfxEventPayloadV1::SpawnParticle { .. } => "particle",
                 };
-                vfx_events.send(VfxEventRequest::new(origin, payload));
+                if let VfxEventPayloadV1::SpawnParticle {
+                    event_id,
+                    origin: particle_origin,
+                    count,
+                    ..
+                } = &payload
+                {
+                    if let Some(particle) = vanilla_particle_from_id(event_id) {
+                        let mut request = VanillaVfxParticleRequest::new(
+                            current_dimension.map(|d| d.0).unwrap_or_default(),
+                            particle,
+                            DVec3::new(particle_origin[0], particle_origin[1], particle_origin[2]),
+                        );
+                        request.count = i32::from(count.unwrap_or(DEFAULT_PARTICLE_COUNT));
+                        vanilla_particles.send(request);
+                    } else {
+                        vfx_events.send(VfxEventRequest::new(origin, payload));
+                    }
+                } else {
+                    vfx_events.send(VfxEventRequest::new(origin, payload));
+                }
                 if let Ok(mut c) = clients.get_mut(*client) {
                     c.send_chat_message(format!("/bong-vfx {kind} dispatched: {id}"));
                 }
