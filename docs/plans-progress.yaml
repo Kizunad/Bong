@@ -34,7 +34,7 @@ groups:
     description: "战斗流派 + 快捷栏，等待开工"
   - id: finished
     title: "已完成归档"
-    description: "M0/M1 阶段产物"
+    description: "M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan"
 
 plans:
   # ============================================================
@@ -46,9 +46,9 @@ plans:
     state: active-implementing
     percent: 70
     last_updated: "2026-04-27"
-    pr_refs: [47, 49, 50, 51, 53, 54, 55]
-    blocking_on: ["plan-tsy-hostile-v1", "plan-tsy-extract-v1"]
-    summary: "P-1/P0/P0-followup/worldgen/P1/P2/P3 共 7 子 plan 已 merged（PR #47-55）；P4 hostile/P5 extract 零代码，整体未归档；§10 进度日志只到 2026-04-26，未反映后续 6 个 PR"
+    pr_refs: [47, 49, 50, 51, 53, 54, 55, 59]
+    blocking_on: ["plan-tsy-hostile-v1"]
+    summary: "P-1/P0/P0-followup/worldgen/P1/P2/P3/P5 共 8 子 plan 已 merged（PR #47-59）；P4 hostile 仍零代码，整体未归档；P5 extract 已 merged 后整体闭环只缺 NPC 层。"
 
   - file: plan-tsy-dimension-v1.md
     group: tsy
@@ -58,399 +58,379 @@ plans:
     last_updated: "2026-04-26"
     pr_refs: [47]
     blocking_on: []
-    summary: "DimensionKind/DimensionLayers/CurrentDimension/TerrainProviders/DimensionTransferRequest 全链路 + Zone.dimension + DB v13 已落，1252 单测绿"
+    summary: "PR #47 落地：world/dimension.rs + dimension_transfer.rs 全新建，DimensionKind/DimensionLayers/CurrentDimension/DimensionTransferRequest/register_tsy_dimension/find_zone(dim,pos) 全部确认，DB migration v13 已在，1252 单测全绿。"
 
   - file: plan-tsy-zone-v1.md
     group: tsy
     title: "TSY Zone P0 基础"
     state: merged
-    percent: 92
-    last_updated: "2026-04-26"
+    percent: 90
+    last_updated: "2026-04-27"
     pr_refs: [49]
     blocking_on: []
-    summary: "tsy.rs/tsy_drain.rs/tsy_portal.rs/tsy_filter.rs/tsy_dev_command.rs + zone.rs helpers 全部存在；TsyPresence/RiftPortal/DimensionAnchor 组件落地；agent/packages/schema/src/tsy.ts 双端对齐"
+    summary: "PR #49 落地：tsy.rs / tsy_drain.rs / tsy_portal.rs / tsy_filter.rs / tsy_dev_command.rs + TsyPresence/RiftPortal/zone helpers / ZoneRegistry runtime add 全部 grep 命中；agent schema tsy.ts 已生成。剩余 ~10%：Manual QA A-E（需真人 client）未跑。"
 
   - file: plan-tsy-zone-followup-v1.md
     group: tsy
-    title: "TSY Zone P0 收尾（集成测+Redis 桥）"
+    title: "TSY Zone P0 收尾（集成测 + Server→Redis 桥）"
     state: merged
     percent: 95
     last_updated: "2026-04-27"
     pr_refs: [50]
     blocking_on: []
-    summary: "tsy_event_bridge.rs（含 publish_tsy_enter/exit_events + 4 单测）已落，channels.ts 中 TSY_EVENT='bong:tsy_event' 已建，tsy_integration_test.rs 内嵌于 server/src/world/（bin crate 路径决策）"
+    summary: "PR #50 落地：tsy_integration_test.rs（4 端到端 case A-D）+ tsy_event_bridge.rs + CH_TSY_EVENT + DimensionKind::ident_str + agent/channels.ts，889 行变更。doc §1.3 原要求独立 tests/ 目录，实际落在 server/src/world/，路径差异但功能完整。"
 
   - file: plan-tsy-worldgen-v1.md
     group: tsy
-    title: "TSY Worldgen + POI consumer"
+    title: "TSY 地形/POI/NPC anchor 自动生成"
     state: merged
     percent: 85
     last_updated: "2026-04-27"
     pr_refs: [51]
     blocking_on: []
-    summary: "4 个 TSY profile (zongmen_ruin/daneng_crater/gaoshou_hermitage/zhanchang) + tsy_poi_consumer.rs 4 个 spawn 函数已落；plan 文档仍存放 plans-skeleton/，与已 merged 状态有路径差异"
+    summary: "PR #51 落地：4 个 TSY profile（tsy_zongmen_ruin/tsy_daneng_crater/tsy_gaoshou_hermitage/tsy_zhanchang）+ tsy_poi_consumer.rs + worldgen 双 manifest 流水线 + zones.tsy.json 全部确认，3202 行变更。剩余：smoke-tsy-worldgen.sh 未建，§10 升级条件 P4 archetype 命名仍 ⏳。"
 
   - file: plan-tsy-loot-v1.md
     group: tsy
-    title: "TSY 物资与秘境死亡分流"
+    title: "TSY 物资 99/1 + 秘境分流死亡 + 干尸"
     state: merged
     percent: 92
     last_updated: "2026-04-27"
     pr_refs: [53]
     blocking_on: []
-    summary: "ancient_relics.rs/tsy_loot_spawn.rs/tsy_death_drop.rs/corpse.rs + ItemRarity::Ancient + DeathEvent.attacker + tsy_loot_integration_test 已落；文档进度日志仍停 2026-04-26"
+    summary: "PR #53 落地：ancient_relics.rs / tsy_loot_spawn.rs / tsy_death_drop.rs / corpse.rs + ItemRarity::Ancient + DeathEvent.attacker_player_id + DroppedLootRegistry.ownerless + MixinPlayerEntityDrop 全部确认。剩余 ~8%：smoke 全链路 e2e 与文档清单未跑。"
 
   - file: plan-tsy-lifecycle-v1.md
     group: tsy
-    title: "TSY 生命周期与道伥"
+    title: "TSY 生命周期（状态机 + 塌缩 + 道伥）"
     state: merged
     percent: 90
     last_updated: "2026-04-27"
     pr_refs: [54]
     blocking_on: []
-    summary: "tsy_lifecycle.rs 状态机（New/Active/Declining/Collapsing/Dead）+ Daoxiang variant 加入 npc/lifecycle.rs + tsy_lifecycle_integration_test.rs 全部确认；P3/P4/P5 解冻"
+    summary: "PR #54 落地：tsy_lifecycle.rs + TsyLifecycle 枚举 + TsyZoneStateRegistry + NpcArchetype::Daoxiang + 26 单测全部确认；tsy_loot_spawn 接 family 注册、tsy_portal 拒 Collapsing/Dead 入场。剩余 ~10%：道伥 spawn 参数调优与 e2e smoke 未跑。"
 
   - file: plan-tsy-container-v1.md
     group: tsy
-    title: "TSY 容器与搜刮"
+    title: "TSY 容器搜刮系统（5 档 + 钥匙 + 真元加速）"
     state: merged
     percent: 95
     last_updated: "2026-04-27"
     pr_refs: [55]
     blocking_on: []
-    summary: "PR #55 已 merge：tsy_container.rs/tsy_container_search.rs/tsy_container_spawn.rs + ContainerKind/SearchProgress/RelicExtracted/LootContainer 全确认；client SearchHudState/SearchProgressHudPlanner 已落；agent container-interaction.ts schema 已建；文档进度日志未回填 merge 状态"
+    summary: "PR #55 落地：tsy_container.rs / tsy_container_search.rs / tsy_container_spawn.rs + LootContainer/SearchProgress/RelicExtracted/ContainerKind 全部确认；tsy_keys.toml / loot_pools.json / tsy_containers.json 已生成；client SearchHudState + SearchProgressHudPlanner 落地。"
 
   - file: plan-tsy-hostile-v1.md
     group: tsy
-    title: "TSY 敌对 NPC（道伥/执念/守灵）"
+    title: "TSY 敌对 NPC 四档（道伥/执念/守灵/畸变体）"
     state: active-design
     percent: 0
     last_updated: "2026-04-27"
     pr_refs: []
     blocking_on: []
-    summary: "纯设计骨架；grep Zhinian/Fuya/TsyOrigin/FuyaAura/tsy_hostile 全部零命中；前置 P0/P1/P2/P3 均已 merge，可立即开工"
+    summary: "零代码落地：grep NpcArchetype::Zhinian/Fuya/FuyaAura/ZhinianPhase/tsy_spawn_pools/tsy_drops 全无命中，无 tsy_hostile.rs / npc/daoxiang.rs；文档仍为纯设计骨架，P0-P3 已就绪，等 /consume-plan tsy-hostile 启动。"
 
   - file: plan-tsy-extract-v1.md
     group: tsy
-    title: "TSY 撤离点与 race-out"
-    state: active-design
-    percent: 0
+    title: "TSY 撤离点（RiftPortal + 撤离倒计时 + race-out）"
+    state: merged
+    percent: 90
     last_updated: "2026-04-27"
-    pr_refs: []
+    pr_refs: [59]
     blocking_on: []
-    summary: "纯设计骨架；grep ExtractProgress/RiftKind/tsy_extract 全部零命中；前置 zone/loot/lifecycle 均已 merge，可立即开工"
+    summary: "PR #59 落地：extract_system.rs + rift_portal.rs + extract_emit.rs + tsy_portals.json + client ExtractProgressHudPlanner 全部确认，4754 行变更；RiftKind/ExtractProgress/StartExtractRequest/CollapseTear 均有 grep 命中。剩余 ~10%：实机 E2E 与 smoke 脚本未建。"
 
   # ============================================================
   # Group: combat-vfx
   # ============================================================
   - file: plan-combat-no_ui.md
     group: combat-vfx
-    title: "战斗 ECS（伤害/流派/状态/死亡）"
+    title: "服务端 ECS 战斗系统 C1-C3 实装"
     state: merged
-    percent: 52
-    last_updated: "2026-04-27"
-    pr_refs: [10, 16, 30]
+    percent: 85
+    last_updated: "2026-04-21"
+    pr_refs: [29, 30]
     blocking_on: []
-    summary: "C1(Wounds/AttackIntent/Lifecycle)+C2(攻击事务/截脉/AABB raycast)+C3(bong:combat_realtime/summary 双通道+DeathArbiter) 全 merged；C4(终结归档)~C7(飞行) 按 worktree 边界禁碰，约占全 plan 一半体量"
+    summary: "C1-C3（combat/components.rs/resolve.rs/lifecycle.rs/raycast.rs/status.rs/events.rs/debug.rs）全部落地，IPC 双通道 bong:combat_realtime/bong:combat_summary 双端对齐，PR #29/#30 已 merged。C4+（终结归档/亡者博物馆/CharacterRegistry）按 worktree v1 边界明确禁止，文档与代码高度对齐（原 52% 低估）。"
 
   - file: plan-combat-ui_impl.md
     group: combat-vfx
-    title: "战斗系统客户端 UI"
+    title: "战斗系统客户端 UI 全套实装"
     state: merged
-    percent: 88
-    last_updated: "2026-04-27"
-    pr_refs: [20]
+    percent: 90
+    last_updated: "2026-04-25"
+    pr_refs: []
     blocking_on: []
-    summary: "§3 全 21 项 Java 类落地（handler/screen/store/inspect 四包）；§4 阶段表 U1-U7 + 并行项全打 ✅；端到端 runClient 联调与实机验收尚未完成"
+    summary: "文档列出所有 UI 组件均标注 ✅，grep 验证 WoundsSnapshotHandler/DeathScreen/TerminateScreen/ForgeCarrierScreen/ZhenfaLayoutScreen/TribulationBroadcastHudPlanner 等 15+ 文件均存在于 client/combat/。文档 30 处 ✅ 无 [ ] 项。"
 
   - file: plan-weapon-v1.md
     group: combat-vfx
-    title: "武器/法宝（ItemInstance→3D 模型）"
+    title: "武器法宝装备切换与 3D 渲染完整链路"
     state: merged
-    percent: 80
-    last_updated: "2026-04-27"
+    percent: 85
+    last_updated: "2026-04-25"
     pr_refs: [41]
     blocking_on: []
-    summary: "W1-W6 已 merged：combat/weapon.rs(496 行)、MixinInGameHud 关原生 hotbar、MixinHeldItemRenderer 拦截、WeaponHotbarHudPlanner、WeaponRenderBootstrap 均确认；W8 武器物品清单(7 把全量 OBJ) 与 forge 修复渠道接入仍待"
+    summary: "PR #41 merged，server combat/weapon.rs + client MixinHeldItemRenderer/WeaponEquippedStore/BongWeaponModelRegistry/WeaponHotbarHudPlanner 及 weapons.toml 均存在，W1-W6/W8 已完成。第三人称持握 MVP 不做（§5.2 定案），plan-forge 修复链路待后续。"
 
   - file: plan-armor-v1.md
     group: combat-vfx
-    title: "护甲减免（WoundKind×BodyPart）"
-    state: merged
-    percent: 88
-    last_updated: "2026-04-27"
+    title: "装备护甲减免与耐久系统闭环"
+    state: active-implementing
+    percent: 55
+    last_updated: "2026-04-25"
     pr_refs: [46, 52, 56]
     blocking_on: []
-    summary: "P0+P1 全 merged：ArmorProfile 二维矩阵(4 档×5 kind)、apply_armor_mitigation(ARMOR_HIT_DURABILITY_COST_POINTS=0.5)、ArmorDurabilityChangedV1 事件链、BodyRefiningMarker×1.3、client ArmorProfileStore+破损 toast 均落；实机 playtest 与 client tooltip 精细化未完"
+    summary: "P0 护甲减免结算（ArmorProfile/registry/apply_armor_mitigation/sync_armor_to_derived_attrs）已 merged PR #46/#52/#56，server armor.rs/armor_sync.rs/resolve.rs 及 client ArmorProfileStore 均存在。P1（耐久衰减/broken 降级/体修 buff/矩阵 fixture/client tooltip）仍未启动，断层明显（原 88% 高估）。"
 
   - file: plan-HUD-v1.md
     group: combat-vfx
-    title: "客户端 HUD 全套（双层快捷栏）"
+    title: "Bong 客户端全部 HUD 元素布局与渲染系统"
     state: merged
-    percent: 82
-    last_updated: "2026-04-27"
-    pr_refs: [18, 43]
+    percent: 88
+    last_updated: "2026-04-25"
+    pr_refs: []
     blocking_on: []
-    summary: "C1-C5(MiniBody/QuickBar/CastBar/EventStream/条件渲染)+C7(死亡/断线)+C8 阈值配置全实装；C6 InspectScreen 第 5 tab 拖拽 UI 与 QuickSlotBindIntent 发送未做，伪皮/涡流角标与事件流 toggle 仍空缺"
+    summary: "C1-C5/C7/C8 阈值配置已实装，grep 验证 StaminaBarHudPlanner/QuickBarHudPlanner/JiemaiRingHudPlanner/EdgeFeedbackHudPlanner 等全部存在。C6（InspectScreen 拖拽 tab）和伪皮/涡流角标未做，事件流隐藏 toggle 待做。"
 
   - file: plan-particle-system-v1.md
     group: combat-vfx
-    title: "粒子/世界内 VFX 系统"
+    title: "粒子与世界内 VFX 系统三基类及首批资产"
     state: merged
-    percent: 72
-    last_updated: "2026-04-27"
+    percent: 75
+    last_updated: "2026-04-25"
     pr_refs: [17]
     blocking_on: []
-    summary: "P0(VfxEventV1+范围过滤)+P1(Line/Ribbon/GroundDecal 三基类)+P2 部分 merged：9 类粒子贴图 + 6 VfxPlayer 注册 VfxBootstrap；emissive RenderLayer、飞剑 Ribbon demo、符阵 BlockEntity demo 仍未启动"
+    summary: "Phase 0-2 核心已 merged PR #17，BongLineParticle/BongRibbonParticle/BongGroundDecalParticle/VfxBootstrap/SwordQiSlashPlayer 等 6 个 event player 均存在，9 类粒子贴图齐备。Phase 2 飞剑实体/符阵 BlockEntity demo 和 emissive RenderLayer 仍 [ ]，Phase 3 性能压测未启动。"
 
   - file: plan-iris-integration-v1.md
     group: combat-vfx
-    title: "Iris 光影集成（修仙状态驱动）"
+    title: "Iris 光影集成与修仙状态驱动 shader"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-25"
+    pr_refs: []
+    blocking_on: ["plan-vfx-v1"]
+    summary: "client 无 IrisApi/CommonUniforms Mixin、无 BongClientState、无 bong_xianxia shader pack 资源，fabric.mod.json 无 recommends.iris，所有 §2-§5 任务全部 [ ]。仅停留在调研阶段（§1）。"
+
+  - file: plan-player-animation-v1.md
+    group: combat-vfx
+    title: "PlayerAnimator 玩家骨骼动画 AI-Native 生产线"
+    state: merged
+    percent: 80
+    last_updated: "2026-04-25"
+    pr_refs: []
+    blocking_on: []
+    summary: "PlayerAnimator gradle 依赖已接入，20 个 JSON 动画资产全部落地，BongAnimationRegistry/Player/Bridge + ClientAnimationBridge + server vfx_event_emit.rs 已就位，手动触发链路贯通。剩余：combat/cultivation system 自动映射调用点及 §4.4 inline JSON 注入未启动。"
+
+  - file: plan-hotbar-modify-v1.md
+    group: combat-vfx
+    title: "快捷栏双行重构与战斗技能槽接口设计"
+    state: active-design
+    percent: 8
+    last_updated: "2026-04-27"
+    pr_refs: []
+    blocking_on: []
+    summary: "plan 今日（2026-04-27）出骨架并完成详细设计（五区联动工作台 + SVG v2），但 server 无 SkillBarBindings/handle_skill_bar_cast，client 无 SkillBarStore/SkillBarBind handler，agent schema 无 SkillBarCast 协议定义，全部 P0 任务均 [ ]，零实际代码落地（原 18% 高估）。"
+
+  - file: plan-baomai-v1.md
+    group: combat-vfx
+    title: "体修·爆脉流战斗功法 P0 崩拳实装"
     state: active-design
     percent: 5
     last_updated: "2026-04-27"
     pr_refs: []
-    blocking_on: []
-    summary: "仅 §1 调研结论阶段：fabric.mod.json 无 iris recommends 声明，client/ 无任何 IrisApi Mixin/BongClientState/bong_xianxia shader pack 资源；前置 plan-vfx-v1 已归档，技术可行性 Phase A 未跑"
-
-  - file: plan-player-animation-v1.md
-    group: combat-vfx
-    title: "PlayerAnimator 玩家动画系统"
-    state: active-implementing
-    percent: 75
-    last_updated: "2026-04-27"
-    pr_refs: []
-    blocking_on: []
-    summary: "20 动画 JSON 全部落地、BongAnimationRegistry/Player/Bridge + BongAnimCommand 就绪、server vfx_event_emit.rs PlayAnim/StopAnim 广播器已实装；combat/cultivation 自动映射 + §4.4 inline JSON 注入(天道生成) 未启动"
-
-  - file: plan-hotbar-modify-v1.md
-    group: combat-vfx
-    title: "快捷栏双行重构（1-9 战斗 / F1-F9 物品快捷）"
-    state: active-design
-    percent: 18
-    last_updated: "2026-04-27"
-    pr_refs: []
-    blocking_on: []
-    summary: "设计已锁：v2 SVG 对齐现网 outerRow 真实结构（左 hotbarStrip+quickUseStrip 双竖条 / 中 mainPanel 战斗·修炼 tab / 右 discardStrip）；P0 不依赖 plan-baomai-v1（mock skill consumer 顶位 + 完整接口），§8 测试章节按 CLAUDE.md 饱和化清单重写；零代码，可立即开工"
-
-  - file: plan-baomai-v1.md
-    group: combat-vfx
-    title: "体修·爆脉流（崩拳示范）"
-    state: active-design
-    percent: 12
-    last_updated: "2026-04-27"
-    pr_refs: []
     blocking_on: ["plan-hotbar-modify-v1"]
-    summary: "P0 收紧到仅崩拳（引气期最低级，项目首个落地战斗功法示范）；§3 重写为对接 hotbar plan skill_registry fn pointer 替换 mock；§13 新增饱和化测试清单 12+ 条；4 招/虚脱期/染色加成下沉 P1+；阻塞在 hotbar plan P0 merged 后"
+    summary: "plan 今日（2026-04-27）出骨架，server 无 burst_meridian.rs/resolve_beng_quan/SkillBarBindings，client 无 BurstMeridianEvent handler。完全依赖 plan-hotbar-modify-v1 P0 merged 后才能开工，当前零代码落地。"
 
   # ============================================================
   # Group: cultivation-economy
   # ============================================================
-  - file: plan-cultivation-v1.md
-    group: cultivation-economy
-    title: "核心修炼系统（六境/经脉/真元/顿悟）"
-    state: merged
-    percent: 92
-    last_updated: "2026-04-27"
-    pr_refs: [48]
-    blocking_on: []
-    summary: "server/src/cultivation/ 22 文件 5452 行 P1-P5 全落（contamination/overload/heal/negative_zone/death_hooks/tribulation/life_record/karma/insight*）；schema 9 类型；agent insight-runtime + arbiter 7 单测；228 单测过；剩 ~8% 天劫客户端锁定 UI 与 network 广播"
-
-  - file: plan-cultivation-mvp-cleanup-v1.md
-    group: cultivation-economy
-    title: "Cultivation 单一来源清理"
-    state: merged
-    percent: 90
-    last_updated: "2026-04-27"
-    pr_refs: [48]
-    blocking_on: []
-    summary: "PR #48（688384e3）已合并：progression.rs 整块删（-469 行）、gameplay.rs MVP 突破改为转发 BreakthroughRequest、PlayerState 旧字段收口；client humanizeRealm 已六境映射；剩 10% SQL migration 与 Java 测试 fixture 零散点"
-
   - file: plan-tribulation-v1.md
     group: cultivation-economy
-    title: "天劫系统（虚劫/域崩/天罚）"
+    title: "天劫系统：渡虚劫/域崩/定向天罚三类天道手段"
     state: active-implementing
     percent: 20
     last_updated: "2026-04-27"
     pr_refs: []
-    blocking_on: ["plan-death-lifecycle-v1"]
-    summary: "Phase 0 数据层 + 渡虚劫成功/失败两条结算路径已通；TribulationAnnounce emit + VFX 接入；锁定期硬边界/3 波 AOE/心魔劫/截胡/半步化虚/域崩/定向天罚均未实装；network → 客户端聊天栏广播未接"
+    blocking_on: ["plan-cultivation-v1"]
+    summary: "server/src/cultivation/tribulation.rs 215 行落地 Phase 0 数据层（TribulationState/AscensionQuotaStore/化虚成功/退境失败两条结算）+ 预兆 VFX emit；Phase 1 锁定期/3 波 AOE/截胡/半步化虚、Phase 2-7 全部未实装。"
 
   - file: plan-alchemy-v1.md
     group: cultivation-economy
-    title: "炼丹系统（配方/熔炉/火候）"
+    title: "炼丹系统：配方/熔炉/火候 + 丹毒污染"
     state: active-implementing
-    percent: 55
-    last_updated: "2026-04-27"
+    percent: 65
+    last_updated: "2026-04-26"
     pr_refs: [21, 28]
-    blocking_on: []
-    summary: "alchemy/ 3909 行 P0/P3/P4/P5 落（RecipeRegistry+3 JSON、火候 tick/outcome、残缺匹配/LifeRecord、shelflife 消费）；AlchemyFurnace 组件实装；客户端 AlchemyScreen 骨架在但 Fabric 右键拦截未接、BlockEntity 持久化未做、bong:alchemy/* IPC 未建"
+    blocking_on: ["plan-botany-v1", "plan-inventory-v1"]
+    summary: "server/src/alchemy/ 3909 行落地（RecipeRegistry/RecipeResolver/AlchemyFurnace/Pill/Contamination P0-P5 服务端），client AlchemyScreen/AlchemyFurnaceStore/AlchemySessionStore 已实装；BlockEntity 持久化、bong:alchemy/* IPC channel、过量 debuff、P6 UI 投料拖拽未完成。"
 
   - file: plan-forge-v1.md
     group: cultivation-economy
-    title: "炼器系统（武器四步锻造）"
+    title: "炼器系统：四步串行武器锻造（坯料/淬炼/铭文/开光）"
     state: active-implementing
-    percent: 55
-    last_updated: "2026-04-27"
+    percent: 45
+    last_updated: "2026-04-26"
     pr_refs: [19]
-    blocking_on: []
-    summary: "forge/ 10 文件 2379 行 P0-P6 服务端逻辑全落：BlueprintRegistry+3 JSON、四步状态机、纯函数解析、fallback/side_effect、ForgeHistory、skill_hook；缺 BlockEntity 持久化、bong:forge/* IPC、客户端 UI（节奏轨道/铭文槽/真元注入）、装备 item 数据契约"
+    blocking_on: ["plan-inventory-v1"]
+    summary: "server/src/forge/ 2565 行落地（BlueprintRegistry/四步状态机/ForgeHistory/skill_hook/P0-P6 server 纯函数层），client 无专用 ForgeScreen（仅 ForgeCarrierScreen 骨架）；BlockEntity 持久化、bong:forge/* IPC channel、client 节奏轨道/铭文槽/塔科夫背包面板均未做。"
 
   - file: plan-mineral-v1.md
     group: cultivation-economy
-    title: "矿物材料（18 矿 + NFT 流转）"
-    state: merged
-    percent: 82
+    title: "矿物材料：18 种正典矿物 + 探矿/挖矿/耗尽持久化"
+    state: active-implementing
+    percent: 75
     last_updated: "2026-04-27"
-    pr_refs: [44]
+    pr_refs: [31, 44]
     blocking_on: []
-    summary: "PR #44 + 后续 commit（4febea14 探矿请求 / eed0dda6 物化锚点 / f04a18db 注册灵石衰变 profile / c331850e 运行时接线 / 4b481e37 探矿范围修复）；mineral/ 11 文件含 anchors/probe；缺 M2 worldgen 运行时 spawn、forge is_valid_mineral_id 校验、yi_beast_bone placeholder"
+    summary: "server/src/mineral/ 8 文件（MineralRegistry/MineralOreNode/break_handler/inventory_grant/persistence/bridge）+ M0-M3/M5-M6 全链路 + client 14 张 ore 改色资源包已落；M2 worldgen 实际 spawn OreNode 入 ECS、forge 配方运行时 mineral_id 校验、shelflife 生产 profile 注册 3 处缺口未闭（原 82% 高估为 merged）。"
 
   - file: plan-lingtian-v1.md
     group: cultivation-economy
-    title: "灵田种植（开垦/种植/补灵/收获）"
+    title: "灵田种植：开垦/种植/补灵/收获/翻新 + 偷菜/密度天罚"
     state: merged
-    percent: 85
-    last_updated: "2026-04-27"
+    percent: 90
+    last_updated: "2026-04-26"
     pr_refs: [26]
-    blocking_on: ["plan-zhenfa-v1"]
-    summary: "lingtian/ 14 文件 5163 行 + 道伥 spawn + 偷菜/偷灵 + valence 方块桥接 + 客户端 LingtianActionScreen/HUD 全闭环；627 单测过；剩 client 浮窗、skill herbalism XP 未接、alchemy 配方名 placeholder、zhenfa_jvling 仍 false"
+    blocking_on: []
+    summary: "server/src/lingtian/ 14 模块（627 单测）+ client LingtianSessionHud/LingtianActionScreen（L 键 6 类动作）+ valence 方块桥接全部落地；剩余 client 独立浮窗/种子图标、skill XP 接入、zhenfa/alchemy/forge 跨 plan 钩子未完成。"
 
   - file: plan-shelflife-v1.md
     group: cultivation-economy
-    title: "保质期/过期（Decay/Spoil/Age）"
-    state: merged
-    percent: 80
+    title: "通用保质期系统：衰减/腐败/陈化三路径 + 神识感知"
+    state: active-implementing
+    percent: 70
     last_updated: "2026-04-27"
     pr_refs: [32, 33, 34, 35, 36, 37, 38, 39, 40]
     blocking_on: []
-    summary: "shelflife/ 7 文件 M0-M5 全落地：compute.rs 874 行、container/consume/probe/registry；build_default_registry() 已注册四档 ling_shi profile（非空）；alchemy 消费侧实接闭环；剩 M6 item ID 切换、M7 fauna/botany/food 各 plan profile 注册、forge/cultivation/lingtian 消费入口"
+    summary: "server/src/shelflife/ 2770 行（M0-M5 全落）：compute/container/consume/probe/types/registry 六模块完整；alchemy 消费侧已实接（mod.rs:337/pill.rs:107/resolver.rs:245）；M6 死物 item ID 切换、M7 生产 DecayProfileRegistry 填档（forge/cultivation/lingtian/food 入口）仍未落（原 80% merged 高估）。"
 
   # ============================================================
   # Group: gameplay-npc
   # ============================================================
   - file: plan-inventory-v1.md
     group: gameplay-npc
-    title: "权威背包/掉落/丹药/重量"
+    title: "Server 权威背包 + 掉落物 + 丹药使用闭环"
     state: merged
-    percent: 92
-    last_updated: "2026-04-27"
+    percent: 90
+    last_updated: "2026-04-26"
     pr_refs: [27]
     blocking_on: []
-    summary: "PR #27 + 后续多次 commit 闭环主链：InventoryStateStore/DroppedLootRegistry/InspectScreen/ApplyPill/death_drop/DroppedItemWorldRenderer 三端全通；剩 ItemRegistrySnapshotHandlerTest、InventoryItemTest 和 §7.5 Manual QA Checklist 待执行"
+    summary: "PR #27 合并后主链完全闭环：InventorySnapshot/InventoryEventHandler/DroppedLootRegistry/DroppedItemStore/world billboard/G 键 pickup/丹药三分支/超重 HUD 全部落地；剩余 ItemRegistryStore、Manual QA 记录、stackCount 角标等为非阻塞尾项。"
 
   - file: plan-npc-ai-v1.md
     group: gameplay-npc
-    title: "NPC AI（archetype/生命周期/派系）"
+    title: "NPC 多 archetype / 寿元老化 / 派系社交行为 AI"
     state: active-implementing
     percent: 65
-    last_updated: "2026-04-27"
-    pr_refs: [22, 45]
+    last_updated: "2026-04-26"
+    pr_refs: [45]
     blocking_on: []
-    summary: "PR #22 初版 big-brain 骨架 + PR #45 §§4-9 已落地：Phase 1/2/3/9 完整闭环（RogueBundle/CultivationDriveScorer/TribulationReadyScorer/NpcLodConfig/FactionStore），Phase 4/5/6/8 数据层就绪但 Scorer/Action ECS 注册因 e2e TPS 回归暂降级"
+    summary: "PR #45 落地 Phase 1-3/9 完整闭环（Commoner/Rogue/Beast archetype、NPC 寿元老化、渡虚劫、LOD 降频）及 Phase 4 派系数据层（FactionId/Reputation/FactionMembership/npc/faction.rs/npc/social.rs）；Phase 4/5/6 Scorer/Action ECS 注册因 e2e TPS 回归暂降级，Phase 8 遗种考验脚本/派系兴衰 Agent 端未完成。"
 
   - file: plan-npc-skin-v1.md
     group: gameplay-npc
-    title: "NPC 假玩家实体 + MineSkin"
+    title: "NPC 假玩家实体 + MineSkin 皮肤注入"
     state: active-design
-    percent: 2
-    last_updated: "2026-04-27"
+    percent: 0
+    last_updated: "2026-04-26"
     pr_refs: []
     blocking_on: ["plan-npc-ai-v1"]
-    summary: "server/src/skin/ 模块未建，无 SignedSkin/SkinPool/NpcPlayerInfoUpdateS2c 任何符号；spawn.rs 仍用 VillagerEntityBundle/ZombieEntityBundle 占位；Phase 0-9 全未勾"
+    summary: "文档完整（调研落地于 2026-04-25），但代码层零实装：server/src/skin/ 模块不存在，无 reqwest 依赖，spawn.rs 仍用 VillagerEntityBundle(Rogue/Commoner) + ZombieEntityBundle(Beast) 占位，Phase 0-9 全部未启动。"
 
   - file: plan-perception-v1.md
     group: gameplay-npc
-    title: "肉眼视距 + 神识感知双系统"
+    title: "肉眼视觉雾化 + 神识感知双系统"
     state: active-design
-    percent: 3
-    last_updated: "2026-04-27"
+    percent: 5
+    last_updated: "2026-04-26"
     pr_refs: []
     blocking_on: []
-    summary: "仅 bong:server_data 推送通道（ServerDataPayloadV1）作为 Phase 0 前置已存在；无 BackgroundRenderer Mixin、视距表、PerceptionHudRenderer、Visual/Perception ServerData payload，无服务端感知扫描 system；client/visual/ 无 fog 或神识相关文件"
+    summary: "仅 Phase 0 第一项（ServerDataPayloadV1 推送通道）间接已通；仓库内 'perception' 仅指 narration 旁白样式与 InsightCategory::Perception，与本 plan 的 BackgroundRenderer Mixin、视距表、PerceptionHudRenderer、服务端感知扫描 system 完全无关，Phase 1/2/3 全部待启动。"
 
   - file: plan-social-v1.md
     group: gameplay-npc
-    title: "匿名社会/关系图/灵龛/声名"
+    title: "匿名社交 / 关系图 / 灵龛 / 声名系统"
     state: active-design
-    percent: 5
-    last_updated: "2026-04-27"
+    percent: 8
+    last_updated: "2026-04-26"
     pr_refs: []
     blocking_on: ["plan-npc-ai-v1", "plan-persistence-v1"]
-    summary: "仅 §-1 基础设施（chat_collector.rs/ChatMessageV1/tiandao chat-processor）已存在；persistence/mod.rs 有 relationships 表骨架（来自 plan-persistence）；npc/social.rs 的 SocializeAction/FactionDuelScorer 属 NPC 内部派系非本 plan 玩家社交；无 AnonymityPayload/Renown/LingKan 任何符号"
+    summary: "仅 §-1 已有基础（chat_collector.rs/ChatMessageV1/Redis bong:player_chat + persistence/mod.rs 中 relationships 表骨架）；npc/faction.rs 与 npc/social.rs 属 NPC 内部派系（plan-npc-ai §4），不是本 plan 玩家侧的 Anonymity/Renown/SpiritNiche/Relationship 组件，Phase 0-7 全部未启动。"
 
   - file: plan-death-lifecycle-v1.md
     group: gameplay-npc
-    title: "玩家死亡/重生/寿元/终结"
+    title: "死亡运数/寿元/续命/终结生命周期系统"
     state: active-implementing
-    percent: 35
+    percent: 30
     last_updated: "2026-04-27"
     pr_refs: []
-    blocking_on: ["plan-tribulation-v1"]
-    summary: "main 仅 Phase 1 骨架（Lifecycle/fortune_remaining/apply_revive_penalty/persist_termination）；branch auto/plan-death-lifecycle-v1 已完成 Phase 1-7（寿元 tick、夺舍、续命、遗念、library-web 亡者博物馆页面）但尚未合入 main，进度有 branch/main 分裂"
+    blocking_on: []
+    summary: "Phase 1 骨架已落地：Lifecycle{fortune_remaining=3}、apply_revive_penalty、REVIVE_WEAKENED_TICKS、NearDeath 状态机、终结快照持久化均已实装；但劫数概率 Roll、寿元 tick、续命、遗念、亡者博物馆、域条件判定（业力/灵龛/死域）全部未启动，约 Phase 1-9 中 2/9 完成。"
 
   - file: plan-skill-v1.md
     group: gameplay-npc
-    title: "子技能 XP/升级/残卷/境界 cap"
+    title: "子技能系统（采药/炼丹/锻造）XP 成长层"
     state: merged
-    percent: 78
-    last_updated: "2026-04-27"
+    percent: 75
+    last_updated: "2026-04-26"
     pr_refs: [42]
     blocking_on: []
-    summary: "PR #42 落地 P0/P1/P3/P6（SkillSet/SkillXpGain/xp_to_next/SkillCapChanged/LearnSkillScroll 三端全通，alchemy/botany/forge/cultivation 钩子接入，LifeRecord.skill_milestones 实装）；P2 InspectScreen 技艺 tab 左列就位、P4 残卷拖拽合法性 UI、P5 agent narration、P7 BotanySkillStore 移除待"
+    summary: "PR #42 合并，P0/P1/P3/P6 已完整落地：SkillSet/SkillEntry/SkillId、四类事件、skill::register 接入 main.rs、client SkillSetStore/SkillSnapshotHandler/SkillEventHandler/LearnSkillScroll、botany/alchemy/forge 效果钩子均已实装；P2(InspectScreen 技艺列)、P4(残卷拖拽 UI 校验)、P5(agent narration)、P7(BotanySkillStore 彻底移除) 仍待完成。"
 
   # ============================================================
   # Group: infrastructure
   # ============================================================
   - file: plan-ipc-schema-v1.md
     group: infrastructure
-    title: "Redis channel + TypeBox schema 双端对齐"
-    state: active-implementing
-    percent: 75
-    last_updated: "2026-04-27"
-    pr_refs: []
+    title: "IPC schema 集中管理：TypeBox source-of-truth + 双端 channel 对齐"
+    state: merged
+    percent: 80
+    last_updated: "2026-04-25"
+    pr_refs: [41, 42, 43, 44, 45, 46, 47]
     blocking_on: []
-    summary: "20 channels 双端落地（TS 20 / Rust 37）+ 63 samples + 完整 generated/ JSON Schema + CI 校验闭环；最新新增 container-state/search-*/client-request-* 共 9 产物；P2 schemaVersion/migration 策略未启动，为唯一剩余主干项"
+    summary: "agent/packages/schema/src/channels.ts（REDIS_V1_CHANNELS，20 条 channel）与 server/src/schema/channels.rs（frozen 测试）双端已落地，TypeBox + samples/*.json round-trip + CI 校验闭环；P2 版本化（schemaVersion / migration 策略）未启动，约占 20% 剩余工作。"
 
   - file: plan-persistence-v1.md
     group: infrastructure
-    title: "SQLite WAL 全局持久化"
-    state: active-implementing
-    percent: 70
-    last_updated: "2026-04-27"
+    title: "存档持久化专项：SQLite WAL + 事件驱动 + 节流快照双轨"
+    state: merged
+    percent: 85
+    last_updated: "2026-04-25"
     pr_refs: [24]
     blocking_on: []
-    summary: "PR #24 已 merge，user_version=13，player_core/player_slow/life_records/npc_state/factions/zone_overlays 等核心表全部实装；缺 quest_log/exposures/renown/spirit_niches 表、Redis AOF 配置、r2d2 连接池、reconcile cron、Phase 7 迁移演练"
+    summary: "server/src/persistence/ 已实装 SQLite WAL（CURRENT_USER_VERSION=13）、12 migration 块、玩家/NPC/Faction/Zone/Tribulation/Agent WorldModel 全部落盘；r2d2 连接池未引入（按需开 Connection），quest_log 表未建，Phase 7 版本迁移演练和 Phase 9 性能回归未完成。"
 
   - file: plan-library-web-content-v1.md
     group: infrastructure
-    title: "末法残土图书馆内容（28 册）"
+    title: "末法残土图书馆 18 册 Astro 馆藏内容填充"
     state: active-implementing
-    percent: 45
-    last_updated: "2026-04-27"
+    percent: 70
+    last_updated: "2026-04-25"
     pr_refs: []
     blocking_on: []
-    summary: "docs/library/ 已有 28 本 JSON 馆藏 + fetch-content.mjs 管道就位；但 library-web/src/content/books/ 目前为空（0 个 .md 文件），Astro build 目标尚未验证，docs/library → Astro collection 转换未执行"
+    summary: "docs/library/ 下已产出 29 个 JSON 馆藏（含超额产出）；library-web/src/content/books/ 目录为空（无 .md 文件），实际由 scripts/fetch-content.mjs 运行时从 docs/library/ 转换，Astro collection 本身未直接收录 md 文件，文档描述与实际落地路径存在差异。"
 
   - file: plan-opencode-workflow-v1.md
     group: infrastructure
-    title: "opencode 全自动 plan 消费流水线"
+    title: "opencode + oh-my-opencode 全自动 plan 消费流水线"
     state: active-implementing
-    percent: 60
-    last_updated: "2026-04-27"
+    percent: 65
+    last_updated: "2026-04-25"
     pr_refs: []
     blocking_on: []
-    summary: "核心文件全部就位：bong-plan-auto.sh/plan-finish.sh、opencode.json（plugin+model）、AGENTS.md、.opencode/prompts/auto-consume.md、.opencode/commands/、多个 .worktree/plan-* 证明隔离机制工作；缺 oh-my-opencode.json，§6 验收标准 #1/#2/#5/#6/#7/#8 端到端未验证"
+    summary: "宿主脚本 bong-plan-auto.sh、plan-finish.sh、opencode.json（含 oh-my-opencode 插件）、AGENTS.md、.opencode/prompts/ 与 commands/ 均已就位；.opencode/oh-my-opencode.json 尚未创建，§3 模型挂载（gpt-5.4）和 §6 端到端验收（#2/#5/#6/#7/#8）未跑通。"
 
   - file: plan-audio-v1.md
     group: infrastructure
-    title: "零自制资源 vanilla 音效层叠"
+    title: "音效专项：100% 复用 vanilla SoundEvent 层叠组合修仙氛围"
     state: active-design
-    percent: 0
-    last_updated: "2026-04-27"
+    percent: 5
+    last_updated: "2026-04-25"
     pr_refs: []
-    blocking_on: []
-    summary: "代码完全未落地：server/assets/audio/ 不存在，SoundRecipe/PlaySoundRecipe 符号缺失，bong:audio 未注册到双端 channels，client 仅直接用 vanilla SoundEvents；plan 自述 P0/P1 未实装，与代码吻合"
+    blocking_on: ["plan-HUD-v1", "plan-combat-no_ui", "plan-tribulation-v1"]
+    summary: "进度日志自述 P0/P1 暂未实装：server/assets/audio/ 目录不存在，SoundRecipe/PlaySoundRecipe 符号缺失，client 侧仅直接使用 vanilla SoundEvents。设计文档详尽（recipe JSON 结构 + 22 条 MVP 清单 + 混音策略），但代码零落地。"
 
   # ============================================================
   # Group: skeleton
@@ -526,8 +506,18 @@ plans:
     summary: "骨架（部分 §0 条目已 ✅）"
 
   # ============================================================
-  # Group: finished（M0/M1 阶段产物，已归档）
+  # Group: finished（M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan）
   # ============================================================
+  - file: mvp01-plan.md
+    group: finished
+    title: "MVP 0.1 — Server scaffold + NPC + Fabric Client"
+    state: finished
+    percent: 100
+    last_updated: "2026-03-25"
+    pr_refs: []
+    blocking_on: []
+    summary: "MVP 0.1 三界分立最小闭环"
+
   - file: plan-agent.md
     group: finished
     title: "天道 Agent 闭环（v1）"
@@ -617,3 +607,23 @@ plans:
     pr_refs: []
     blocking_on: []
     summary: "采集系统 + 草药 + skill XP 钩子"
+
+  - file: plan-cultivation-v1.md
+    group: finished
+    title: "修炼系统：六境/经脉/真元/污染/突破/顿悟"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-27"
+    pr_refs: [21, 26, 28, 29, 48]
+    blocking_on: []
+    summary: "server/src/cultivation/ 21 模块（228 单测）+ agent insight-runtime + 客户端 inspect UI 全部落地，已迁入 finished_plans/。渡劫锁定期/截胡/心魔劫/域崩归 plan-tribulation 处理。"
+
+  - file: plan-cultivation-mvp-cleanup-v1.md
+    group: finished
+    title: "Cultivation 双头清理：删旧 MVP 占位"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-27"
+    pr_refs: [48]
+    blocking_on: []
+    summary: "PR #48 已落地全部§1/§2清单：删 gameplay.rs BREAKTHROUGH_RULES + progression.rs REALM_LADDER、PlayerState 缩到 karma+inventory_score、IPC 统一 PascalCase 六境、v13 migration 独立 player_cultivation 表，已迁入 finished_plans/。"
