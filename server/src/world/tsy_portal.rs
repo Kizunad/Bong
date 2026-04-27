@@ -74,7 +74,7 @@ pub fn tsy_entry_portal_tick(
         }
 
         for (portal_pos, portal) in &portals {
-            if !matches!(portal.direction, PortalDirection::Entry) {
+            if !matches!(portal.direction, PortalDirection::Entry) || !portal.kind.allows_entry() {
                 continue;
             }
             if player_pos.0.distance(portal_pos.0) > portal.trigger_radius {
@@ -216,6 +216,7 @@ mod tests {
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         PlayerInventory,
     };
+    use crate::world::tsy::RiftKind;
     use std::collections::HashMap;
     use valence::prelude::{
         App, DVec3, EntityLayerId, Events, VisibleChunkLayer, VisibleEntityLayers,
@@ -297,15 +298,14 @@ mod tests {
         // Spawn a portal at (0,64,0)
         app.world_mut().spawn((
             Position::new([0.0, 64.0, 0.0]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: DVec3::new(50.0, 80.0, 50.0),
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Entry,
-            },
+                1.5,
+            ),
         ));
 
         // Player already in TSY (CurrentDimension::Tsy) at (0.5, 64, 0)
@@ -336,15 +336,14 @@ mod tests {
 
         app.world_mut().spawn((
             Position::new([0.0, 64.0, 0.0]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: DVec3::new(50.0, 80.0, 50.0),
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Entry,
-            },
+                1.5,
+            ),
         ));
 
         // Player far away (10 blocks)
@@ -369,15 +368,14 @@ mod tests {
 
         app.world_mut().spawn((
             Position::new([0.0, 64.0, 0.0]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: DVec3::new(50.0, 80.0, 50.0),
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Entry,
-            },
+                1.5,
+            ),
         ));
 
         let player = app
@@ -455,15 +453,15 @@ mod tests {
         // Exit portal at (50, 80, 50) — TSY dim
         app.world_mut().spawn((
             Position::new([50.0, 80.0, 50.0]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::exit(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Overworld,
                     pos: DVec3::new(0.0, 65.0, 0.0),
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Exit,
-            },
+                1.5,
+                RiftKind::MainRift,
+            ),
         ));
 
         let return_to = DimensionAnchor {
@@ -519,15 +517,15 @@ mod tests {
         // Exit portal for "tsy_other_99"
         app.world_mut().spawn((
             Position::new([50.0, 80.0, 50.0]),
-            RiftPortal {
-                family_id: "tsy_other_99".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::exit(
+                "tsy_other_99".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Overworld,
                     pos: DVec3::new(0.0, 65.0, 0.0),
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Exit,
-            },
+                1.5,
+                RiftKind::MainRift,
+            ),
         ));
 
         // Player presence is tsy_lingxu_01
@@ -573,15 +571,14 @@ mod tests {
 
         app.world_mut().spawn((
             Position::new([portal_pos.x, portal_pos.y, portal_pos.z]),
-            RiftPortal {
-                family_id: "tsy_test".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_test".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: DVec3::new(50.0, 80.0, 50.0),
                 },
                 trigger_radius,
-                direction: PortalDirection::Entry,
-            },
+            ),
         ));
         app.world_mut().spawn((
             Position::new([portal_pos.x + 0.2, portal_pos.y, portal_pos.z]),
@@ -617,15 +614,14 @@ mod tests {
         let trigger_radius = 5.0_f64;
         app.world_mut().spawn((
             Position::new([0.0, 64.0, 0.0]),
-            RiftPortal {
-                family_id: "tsy_big".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_big".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: DVec3::new(50.0, 80.0, 50.0),
                 },
                 trigger_radius,
-                direction: PortalDirection::Entry,
-            },
+            ),
         ));
         app.world_mut().spawn((
             Position::new([2.0, 64.0, 0.0]),

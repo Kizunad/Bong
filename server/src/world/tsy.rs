@@ -7,6 +7,8 @@ use valence::prelude::{bevy_ecs, Component, DVec3};
 
 use super::dimension::DimensionKind;
 
+pub use super::rift_portal::{PortalDirection, RiftKind, RiftPortal, TickWindow};
+
 /// 跨位面锚点（dim + 位面内部坐标）。
 ///
 /// `plan-tsy-zone-v1 §1.3` / `plan-tsy-dimension-v1 §3` — 出关 / 入场跨位面传送
@@ -53,32 +55,6 @@ pub struct TsyPresence {
     /// 通常 = `(Overworld, 触发 Entry 裂缝的主世界坐标 + (0,1,0))`。
     /// 塌缩时若主世界锚点失效 → P2 lifecycle 决定 fallback（出生点 / 灵龛）。
     pub return_to: DimensionAnchor,
-}
-
-/// 裂缝 POI 朝向。Entry = 主世界 → TSY；Exit = TSY → 主世界。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortalDirection {
-    Entry,
-    Exit,
-}
-
-/// 裂缝 POI Component。
-///
-/// 实体附着方式：worldgen blueprint 或 `!tsy-spawn` 调试命令在 layer 上摆好 portal
-/// 方块（vanilla nether_portal / end_portal 皮肤），中心位置 spawn 一个不可见的
-/// marker entity（armor stand），挂 `Position` + 本组件。玩家靠近 → AABB 命中
-/// marker → portal system 发 `DimensionTransferRequest`。
-#[allow(dead_code)] // 字段由 tsy_portal.rs 消费；P0 单独 commit 落定义。
-#[derive(Component, Debug, Clone)]
-pub struct RiftPortal {
-    /// 对应 TSY family id（如 `"tsy_lingxu_01"`）。Entry / Exit 共享 family 串联。
-    pub family_id: String,
-    /// 跨位面传送目标。
-    pub target: DimensionAnchor,
-    /// 激活半径（玩家距 marker 中心 ≤ 此值即触发）。MVP 默认 1.5。
-    pub trigger_radius: f64,
-    /// 主世界 → TSY，还是 TSY → 主世界。
-    pub direction: PortalDirection,
 }
 
 /// 容器 POI marker（plan-tsy-worldgen-v1 §1.1，本 plan 落最简 schema）。
@@ -176,27 +152,26 @@ mod tests {
 
     #[test]
     fn rift_portal_can_be_constructed_for_entry_and_exit() {
-        let entry = RiftPortal {
-            family_id: "tsy_lingxu_01".to_string(),
-            target: DimensionAnchor {
+        let entry = RiftPortal::entry(
+            "tsy_lingxu_01".to_string(),
+            DimensionAnchor {
                 dimension: DimensionKind::Tsy,
                 pos: DVec3::new(50.0, 80.0, 50.0),
             },
-            trigger_radius: 1.5,
-            direction: PortalDirection::Entry,
-        };
+            1.5,
+        );
         assert_eq!(entry.direction, PortalDirection::Entry);
         assert_eq!(entry.target.dimension, DimensionKind::Tsy);
 
-        let exit = RiftPortal {
-            family_id: "tsy_lingxu_01".to_string(),
-            target: DimensionAnchor {
+        let exit = RiftPortal::exit(
+            "tsy_lingxu_01".to_string(),
+            DimensionAnchor {
                 dimension: DimensionKind::Overworld,
                 pos: DVec3::new(0.0, 66.0, 0.0),
             },
-            trigger_radius: 1.5,
-            direction: PortalDirection::Exit,
-        };
+            1.5,
+            RiftKind::MainRift,
+        );
         assert_eq!(exit.direction, PortalDirection::Exit);
         assert_eq!(exit.target.dimension, DimensionKind::Overworld);
     }

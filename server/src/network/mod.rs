@@ -11,6 +11,7 @@ pub mod cultivation_detail_emit;
 pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
+pub mod extract_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
@@ -302,6 +303,30 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            extract_emit::emit_rift_portal_state_payloads,
+            extract_emit::emit_rift_portal_state_payloads_to_joined_clients,
+            extract_emit::emit_extract_started_payloads
+                .after(crate::world::extract_system::start_extract_request),
+            extract_emit::emit_extract_progress_payloads
+                .after(crate::world::extract_system::tick_extract_progress),
+            extract_emit::emit_extract_completed_payloads
+                .after(crate::world::extract_system::tick_extract_progress)
+                .before(crate::world::extract_system::handle_extract_completed),
+            extract_emit::emit_extract_aborted_payloads
+                .after(crate::world::extract_system::tick_extract_progress)
+                .after(crate::world::extract_system::cancel_extract_request),
+            extract_emit::emit_extract_failed_payloads
+                .after(crate::world::extract_system::tick_extract_progress)
+                .before(crate::world::extract_system::handle_extract_failed),
+            extract_emit::emit_tsy_collapse_portal_state_payloads
+                .after(crate::world::extract_system::on_tsy_collapse_started),
+            extract_emit::emit_tsy_collapse_started_payloads
+                .after(crate::world::extract_system::on_tsy_collapse_started),
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();

@@ -16,6 +16,7 @@ mod tests {
         App, DVec3, EntityLayerId, Events, Position, Update, VisibleChunkLayer, VisibleEntityLayers,
     };
 
+    use crate::combat::events::DeathEvent;
     use crate::combat::CombatClock;
     use crate::inventory::ancient_relics::AncientRelicSource;
     use crate::inventory::corpse::CorpseEmbalmed;
@@ -90,15 +91,19 @@ mod tests {
         app.insert_resource(DimensionLayers { overworld, tsy });
 
         app.add_event::<DimensionTransferRequest>();
+        app.add_event::<DeathEvent>();
         app.add_event::<TsyCollapseStarted>();
         app.add_event::<TsyCollapseCompleted>();
         app.add_systems(
             Update,
             (
                 tsy_lifecycle_tick,
+                crate::world::extract_system::on_tsy_collapse_completed.after(tsy_lifecycle_tick),
                 tsy_lifecycle_apply_spirit_qi.after(tsy_lifecycle_tick),
                 tsy_corpse_to_daoxiang_tick.after(tsy_lifecycle_apply_spirit_qi),
-                tsy_collapse_completed_cleanup.after(tsy_lifecycle_tick),
+                tsy_collapse_completed_cleanup
+                    .after(tsy_lifecycle_tick)
+                    .after(crate::world::extract_system::on_tsy_collapse_completed),
                 apply_dimension_transfers.after(tsy_collapse_completed_cleanup),
             ),
         );
@@ -255,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn collapse_completed_kicks_player_back_to_overworld() {
+    fn collapse_completed_kills_player_in_tsy() {
         let mut app = make_app(0);
         register_lingxu(&mut app);
 
@@ -304,25 +309,22 @@ mod tests {
 
         app.update();
 
-        // TsyPresence 已被移除
+        // TsyPresence 留给 P1 死亡掉落路径读取，P5 handler 发 DeathEvent 化灰。
         assert!(
-            app.world().entity(player).get::<TsyPresence>().is_none(),
-            "Cleanup 后 TsyPresence 必须移除"
+            app.world().entity(player).get::<TsyPresence>().is_some(),
+            "Collapse death drop path still needs TsyPresence"
         );
-        // 玩家被传到 Overworld 的 return_to 坐标
-        let pos = app
-            .world()
-            .entity(player)
-            .get::<Position>()
-            .expect("Position")
-            .get();
-        assert_eq!(pos, return_anchor.pos);
+        let deaths = app.world().resource::<Events<DeathEvent>>();
+        let collected: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].target, player);
+        assert_eq!(collected[0].cause, "tsy_collapsed");
         let cur = app
             .world()
             .entity(player)
             .get::<CurrentDimension>()
             .expect("CurrentDimension");
-        assert_eq!(cur.0, DimensionKind::Overworld);
+        assert_eq!(cur.0, DimensionKind::Tsy);
     }
 
     #[test]
