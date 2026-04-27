@@ -24,6 +24,16 @@ public final class BongWeaponModelRegistry {
         }
     }
 
+    public static final Set<String> V1_WEAPON_TEMPLATE_IDS = Set.of(
+        "iron_sword",
+        "bronze_saber",
+        "wooden_staff",
+        "bone_dagger",
+        "hand_wrap",
+        "spirit_sword",
+        "flying_sword_feixuan"
+    );
+
     private static final Map<String, Entry> ENTRIES;
     private static final Set<String> VANILLA_MODEL_PATHS;
 
