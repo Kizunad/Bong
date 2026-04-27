@@ -12,6 +12,7 @@ public final class BongHudOrchestrator {
     private static final int BASELINE_Y = 10;
     private static final int LINE_HEIGHT = 12;
     private static final int DEFAULT_TEXT_WIDTH = 220;
+    private static final int ARMOR_BREAK_TOAST_COLOR = 0xFFC04040;
 
     private BongHudOrchestrator() {
     }
@@ -90,6 +91,18 @@ public final class BongHudOrchestrator {
         if (BongClientFeatures.ENABLE_TOASTS
             && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, BASELINE_X, nextY)) {
             nextY += LINE_HEIGHT;
+        }
+
+        ArmorBreakIndicator.BreakEvent armorBreakEvent = ArmorBreakIndicator.lastBreak();
+        if (armorBreakEvent != null) {
+            String armorBreakToast = ArmorBreakIndicator.toastText(armorBreakEvent);
+            if (armorBreakToast != null && !armorBreakToast.isBlank()) {
+                String clipped = HudTextHelper.clipToWidth(armorBreakToast, normalizedWidth, widthMeasurer);
+                if (!clipped.isEmpty()) {
+                    commands.add(HudRenderCommand.toast(HudRenderLayer.TOAST, clipped, BASELINE_X, nextY, ARMOR_BREAK_TOAST_COLOR));
+                    nextY += LINE_HEIGHT;
+                }
+            }
         }
 
         commands.addAll(OverweightHudPlanner.buildCommands(widthMeasurer, normalizedWidth));
