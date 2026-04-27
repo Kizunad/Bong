@@ -22,6 +22,8 @@ use crate::cultivation::death_hooks::CultivationDeathTrigger;
 use crate::cultivation::forging::{ForgeAxis, ForgeOutcome};
 use crate::cultivation::insight::{InsightCategory, InsightQuota, InsightRequest};
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::lifespan::{AgingEventEmitted, LifespanEventEmitted};
+use crate::cultivation::possession::DuoSheEventEmitted;
 use crate::schema::cultivation::{
     color_kind_to_string, meridian_id_to_string, realm_to_string, BreakthroughEventV1,
     CultivationDeathV1, ForgeEventV1, InsightRequestV1, QiColorStateV1,
@@ -163,5 +165,38 @@ pub fn publish_cultivation_death_events(
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::CultivationDeath(payload));
+    }
+}
+
+pub fn publish_lifespan_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<LifespanEventEmitted>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::LifespanEvent(ev.payload.clone()));
+    }
+}
+
+pub fn publish_duo_she_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<DuoSheEventEmitted>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::DuoSheEvent(ev.payload.clone()));
+    }
+}
+
+pub fn publish_aging_events(
+    redis: Res<RedisBridgeResource>,
+    mut reader: EventReader<AgingEventEmitted>,
+) {
+    for ev in reader.read() {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::Aging(ev.payload.clone()));
     }
 }

@@ -115,6 +115,11 @@ pub fn apply_choice(
         UnlockPerception { kind } => {
             perceptions.set.insert(kind.clone());
         }
+        LifespanExtensionEnlightenment => {
+            modifiers
+                .practices
+                .insert("lifespan_extension:enlightenment_used".into());
+        }
     }
 
     // 写生平
@@ -202,5 +207,26 @@ mod tests {
             &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 0,
         );
         assert!((mods.qi_regen_mul - 1.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lifespan_extension_choice_marks_enlightenment_use() {
+        let mut c = Cultivation::default();
+        let mut ms = MeridianSystem::default();
+        let mut qc = QiColor::default();
+        let mut perc = UnlockedPerceptions::default();
+        let mut mods = InsightModifiers::new();
+        let mut lr = LifeRecord::default();
+        let choice = InsightChoice {
+            category: crate::cultivation::insight::InsightCategory::Perception,
+            effect: crate::cultivation::insight::InsightEffect::LifespanExtensionEnlightenment,
+            flavor: "".into(),
+        };
+        apply_choice(
+            &choice, &mut c, &mut ms, &mut qc, &mut perc, &mut mods, &mut lr, "t", 0,
+        );
+        assert!(mods
+            .practices
+            .contains("lifespan_extension:enlightenment_used"));
     }
 }

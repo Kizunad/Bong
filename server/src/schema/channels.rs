@@ -16,6 +16,7 @@ pub const CH_REBIRTH: &str = "bong:rebirth";
 pub const CH_DEATH_INSIGHT: &str = "bong:death_insight";
 pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
+pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
 
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";

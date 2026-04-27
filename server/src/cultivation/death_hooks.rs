@@ -17,7 +17,6 @@ use valence::prelude::Res;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CultivationDeathCause {
     BreakthroughBackfire,
-    TribulationFailure,
     MeridianCollapse,
     NegativeZoneDrain,
     ContaminationOverflow,

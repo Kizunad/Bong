@@ -125,6 +125,14 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         target: ApplyPillTargetV1,
     },
+    DuoSheRequest {
+        v: u8,
+        target_id: String,
+    },
+    UseLifeCore {
+        v: u8,
+        instance_id: u64,
+    },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
     /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
     /// 并回推 `defense_window` payload 让 client 渲染红环。
@@ -341,6 +349,32 @@ mod tests {
                 );
             }
             other => panic!("expected ApplyPill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duo_she_request_roundtrip() {
+        let json = r#"{"type":"duo_she_request","v":1,"target_id":"npc_12v0"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::DuoSheRequest { v, target_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(target_id, "npc_12v0");
+            }
+            other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_life_core_roundtrip() {
+        let json = r#"{"type":"use_life_core","v":1,"instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::UseLifeCore { v, instance_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 4242);
+            }
+            other => panic!("expected UseLifeCore, got {other:?}"),
         }
     }
 

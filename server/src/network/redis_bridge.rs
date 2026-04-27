@@ -7,10 +7,10 @@ use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_BOTANY_ECOLOGY,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_BOTANY_ECOLOGY,
     CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH,
-    CH_DEATH_INSIGHT, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT,
-    CH_WORLD_STATE,
+    CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_PLAYER_CHAT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -19,6 +19,7 @@ use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
+use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::world_state::WorldStateV1;
 
@@ -49,6 +50,9 @@ pub enum RedisOutbound {
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     DeathInsight(DeathInsightRequestV1),
+    Aging(AgingEventV1),
+    LifespanEvent(LifespanEventV1),
+    DuoSheEvent(DuoSheEventV1),
     BotanyEcology(BotanyEcologySnapshotV1),
 }
 
@@ -335,6 +339,33 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DEATH_INSIGHT,
+                payload,
+            })
+        }
+        RedisOutbound::Aging(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize AgingEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_AGING,
+                payload,
+            })
+        }
+        RedisOutbound::LifespanEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize LifespanEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_LIFESPAN_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::DuoSheEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize DuoSheEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_DUO_SHE_EVENT,
                 payload,
             })
         }
@@ -1010,6 +1041,7 @@ mod redis_bridge_tests {
     use crate::schema::death_insight::{
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
+    use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -1136,6 +1168,56 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["category"], "natural");
                 assert_eq!(v["zone_kind"], "ordinary");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_lifespan_and_aging_events_on_correct_channels() {
+        let lifespan = prepare_outbound_command(RedisOutbound::LifespanEvent(LifespanEventV1 {
+            v: 1,
+            character_id: "offline:Azure".to_string(),
+            at_tick: 84_000,
+            kind: LifespanEventKindV1::DeathPenalty,
+            delta_years: -4,
+            source: "bleed_out".to_string(),
+        }))
+        .expect("lifespan payload should serialize");
+
+        match lifespan {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_LIFESPAN_EVENT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["character_id"], "offline:Azure");
+                assert_eq!(v["kind"], "death_penalty");
+                assert_eq!(v["delta_years"], -4);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let aging = prepare_outbound_command(RedisOutbound::Aging(AgingEventV1 {
+            v: 1,
+            character_id: "offline:Azure".to_string(),
+            at_tick: 84_000,
+            kind: AgingEventKindV1::NaturalDeath,
+            years_lived: 80.0,
+            cap_by_realm: 80,
+            remaining_years: 0.0,
+            tick_rate_multiplier: 1.0,
+            source: "online".to_string(),
+        }))
+        .expect("aging payload should serialize");
+
+        match aging {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_AGING);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["character_id"], "offline:Azure");
+                assert_eq!(v["kind"], "natural_death");
+                assert_eq!(v["remaining_years"], 0.0);
             }
             other => panic!("expected publish, got {other:?}"),
         }

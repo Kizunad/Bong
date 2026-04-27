@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut,
-    Resource, Username,
+    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Events, Query, Res,
+    ResMut, Resource, Username,
 };
 
 use crate::alchemy::{
@@ -31,7 +31,9 @@ use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
+use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::inventory::{
     apply_inventory_move, discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
     pickup_dropped_loot_instance, DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
@@ -118,6 +120,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
+    pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
+    pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
+    pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub defense_tx: EventWriter<'w, DefenseIntent>,
     pub revival_tx: EventWriter<'w, RevivalActionIntent>,
 }
@@ -196,6 +201,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
+            | ClientRequestV1::DuoSheRequest { v, .. }
+            | ClientRequestV1::UseLifeCore { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
@@ -351,6 +358,7 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &mut combat_params,
+                    &mut dispatch.lifespan_extension_tx,
                 );
             }
             ClientRequestV1::AlchemyFurnacePlace {
@@ -465,7 +473,24 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &mut combat_params,
+                    &mut dispatch.lifespan_extension_tx,
                 );
+            }
+            ClientRequestV1::DuoSheRequest { target_id, .. } => {
+                if let Some(duo_she_tx) = dispatch.duo_she_tx.as_deref_mut() {
+                    duo_she_tx.send(DuoSheRequestEvent {
+                        host: ev.client,
+                        target_id,
+                    });
+                }
+            }
+            ClientRequestV1::UseLifeCore { instance_id, .. } => {
+                if let Some(life_core_tx) = dispatch.life_core_tx.as_deref_mut() {
+                    life_core_tx.send(UseLifeCoreEvent {
+                        entity: ev.client,
+                        instance_id,
+                    });
+                }
             }
             ClientRequestV1::Jiemai { .. } => {
                 tracing::info!(
@@ -1330,6 +1355,7 @@ fn handle_apply_pill(
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     combat_params: &mut CombatRequestParams,
+    lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
 ) {
     let template_id = inventories
         .get(entity)
@@ -1352,6 +1378,7 @@ fn handle_apply_pill(
         clients,
         player_states,
         combat_params,
+        lifespan_extension_tx,
     );
 }
 
@@ -1458,6 +1485,7 @@ fn handle_alchemy_intervention(
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
 /// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
+#[allow(clippy::too_many_arguments)]
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
@@ -1466,6 +1494,7 @@ fn handle_alchemy_take_pill(
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     combat_params: &mut CombatRequestParams,
+    lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
 ) {
     let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
         tracing::warn!(
@@ -1507,6 +1536,18 @@ fn handle_alchemy_take_pill(
             });
             tracing::info!(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
+            );
+        }
+        ItemEffect::LifespanExtension { years, source } => {
+            if let Some(lifespan_extension_tx) = lifespan_extension_tx.as_deref_mut() {
+                lifespan_extension_tx.send(LifespanExtensionIntent {
+                    entity,
+                    requested_years: years,
+                    source: source.clone(),
+                });
+            }
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} lifespan extension {years} years source={source}"
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {

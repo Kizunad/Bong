@@ -184,7 +184,7 @@ impl RevivalDecision {
     }
 
     pub fn can_terminate(self) -> bool {
-        true
+        matches!(self, Self::Tribulation { .. })
     }
 }
 

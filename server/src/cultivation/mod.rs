@@ -24,7 +24,7 @@
 //! 跨仓库 TODO：
 //!   * 客户端 inspect UI + 目标选择对话框（plan §7）
 //!   * agent LLM runtime（InsightRequest → InsightOffer 桥）
-//!   * 战斗 plan：消费 CultivationDeathTrigger / TribulationFailed / throughput 写入
+//!   * 战斗 plan：消费 CultivationDeathTrigger / throughput 写入，并在渡劫波次失败时发送 TribulationFailed
 
 pub mod breakthrough;
 pub mod color;
@@ -44,6 +44,7 @@ pub mod lifespan;
 pub mod meridian_open;
 pub mod negative_zone;
 pub mod overload;
+pub mod possession;
 pub mod qi_zero_decay;
 pub mod tick;
 pub mod topology;
@@ -70,14 +71,22 @@ use self::insight::{
 use self::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use self::insight_flow::{
     apply_insight_chosen, insight_trigger_on_breakthrough, insight_trigger_on_forge,
-    process_insight_request,
+    insight_trigger_on_wind_candle, process_insight_request,
 };
 use self::karma::karma_decay_tick;
 use self::life_record::LifeRecord;
-use self::lifespan::{lifespan_aging_tick, DeathRegistry, LifespanCapTable, LifespanComponent};
+use self::lifespan::{
+    lifespan_aging_tick, process_lifespan_extension_intents, AgingEventEmitted, DeathRegistry,
+    LifespanCapTable, LifespanComponent, LifespanEventEmitted, LifespanExtensionIntent,
+    LifespanExtensionLedger,
+};
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::overload_detection_tick;
+use self::possession::{
+    process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
+    DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
+};
 use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
@@ -96,6 +105,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
+    app.insert_resource(DuoSheCooldowns::default());
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
@@ -106,6 +116,13 @@ pub fn register(app: &mut App) {
     app.add_event::<CultivationDeathTrigger>();
     app.add_event::<PlayerRevived>();
     app.add_event::<PlayerTerminated>();
+    app.add_event::<LifespanEventEmitted>();
+    app.add_event::<AgingEventEmitted>();
+    app.add_event::<LifespanExtensionIntent>();
+    app.add_event::<DuoSheRequestEvent>();
+    app.add_event::<DuoSheEventEmitted>();
+    app.add_event::<DuoSheWarningEvent>();
+    app.add_event::<UseLifeCoreEvent>();
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<TribulationAnnounce>();
     app.add_event::<TribulationWaveCleared>();
@@ -149,12 +166,22 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            process_lifespan_extension_intents.after(lifespan_aging_tick),
+            process_duo_she_requests.after(lifespan_aging_tick),
+            process_life_core_requests.after(process_duo_she_requests),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             // plan §5.4 / §5.5 顿悟流水线
             insight_trigger_on_breakthrough.after(breakthrough_system),
             insight_trigger_on_forge.after(forging_system),
             process_insight_request
                 .after(insight_trigger_on_breakthrough)
-                .after(insight_trigger_on_forge),
+                .after(insight_trigger_on_forge)
+                .after(insight_trigger_on_wind_candle),
+            insight_trigger_on_wind_candle.after(lifespan_aging_tick),
             apply_insight_chosen.after(process_insight_request),
         ),
     );
@@ -222,6 +249,7 @@ fn attach_cultivation_to_joined_clients(
             Contamination::default(),
             LifeRecord::new(canonical_id.clone()),
             DeathRegistry::new(canonical_id.clone()),
+            LifespanExtensionLedger::default(),
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),

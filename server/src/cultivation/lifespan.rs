@@ -1,17 +1,22 @@
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Entity, EventWriter, Position, Query, Res, ResMut};
+use valence::prelude::{
+    bevy_ecs, Component, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+};
 
 use super::components::Realm;
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::Cultivation;
-use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::persistence::{persist_lifespan_event, LifespanEventRecord, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::player::state::PlayerState;
+use crate::player::state::{PlayerState, PlayerStatePersistence};
 use crate::schema::common::NarrationStyle;
-use crate::world::zone::ZoneRegistry;
+use crate::schema::death_lifecycle::{
+    AgingEventKindV1, AgingEventV1, LifespanEventKindV1, LifespanEventV1,
+};
+use crate::world::zone::{Zone, ZoneRegistry};
 
 pub const KARMA_REBIRTH_THRESHOLD: f64 = 0.5;
 pub const REBIRTH_SAFE_WINDOW_TICKS: u64 = 24 * 60 * 60 * 20;
@@ -25,9 +30,126 @@ pub const LIFESPAN_ONLINE_MULTIPLIER: f64 = 1.0;
 pub const LIFESPAN_NEGATIVE_ZONE_MULTIPLIER: f64 = 2.0;
 pub const LIFESPAN_OFFLINE_MULTIPLIER: f64 = 0.1;
 pub const LIFESPAN_WIND_CANDLE_NARRATION_INTERVAL_TICKS: u64 = REBIRTH_SAFE_WINDOW_TICKS;
+pub const LIFESPAN_EXTENSION_HARD_CAP_FACTOR: f64 = 2.0;
+pub const LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR: f64 = 0.01;
+pub const LIFESPAN_ENLIGHTENMENT_TARGET_REMAINING_RATIO: f64 = 0.30;
 
 const UNASSIGNED_DEATH_REGISTRY_ID: &str = "unassigned:death_registry";
 const NEGATIVE_ZONE_SPIRIT_QI_THRESHOLD: f64 = -0.2;
+const ENLIGHTENMENT_EXTENSION_MARKER: &str = "lifespan_extension:enlightenment_used";
+
+#[derive(Debug, Clone, bevy_ecs::event::Event, Serialize, Deserialize, PartialEq)]
+pub struct LifespanEventEmitted {
+    pub payload: LifespanEventV1,
+}
+
+#[derive(Debug, Clone, bevy_ecs::event::Event, Serialize, Deserialize, PartialEq)]
+pub struct AgingEventEmitted {
+    pub payload: AgingEventV1,
+}
+
+#[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
+pub struct LifespanExtensionIntent {
+    pub entity: Entity,
+    pub requested_years: u32,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Component, Default, Serialize, Deserialize, PartialEq)]
+pub struct LifespanExtensionLedger {
+    pub accumulated_years: f64,
+    #[serde(default)]
+    pub enlightenment_used: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ExtensionCost {
+    pub karma_delta: f64,
+    pub qi_cap_delta: f64,
+    pub realm_progress_delta: f64,
+    pub enlightenment_slot: bool,
+}
+
+pub trait ExtensionContract {
+    fn source(&self) -> &'static str;
+    fn requested_years(&self, lifespan: &LifespanComponent) -> u32;
+    fn cost(&self, years: u32, _accumulated_years: f64, _cap_by_realm: u32) -> ExtensionCost {
+        ExtensionCost {
+            qi_cap_delta: -(years as f64 * self.qi_cap_cost_factor()),
+            enlightenment_slot: self.consumes_enlightenment(),
+            ..Default::default()
+        }
+    }
+    fn qi_cap_cost_factor(&self) -> f64 {
+        0.0
+    }
+    fn consumes_enlightenment(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PillExtensionContract {
+    pub years: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnlightenmentExtensionContract;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollapseCoreExtensionContract {
+    pub years: u32,
+}
+
+impl ExtensionContract for PillExtensionContract {
+    fn source(&self) -> &'static str {
+        "life_extension_pill"
+    }
+
+    fn requested_years(&self, _lifespan: &LifespanComponent) -> u32 {
+        self.years
+    }
+
+    fn qi_cap_cost_factor(&self) -> f64 {
+        self.years as f64 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR
+    }
+}
+
+impl ExtensionContract for EnlightenmentExtensionContract {
+    fn source(&self) -> &'static str {
+        "enlightenment_extension"
+    }
+
+    fn requested_years(&self, lifespan: &LifespanComponent) -> u32 {
+        let target_remaining =
+            lifespan.cap_by_realm as f64 * LIFESPAN_ENLIGHTENMENT_TARGET_REMAINING_RATIO;
+        (target_remaining - lifespan.remaining_years())
+            .ceil()
+            .max(0.0) as u32
+    }
+
+    fn consumes_enlightenment(&self) -> bool {
+        true
+    }
+}
+
+impl ExtensionContract for CollapseCoreExtensionContract {
+    fn source(&self) -> &'static str {
+        "collapse_core"
+    }
+
+    fn requested_years(&self, _lifespan: &LifespanComponent) -> u32 {
+        self.years
+    }
+
+    fn cost(&self, years: u32, accumulated_years: f64, cap_by_realm: u32) -> ExtensionCost {
+        let pressure = 1.0 + (accumulated_years / cap_by_realm.max(1) as f64).powf(1.5);
+        ExtensionCost {
+            realm_progress_delta: -(years as f64 * 100.0 * pressure).round(),
+            ..Default::default()
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -255,12 +377,14 @@ pub fn tribulation_rebirth_chance(death_number: u32) -> f64 {
         .clamp(REBIRTH_MIN_CHANCE, REBIRTH_BASE_CHANCE)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn lifespan_aging_tick(
     clock: Res<CultivationClock>,
     persistence: Option<Res<PersistenceSettings>>,
     zones: Option<Res<ZoneRegistry>>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
+    mut aging_events: Option<ResMut<Events<AgingEventEmitted>>>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut actors: Query<(
         Entity,
@@ -295,24 +419,45 @@ pub fn lifespan_aging_tick(
         let crossed_years =
             lifespan_whole_years_crossed(previous_years_lived, lifespan.years_lived);
         if crossed_years > 0 {
-            if let (Some(settings), Some(char_id)) =
-                (persistence, lifespan_event_char_id(life_record, lifecycle))
-            {
+            if let Some(char_id) = lifespan_event_char_id(life_record, lifecycle) {
                 let event = LifespanEventRecord {
                     at_tick: clock.tick,
                     kind: "aging".to_string(),
                     delta_years: crossed_years,
                     source: lifespan_event_source(multiplier).to_string(),
                 };
-                if let Err(error) = persist_lifespan_event(settings, char_id, &event) {
-                    tracing::warn!(
-                        "[bong][lifespan] failed to persist aging event for {char_id}: {error}"
+                emit_lifespan_event(lifespan_events.as_deref_mut(), char_id, &event);
+                if (multiplier - LIFESPAN_ONLINE_MULTIPLIER).abs() > f64::EPSILON {
+                    emit_aging_event(
+                        aging_events.as_deref_mut(),
+                        char_id,
+                        AgingEventKindV1::TickRate,
+                        clock.tick,
+                        &lifespan,
+                        multiplier,
                     );
+                }
+                if let Some(settings) = persistence {
+                    if let Err(error) = persist_lifespan_event(settings, char_id, &event) {
+                        tracing::warn!(
+                            "[bong][lifespan] failed to persist aging event for {char_id}: {error}"
+                        );
+                    }
                 }
             }
         }
 
         if should_emit_wind_candle_narration(&lifespan, clock.tick) {
+            if let Some(char_id) = lifespan_event_char_id(life_record, lifecycle) {
+                emit_aging_event(
+                    aging_events.as_deref_mut(),
+                    char_id,
+                    AgingEventKindV1::WindCandle,
+                    clock.tick,
+                    &lifespan,
+                    multiplier,
+                );
+            }
             if let (Some(pending_narrations), Some(target)) = (
                 pending_narrations.as_deref_mut(),
                 lifespan_narration_target(life_record, lifecycle),
@@ -326,6 +471,16 @@ pub fn lifespan_aging_tick(
         }
 
         if previous_remaining > f64::EPSILON && lifespan.remaining_years() <= f64::EPSILON {
+            if let Some(char_id) = lifespan_event_char_id(life_record, lifecycle) {
+                emit_aging_event(
+                    aging_events.as_deref_mut(),
+                    char_id,
+                    AgingEventKindV1::NaturalDeath,
+                    clock.tick,
+                    &lifespan,
+                    multiplier,
+                );
+            }
             deaths.send(CultivationDeathTrigger {
                 entity,
                 cause: CultivationDeathCause::NaturalAging,
@@ -336,6 +491,202 @@ pub fn lifespan_aging_tick(
                     "at_tick": clock.tick,
                 }),
             });
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn process_lifespan_extension_intents(
+    clock: Res<CultivationClock>,
+    persistence: Option<Res<PersistenceSettings>>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    mut intents: EventReader<LifespanExtensionIntent>,
+    mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
+    mut actors: Query<(
+        &mut LifespanComponent,
+        &mut LifespanExtensionLedger,
+        Option<&mut Cultivation>,
+        Option<&mut PlayerState>,
+        Option<&mut LifeRecord>,
+        Option<&Lifecycle>,
+    )>,
+) {
+    let persistence = persistence.as_deref();
+    let player_persistence = player_persistence.as_deref();
+
+    for intent in intents.read() {
+        let Ok((mut lifespan, mut ledger, cultivation, player_state, mut life_record, lifecycle)) =
+            actors.get_mut(intent.entity)
+        else {
+            continue;
+        };
+
+        let realm_at_time = cultivation
+            .as_deref()
+            .map(|cultivation| cultivation.realm)
+            .unwrap_or(crate::cultivation::components::Realm::Awaken);
+        let contract =
+            extension_contract_from_source(intent.source.as_str(), intent.requested_years);
+        let requested_years = if intent.requested_years == 0 {
+            contract.requested_years(&lifespan)
+        } else {
+            intent.requested_years
+        };
+        let Some(applied_years) = apply_lifespan_extension(
+            &mut lifespan,
+            &mut ledger,
+            requested_years,
+            contract.consumes_enlightenment(),
+        ) else {
+            continue;
+        };
+
+        let accumulated_after = ledger.accumulated_years;
+        apply_extension_cost(
+            contract.cost(applied_years, accumulated_after, lifespan.cap_by_realm),
+            cultivation,
+            player_state,
+        );
+
+        let event = LifespanEventRecord {
+            at_tick: clock.tick,
+            kind: "extension".to_string(),
+            delta_years: i64::from(applied_years),
+            source: contract.source().to_string(),
+        };
+        let char_id = lifespan_event_char_id(life_record.as_deref(), lifecycle).map(str::to_string);
+        if let Some(char_id) = char_id.as_deref() {
+            emit_lifespan_event(lifespan_events.as_deref_mut(), char_id, &event);
+            if let Some(settings) = persistence {
+                if let Err(error) = persist_lifespan_event(settings, char_id, &event) {
+                    tracing::warn!(
+                        "[bong][lifespan] failed to persist extension event for {char_id}: {error}"
+                    );
+                }
+            }
+        }
+        if let Some(life_record) = life_record.as_deref_mut() {
+            life_record.push(BiographyEntry::LifespanExtended {
+                source: contract.source().to_string(),
+                delta_years: i64::from(applied_years),
+                tick: clock.tick,
+            });
+            if contract.consumes_enlightenment()
+                && !life_record
+                    .insights_taken
+                    .iter()
+                    .any(|insight| insight.trigger_id == ENLIGHTENMENT_EXTENSION_MARKER)
+            {
+                life_record
+                    .insights_taken
+                    .push(crate::cultivation::life_record::TakenInsight {
+                        trigger_id: ENLIGHTENMENT_EXTENSION_MARKER.to_string(),
+                        choice: "LifespanExtensionEnlightenment".to_string(),
+                        magnitude: 0.0,
+                        flavor: "悟道延寿已用，悟境天花永久下调。".to_string(),
+                        taken_at: clock.tick,
+                        realm_at_time,
+                    });
+            }
+        }
+        if let (Some(player_persistence), Some(char_id)) = (player_persistence, char_id.as_deref())
+        {
+            if let Some(username) = char_id.strip_prefix("offline:") {
+                if let Err(error) = crate::player::state::save_player_lifespan_slice(
+                    player_persistence,
+                    username,
+                    &lifespan,
+                ) {
+                    tracing::warn!(
+                        "[bong][lifespan] failed to persist extended lifespan for {char_id}: {error}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn extension_contract_from_source(
+    source: &str,
+    requested_years: u32,
+) -> Box<dyn ExtensionContract> {
+    match source {
+        "enlightenment_extension" => Box::new(EnlightenmentExtensionContract),
+        "collapse_core" => Box::new(CollapseCoreExtensionContract {
+            years: requested_years,
+        }),
+        _ => Box::new(PillExtensionContract {
+            years: requested_years,
+        }),
+    }
+}
+
+pub fn apply_lifespan_extension(
+    lifespan: &mut LifespanComponent,
+    ledger: &mut LifespanExtensionLedger,
+    requested_years: u32,
+    consumes_enlightenment: bool,
+) -> Option<u32> {
+    if consumes_enlightenment && ledger.enlightenment_used {
+        return None;
+    }
+
+    let requested_years = if requested_years == 0 && consumes_enlightenment {
+        let target_remaining =
+            lifespan.cap_by_realm as f64 * LIFESPAN_ENLIGHTENMENT_TARGET_REMAINING_RATIO;
+        (target_remaining - lifespan.remaining_years())
+            .ceil()
+            .max(0.0) as u32
+    } else {
+        requested_years
+    };
+    if requested_years == 0 {
+        return None;
+    }
+
+    let hard_cap = lifespan.cap_by_realm as f64 * LIFESPAN_EXTENSION_HARD_CAP_FACTOR;
+    let remaining_extension_budget = (hard_cap - ledger.accumulated_years).max(0.0);
+    let fillable_years = lifespan.years_lived.max(0.0);
+    let applied = (requested_years as f64)
+        .min(remaining_extension_budget)
+        .min(fillable_years)
+        .floor() as u32;
+    if applied == 0 {
+        return None;
+    }
+
+    lifespan.years_lived = (lifespan.years_lived - applied as f64).max(0.0);
+    ledger.accumulated_years += applied as f64;
+    if consumes_enlightenment {
+        ledger.enlightenment_used = true;
+    }
+    Some(applied)
+}
+
+fn apply_extension_cost(
+    cost: ExtensionCost,
+    cultivation: Option<valence::prelude::Mut<'_, Cultivation>>,
+    player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
+) {
+    if let Some(mut cultivation) = cultivation {
+        if cost.qi_cap_delta < 0.0 {
+            let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
+            cultivation.qi_max = (cultivation.qi_max * factor).max(1.0);
+            cultivation.qi_current = cultivation.qi_current.min(cultivation.qi_max);
+        }
+    }
+    if let Some(mut player_state) = player_state {
+        if cost.qi_cap_delta < 0.0 {
+            let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
+            player_state.spirit_qi_max = (player_state.spirit_qi_max * factor).max(1.0);
+            player_state.spirit_qi = player_state.spirit_qi.min(player_state.spirit_qi_max);
+        }
+        if cost.karma_delta != 0.0 {
+            player_state.karma = (player_state.karma + cost.karma_delta).clamp(-1.0, 1.0);
+        }
+        if cost.realm_progress_delta < 0.0 {
+            let penalty = (-cost.realm_progress_delta) as u64;
+            player_state.experience = player_state.experience.saturating_sub(penalty);
         }
     }
 }
@@ -358,6 +709,65 @@ pub fn lifespan_cap_for_actor(
     }
 }
 
+pub fn lifespan_event_payload_from_record(
+    character_id: impl Into<String>,
+    event: &LifespanEventRecord,
+) -> LifespanEventV1 {
+    LifespanEventV1 {
+        v: 1,
+        character_id: character_id.into(),
+        at_tick: event.at_tick,
+        kind: lifespan_event_kind_from_record(event.kind.as_str()),
+        delta_years: event.delta_years,
+        source: event.source.clone(),
+    }
+}
+
+fn emit_lifespan_event(
+    events: Option<&mut Events<LifespanEventEmitted>>,
+    char_id: &str,
+    event: &LifespanEventRecord,
+) {
+    if let Some(events) = events {
+        events.send(LifespanEventEmitted {
+            payload: lifespan_event_payload_from_record(char_id.to_string(), event),
+        });
+    }
+}
+
+fn emit_aging_event(
+    events: Option<&mut Events<AgingEventEmitted>>,
+    char_id: &str,
+    kind: AgingEventKindV1,
+    at_tick: u64,
+    lifespan: &LifespanComponent,
+    tick_rate_multiplier: f64,
+) {
+    if let Some(events) = events {
+        events.send(AgingEventEmitted {
+            payload: AgingEventV1 {
+                v: 1,
+                character_id: char_id.to_string(),
+                at_tick,
+                kind,
+                years_lived: lifespan.years_lived,
+                cap_by_realm: lifespan.cap_by_realm,
+                remaining_years: lifespan.remaining_years(),
+                tick_rate_multiplier,
+                source: lifespan_event_source(tick_rate_multiplier).to_string(),
+            },
+        });
+    }
+}
+
+fn lifespan_event_kind_from_record(kind: &str) -> LifespanEventKindV1 {
+    match kind {
+        "death_penalty" => LifespanEventKindV1::DeathPenalty,
+        "extension" => LifespanEventKindV1::Extension,
+        _ => LifespanEventKindV1::Aging,
+    }
+}
+
 pub fn lifespan_tick_rate_multiplier(
     position: Option<&Position>,
     zones: Option<&ZoneRegistry>,
@@ -373,6 +783,17 @@ pub fn lifespan_tick_rate_multiplier(
     } else {
         LIFESPAN_ONLINE_MULTIPLIER
     }
+}
+
+pub fn is_collapse_abyss_zone(zone: &Zone) -> bool {
+    zone.spirit_qi < NEGATIVE_ZONE_SPIRIT_QI_THRESHOLD
+        && (zone.name.contains("collapse")
+            || zone.name.contains("fu_ling")
+            || zone.active_events.iter().any(|event| {
+                event.contains("collapse")
+                    || event.contains("fu_ling")
+                    || event.contains("life_core")
+            }))
 }
 
 pub fn lifespan_delta_years_for_ticks(ticks: u64, multiplier: f64) -> f64 {
@@ -652,6 +1073,96 @@ mod tests {
             lifespan_tick_rate_multiplier(Some(&position), Some(&zones)),
             LIFESPAN_NEGATIVE_ZONE_MULTIPLIER
         );
+    }
+
+    #[test]
+    fn lifespan_extension_clamps_to_fillable_age_and_hard_cap() {
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        lifespan.years_lived = 30.0;
+        let mut ledger = LifespanExtensionLedger {
+            accumulated_years: 159.0,
+            enlightenment_used: false,
+        };
+
+        let applied = apply_lifespan_extension(&mut lifespan, &mut ledger, 10, false);
+
+        assert_eq!(applied, Some(1));
+        assert_eq!(lifespan.years_lived, 29.0);
+        assert_eq!(ledger.accumulated_years, 160.0);
+    }
+
+    #[test]
+    fn enlightenment_extension_targets_thirty_percent_remaining_once() {
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        lifespan.years_lived = 75.0;
+        let mut ledger = LifespanExtensionLedger::default();
+
+        let applied = apply_lifespan_extension(&mut lifespan, &mut ledger, 0, true);
+
+        assert_eq!(applied, Some(19));
+        assert_eq!(lifespan.remaining_years(), 24.0);
+        assert!(ledger.enlightenment_used);
+        assert_eq!(
+            apply_lifespan_extension(&mut lifespan, &mut ledger, 0, true),
+            None
+        );
+    }
+
+    #[test]
+    fn process_lifespan_extension_intent_emits_and_persists_event() {
+        let (settings, root) = persistence_settings("extension-event");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock { tick: 99 });
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<LifespanEventEmitted>();
+        app.add_systems(Update, process_lifespan_extension_intents);
+
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        lifespan.years_lived = 70.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                lifespan,
+                LifespanExtensionLedger::default(),
+                LifeRecord::new("offline:Azure"),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<LifespanExtensionIntent>>()
+            .send(LifespanExtensionIntent {
+                entity,
+                requested_years: 10,
+                source: "life_extension_pill".to_string(),
+            });
+
+        app.update();
+
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .unwrap();
+        assert_eq!(lifespan.years_lived, 60.0);
+        let emitted = app.world().resource::<Events<LifespanEventEmitted>>();
+        assert_eq!(emitted.len(), 1);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let (event_type, payload_json): (String, String) = connection
+            .query_row(
+                "SELECT event_type, payload_json FROM lifespan_events WHERE char_id = ?1",
+                params!["offline:Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("extension lifespan event should persist");
+        let payload: LifespanEventRecord =
+            serde_json::from_str(&payload_json).expect("lifespan payload should decode");
+        assert_eq!(event_type, "extension");
+        assert_eq!(payload.kind, "extension");
+        assert_eq!(payload.delta_years, 10);
+        assert_eq!(payload.source, "life_extension_pill");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -74,6 +74,21 @@ pub enum BiographyEntry {
         cause: String,
         tick: u64,
     },
+    LifespanExtended {
+        source: String,
+        delta_years: i64,
+        tick: u64,
+    },
+    DuoShePerformed {
+        target_id: String,
+        host_prev_age: f64,
+        target_age: f64,
+        tick: u64,
+    },
+    PossessedBy {
+        host_id: String,
+        tick: u64,
+    },
     /// plan-alchemy-v1 §1.3 — 每次炼丹结算写一条（精确或残缺路径）。
     AlchemyAttempt {
         recipe_id: String,
@@ -263,6 +278,18 @@ fn format_entry(entry: &BiographyEntry) -> String {
         } => format!("t{tick}:combat:{attacker_id}:{body_part}:{wound_kind}:{damage:.1}"),
         BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
+        BiographyEntry::LifespanExtended {
+            source,
+            delta_years,
+            tick,
+        } => format!("t{tick}:lifespan_extended:{source}:{delta_years}"),
+        BiographyEntry::DuoShePerformed {
+            target_id,
+            host_prev_age,
+            target_age,
+            tick,
+        } => format!("t{tick}:duoshe:{target_id}:{host_prev_age:.1}->{target_age:.1}"),
+        BiographyEntry::PossessedBy { host_id, tick } => format!("t{tick}:possessed_by:{host_id}"),
         BiographyEntry::AlchemyAttempt {
             recipe_id,
             pill,

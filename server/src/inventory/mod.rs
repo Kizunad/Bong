@@ -128,6 +128,7 @@ pub enum ItemEffect {
     BreakthroughBonus { magnitude: f64 },
     MeridianHeal { magnitude: f64, target: String },
     ContaminationCleanse { magnitude: f64 },
+    LifespanExtension { years: u32, source: String },
 }
 
 #[derive(Debug, Default)]
@@ -1079,6 +1080,16 @@ fn parse_item_effect(
         "contamination_cleanse" => Ok(ItemEffect::ContaminationCleanse {
             magnitude: effect.magnitude,
         }),
+        "lifespan_extension" => {
+            let source = effect
+                .target
+                .filter(|target| !target.trim().is_empty())
+                .unwrap_or_else(|| "life_extension_pill".to_string());
+            Ok(ItemEffect::LifespanExtension {
+                years: effect.magnitude.floor() as u32,
+                source,
+            })
+        }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
             source_path.display()
@@ -2806,6 +2817,20 @@ mod tests {
             load_item_registry().expect("item registry should load from assets/items/*.toml");
         assert!(registry.len() >= 1);
         assert!(registry.get("starter_talisman").is_some());
+        assert!(matches!(
+            registry.get("life_extension_pill").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::LifespanExtension {
+                years: 10,
+                source,
+            }) if source == "life_extension_pill"
+        ));
+        assert!(matches!(
+            registry.get("life_core").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::LifespanExtension {
+                years: 25,
+                source,
+            }) if source == "collapse_core"
+        ));
     }
 
     #[test]

@@ -29,6 +29,21 @@ pub struct LifespanPreviewV1 {
     pub is_wind_candle: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenStageV1 {
+    Fortune,
+    Tribulation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenZoneKindV1 {
+    Ordinary,
+    Death,
+    Negative,
+}
+
 #[derive(Debug)]
 pub enum ServerDataBuildError {
     Json(serde_json::Error),
@@ -174,6 +189,10 @@ pub enum ServerDataPayloadV1 {
         countdown_until_ms: u64,
         can_reincarnate: bool,
         can_terminate: bool,
+        stage: Option<DeathScreenStageV1>,
+        death_number: Option<u32>,
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        lifespan: Option<LifespanPreviewV1>,
     },
     TerminateScreen {
         visible: bool,
@@ -352,6 +371,14 @@ enum ServerDataPayloadWireV1 {
         countdown_until_ms: u64,
         can_reincarnate: bool,
         can_terminate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage: Option<DeathScreenStageV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        death_number: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
     },
     TerminateScreen {
         visible: bool,
@@ -640,6 +667,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 countdown_until_ms,
                 can_reincarnate,
                 can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
             } => Ok(Self::DeathScreen {
                 visible,
                 cause,
@@ -648,6 +679,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 countdown_until_ms,
                 can_reincarnate,
                 can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
             }),
             ServerDataPayloadWireV1::TerminateScreen {
                 visible,
@@ -839,6 +874,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 countdown_until_ms,
                 can_reincarnate,
                 can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
             } => Self::DeathScreen {
                 visible: *visible,
                 cause: cause.clone(),
@@ -847,6 +886,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 countdown_until_ms: *countdown_until_ms,
                 can_reincarnate: *can_reincarnate,
                 can_terminate: *can_terminate,
+                stage: stage.clone(),
+                death_number: *death_number,
+                zone_kind: zone_kind.clone(),
+                lifespan: lifespan.clone(),
             },
             ServerDataPayloadV1::TerminateScreen {
                 visible,
@@ -1145,6 +1188,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.death-screen.sample.json"
             ),
         ];
 

@@ -1,6 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, ResMut, Username};
+use valence::prelude::{
+    Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
+};
 
 use crate::alchemy::LearnedRecipes;
 use crate::combat::CombatClock;
@@ -11,8 +13,9 @@ use crate::cultivation::death_hooks::{
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
-    calculate_rebirth_chance, tribulation_rebirth_chance, DeathRegistry, LifespanCapTable,
-    LifespanComponent, RebirthChanceInput, ZoneDeathKind,
+    calculate_rebirth_chance, lifespan_tick_rate_multiplier, tribulation_rebirth_chance,
+    DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted, RebirthChanceInput,
+    ZoneDeathKind,
 };
 use crate::cultivation::{
     color::PracticeLog,
@@ -29,7 +32,7 @@ use crate::network::send_server_data_payload;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::persistence::{
     persist_near_death_transition, persist_revival_transition, persist_termination_transition,
-    LifespanEventRecord, PersistenceSettings,
+    persist_termination_transition_with_death_context, LifespanEventRecord, PersistenceSettings,
 };
 use crate::player::state::{
     rotate_current_character_id, save_player_shrine_anchor_slice, save_player_slices, PlayerState,
@@ -39,6 +42,7 @@ use crate::schema::cultivation::realm_to_string;
 use crate::schema::death_insight::{
     DeathInsightCategoryV1, DeathInsightPositionV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
 };
+use crate::schema::server_data::{DeathScreenStageV1, DeathScreenZoneKindV1, LifespanPreviewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
@@ -95,6 +99,14 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a mut PlayerInventory>,
     Option<&'a mut SkillSet>,
 );
+
+struct DeathScreenContext<'a> {
+    lifecycle: &'a Lifecycle,
+    death_registry: Option<&'a DeathRegistry>,
+    lifespan: Option<&'a LifespanComponent>,
+    position: Option<&'a Position>,
+    zones: Option<&'a ZoneRegistry>,
+}
 
 pub fn sync_combat_state_from_events(
     mut events: EventReader<CombatEvent>,
@@ -246,6 +258,7 @@ pub fn death_arbiter_tick(
     mut death_insights: EventWriter<DeathInsightRequested>,
     mut terminated: EventWriter<PlayerTerminated>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
     mut lifecycle_q: Query<DeathArbiterQueryItem<'_>>,
 ) {
     for event in death_events.read() {
@@ -283,7 +296,7 @@ pub fn death_arbiter_tick(
         }
         let lifespan_exhausted =
             apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
-        let rebirth_chance = if lifespan_exhausted {
+        let revival_decision = if lifespan_exhausted {
             None
         } else {
             determine_revival_decision(
@@ -296,8 +309,12 @@ pub fn death_arbiter_tick(
                 zones.as_deref(),
                 now_tick,
             )
-            .map(|decision| decision.chance_shown())
         };
+        let rebirth_chance = revival_decision.map(|decision| decision.chance_shown());
+        let category = death_insight_category_from_revival_decision(
+            DeathInsightCategoryV1::Combat,
+            revival_decision,
+        );
         let insight_payload = build_death_insight_request(DeathInsightBuildInput {
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
@@ -308,14 +325,19 @@ pub fn death_arbiter_tick(
             position,
             at_tick: now_tick,
             cause: event.cause.as_str(),
-            category: DeathInsightCategoryV1::Combat,
+            category,
             zone_kind: death_zone,
             rebirth_chance,
             will_terminate: lifespan_exhausted,
         });
 
         if lifespan_exhausted {
-            let terminated_now = terminate_lifecycle(
+            let lifespan_event =
+                death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
+            let lifespan_event_char_id = lifespan_event
+                .as_ref()
+                .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
+            let terminated_now = terminate_lifecycle_with_death_context(
                 event.target,
                 &mut lifecycle,
                 life_record,
@@ -325,8 +347,15 @@ pub fn death_arbiter_tick(
                 position,
                 &mut vfx_events,
                 "natural_end",
+                Some(event.cause.as_str()),
+                lifespan_event.clone(),
             );
             if terminated_now {
+                emit_death_lifespan_event(
+                    lifespan_events.as_deref_mut(),
+                    lifespan_event_char_id,
+                    lifespan_event.as_ref(),
+                );
                 death_insights.send(DeathInsightRequested {
                     payload: insight_payload,
                 });
@@ -334,6 +363,11 @@ pub fn death_arbiter_tick(
             continue;
         }
 
+        let lifespan_event =
+            death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
+        let lifespan_event_char_id = lifespan_event
+            .as_ref()
+            .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
                 cause: event.cause.clone(),
@@ -341,8 +375,6 @@ pub fn death_arbiter_tick(
             });
             let mut staged_lifecycle = lifecycle.clone();
             staged_lifecycle.enter_near_death(now_tick);
-            let lifespan_event =
-                death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
             if let Err(error) = persist_near_death_transition(
                 &persistence,
                 &staged_lifecycle,
@@ -358,6 +390,11 @@ pub fn death_arbiter_tick(
                 continue;
             }
         }
+        emit_death_lifespan_event(
+            lifespan_events.as_deref_mut(),
+            lifespan_event_char_id,
+            lifespan_event.as_ref(),
+        );
         enter_near_death(&mut lifecycle, wounds, now_tick);
         death_insights.send(DeathInsightRequested {
             payload: insight_payload,
@@ -400,9 +437,17 @@ pub fn death_arbiter_tick(
         if let Some(registry) = death_registry.as_deref_mut() {
             registry.record_death(clock.tick, death_zone);
         }
-        let lifespan_exhausted =
-            apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state);
-        let rebirth_chance = if lifespan_exhausted {
+        let lifespan_exhausted = if event.cause == CultivationDeathCause::NaturalAging {
+            apply_natural_aging_lifespan_exhaustion(
+                cultivation,
+                lifespan.as_deref_mut(),
+                player_state,
+            );
+            true
+        } else {
+            apply_death_lifespan_penalty(cultivation, lifespan.as_deref_mut(), player_state)
+        };
+        let revival_decision = if lifespan_exhausted {
             None
         } else {
             determine_revival_decision(
@@ -415,9 +460,12 @@ pub fn death_arbiter_tick(
                 zones.as_deref(),
                 clock.tick,
             )
-            .map(|decision| decision.chance_shown())
         };
-        let category = death_insight_category_from_cultivation_cause(event.cause);
+        let rebirth_chance = revival_decision.map(|decision| decision.chance_shown());
+        let category = death_insight_category_from_revival_decision(
+            death_insight_category_from_cultivation_cause(event.cause),
+            revival_decision,
+        );
         let insight_payload = build_death_insight_request(DeathInsightBuildInput {
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
@@ -435,7 +483,15 @@ pub fn death_arbiter_tick(
         });
 
         if lifespan_exhausted {
-            let terminated_now = terminate_lifecycle(
+            let lifespan_event = if event.cause == CultivationDeathCause::NaturalAging {
+                None
+            } else {
+                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
+            };
+            let lifespan_event_char_id = lifespan_event
+                .as_ref()
+                .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
+            let terminated_now = terminate_lifecycle_with_death_context(
                 event.entity,
                 &mut lifecycle,
                 life_record,
@@ -445,8 +501,15 @@ pub fn death_arbiter_tick(
                 position,
                 &mut vfx_events,
                 "natural_end",
+                Some(cause.as_str()),
+                lifespan_event.clone(),
             );
             if terminated_now {
+                emit_death_lifespan_event(
+                    lifespan_events.as_deref_mut(),
+                    lifespan_event_char_id,
+                    lifespan_event.as_ref(),
+                );
                 death_insights.send(DeathInsightRequested {
                     payload: insight_payload,
                 });
@@ -454,6 +517,10 @@ pub fn death_arbiter_tick(
             continue;
         }
 
+        let lifespan_event = death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str());
+        let lifespan_event_char_id = lifespan_event
+            .as_ref()
+            .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::NearDeath {
                 cause: cause.clone(),
@@ -461,9 +528,6 @@ pub fn death_arbiter_tick(
             });
             let mut staged_lifecycle = lifecycle.clone();
             staged_lifecycle.enter_near_death(clock.tick);
-            let lifespan_event =
-                death_penalty_lifespan_event(cultivation, clock.tick, cause.as_str())
-                    .filter(|_| event.cause != CultivationDeathCause::TribulationFailure);
             if let Err(error) = persist_near_death_transition(
                 &persistence,
                 &staged_lifecycle,
@@ -479,6 +543,11 @@ pub fn death_arbiter_tick(
                 continue;
             }
         }
+        emit_death_lifespan_event(
+            lifespan_events.as_deref_mut(),
+            lifespan_event_char_id,
+            lifespan_event.as_ref(),
+        );
         enter_near_death(&mut lifecycle, wounds, clock.tick);
         death_insights.send(DeathInsightRequested {
             payload: insight_payload,
@@ -572,6 +641,13 @@ pub fn near_death_tick(
             entity,
             &eventual_cause(life_record.as_deref()),
             decision,
+            DeathScreenContext {
+                lifecycle: &lifecycle,
+                death_registry: death_registry.as_deref(),
+                lifespan: lifespan.as_deref(),
+                position: position.as_deref(),
+                zones: zones.as_deref(),
+            },
             clock.tick,
             decision_deadline_tick,
         );
@@ -678,6 +754,16 @@ pub fn handle_revival_action_intents(
                 }
             }
             RevivalActionKind::Terminate => {
+                if lifecycle.state != LifecycleState::AwaitingRevival {
+                    continue;
+                }
+                let Some(decision) = lifecycle.awaiting_decision else {
+                    continue;
+                };
+                if !decision.can_terminate() {
+                    continue;
+                }
+
                 if terminate_lifecycle(
                     entity,
                     &mut lifecycle,
@@ -770,6 +856,25 @@ fn death_penalty_lifespan_event(
     })
 }
 
+fn lifespan_event_character_id(life_record: Option<&LifeRecord>, lifecycle: &Lifecycle) -> String {
+    life_record
+        .map(|record| record.character_id.clone())
+        .unwrap_or_else(|| lifecycle.character_id.clone())
+}
+
+fn emit_death_lifespan_event(
+    events: Option<&mut Events<LifespanEventEmitted>>,
+    char_id: Option<String>,
+    event: Option<&LifespanEventRecord>,
+) {
+    let (Some(events), Some(char_id), Some(event)) = (events, char_id, event) else {
+        return;
+    };
+    events.send(LifespanEventEmitted {
+        payload: crate::cultivation::lifespan::lifespan_event_payload_from_record(char_id, event),
+    });
+}
+
 struct DeathInsightBuildInput<'a> {
     lifecycle: &'a Lifecycle,
     life_record: Option<&'a LifeRecord>,
@@ -787,10 +892,7 @@ struct DeathInsightBuildInput<'a> {
 }
 
 fn build_death_insight_request(input: DeathInsightBuildInput<'_>) -> DeathInsightRequestV1 {
-    let death_count = input
-        .death_registry
-        .map_or(input.lifecycle.death_count, |registry| registry.death_count)
-        .max(1);
+    let death_count = death_count_for_current_insight(input.lifecycle, input.death_registry);
     let character_id = input
         .life_record
         .map(|record| record.character_id.clone())
@@ -847,12 +949,40 @@ fn death_insight_category_from_cultivation_cause(
 ) -> DeathInsightCategoryV1 {
     match cause {
         CultivationDeathCause::NaturalAging => DeathInsightCategoryV1::Natural,
-        CultivationDeathCause::TribulationFailure => DeathInsightCategoryV1::Tribulation,
         CultivationDeathCause::BreakthroughBackfire
         | CultivationDeathCause::MeridianCollapse
         | CultivationDeathCause::NegativeZoneDrain
         | CultivationDeathCause::ContaminationOverflow => DeathInsightCategoryV1::Cultivation,
     }
+}
+
+fn death_insight_category_from_revival_decision(
+    base_category: DeathInsightCategoryV1,
+    decision: Option<RevivalDecision>,
+) -> DeathInsightCategoryV1 {
+    if matches!(decision, Some(RevivalDecision::Tribulation { .. })) {
+        DeathInsightCategoryV1::Tribulation
+    } else {
+        base_category
+    }
+}
+
+fn death_count_for_current_insight(
+    lifecycle: &Lifecycle,
+    death_registry: Option<&DeathRegistry>,
+) -> u32 {
+    death_registry
+        .map_or_else(
+            || {
+                if lifecycle_includes_current_death(lifecycle) {
+                    lifecycle.death_count
+                } else {
+                    lifecycle.death_count.saturating_add(1)
+                }
+            },
+            |registry| registry.death_count,
+        )
+        .max(1)
 }
 
 fn map_death_insight_zone_kind(zone_kind: ZoneDeathKind) -> DeathInsightZoneKindV1 {
@@ -888,6 +1018,30 @@ fn apply_death_lifespan_penalty(
     lifespan.remaining_years() <= f64::EPSILON
 }
 
+fn apply_natural_aging_lifespan_exhaustion(
+    cultivation: Option<&Cultivation>,
+    lifespan: Option<&mut LifespanComponent>,
+    player_state: Option<&PlayerState>,
+) {
+    let Some(lifespan) = lifespan else {
+        return;
+    };
+    let cap = match (player_state, cultivation) {
+        (Some(player_state), Some(cultivation)) => LifespanCapTable::for_player_state_realm(
+            Some(player_state.realm.as_str()),
+            cultivation.realm,
+        ),
+        (Some(player_state), None) => LifespanCapTable::for_player_state_realm(
+            Some(player_state.realm.as_str()),
+            Realm::Awaken,
+        ),
+        (None, Some(cultivation)) => LifespanCapTable::for_realm(cultivation.realm),
+        (None, None) => LifespanCapTable::MORTAL,
+    };
+    lifespan.apply_cap(cap);
+    lifespan.years_lived = lifespan.years_lived.max(cap as f64);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn determine_revival_decision(
     lifecycle: &Lifecycle,
@@ -903,13 +1057,24 @@ fn determine_revival_decision(
         return None;
     }
 
-    let registry = death_registry
-        .cloned()
-        .unwrap_or_else(|| DeathRegistry::new(lifecycle.character_id.clone()));
-    let death_zone = registry
-        .last_death_zone
-        .or_else(|| Some(death_zone_from_context(cause, position, zones)))
-        .unwrap_or(ZoneDeathKind::Ordinary);
+    let current_death_zone = death_zone_from_context(cause, position, zones);
+    let (registry, includes_current_death, death_zone) = match death_registry {
+        Some(registry) => (
+            registry.clone(),
+            true,
+            registry.last_death_zone.unwrap_or(current_death_zone),
+        ),
+        None => {
+            let includes_current_death = lifecycle_includes_current_death(lifecycle);
+            let mut registry = DeathRegistry::new(lifecycle.character_id.clone());
+            registry.death_count = lifecycle.death_count;
+            registry.last_death_tick = lifecycle.last_death_tick;
+            if includes_current_death {
+                registry.last_death_zone = Some(current_death_zone);
+            }
+            (registry, includes_current_death, current_death_zone)
+        }
+    };
     let result = calculate_rebirth_chance(&RebirthChanceInput {
         registry,
         at_tick: now_tick,
@@ -918,7 +1083,7 @@ fn determine_revival_decision(
         // plan-death-lifecycle-v1 §2：拥有"灵龛归属"可满足运数期保底条件。
         // MVP：以 Lifecycle.spawn_anchor 是否存在作为归属判定（社交侧揭露/失效规则后续接入）。
         has_shrine: lifecycle.spawn_anchor.is_some(),
-        includes_current_death: death_registry.is_some(),
+        includes_current_death,
     });
 
     if lifecycle.fortune_remaining == 0 && result.guaranteed {
@@ -940,6 +1105,13 @@ fn determine_revival_decision(
             chance: result.chance,
         })
     }
+}
+
+fn lifecycle_includes_current_death(lifecycle: &Lifecycle) -> bool {
+    matches!(
+        lifecycle.state,
+        LifecycleState::NearDeath | LifecycleState::AwaitingRevival | LifecycleState::Terminated
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1056,7 +1228,44 @@ fn terminate_lifecycle(
     vfx_events: &mut EventWriter<VfxEventRequest>,
     cause: &str,
 ) -> bool {
+    terminate_lifecycle_with_death_context(
+        entity,
+        lifecycle,
+        life_record,
+        persistence,
+        now_tick,
+        terminated,
+        position,
+        vfx_events,
+        cause,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn terminate_lifecycle_with_death_context(
+    entity: Entity,
+    lifecycle: &mut Lifecycle,
+    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    persistence: &PersistenceSettings,
+    now_tick: u64,
+    terminated: &mut EventWriter<PlayerTerminated>,
+    position: Option<&Position>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    cause: &str,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<LifespanEventRecord>,
+) -> bool {
     let Some(mut life_record) = life_record else {
+        if death_registry_cause.is_some()
+            && !matches!(
+                lifecycle.state,
+                LifecycleState::NearDeath | LifecycleState::AwaitingRevival
+            )
+        {
+            lifecycle.death_count = lifecycle.death_count.saturating_add(1);
+        }
         lifecycle.terminate(now_tick);
         terminated.send(PlayerTerminated { entity });
         return true;
@@ -1066,15 +1275,36 @@ fn terminate_lifecycle(
         tick: now_tick,
     });
     let mut staged_lifecycle = lifecycle.clone();
+    let should_record_direct_death = death_registry_cause.is_some()
+        && !matches!(
+            lifecycle.state,
+            LifecycleState::NearDeath | LifecycleState::AwaitingRevival
+        );
+    if should_record_direct_death {
+        staged_lifecycle.death_count = staged_lifecycle.death_count.saturating_add(1);
+    }
     staged_lifecycle.terminate(now_tick);
-    if let Err(error) = persist_termination_transition(persistence, &staged_lifecycle, &life_record)
-    {
+    let persist_result = if death_registry_cause.is_some() || lifespan_event.is_some() {
+        persist_termination_transition_with_death_context(
+            persistence,
+            &staged_lifecycle,
+            &life_record,
+            death_registry_cause,
+            lifespan_event.as_ref(),
+        )
+    } else {
+        persist_termination_transition(persistence, &staged_lifecycle, &life_record)
+    };
+    if let Err(error) = persist_result {
         tracing::warn!(
             "[bong][persistence] failed to persist terminated snapshot for {}: {error}",
             life_record.character_id
         );
         let _ = life_record.biography.pop();
         return false;
+    }
+    if should_record_direct_death {
+        lifecycle.death_count = lifecycle.death_count.saturating_add(1);
     }
     lifecycle.terminate(now_tick);
     terminated.send(PlayerTerminated { entity });
@@ -1307,9 +1537,11 @@ fn emit_death_screen(
     entity: Entity,
     cause: &str,
     decision: RevivalDecision,
+    context: DeathScreenContext<'_>,
     now_tick: u64,
     decision_deadline_tick: u64,
 ) {
+    let zone_kind = death_zone_from_context(cause, context.position, context.zones);
     send_payload(
         clients,
         entity,
@@ -1321,6 +1553,18 @@ fn emit_death_screen(
             countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
             can_reincarnate: decision.can_reincarnate(),
             can_terminate: decision.can_terminate(),
+            stage: Some(death_screen_stage(decision)),
+            death_number: Some(
+                context
+                    .death_registry
+                    .map_or(context.lifecycle.death_count, |registry| {
+                        registry.death_count.max(context.lifecycle.death_count)
+                    }),
+            ),
+            zone_kind: Some(death_screen_zone_kind(zone_kind)),
+            lifespan: context.lifespan.map(|lifespan| {
+                death_screen_lifespan_preview(lifespan, context.position, context.zones)
+            }),
         }),
     );
 }
@@ -1356,8 +1600,42 @@ fn hide_death_screen(clients: &mut Query<&mut valence::prelude::Client>, entity:
             countdown_until_ms: 0,
             can_reincarnate: false,
             can_terminate: false,
+            stage: None,
+            death_number: None,
+            zone_kind: None,
+            lifespan: None,
         }),
     );
+}
+
+fn death_screen_stage(decision: RevivalDecision) -> DeathScreenStageV1 {
+    match decision {
+        RevivalDecision::Fortune { .. } => DeathScreenStageV1::Fortune,
+        RevivalDecision::Tribulation { .. } => DeathScreenStageV1::Tribulation,
+    }
+}
+
+fn death_screen_zone_kind(kind: ZoneDeathKind) -> DeathScreenZoneKindV1 {
+    match kind {
+        ZoneDeathKind::Ordinary => DeathScreenZoneKindV1::Ordinary,
+        ZoneDeathKind::Death => DeathScreenZoneKindV1::Death,
+        ZoneDeathKind::Negative => DeathScreenZoneKindV1::Negative,
+    }
+}
+
+fn death_screen_lifespan_preview(
+    lifespan: &LifespanComponent,
+    position: Option<&Position>,
+    zones: Option<&ZoneRegistry>,
+) -> LifespanPreviewV1 {
+    LifespanPreviewV1 {
+        years_lived: lifespan.years_lived,
+        cap_by_realm: lifespan.cap_by_realm,
+        remaining_years: lifespan.remaining_years(),
+        death_penalty_years: LifespanCapTable::death_penalty_years_for_cap(lifespan.cap_by_realm),
+        tick_rate_multiplier: lifespan_tick_rate_multiplier(position, zones),
+        is_wind_candle: lifespan.is_wind_candle(),
+    }
 }
 
 fn hide_terminate_screen(clients: &mut Query<&mut valence::prelude::Client>, entity: Entity) {
@@ -1797,7 +2075,8 @@ mod tests {
             ServerDataPayloadV1::DeathScreen {
                 visible: true,
                 can_reincarnate: true,
-                can_terminate: true,
+                can_terminate: false,
+                stage: Some(DeathScreenStageV1::Fortune),
                 ..
             }
         )));
@@ -1925,10 +2204,64 @@ mod tests {
     }
 
     #[test]
+    fn missing_death_registry_uses_lifecycle_death_count_for_tribulation_stage() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("lifecycle-count-without-registry");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:FourthDeath".to_string(),
+                    death_count: 3,
+                    fortune_remaining: 3,
+                    last_death_tick: Some(1),
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:FourthDeath"),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "bleed_out".to_string(),
+            at_tick: 200,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.death_count, 4);
+
+        let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+        let mut insight_reader = insight_events.get_reader();
+        let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+        assert_eq!(insights.len(), 1);
+        let payload = &insights[0].payload;
+        assert_eq!(payload.character_id, "offline:FourthDeath");
+        assert_eq!(payload.death_count, 4);
+        assert_eq!(payload.category, DeathInsightCategoryV1::Tribulation);
+        assert_eq!(payload.rebirth_chance, Some(0.65));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn natural_aging_death_emits_natural_death_insight_request() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("natural-aging-insight");
-        app.insert_resource(settings);
+        app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 440 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
@@ -1945,7 +2278,9 @@ mod tests {
                 CombatState::default(),
                 Lifecycle {
                     character_id: "offline:Ancestor".to_string(),
+                    death_count: 4,
                     fortune_remaining: 0,
+                    last_death_tick: Some(300),
                     ..Default::default()
                 },
                 Cultivation {
@@ -1979,6 +2314,15 @@ mod tests {
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
         assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(lifecycle.death_count, 5);
+        assert_eq!(lifecycle.last_death_tick, Some(440));
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .expect("lifespan should remain attached");
+        assert_eq!(lifespan.years_lived, LifespanCapTable::CONDENSE as f64);
+        assert_eq!(lifespan.remaining_years(), 0.0);
         let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
         let mut insight_reader = insight_events.get_reader();
         let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
@@ -1993,6 +2337,180 @@ mod tests {
         assert_eq!(payload.lifespan_remaining_years, Some(0.0));
         assert_eq!(payload.zone_kind, DeathInsightZoneKindV1::Ordinary);
         assert_eq!(payload.context["will_terminate"], true);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let death_registry: (i64, i64, String) = connection
+            .query_row(
+                "SELECT death_count, last_death_tick, last_death_cause FROM death_registry WHERE char_id = ?1",
+                params!["offline:Ancestor"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("natural end should persist death registry");
+        let lifespan_events: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM lifespan_events WHERE char_id = ?1 AND event_type = 'death_penalty'",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("lifespan event count should be readable");
+        assert_eq!(
+            death_registry,
+            (5, 440, "cultivation:NaturalAging".to_string())
+        );
+        assert_eq!(lifespan_events, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn negative_zone_death_insight_is_classified_as_tribulation_before_fourth_death() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("negative-zone-tribulation-insight");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 120 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:DepthWalker".to_string(),
+                    fortune_remaining: 3,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:DepthWalker"),
+                DeathRegistry::new("offline:DepthWalker"),
+                Position::new([3.0, 55.0, -7.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "negative_zone_drain".to_string(),
+            at_tick: 120,
+        });
+        app.update();
+
+        let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
+        let mut insight_reader = insight_events.get_reader();
+        let insights: Vec<_> = insight_reader.read(insight_events).cloned().collect();
+        assert_eq!(insights.len(), 1);
+        let payload = &insights[0].payload;
+        assert_eq!(payload.character_id, "offline:DepthWalker");
+        assert_eq!(payload.death_count, 1);
+        assert_eq!(payload.category, DeathInsightCategoryV1::Tribulation);
+        assert_eq!(payload.zone_kind, DeathInsightZoneKindV1::Negative);
+        assert_eq!(payload.rebirth_chance, Some(0.80));
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.death_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_penalty_exhaustion_persists_registry_and_lifespan_event_before_termination() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("death-penalty-exhaustion");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 240 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:ShortLived".to_string(),
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:ShortLived"),
+                DeathRegistry::new("offline:ShortLived"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: LifespanCapTable::AWAKEN as f64 - 1.0,
+                    cap_by_realm: LifespanCapTable::AWAKEN,
+                    offline_pause_tick: None,
+                },
+                Position::new([2.0, 70.0, 2.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "bleed_out".to_string(),
+            at_tick: 240,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(lifecycle.death_count, 1);
+        let lifespan = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .expect("lifespan should remain attached");
+        assert_eq!(lifespan.remaining_years(), 0.0);
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let death_registry: (i64, i64, String) = connection
+            .query_row(
+                "SELECT death_count, last_death_tick, last_death_cause FROM death_registry WHERE char_id = ?1",
+                params!["offline:ShortLived"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("death penalty exhaustion should persist death registry");
+        let lifespan_payload_json: String = connection
+            .query_row(
+                "SELECT payload_json FROM lifespan_events WHERE char_id = ?1 AND event_type = 'death_penalty'",
+                params!["offline:ShortLived"],
+                |row| row.get(0),
+            )
+            .expect("death penalty lifespan event should persist");
+        let lifespan_payload: LifespanEventRecord =
+            serde_json::from_str(&lifespan_payload_json).expect("lifespan payload should decode");
+        let snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(
+                settings
+                    .deceased_public_dir()
+                    .join("offline:ShortLived.json"),
+            )
+            .expect("deceased snapshot should exist"),
+        )
+        .expect("deceased snapshot should decode");
+
+        assert_eq!(death_registry, (1, 240, "bleed_out".to_string()));
+        assert_eq!(lifespan_payload.kind, "death_penalty");
+        assert_eq!(lifespan_payload.delta_years, -6);
+        assert_eq!(lifespan_payload.source, "bleed_out");
+        assert_eq!(snapshot.lifecycle.death_count, 1);
+        assert_eq!(snapshot.termination_category, "善终");
+        assert!(matches!(
+            snapshot.life_record.biography.last(),
+            Some(BiographyEntry::Terminated { cause, tick })
+                if cause == "natural_end" && *tick == 240
+        ));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2204,6 +2722,7 @@ mod tests {
 
         assert_eq!(snapshot.char_id, "offline:Ancestor");
         assert_eq!(snapshot.died_at_tick, 641);
+        assert_eq!(snapshot.termination_category, "自主归隐");
         assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
         assert!(matches!(
             snapshot.life_record.biography.last(),
@@ -2212,6 +2731,135 @@ mod tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].termination_category, "自主归隐");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn terminate_action_is_ignored_for_alive_and_fortune_stage_characters() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("terminate-gated");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 120 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let alive = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Alive".to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Alive"),
+            ))
+            .id();
+        let fortune_stage = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Fortune".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(200),
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Fortune"),
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity: alive,
+            action: RevivalActionKind::Terminate,
+            issued_at_tick: 120,
+        });
+        app.world_mut().send_event(RevivalActionIntent {
+            entity: fortune_stage,
+            action: RevivalActionKind::Terminate,
+            issued_at_tick: 120,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().entity(alive).get::<Lifecycle>().unwrap().state,
+            LifecycleState::Alive
+        );
+        assert_eq!(
+            app.world()
+                .entity(fortune_stage)
+                .get::<Lifecycle>()
+                .unwrap()
+                .state,
+            LifecycleState::AwaitingRevival
+        );
+        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fortune_stage_death_screen_disables_voluntary_termination() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("fortune-no-terminate-button");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+                handle_revival_action_intents.after(near_death_tick),
+            ),
+        );
+
+        let (entity, mut helper) = spawn_client_actor(
+            &mut app,
+            "FortuneOnly",
+            Wounds {
+                health_current: 0.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                fortune_remaining: 1,
+                ..Default::default()
+            },
+        );
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "test".to_string(),
+            at_tick: 100,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 701;
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(payloads.iter().any(|payload| matches!(
+            payload.payload,
+            ServerDataPayloadV1::DeathScreen {
+                visible: true,
+                can_reincarnate: true,
+                can_terminate: false,
+                stage: Some(DeathScreenStageV1::Fortune),
+                ..
+            }
+        )));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2386,10 +3034,12 @@ mod tests {
         assert_eq!(persisted.state, PlayerState::default());
         assert_eq!(persisted.position, crate::player::spawn_position());
         assert!(persisted.inventory.is_some());
-        assert_eq!(
-            persisted.lifespan.expect("fresh lifespan should persist"),
-            LifespanComponent::new(LifespanCapTable::MORTAL),
-        );
+        let persisted_lifespan = persisted.lifespan.expect("fresh lifespan should persist");
+        assert_eq!(persisted_lifespan.born_at_tick, 0);
+        assert_eq!(persisted_lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+        assert!(persisted_lifespan.years_lived >= 0.0);
+        assert!(persisted_lifespan.years_lived < 0.01);
+        assert_eq!(persisted_lifespan.offline_pause_tick, None);
 
         let _ = fs::remove_dir_all(root);
     }

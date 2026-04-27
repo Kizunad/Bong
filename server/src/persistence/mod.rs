@@ -140,12 +140,16 @@ pub struct DeceasedIndexEntry {
     pub char_id: String,
     pub died_at_tick: u64,
     pub path: String,
+    #[serde(default = "default_termination_category")]
+    pub termination_category: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeceasedSnapshot {
     pub char_id: String,
     pub died_at_tick: u64,
+    #[serde(default = "default_termination_category")]
+    pub termination_category: String,
     pub lifecycle: Lifecycle,
     pub life_record: LifeRecord,
 }
@@ -1637,12 +1641,40 @@ pub fn persist_termination_transition(
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
+    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
+}
+
+pub fn persist_termination_transition_with_death_context(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
+) -> io::Result<()> {
+    persist_termination_transition_inner(
+        settings,
+        lifecycle,
+        life_record,
+        death_registry_cause,
+        lifespan_event,
+    )
+}
+
+fn persist_termination_transition_inner(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
+) -> io::Result<()> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
     let died_at_tick = biography_tick(entry);
+    let termination_category = termination_category_from_entry(entry);
     let snapshot = DeceasedSnapshot {
         char_id: life_record.character_id.clone(),
         died_at_tick,
+        termination_category: termination_category.clone(),
         lifecycle: lifecycle.clone(),
         life_record: life_record.clone(),
     };
@@ -1654,6 +1686,7 @@ pub fn persist_termination_transition(
             life_record.character_id.as_str(),
             snapshot_json.as_str(),
             died_at_tick,
+            termination_category.as_str(),
         )?)
     } else {
         None
@@ -1669,6 +1702,23 @@ pub fn persist_termination_transition(
             entry,
             wall_clock,
         )?;
+        if let Some(death_registry_cause) = death_registry_cause {
+            upsert_death_registry(
+                &transaction,
+                life_record.character_id.as_str(),
+                lifecycle,
+                death_registry_cause,
+                wall_clock,
+            )?;
+        }
+        if let Some(lifespan_event) = lifespan_event {
+            append_lifespan_event(
+                &transaction,
+                life_record.character_id.as_str(),
+                lifespan_event,
+                wall_clock,
+            )?;
+        }
         upsert_deceased_snapshot(
             &transaction,
             life_record.character_id.as_str(),
@@ -3377,6 +3427,9 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::NearDeath { .. } => "near_death",
         BiographyEntry::Terminated { .. } => "terminated",
+        BiographyEntry::LifespanExtended { .. } => "lifespan_extended",
+        BiographyEntry::DuoShePerformed { .. } => "duoshe_performed",
+        BiographyEntry::PossessedBy { .. } => "possessed_by",
         BiographyEntry::AlchemyAttempt { .. } => "alchemy_attempt",
         BiographyEntry::PlotHarvestedByOther { .. } => "plot_harvested_by_other",
         BiographyEntry::PlotHarvestedFromOther { .. } => "plot_harvested_from_other",
@@ -3445,6 +3498,9 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::NearDeath { tick, .. }
         | BiographyEntry::Terminated { tick, .. }
+        | BiographyEntry::LifespanExtended { tick, .. }
+        | BiographyEntry::DuoShePerformed { tick, .. }
+        | BiographyEntry::PossessedBy { tick, .. }
         | BiographyEntry::AlchemyAttempt { tick, .. }
         | BiographyEntry::PlotHarvestedByOther { tick, .. }
         | BiographyEntry::PlotHarvestedFromOther { tick, .. }
@@ -3685,11 +3741,29 @@ fn should_export_public_snapshot(char_id: &str) -> bool {
     char_id.starts_with("offline:")
 }
 
+fn default_termination_category() -> String {
+    "横死".to_string()
+}
+
+fn termination_category_from_entry(entry: &BiographyEntry) -> String {
+    let BiographyEntry::Terminated { cause, .. } = entry else {
+        return default_termination_category();
+    };
+    match cause.as_str() {
+        "natural_end" => "善终",
+        "voluntary_retire" => "自主归隐",
+        "duo_she" => "夺舍者",
+        _ => "横死",
+    }
+    .to_string()
+}
+
 fn stage_public_deceased_export(
     settings: &PersistenceSettings,
     char_id: &str,
     snapshot_json: &str,
     died_at_tick: u64,
+    termination_category: &str,
 ) -> io::Result<StagedDeceasedExport> {
     fs::create_dir_all(settings.deceased_public_dir())?;
 
@@ -3708,6 +3782,7 @@ fn stage_public_deceased_export(
         char_id: char_id.to_string(),
         died_at_tick,
         path: relative_snapshot_path.clone(),
+        termination_category: termination_category.to_string(),
     });
     entries.sort_by(|left, right| {
         left.died_at_tick
@@ -5616,6 +5691,7 @@ mod persistence_tests {
 
         assert_eq!(snapshot.char_id, "offline:Ancestor");
         assert_eq!(snapshot.died_at_tick, 77);
+        assert_eq!(snapshot.termination_category, "横死");
         assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
         assert_eq!(snapshot.lifecycle.death_count, lifecycle.death_count);
         assert_eq!(
@@ -5645,6 +5721,7 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 77);
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].termination_category, "横死");
         assert_eq!(public_path, "deceased/offline:Ancestor.json");
 
         let _ = fs::remove_dir_all(root);
@@ -5731,6 +5808,7 @@ mod persistence_tests {
 
         assert_eq!(snapshot.char_id, "offline:Ancestor");
         assert_eq!(snapshot.died_at_tick, 99);
+        assert_eq!(snapshot.termination_category, "横死");
         assert!(matches!(
             snapshot.life_record.biography.last(),
             Some(BiographyEntry::Terminated { tick: 99, .. })
@@ -5739,6 +5817,7 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 99);
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].termination_category, "横死");
         assert_eq!(died_at_tick, 99);
         assert_eq!(public_path, "deceased/offline:Ancestor.json");
 
@@ -5797,14 +5876,86 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Bronze");
         assert_eq!(index[0].died_at_tick, 77);
         assert_eq!(index[0].path, "deceased/offline:Bronze.json");
+        assert_eq!(index[0].termination_category, "横死");
 
         assert_eq!(index[1].char_id, "offline:Azure");
         assert_eq!(index[1].died_at_tick, 90);
         assert_eq!(index[1].path, "deceased/offline:Azure.json");
+        assert_eq!(index[1].termination_category, "横死");
 
         assert_eq!(index[2].char_id, "offline:Crimson");
         assert_eq!(index[2].died_at_tick, 90);
         assert_eq!(index[2].path, "deceased/offline:Crimson.json");
+        assert_eq!(index[2].termination_category, "横死");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_termination_transition_classifies_good_end_and_voluntary_retire() {
+        let (settings, root) = persistence_settings("deceased-export-category");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        for (char_id, cause, expected_category, tick) in [
+            ("offline:OldOne", "natural_end", "善终", 88_u64),
+            ("offline:Hermit", "voluntary_retire", "自主归隐", 89_u64),
+        ] {
+            let life_record = LifeRecord {
+                character_id: char_id.to_string(),
+                created_at: 11,
+                biography: vec![BiographyEntry::Terminated {
+                    cause: cause.to_string(),
+                    tick,
+                }],
+                insights_taken: Vec::new(),
+                death_insights: Vec::new(),
+                spirit_root_first: None,
+            };
+            let lifecycle = Lifecycle {
+                character_id: life_record.character_id.clone(),
+                death_count: 1,
+                fortune_remaining: 0,
+                last_death_tick: Some(tick),
+                last_revive_tick: None,
+                spawn_anchor: None,
+                near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
+                weakened_until_tick: None,
+                state: crate::combat::components::LifecycleState::Terminated,
+            };
+
+            persist_termination_transition(&settings, &lifecycle, &life_record)
+                .expect("terminated snapshot should persist");
+
+            let snapshot: DeceasedSnapshot = serde_json::from_str(
+                &fs::read_to_string(
+                    settings
+                        .deceased_public_dir()
+                        .join(format!("{char_id}.json")),
+                )
+                .expect("snapshot json should exist"),
+            )
+            .expect("snapshot json should deserialize");
+            assert_eq!(snapshot.termination_category, expected_category);
+        }
+
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index json should exist"),
+        )
+        .expect("index json should deserialize");
+        assert!(
+            index
+                .iter()
+                .any(|entry| entry.char_id == "offline:OldOne"
+                    && entry.termination_category == "善终")
+        );
+        assert!(index
+            .iter()
+            .any(|entry| entry.char_id == "offline:Hermit"
+                && entry.termination_category == "自主归隐"));
 
         let _ = fs::remove_dir_all(root);
     }
