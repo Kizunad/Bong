@@ -6,6 +6,13 @@
 //!
 //! 本模块只定义数据结构 + 纯函数 helper（搜刮时长 / 钥匙映射），
 //! system / event 在 `tsy_container_search.rs`。
+//!
+//! 字段级 `#[allow(dead_code)]`：`depth` / `locked` / `spawned_at_tick` /
+//! `started_at_tick` 等是 IPC schema bridge / 未来 system（client HUD bridge /
+//! lifecycle inspect / debug 命令）消费的元数据，运行时 system 暂不读，
+//! 但已写入 ECS 状态。
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
@@ -275,10 +282,7 @@ mod tests {
             item_as_container_key(&dummy_item("key_array_core")),
             Some(KeyKind::ArrayCoreSigil)
         );
-        assert_eq!(
-            item_as_container_key(&dummy_item("iron_sword")),
-            None
-        );
+        assert_eq!(item_as_container_key(&dummy_item("iron_sword")), None);
     }
 
     #[test]

@@ -14,9 +14,7 @@ use serde::Deserialize;
 use valence::prelude::{bevy_ecs, Resource};
 
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
-use crate::inventory::{
-    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
-};
+use crate::inventory::{InventoryInstanceIdAllocator, ItemInstance, ItemRegistry};
 
 /// loot pool 注册表 resource。启动时从 `server/loot_pools.json` 加载。
 #[derive(Debug, Default, Resource)]
@@ -33,10 +31,12 @@ impl LootPoolRegistry {
         self.pools.get(id)
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.pools.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.pools.is_empty()
     }

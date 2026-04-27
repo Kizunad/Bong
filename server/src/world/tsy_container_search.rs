@@ -11,6 +11,12 @@
 //! - 玩家位置偏移 > [`SEARCH_MOVE_INTERRUPT_THRESHOLD_M`]
 //! - 进入战斗（`CombatState.in_combat_until_tick > clock.tick`）
 //! - 本 tick 受击（`Wounds.entries[*].created_at_tick == clock.tick`）
+//!
+//! 文件级 `#[allow(dead_code)]`：StartSearchResult / SearchCompleted /
+//! SearchAborted / TsyZoneInitialized / RelicExtracted 字段是 IPC bridge /
+//! agent narration 消费侧，本 plan 落实事件总线，client 端接入留 client plan。
+
+#![allow(dead_code)]
 
 use valence::prelude::{
     bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
@@ -20,11 +26,11 @@ use valence::prelude::{
 use crate::combat::components::{CombatState, Wounds};
 use crate::combat::CombatClock;
 use crate::inventory::ancient_relics::AncientRelicPool;
+use crate::inventory::InventoryInstanceIdAllocator;
 use crate::inventory::{
     bump_revision, consume_item_instance_once, ItemInstance, ItemRegistry, PlacedItemState,
     PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
-use crate::inventory::InventoryInstanceIdAllocator;
 use crate::world::loot_pool::{roll_loot_pool, LootPoolRegistry};
 use crate::world::tsy_container::{
     item_as_container_key, KeyKind, LootContainer, SearchProgress, SEARCH_INTERACT_RANGE_M,
@@ -250,6 +256,7 @@ pub fn start_search_container(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tick_search_progress(
     mut players: Query<
         (
@@ -283,7 +290,11 @@ pub fn tick_search_progress(
             progress.started_pos[2],
         ));
         if dist > SEARCH_MOVE_INTERRUPT_THRESHOLD_M {
-            to_clear.push((player_ent, progress.container, Some(SearchAbortReason::Moved)));
+            to_clear.push((
+                player_ent,
+                progress.container,
+                Some(SearchAbortReason::Moved),
+            ));
             continue;
         }
         if is_in_combat(combat, clock.tick) {
@@ -305,7 +316,11 @@ pub fn tick_search_progress(
 
         progress.elapsed_ticks = progress.elapsed_ticks.saturating_add(1);
         if progress.elapsed_ticks >= progress.required_ticks {
-            completions.push((player_ent, progress.container, progress.key_item_instance_id));
+            completions.push((
+                player_ent,
+                progress.container,
+                progress.key_item_instance_id,
+            ));
         }
     }
 

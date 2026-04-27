@@ -31,7 +31,7 @@ use crate::world::tsy_container_spawn::{
     apply_origin_multiplier, origin_multiplier_for_family, sample_position_avoiding_blocks,
     TsyContainerSpawnRegistry,
 };
-use crate::world::zone::{Zone, TsyDepth, ZoneRegistry};
+use crate::world::zone::{TsyDepth, Zone, ZoneRegistry};
 
 /// chat_collector → tsy_dev_command 桥事件。
 #[derive(Event, Debug, Clone)]
@@ -272,7 +272,7 @@ pub fn apply_tsy_spawn_requests(
         });
 
         // plan-tsy-container-v1 §4.1 — portal 就位后撒容器（如果配置 + clock 都在）
-        if let (Some(specs), Some(ref clk)) = (container_specs.as_ref(), clock.as_ref()) {
+        if let (Some(specs), Some(clk)) = (container_specs.as_ref(), clock.as_ref()) {
             let relic_count =
                 spawn_containers_for_family(&req.family_id, specs, &zones, clk.tick, &mut commands);
             zone_init.send(TsyZoneInitialized {

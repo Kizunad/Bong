@@ -34,10 +34,12 @@ impl TsyContainerSpawnRegistry {
         self.families.get(family_id)
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.families.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.families.is_empty()
     }
@@ -167,7 +169,11 @@ pub fn origin_multiplier_for_family(family_id: &str) -> OriginMultiplier {
 }
 
 /// 应用乘数后的最终 count（向上取整，最少 0）。
-pub fn apply_origin_multiplier(base_count: u32, kind: ContainerKind, mult: OriginMultiplier) -> u32 {
+pub fn apply_origin_multiplier(
+    base_count: u32,
+    kind: ContainerKind,
+    mult: OriginMultiplier,
+) -> u32 {
     let scaled = (base_count as f32) * mult.for_kind(kind);
     if scaled <= 0.0 {
         0
@@ -274,32 +280,37 @@ struct ContainerSpecJson {
 }
 
 impl TsyFamilyContainersJson {
-    fn try_into_family(self, family_id: &str, source: &Path) -> Result<TsyFamilyContainers, String> {
-        let convert = |raw: Vec<ContainerSpecJson>, layer_name: &str| -> Result<Vec<ContainerSpec>, String> {
-            let mut out = Vec::with_capacity(raw.len());
-            for spec in raw {
-                let kind = ContainerKind::from_str(&spec.kind).ok_or_else(|| {
-                    format!(
+    fn try_into_family(
+        self,
+        family_id: &str,
+        source: &Path,
+    ) -> Result<TsyFamilyContainers, String> {
+        let convert =
+            |raw: Vec<ContainerSpecJson>, layer_name: &str| -> Result<Vec<ContainerSpec>, String> {
+                let mut out = Vec::with_capacity(raw.len());
+                for spec in raw {
+                    let kind = ContainerKind::from_str(&spec.kind).ok_or_else(|| {
+                        format!(
                         "{} family `{family_id}` layer `{layer_name}` unknown container kind `{}`",
                         source.display(),
                         spec.kind
                     )
-                })?;
-                if spec.loot_pool.is_empty() {
-                    return Err(format!(
+                    })?;
+                    if spec.loot_pool.is_empty() {
+                        return Err(format!(
                         "{} family `{family_id}` layer `{layer_name}` kind `{}` empty loot_pool",
                         source.display(),
                         spec.kind
                     ));
+                    }
+                    out.push(ContainerSpec {
+                        kind,
+                        count: spec.count,
+                        loot_pool_id: spec.loot_pool,
+                    });
                 }
-                out.push(ContainerSpec {
-                    kind,
-                    count: spec.count,
-                    loot_pool_id: spec.loot_pool,
-                });
-            }
-            Ok(out)
-        };
+                Ok(out)
+            };
         Ok(TsyFamilyContainers {
             shallow: convert(self.shallow, "shallow")?,
             mid: convert(self.mid, "mid")?,
@@ -314,9 +325,11 @@ mod tests {
 
     #[test]
     fn loads_default_tsy_containers_json() {
-        let reg = load_tsy_container_spawn_registry()
-            .expect("default tsy_containers.json must parse");
-        let fam = reg.get("tsy_lingxu_01").expect("lingxu_01 family must exist");
+        let reg =
+            load_tsy_container_spawn_registry().expect("default tsy_containers.json must parse");
+        let fam = reg
+            .get("tsy_lingxu_01")
+            .expect("lingxu_01 family must exist");
         assert!(!fam.shallow.is_empty());
         assert!(!fam.mid.is_empty());
         assert!(!fam.deep.is_empty());
@@ -329,7 +342,10 @@ mod tests {
             .filter(|s| s.kind == ContainerKind::RelicCore)
             .map(|s| s.count)
             .sum();
-        assert_eq!(relic_count, 3, "deep 层 relic_core 总数应为 3（与 P2 对齐）");
+        assert_eq!(
+            relic_count, 3,
+            "deep 层 relic_core 总数应为 3（与 P2 对齐）"
+        );
     }
 
     #[test]
@@ -366,15 +382,9 @@ mod tests {
             2
         );
         // 1 * 0.4 = 0.4 → 1（ceil）
-        assert_eq!(
-            apply_origin_multiplier(1, ContainerKind::StoneCasket, m),
-            1
-        );
+        assert_eq!(apply_origin_multiplier(1, ContainerKind::StoneCasket, m), 1);
         // 0 → 0
-        assert_eq!(
-            apply_origin_multiplier(0, ContainerKind::RelicCore, m),
-            0
-        );
+        assert_eq!(apply_origin_multiplier(0, ContainerKind::RelicCore, m), 0);
     }
 
     #[test]
