@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "skill_bar_cast",
+      "type": "string"
+    },
+    "slot": {
+      "minimum": 0,
+      "maximum": 8,
+      "type": "integer"
+    },
+    "target": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

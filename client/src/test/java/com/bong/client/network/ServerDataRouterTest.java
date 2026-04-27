@@ -51,6 +51,8 @@ public class ServerDataRouterTest {
             "defense_window",
             "cast_sync",
             "quickslot_config",
+            "skillbar_config",
+            "techniques_snapshot",
             "unlocks_sync",
             "event_stream_push",
             // plan-weapon-v1 §8.2 装备/损坏推送。

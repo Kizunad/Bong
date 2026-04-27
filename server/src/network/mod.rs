@@ -19,6 +19,10 @@ pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
+pub mod skillbar_config_emit;
+#[cfg(test)]
+mod skillbar_config_emit_test;
+pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
@@ -268,6 +272,11 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
+            .after(crate::player::attach_player_state_to_joined_clients),
+    );
+    app.add_systems(
+        Update,
         (
             cultivation_bridge::publish_breakthrough_events,
             cultivation_bridge::publish_forge_events,
@@ -315,6 +324,9 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
+            skillbar_config_emit::emit_skillbar_config_payloads
+                .after(cast_emit::tick_casts_or_interrupt),
+            techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,

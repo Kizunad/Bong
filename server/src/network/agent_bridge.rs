@@ -67,6 +67,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::DefenseWindow => "defense_window",
         ServerDataType::CastSync => "cast_sync",
         ServerDataType::QuickSlotConfig => "quickslot_config",
+        ServerDataType::SkillBarConfig => "skillbar_config",
+        ServerDataType::TechniquesSnapshot => "techniques_snapshot",
         ServerDataType::UnlocksSync => "unlocks_sync",
         ServerDataType::EventStreamPush => "event_stream_push",
         ServerDataType::WeaponEquipped => "weapon_equipped",

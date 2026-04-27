@@ -1,0 +1,109 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "slots",
+    "cooldown_until_ms"
+  ],
+  "properties": {
+    "slots": {
+      "minItems": 9,
+      "maxItems": 9,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "template_id",
+                  "display_name",
+                  "cast_duration_ms",
+                  "cooldown_ms",
+                  "icon_texture"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "item",
+                    "type": "string"
+                  },
+                  "template_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "cast_duration_ms": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "cooldown_ms": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "icon_texture": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "skill_id",
+                  "display_name",
+                  "cast_duration_ms",
+                  "cooldown_ms",
+                  "icon_texture"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "skill",
+                    "type": "string"
+                  },
+                  "skill_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "cast_duration_ms": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "cooldown_ms": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "icon_texture": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "cooldown_until_ms": {
+      "minItems": 9,
+      "maxItems": 9,
+      "type": "array",
+      "items": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    }
+  }
+}

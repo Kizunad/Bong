@@ -10,11 +10,13 @@ package com.bong.client.combat;
  */
 public final class CastState {
     public enum Phase { IDLE, CASTING, COMPLETE, INTERRUPT }
+    public enum Source { QUICK_SLOT, SKILL_BAR }
 
     private static final CastState IDLE = new CastState(
-        Phase.IDLE, -1, 0, 0L, CastOutcome.NONE, 0L);
+        Phase.IDLE, Source.QUICK_SLOT, -1, 0, 0L, CastOutcome.NONE, 0L);
 
     private final Phase phase;
+    private final Source source;
     private final int slot;
     private final int durationMs;
     private final long startedAtMs;
@@ -23,6 +25,7 @@ public final class CastState {
 
     private CastState(
         Phase phase,
+        Source source,
         int slot,
         int durationMs,
         long startedAtMs,
@@ -30,6 +33,7 @@ public final class CastState {
         long endedAtMs
     ) {
         this.phase = phase;
+        this.source = source == null ? Source.QUICK_SLOT : source;
         this.slot = slot;
         this.durationMs = durationMs;
         this.startedAtMs = startedAtMs;
@@ -42,22 +46,30 @@ public final class CastState {
     }
 
     public static CastState casting(int slot, int durationMs, long startedAtMs) {
-        return new CastState(Phase.CASTING, slot, Math.max(0, durationMs), startedAtMs, CastOutcome.NONE, 0L);
+        return casting(Source.QUICK_SLOT, slot, durationMs, startedAtMs);
+    }
+
+    public static CastState casting(Source source, int slot, int durationMs, long startedAtMs) {
+        return new CastState(Phase.CASTING, source, slot, Math.max(0, durationMs), startedAtMs, CastOutcome.NONE, 0L);
     }
 
     public CastState transitionToComplete(long endedAtMs) {
-        return new CastState(Phase.COMPLETE, slot, durationMs, startedAtMs, CastOutcome.COMPLETED, endedAtMs);
+        return new CastState(Phase.COMPLETE, source, slot, durationMs, startedAtMs, CastOutcome.COMPLETED, endedAtMs);
     }
 
     public CastState transitionToInterrupt(CastOutcome reason, long endedAtMs) {
         CastOutcome effective = reason == null || reason == CastOutcome.NONE || reason == CastOutcome.COMPLETED
             ? CastOutcome.USER_CANCEL
             : reason;
-        return new CastState(Phase.INTERRUPT, slot, durationMs, startedAtMs, effective, endedAtMs);
+        return new CastState(Phase.INTERRUPT, source, slot, durationMs, startedAtMs, effective, endedAtMs);
     }
 
     public Phase phase() {
         return phase;
+    }
+
+    public Source source() {
+        return source;
     }
 
     public int slot() {

@@ -119,6 +119,7 @@ public final class BongHudOrchestrator {
             ));
             commands.addAll(QuickBarHudPlanner.buildCommands(
                 combatSnapshot.quickSlotConfig(),
+                combatSnapshot.skillBarConfig(),
                 combatSnapshot.selectedHotbarSlot(),
                 combatSnapshot.castState(),
                 com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),

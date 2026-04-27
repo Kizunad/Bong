@@ -257,6 +257,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.skillbar-config.sample.json", () => {
+    const data = loadSample("server-data.skillbar-config.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.techniques-snapshot.sample.json", () => {
+    const data = loadSample("server-data.techniques-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.alchemy-feed-slot.sample.json", () => {
     const data = loadSample("client-request.alchemy-feed-slot.sample.json");
     const result = validate(ClientRequestV1, data);
@@ -313,6 +325,30 @@ describe("sample files pass schema validation", () => {
 
   it("client-request.inventory-discard-item.sample.json", () => {
     const data = loadSample("client-request.inventory-discard-item.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.use-quick-slot.sample.json", () => {
+    const data = loadSample("client-request.use-quick-slot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.quick-slot-bind.sample.json", () => {
+    const data = loadSample("client-request.quick-slot-bind.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.skill-bar-bind.sample.json", () => {
+    const data = loadSample("client-request.skill-bar-bind.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.skill-bar-cast.sample.json", () => {
+    const data = loadSample("client-request.skill-bar-cast.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -458,6 +494,31 @@ describe("negative sample files fail schema validation", () => {
 
   it("server-data.invalid-unknown-type.sample.json", () => {
     const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects invalid skill bar binding union", () => {
+    const data = {
+      v: 1,
+      type: "skill_bar_bind",
+      slot: 0,
+      binding: { kind: "skill", template_id: "wrong_field" },
+    };
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects out-of-range quick slot request", () => {
+    const data = { v: 1, type: "use_quick_slot", slot: 9 };
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects malformed skillbar_config slot entry", () => {
+    const data = loadObjectSample("server-data.skillbar-config.sample.json");
+    const slots = data.slots as Array<Record<string, unknown> | null>;
+    slots[0] = { kind: "skill", display_name: "崩拳" };
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });

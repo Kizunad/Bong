@@ -599,11 +599,6 @@ pub(crate) fn attach_inventory_to_joined_clients(
             });
 
         commands.entity(entity).insert(player_inventory);
-        // plan-HUD-v1 §10.4 quickslot bindings — 加入空 default，后续 quick_slot_bind
-        // 客户端 intent 会写入。挂在 inventory attach 旁边方便一起看。
-        commands
-            .entity(entity)
-            .insert(crate::combat::components::QuickSlotBindings::default());
         // plan-HUD-v1 §1.3 默认全解锁（v1 演示）。后续接入修炼系统按真实条件 mutate。
         commands
             .entity(entity)
