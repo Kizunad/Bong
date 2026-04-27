@@ -3,13 +3,15 @@
 //! 模块构成：
 //!  * [`types`] — `MineralId` enum（18 个 mineral，含灵石四档）+ 品阶 / 范畴。
 //!  * [`registry`] — `MineralRegistry` resource（18 条静态元数据）。
+//!  * [`anchors`] — worldgen 固定锚点 manifest → `MineralOreNode` 启动期物化。
 //!  * [`components`] — `MineralOreNode` component + `MineralOreIndex` 反查表。
 //!  * [`events`] — Probe / Drop / Exhausted / KarmaFlag 4 个 Bevy events。
 //!  * [`break_handler`] — `DiggingEvent` listener，重写 vanilla loot drop 走 mineral_id。
 //!
-//! M3 阶段未接入 worldgen — `MineralOreIndex` 启动时为空，`break_handler` 对所有
-//! 非矿脉 block 静默 no-op；M2 worldgen 写矿脉时同步插入 OreNode 到 index。
+//! 非矿脉 block 静默 no-op；M2 启动期从 `worldgen/blueprint/mineral_anchors.json`
+//! 物化固定锚点，后续 raster `mineral_density/mineral_kind` 可继续扩展同一 index。
 
+pub mod anchors;
 pub mod break_handler;
 pub mod bridge;
 pub mod components;
@@ -38,8 +40,9 @@ pub use registry::{build_default_registry, LingShiQiRange, MineralEntry, Mineral
 #[allow(unused_imports)]
 pub use types::{MineralCategory, MineralId, MineralRarity};
 
-use valence::prelude::{App, Update};
+use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
 
+use anchors::{spawn_mineral_anchor_nodes, MineralAnchorConfig};
 use break_handler::handle_block_break_for_mineral;
 use bridge::forward_karma_flag_to_agent;
 use inventory_grant::consume_mineral_drops_into_inventory;
@@ -56,6 +59,7 @@ pub fn register(app: &mut App) {
 
     app.insert_resource(registry);
     app.insert_resource(MineralOreIndex::default());
+    app.insert_resource(MineralAnchorConfig::default());
     // plan-mineral-v1 §M6 — 启动时从 data/minerals/exhausted.json hydrate
     // 已耗尽矿脉记录，避免 worldgen 重新生成已挖穿的 ore 块。
     let exhausted_log = ExhaustedMineralsLog::hydrated();
@@ -72,6 +76,11 @@ pub fn register(app: &mut App) {
     app.add_event::<MineralDropEvent>();
     app.add_event::<MineralExhaustedEvent>();
     app.add_event::<KarmaFlagIntent>();
+
+    app.add_systems(
+        Startup,
+        spawn_mineral_anchor_nodes.after(crate::world::setup_world),
+    );
 
     app.add_systems(
         Update,

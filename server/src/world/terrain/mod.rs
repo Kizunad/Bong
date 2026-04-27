@@ -14,11 +14,12 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use valence::prelude::{
-    ident, App, BiomeRegistry, BlockState, ChunkLayer, ChunkPos, Client, Commands,
+    ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands,
     DimensionTypeRegistry, Entity, Query, Res, ResMut, Resource, Server, UnloadedChunk, Update,
     View, VisibleChunkLayer, With,
 };
 
+use crate::mineral::{MineralOreIndex, MineralOreNode};
 use crate::world::dimension::{DimensionLayers, OverworldLayer};
 
 pub use raster::{raster_dir_from_manifest_path, TerrainProvider, TerrainProviders};
@@ -161,6 +162,8 @@ fn generate_chunks_around_players(
     providers: Option<Res<TerrainProviders>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
+    mineral_index: Option<Res<MineralOreIndex>>,
+    mineral_nodes: Query<&MineralOreNode>,
 ) {
     let Some(providers) = providers else {
         return;
@@ -184,7 +187,14 @@ fn generate_chunks_around_players(
             continue;
         }
         for pos in view.get().iter() {
-            ensure_chunk_generated(&mut layer, pos, terrain, &mut generated.loaded);
+            ensure_chunk_generated(
+                &mut layer,
+                pos,
+                terrain,
+                &mut generated.loaded,
+                mineral_index.as_deref(),
+                &mineral_nodes,
+            );
         }
     }
 }
@@ -228,6 +238,8 @@ fn ensure_chunk_generated(
     pos: ChunkPos,
     terrain: &TerrainProvider,
     generated: &mut HashSet<ChunkPos>,
+    mineral_index: Option<&MineralOreIndex>,
+    mineral_nodes: &Query<&MineralOreNode>,
 ) {
     if generated.contains(&pos) || layer.chunk(pos).is_some() {
         return;
@@ -249,7 +261,89 @@ fn ensure_chunk_generated(
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
+    overlay_mineral_ores(&mut chunk, pos, min_y, mineral_index, mineral_nodes);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);
     generated.insert(pos);
+}
+
+fn overlay_mineral_ores(
+    chunk: &mut UnloadedChunk,
+    pos: ChunkPos,
+    min_y: i32,
+    mineral_index: Option<&MineralOreIndex>,
+    mineral_nodes: &Query<&MineralOreNode>,
+) {
+    let Some(mineral_index) = mineral_index else {
+        return;
+    };
+
+    for (block_pos, entity) in mineral_index.iter() {
+        if block_pos.x.div_euclid(16) != pos.x || block_pos.z.div_euclid(16) != pos.z {
+            continue;
+        }
+        let Ok(node) = mineral_nodes.get(entity) else {
+            continue;
+        };
+        set_mineral_block(chunk, block_pos, min_y, node.mineral_id);
+    }
+}
+
+fn set_mineral_block(
+    chunk: &mut UnloadedChunk,
+    block_pos: valence::prelude::BlockPos,
+    min_y: i32,
+    mineral_id: crate::mineral::MineralId,
+) {
+    let local_y = block_pos.y - min_y;
+    if !(0..WORLD_HEIGHT as i32).contains(&local_y) {
+        return;
+    }
+    let local_x = block_pos.x.rem_euclid(16) as u32;
+    let local_z = block_pos.z.rem_euclid(16) as u32;
+    chunk.set_block_state(
+        local_x,
+        local_y as u32,
+        local_z,
+        mineral_block_state(mineral_id),
+    );
+}
+
+fn mineral_block_state(mineral_id: crate::mineral::MineralId) -> BlockState {
+    match mineral_id.vanilla_block() {
+        "iron_ore" => BlockState::IRON_ORE,
+        "deepslate_iron_ore" => BlockState::DEEPSLATE_IRON_ORE,
+        "copper_ore" => BlockState::COPPER_ORE,
+        "redstone_ore" => BlockState::REDSTONE_ORE,
+        "ancient_debris" => BlockState::ANCIENT_DEBRIS,
+        "obsidian" => BlockState::OBSIDIAN,
+        "gold_ore" => BlockState::GOLD_ORE,
+        "emerald_ore" => BlockState::EMERALD_ORE,
+        "lapis_ore" => BlockState::LAPIS_ORE,
+        "coal_ore" => BlockState::COAL_ORE,
+        "nether_gold_ore" => BlockState::NETHER_GOLD_ORE,
+        "nether_quartz_ore" => BlockState::NETHER_QUARTZ_ORE,
+        "diamond_ore" => BlockState::DIAMOND_ORE,
+        _ => BlockState::STONE,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mineral::MineralId;
+    use valence::prelude::BlockPos;
+
+    #[test]
+    fn set_mineral_block_writes_matching_vanilla_block() {
+        let pos = BlockPos::new(3, -12, 5);
+        let mut chunk = UnloadedChunk::with_height(WORLD_HEIGHT);
+
+        set_mineral_block(&mut chunk, pos, MIN_Y, MineralId::ZaGang);
+
+        assert_eq!(
+            chunk.block_state(3, (pos.y - MIN_Y) as u32, 5),
+            BlockState::COPPER_ORE
+        );
+    }
 }
