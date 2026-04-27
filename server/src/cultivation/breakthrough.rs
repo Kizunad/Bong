@@ -136,6 +136,33 @@ pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64)
     cultivation.pending_material_bonus
 }
 
+fn breakthrough_precondition_error(
+    cultivation: &Cultivation,
+    meridians: &MeridianSystem,
+) -> Option<BreakthroughError> {
+    let next = match cultivation.realm {
+        Realm::Awaken => Realm::Induce,
+        Realm::Induce => Realm::Condense,
+        Realm::Condense => Realm::Solidify,
+        Realm::Solidify => Realm::Spirit,
+        Realm::Spirit => return Some(BreakthroughError::RequiresTribulation),
+        Realm::Void => return Some(BreakthroughError::AtMaxRealm),
+    };
+    let need = next.required_meridians();
+    let have = meridians.opened_count();
+    if have < need {
+        return Some(BreakthroughError::NotEnoughMeridians { need, have });
+    }
+    let cost = breakthrough_qi_cost(next);
+    if cultivation.qi_current < cost {
+        return Some(BreakthroughError::NotEnoughQi {
+            need: cost,
+            have: cultivation.qi_current,
+        });
+    }
+    None
+}
+
 /// 随机骰子抽象 — 测试时可注入确定值。
 pub trait RollSource {
     fn roll_unit(&mut self) -> f64;
@@ -162,26 +189,13 @@ pub fn try_breakthrough<R: RollSource>(
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
-    let next = match from {
-        Realm::Awaken => Realm::Induce,
-        Realm::Induce => Realm::Condense,
-        Realm::Condense => Realm::Solidify,
-        Realm::Solidify => Realm::Spirit,
-        Realm::Spirit => return Err(BreakthroughError::RequiresTribulation),
-        Realm::Void => return Err(BreakthroughError::AtMaxRealm),
-    };
+    if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
+        return Err(error);
+    }
+    let next = next_realm(from).expect("precondition check rejects max realm");
     let need = next.required_meridians();
     let have = meridians.opened_count();
-    if have < need {
-        return Err(BreakthroughError::NotEnoughMeridians { need, have });
-    }
     let cost = breakthrough_qi_cost(next);
-    if cultivation.qi_current < cost {
-        return Err(BreakthroughError::NotEnoughQi {
-            need: cost,
-            have: cultivation.qi_current,
-        });
-    }
 
     let n = meridians.iter().count() as f64;
     let integrity_avg = if n > 0.0 {
@@ -276,7 +290,10 @@ pub fn breakthrough_system(
             .unwrap_or(0.0);
         let material_bonus = req.material_bonus + buff_bonus;
 
-        let res = try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll);
+        let res = breakthrough_precondition_error(&cultivation, &meridians).map_or_else(
+            || try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll),
+            Err,
+        );
 
         match &res {
             Ok(success) => {
