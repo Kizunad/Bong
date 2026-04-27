@@ -2017,6 +2017,8 @@ mod tests {
             cooldown_ms: 1500,
             weapon_spec: None,
             forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 
@@ -2036,6 +2038,8 @@ mod tests {
             cooldown_ms: 1500,
             weapon_spec: None,
             forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 

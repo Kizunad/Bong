@@ -225,6 +225,8 @@ mod tests {
             cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
             weapon_spec: None,
             forge_station_spec: Some(ForgeStationSpec { tier }),
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 

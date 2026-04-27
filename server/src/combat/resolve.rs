@@ -942,6 +942,8 @@ mod tests {
                         qi_cost_mul: 1.0,
                     }),
                     forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: None,
                 },
             ),
             (
@@ -967,6 +969,8 @@ mod tests {
                         qi_cost_mul: 1.0,
                     }),
                     forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: None,
                 },
             ),
         ]))
