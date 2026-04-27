@@ -668,7 +668,7 @@ mod tests {
         app.add_systems(Update, enforce_harvest_session_constraints);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
-        let _client_entity = app.world_mut().spawn(client_bundle).id();
+        let client_entity = app.world_mut().spawn(client_bundle).id();
         let target = plant_entity(&mut app, "spawn");
 
         {
@@ -812,7 +812,7 @@ mod tests {
 
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
-        let client_entity = app.world_mut().spawn(client_bundle).id();
+        let _client_entity = app.world_mut().spawn(client_bundle).id();
 
         // 植物离玩家 0.2 块（在 0.7 半径内）
         let target = app
