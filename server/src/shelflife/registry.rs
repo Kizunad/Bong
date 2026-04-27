@@ -63,6 +63,8 @@ impl DecayProfileRegistry {
 /// Exponential decay resources, distinct from slow/freezable bone-coin profiles.
 pub fn build_default_registry() -> DecayProfileRegistry {
     let mut registry = DecayProfileRegistry::new();
+
+    // plan-mineral-v1 §1.4: 四档灵石 Exponential Decay
     for profile in [
         ling_shi_profile("ling_shi_fan_v1", 3),
         ling_shi_profile("ling_shi_zhong_v1", 5),
@@ -73,6 +75,42 @@ pub fn build_default_registry() -> DecayProfileRegistry {
             .insert(profile)
             .expect("built-in ling_shi profile should validate");
     }
+
+    // plan-shelflife-v1 M6: 骨币 Linear Decay（~1y 完全衰减）
+    registry
+        .insert(DecayProfile::Decay {
+            id: DecayProfileId::new("bone_coin_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 100.0 / (TICKS_PER_REAL_DAY as f32 * 365.0),
+            },
+            floor_qi: 0.0,
+        })
+        .expect("built-in bone_coin profile should validate");
+
+    // plan-shelflife-v1 M6: 陈酒 Age PeakAndFall → 过峰迁 Spoil（chen_cu_v1）
+    // chen_cu_v1 作为 Spoil profile 先注册，chen_jiu_v1 引用它
+    registry
+        .insert(DecayProfile::Spoil {
+            id: DecayProfileId::new("chen_cu_v1"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 365 * TICKS_PER_REAL_DAY,
+            },
+            spoil_threshold: 10.0,
+        })
+        .expect("built-in chen_cu profile should validate");
+
+    registry
+        .insert(DecayProfile::Age {
+            id: DecayProfileId::new("chen_jiu_v1"),
+            peak_at_ticks: 365 * TICKS_PER_REAL_DAY, // 1 real-year
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 365 * TICKS_PER_REAL_DAY,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: DecayProfileId::new("chen_cu_v1"),
+        })
+        .expect("built-in chen_jiu profile should validate");
+
     registry
 }
 
@@ -182,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_registers_four_ling_shi_profiles() {
+    fn default_registry_registers_all_ling_shi_profiles() {
         let r = build_default_registry();
         for id in [
             "ling_shi_fan_v1",
@@ -192,7 +230,8 @@ mod tests {
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 4);
+        // M6 新增 bone_coin_v1 + chen_cu_v1 + chen_jiu_v1
+        assert_eq!(r.len(), 7);
     }
 
     #[test]

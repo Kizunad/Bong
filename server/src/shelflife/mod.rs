@@ -19,7 +19,9 @@ pub mod consume;
 pub mod container;
 pub mod probe;
 pub mod registry;
+pub mod sweep;
 pub mod types;
+pub mod variant;
 
 pub use compute::{compute_current_qi, compute_track_state};
 #[allow(unused_imports)]
@@ -40,11 +42,14 @@ pub use types::{
     ContainerFreshnessBehavior, DecayFormula, DecayProfile, DecayProfileId, DecayTrack, Freshness,
     TrackState,
 };
+#[allow(unused_imports)]
+pub use variant::apply_variant_switch;
 
-/// plan-shelflife-v1 M3a + M4a + M5a — 注册 shelflife 资源 + 事件 + 系统。
+/// plan-shelflife-v1 M3a + M4a + M5a + M6 — 注册 shelflife 资源 + 事件 + 系统。
 /// - DecayProfileRegistry 默认注册 active plan 的生产 profile
 /// - FreshnessProbeIntent/Response 事件 + resolver 系统（M4a）
 /// - SpoilConsumeWarning / AgeBonusRoll 事件总线（M5a，consumer 侧 emit；M5b+ 接 alchemy/pill 调用）
+/// - 变体 sweep 系统（M6 tick 200）
 pub fn register(app: &mut valence::prelude::App) {
     use valence::prelude::Update;
     app.insert_resource(build_default_registry());
@@ -53,4 +58,5 @@ pub fn register(app: &mut valence::prelude::App) {
     app.add_event::<SpoilConsumeWarning>();
     app.add_event::<AgeBonusRoll>();
     app.add_systems(Update, resolve_freshness_probe_intents);
+    sweep::register_sweep(app);
 }
