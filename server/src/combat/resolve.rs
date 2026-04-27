@@ -941,6 +941,7 @@ mod tests {
                         durability_max: 200.0,
                         qi_cost_mul: 1.0,
                     }),
+                    forge_station_spec: None,
                 },
             ),
             (
@@ -965,6 +966,7 @@ mod tests {
                         durability_max: 10.0,
                         qi_cost_mul: 1.0,
                     }),
+                    forge_station_spec: None,
                 },
             ),
         ]))

@@ -337,6 +337,7 @@ mod tests {
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
             },
         );
         templates.insert(
@@ -361,6 +362,7 @@ mod tests {
                     durability_max: 400.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
             },
         );
         ItemRegistry::from_map(templates)

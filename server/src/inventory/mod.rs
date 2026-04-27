@@ -102,6 +102,7 @@ pub struct ItemTemplate {
     pub cooldown_ms: u32,
     /// plan-weapon-v1 §1.1：武器特有属性。非武器恒为 None。
     pub weapon_spec: Option<WeaponSpec>,
+    pub forge_station_spec: Option<ForgeStationSpec>,
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -114,6 +115,11 @@ pub struct WeaponSpec {
     pub durability_max: f32,
     /// qi 技能消耗倍率（v1 默认 1.0）。
     pub qi_cost_mul: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForgeStationSpec {
+    pub tier: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -878,6 +884,8 @@ struct ItemTemplateToml {
     /// plan-weapon-v1 §1.1：category == "Weapon" 时必填，否则须缺省。
     #[serde(default)]
     weapon: Option<WeaponSpecToml>,
+    #[serde(default)]
+    forge_station: Option<ForgeStationSpecToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -890,6 +898,12 @@ struct WeaponSpecToml {
     durability_max: f32,
     #[serde(default = "default_qi_cost_mul")]
     qi_cost_mul: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForgeStationSpecToml {
+    tier: u8,
 }
 
 fn default_qi_cost_mul() -> f32 {
@@ -965,6 +979,10 @@ impl ItemTemplateToml {
             }
             (_, None) => None,
         };
+        let forge_station_spec = self
+            .forge_station
+            .map(|raw| parse_forge_station_spec(raw, source_path, id.as_str()))
+            .transpose()?;
 
         Ok(ItemTemplate {
             id,
@@ -980,8 +998,24 @@ impl ItemTemplateToml {
             cast_duration_ms: self.cast_duration_ms.unwrap_or(DEFAULT_CAST_DURATION_MS),
             cooldown_ms: self.cooldown_ms.unwrap_or(DEFAULT_COOLDOWN_MS),
             weapon_spec,
+            forge_station_spec,
         })
     }
+}
+
+pub fn parse_forge_station_spec(
+    raw: ForgeStationSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ForgeStationSpec, String> {
+    if !(1..=4).contains(&raw.tier) {
+        return Err(format!(
+            "{} item `{item_id}` has invalid forge_station.tier {}; expected 1..=4",
+            source_path.display(),
+            raw.tier
+        ));
+    }
+    Ok(ForgeStationSpec { tier: raw.tier })
 }
 
 fn parse_weapon_spec(
@@ -2874,6 +2908,7 @@ mod tests {
                     cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                     cooldown_ms: DEFAULT_COOLDOWN_MS,
                     weapon_spec: None,
+                    forge_station_spec: None,
                 },
             );
         }
@@ -2900,6 +2935,36 @@ mod tests {
                 source,
             }) if source == "collapse_core"
         ));
+        assert!(matches!(
+            registry
+                .get("ling_iron_anvil")
+                .and_then(|item| item.forge_station_spec.as_ref()),
+            Some(ForgeStationSpec { tier: 2 })
+        ));
+    }
+
+    #[test]
+    fn parse_forge_station_spec_accepts_valid_tier() {
+        let spec = parse_forge_station_spec(
+            ForgeStationSpecToml { tier: 4 },
+            Path::new("<inline-items.toml>"),
+            "dao_anvil",
+        )
+        .expect("tier 4 forge station should parse");
+
+        assert_eq!(spec.tier, 4);
+    }
+
+    #[test]
+    fn parse_forge_station_spec_rejects_invalid_tier() {
+        let error = parse_forge_station_spec(
+            ForgeStationSpecToml { tier: 0 },
+            Path::new("<inline-items.toml>"),
+            "bad_anvil",
+        )
+        .expect_err("tier 0 forge station should fail");
+
+        assert!(error.contains("expected 1..=4"));
     }
 
     #[test]
@@ -3114,6 +3179,7 @@ cols = 4
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
                 weapon_spec: None,
+                forge_station_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -3171,6 +3237,7 @@ cols = 4
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
                 weapon_spec: None,
+                forge_station_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -4241,6 +4308,7 @@ cols = 4
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -4300,6 +4368,7 @@ cols = 4
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();

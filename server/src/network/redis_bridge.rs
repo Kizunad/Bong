@@ -11,8 +11,8 @@ use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
-    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_PLAYER_CHAT, CH_TSY_EVENT,
-    CH_WORLD_STATE,
+    CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
+    CH_PLAYER_CHAT, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -22,6 +22,7 @@ use crate::schema::cultivation::{
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
+use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
@@ -52,6 +53,8 @@ pub enum RedisOutbound {
     ArmorDurabilityChanged(ArmorDurabilityChangedV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
+    ForgeStart(ForgeStartPayloadV1),
+    ForgeOutcome(ForgeOutcomePayloadV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     DeathInsight(DeathInsightRequestV1),
@@ -330,6 +333,26 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FORGE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::ForgeStart(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize ForgeStartPayloadV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FORGE_START,
+                payload,
+            })
+        }
+        RedisOutbound::ForgeOutcome(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ForgeOutcomePayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FORGE_OUTCOME,
                 payload,
             })
         }
@@ -1100,6 +1123,7 @@ mod redis_bridge_tests {
         DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
     };
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
+    use crate::schema::forge::ForgeOutcomeBucketV1;
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -1193,6 +1217,86 @@ mod redis_bridge_tests {
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
             other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_forge_start_on_correct_channel() {
+        let payload = ForgeStartPayloadV1 {
+            v: 1,
+            session_id: 7,
+            blueprint_id: "qing_feng_v0".to_string(),
+            station_id: "forge_station_42".to_string(),
+            caster_id: "offline:Azure".to_string(),
+            materials: vec![crate::schema::forge_bridge::ForgeMaterialStackV1 {
+                material: "fan_tie".to_string(),
+                count: 3,
+            }],
+            ts: 84_000,
+        };
+
+        let command = prepare_outbound_command(RedisOutbound::ForgeStart(payload))
+            .expect("forge start payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_FORGE_START);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["session_id"], 7);
+                assert_eq!(v["blueprint_id"], "qing_feng_v0");
+                assert_eq!(v["materials"][0]["material"], "fan_tie");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_forge_outcome_on_correct_channel() {
+        let cases = [
+            ForgeOutcomePayloadV1 {
+                v: 1,
+                session_id: 7,
+                blueprint_id: "qing_feng_v0".to_string(),
+                bucket: ForgeOutcomeBucketV1::Perfect,
+                weapon_item: Some("qing_feng_sword".to_string()),
+                quality: 0.98,
+                color: Some(crate::cultivation::components::ColorKind::Sharp),
+                side_effects: vec![],
+                achieved_tier: 2,
+                caster_id: "offline:Azure".to_string(),
+                ts: 84_020,
+            },
+            ForgeOutcomePayloadV1 {
+                v: 1,
+                session_id: 8,
+                blueprint_id: "qing_feng_v0".to_string(),
+                bucket: ForgeOutcomeBucketV1::Flawed,
+                weapon_item: Some("iron_sword".to_string()),
+                quality: 0.42,
+                color: None,
+                side_effects: vec!["brittle_edge".to_string()],
+                achieved_tier: 1,
+                caster_id: "offline:Azure".to_string(),
+                ts: 84_040,
+            },
+        ];
+
+        for case in cases {
+            let command = prepare_outbound_command(RedisOutbound::ForgeOutcome(case))
+                .expect("forge outcome payload should serialize");
+            match command {
+                RedisIoCommand::Publish { channel, payload } => {
+                    assert_eq!(channel, CH_FORGE_OUTCOME);
+                    let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                    assert_eq!(v["v"], 1);
+                    assert!(matches!(
+                        v["bucket"].as_str(),
+                        Some("perfect") | Some("flawed")
+                    ));
+                }
+                other => panic!("expected publish, got {other:?}"),
+            }
         }
     }
 

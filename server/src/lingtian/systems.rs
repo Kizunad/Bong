@@ -2000,6 +2000,7 @@ mod tests {
             cast_duration_ms: 1500,
             cooldown_ms: 1500,
             weapon_spec: None,
+            forge_station_spec: None,
         }
     }
 
@@ -2018,6 +2019,7 @@ mod tests {
             cast_duration_ms: 1500,
             cooldown_ms: 1500,
             weapon_spec: None,
+            forge_station_spec: None,
         }
     }
 

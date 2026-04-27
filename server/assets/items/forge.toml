@@ -1,0 +1,57 @@
+# plan-forge-leftovers-v1 §1.3 — 炼器砧类物品。
+
+[[item]]
+id = "fan_iron_anvil"
+name = "凡铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 10.0
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "最粗陋的炼器砧，只够压住凡铁和入门灵材。"
+
+[item.forge_station]
+tier = 1
+
+[[item]]
+id = "ling_iron_anvil"
+name = "灵铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 12.0
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "以灵铁回炉铸成的炼器砧，可承受低阶灵器锤炼。"
+
+[item.forge_station]
+tier = 2
+
+[[item]]
+id = "xuan_iron_anvil"
+name = "玄铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 16.0
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "砧面暗沉如夜，能压住玄铁回火时乱窜的脏真元。"
+
+[item.forge_station]
+tier = 3
+
+[[item]]
+id = "dao_anvil"
+name = "道砧"
+category = "treasure"
+grid_w = 2
+grid_h = 2
+base_weight = 20.0
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "旧宗门遗落的道砧，裂纹里还残着不肯熄灭的火星。"
+
+[item.forge_station]
+tier = 4

@@ -1784,6 +1784,7 @@ mod tests {
             cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
             cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
             weapon_spec: None,
+            forge_station_spec: None,
         }
     }
 

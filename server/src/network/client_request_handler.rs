@@ -33,6 +33,7 @@ use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
+use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
     apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
@@ -141,6 +142,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
+    pub place_forge_station_tx: Option<ResMut<'w, Events<PlaceForgeStationRequest>>>,
 }
 
 #[derive(SystemParam)]
@@ -784,15 +786,36 @@ pub fn handle_client_request_payloads(
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
             }
-            // ─── 炼器（武器）（plan-forge-v1 §1.2-§1.4）── wait for wiring ───
+            ClientRequestV1::ForgeStationPlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                station_tier,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][forge] station_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} tier={station_tier}",
+                    ev.client
+                );
+                if let Some(place_forge_station_tx) = dispatch.place_forge_station_tx.as_deref_mut()
+                {
+                    place_forge_station_tx.send(PlaceForgeStationRequest {
+                        player: ev.client,
+                        pos: valence::prelude::BlockPos::new(x, y, z),
+                        item_instance_id,
+                        station_tier,
+                    });
+                }
+            }
+            // ─── 炼器（武器）（plan-forge-v1 §1.3-§1.4）── wait for wiring ───
             ClientRequestV1::ForgeStartSession { .. }
             | ClientRequestV1::ForgeTemperingHit { .. }
             | ClientRequestV1::ForgeInscriptionScroll { .. }
             | ClientRequestV1::ForgeConsecrationInject { .. }
             | ClientRequestV1::ForgeStepAdvance { .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { .. }
-            | ClientRequestV1::ForgeLearnBlueprint { .. }
-            | ClientRequestV1::ForgeStationPlace { .. } => {
+            | ClientRequestV1::ForgeLearnBlueprint { .. } => {
                 tracing::debug!(
                     "[bong][forge][network] plan-forge-v1 client_request not yet wired"
                 );
