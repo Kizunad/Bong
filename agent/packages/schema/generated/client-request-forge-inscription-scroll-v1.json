@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "session_id",
+    "inscription_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "forge_inscription_scroll",
+      "type": "string"
+    },
+    "session_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "inscription_id": {
+      "type": "string"
+    }
+  }
+}

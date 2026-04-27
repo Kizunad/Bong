@@ -29,6 +29,12 @@ import {
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
 import {
+  ForgeBlueprintBookDataV1,
+  ForgeOutcomeDataV1,
+  ForgeSessionDataV1,
+  WeaponForgeStationDataV1,
+} from "./forge.js";
+import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
   SkillScrollUsedPayloadV1,
@@ -131,6 +137,10 @@ export const ServerDataType = Type.Union([
   Type.Literal("extract_aborted"),
   Type.Literal("extract_failed"),
   Type.Literal("tsy_collapse_started_ipc"),
+  Type.Literal("forge_station"),
+  Type.Literal("forge_session"),
+  Type.Literal("forge_outcome"),
+  Type.Literal("forge_blueprint_book"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -630,6 +640,49 @@ export type ServerDataTsyCollapseStartedIpcV1 = Static<
   typeof ServerDataTsyCollapseStartedIpcV1
 >;
 
+// ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────────
+export const ServerDataForgeStationV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_station"),
+    ...WeaponForgeStationDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeStationV1 = Static<typeof ServerDataForgeStationV1>;
+
+export const ServerDataForgeSessionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_session"),
+    ...ForgeSessionDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeSessionV1 = Static<typeof ServerDataForgeSessionV1>;
+
+export const ServerDataForgeOutcomeV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_outcome"),
+    ...ForgeOutcomeDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeOutcomeV1 = Static<typeof ServerDataForgeOutcomeV1>;
+
+export const ServerDataForgeBlueprintBookV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_blueprint_book"),
+    ...ForgeBlueprintBookDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeBlueprintBookV1 = Static<
+  typeof ServerDataForgeBlueprintBookV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -665,5 +718,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataExtractAbortedV1,
   ServerDataExtractFailedV1,
   ServerDataTsyCollapseStartedIpcV1,
+  ServerDataForgeStationV1,
+  ServerDataForgeSessionV1,
+  ServerDataForgeOutcomeV1,
+  ServerDataForgeBlueprintBookV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

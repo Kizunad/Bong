@@ -82,6 +82,12 @@ export const CHANNELS = {
    *
    * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
   TSY_EVENT: "bong:tsy_event",
+
+  // ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────
+  /** Server → Agent: 锻造起炉（玩家起炉时推，供 agent 生成观察叙事） */
+  FORGE_START: "bong:forge/start",
+  /** Server → Agent: 锻造结果（结算推，供 agent 记录/叙事） */
+  FORGE_OUTCOME: "bong:forge/outcome",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -111,6 +117,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
   CHANNELS.TSY_EVENT,
+  CHANNELS.FORGE_START,
+  CHANNELS.FORGE_OUTCOME,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

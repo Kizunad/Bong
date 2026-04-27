@@ -245,7 +245,15 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::LingtianStartPlanting { v, .. }
             | ClientRequestV1::LingtianStartHarvest { v, .. }
             | ClientRequestV1::LingtianStartReplenish { v, .. }
-            | ClientRequestV1::LingtianStartDrainQi { v, .. } => *v,
+            | ClientRequestV1::LingtianStartDrainQi { v, .. }
+            | ClientRequestV1::ForgeStartSession { v, .. }
+            | ClientRequestV1::ForgeTemperingHit { v, .. }
+            | ClientRequestV1::ForgeInscriptionScroll { v, .. }
+            | ClientRequestV1::ForgeConsecrationInject { v, .. }
+            | ClientRequestV1::ForgeStepAdvance { v, .. }
+            | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
+            | ClientRequestV1::ForgeLearnBlueprint { v, .. }
+            | ClientRequestV1::ForgeStationPlace { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -775,6 +783,19 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
+            }
+            // ─── 炼器（武器）（plan-forge-v1 §1.2-§1.4）── wait for wiring ───
+            ClientRequestV1::ForgeStartSession { .. }
+            | ClientRequestV1::ForgeTemperingHit { .. }
+            | ClientRequestV1::ForgeInscriptionScroll { .. }
+            | ClientRequestV1::ForgeConsecrationInject { .. }
+            | ClientRequestV1::ForgeStepAdvance { .. }
+            | ClientRequestV1::ForgeBlueprintTurnPage { .. }
+            | ClientRequestV1::ForgeLearnBlueprint { .. }
+            | ClientRequestV1::ForgeStationPlace { .. } => {
+                tracing::debug!(
+                    "[bong][forge][network] plan-forge-v1 client_request not yet wired"
+                );
             }
         }
     }

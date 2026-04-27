@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod forge_snapshot_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -249,6 +250,8 @@ pub fn register(app: &mut App) {
             inventory_snapshot_emit::emit_join_inventory_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
+            forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             skill_snapshot_emit::emit_join_skill_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),

@@ -1,0 +1,45 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "session_id",
+    "beat",
+    "ticks_remaining"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "forge_tempering_hit",
+      "type": "string"
+    },
+    "session_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "beat": {
+      "anyOf": [
+        {
+          "const": "L",
+          "type": "string"
+        },
+        {
+          "const": "H",
+          "type": "string"
+        },
+        {
+          "const": "F",
+          "type": "string"
+        }
+      ]
+    },
+    "ticks_remaining": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

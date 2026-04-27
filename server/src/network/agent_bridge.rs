@@ -88,6 +88,10 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SkillCapChanged => "skill_cap_changed",
         ServerDataType::SkillScrollUsed => "skill_scroll_used",
         ServerDataType::SkillSnapshot => "skill_snapshot",
+        ServerDataType::ForgeStation => "forge_station",
+        ServerDataType::ForgeSession => "forge_session",
+        ServerDataType::ForgeOutcome => "forge_outcome",
+        ServerDataType::ForgeBlueprintBook => "forge_blueprint_book",
     }
 }
 

@@ -1,0 +1,25 @@
+{
+  "description": "plan §1.3 四步进程",
+  "anyOf": [
+    {
+      "const": "billet",
+      "type": "string"
+    },
+    {
+      "const": "tempering",
+      "type": "string"
+    },
+    {
+      "const": "inscription",
+      "type": "string"
+    },
+    {
+      "const": "consecration",
+      "type": "string"
+    },
+    {
+      "const": "done",
+      "type": "string"
+    }
+  ]
+}
