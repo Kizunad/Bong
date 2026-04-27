@@ -46,6 +46,8 @@ use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
+type ForgeCasterSkillQueryItem<'a> = (&'a Cultivation, &'a QiColor, &'a SkillSet);
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][forge] registering plan-forge-v1 systems");
 
@@ -242,12 +244,13 @@ fn handle_consecration_injects(
 }
 
 /// StepAdvance 统一收束：根据当前 step 结果推进，若到 Done → 派发 outcome。
+#[allow(clippy::too_many_arguments)]
 fn handle_step_advance(
     mut ev: EventReader<StepAdvance>,
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
     mut stations: Query<&mut WeaponForgeStation>,
-    mut caster_q: Query<(&Cultivation, &QiColor, &SkillSet)>,
+    mut caster_q: Query<ForgeCasterSkillQueryItem>,
     mut history_q: Query<&mut ForgeHistory>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
     mut skill_xp_events: EventWriter<SkillXpGain>,
@@ -404,7 +407,7 @@ fn finalize_outcome(
         crate::cultivation::components::ColorKind,
     )>,
     stations: &mut Query<&mut WeaponForgeStation>,
-    _caster_q: &mut Query<(&Cultivation, &QiColor, &SkillSet)>,
+    _caster_q: &mut Query<ForgeCasterSkillQueryItem>,
     history_q: &mut Query<&mut ForgeHistory>,
     outcomes: &mut EventWriter<ForgeOutcomeEvent>,
     skill_xp_events: &mut EventWriter<SkillXpGain>,

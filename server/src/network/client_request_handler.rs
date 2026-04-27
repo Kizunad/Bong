@@ -651,7 +651,7 @@ fn handle_learn_skill_scroll(
             Ok(inv) => inv,
             Err(_) => return,
         };
-        let instance = match inventory_item_by_instance_borrow(&inventory, instance_id) {
+        let instance = match inventory_item_by_instance_borrow(inventory, instance_id) {
             Some(instance) => instance,
             None => return,
         };
@@ -683,7 +683,7 @@ fn handle_learn_skill_scroll(
         if let Ok(inventory) = inventories.get(entity) {
             resync_snapshot(
                 entity,
-                &inventory,
+                inventory,
                 clients,
                 player_states,
                 "skill_scroll_duplicate",
@@ -750,7 +750,7 @@ fn handle_learn_skill_scroll(
                 entity,
                 &mut client,
                 username.0.as_str(),
-                &inventory,
+                inventory,
                 player_state,
                 "skill_scroll_consumed",
             );
