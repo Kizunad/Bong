@@ -26,6 +26,8 @@ use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
 #[cfg(test)]
 use super::ancient_relics::seed_ancient_relics;
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
+use crate::combat::CombatClock;
+use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneStateRegistry};
 use crate::world::tsy_portal::TsyEnterEmit;
 use crate::world::zone::{TsyDepth, ZoneRegistry};
 
@@ -107,6 +109,12 @@ pub fn sample_position_in_layer(
 }
 
 /// 系统：监听 `TsyEnterEmit`，为未 spawn 过的 family 注入 1% 上古遗物。
+///
+/// 同时把 family 注册到 `TsyZoneStateRegistry`（如未注册）并把刚 spawn 的 instance_id
+/// 列表回写到 `state.initial_skeleton` —— 让 plan-tsy-lifecycle-v1 §1.4 状态机能正确
+/// 跟踪"剩余骨架"。即便 zone 未 ready 没放下任何遗物，也会先把 family 注册成 Active
+/// 状态（避免 lifecycle 看不见 family）。
+#[allow(clippy::too_many_arguments)]
 pub fn tsy_loot_spawn_on_enter(
     mut events: EventReader<TsyEnterEmit>,
     zones: Res<ZoneRegistry>,
@@ -114,8 +122,14 @@ pub fn tsy_loot_spawn_on_enter(
     mut spawned: ResMut<TsySpawnedFamilies>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut drops: ResMut<DroppedLootRegistry>,
+    mut lifecycle: ResMut<TsyZoneStateRegistry>,
+    clock: Res<CombatClock>,
 ) {
     for ev in events.read() {
+        // 任何"玩家踏进 family"都先把 family 注册到 lifecycle registry —— 即便
+        // 本 tick 没真正放下遗物（zones 未 ready）也保证 lifecycle 有 anchor 可查。
+        on_first_enter(&mut lifecycle, &ev.family_id, ev.return_to, clock.tick);
+
         // 已经 spawn 过本 family → 跳。
         if spawned.families.contains(&ev.family_id) {
             continue;
@@ -125,7 +139,8 @@ pub fn tsy_loot_spawn_on_enter(
         let count = relic_count_for_source(source, seed);
         let (_shallow, mid_count, deep_count) = layer_distribution(count);
 
-        let placed_mid = spawn_for_layer(
+        let mut placed_ids: Vec<u64> = Vec::new();
+        spawn_for_layer(
             &ev.family_id,
             TsyDepth::Mid,
             mid_count,
@@ -135,8 +150,10 @@ pub fn tsy_loot_spawn_on_enter(
             &relic_pool,
             &mut allocator,
             &mut drops,
+            &mut placed_ids,
         );
-        let placed_deep = spawn_for_layer(
+        let placed_mid = placed_ids.len() as u32;
+        spawn_for_layer(
             &ev.family_id,
             TsyDepth::Deep,
             deep_count,
@@ -146,13 +163,14 @@ pub fn tsy_loot_spawn_on_enter(
             &relic_pool,
             &mut allocator,
             &mut drops,
+            &mut placed_ids,
         );
+        let placed_deep = placed_ids.len() as u32 - placed_mid;
 
         // Codex review #2 修复：mid/deep zone 还没 ready 时（worldgen 慢于
         // 玩家入场）不要把 family 标记成 spawned，否则后续入场全 skip → family
         // 永远缺 relics。只有真正放下 ≥1 件后才记账。
-        let placed_total = placed_mid + placed_deep;
-        if placed_total == 0 {
+        if placed_ids.is_empty() {
             tracing::debug!(
                 family = %ev.family_id,
                 "[bong][tsy-loot] no relics placed (zones not ready) — leaving family un-marked for retry"
@@ -160,12 +178,15 @@ pub fn tsy_loot_spawn_on_enter(
             continue;
         }
         spawned.families.insert(ev.family_id.clone());
+        // plan-tsy-lifecycle-v1 §1.5 — spawn 完成后回写初始骨架；mark_initial_skeleton
+        // 内部 idempotent（仅在 vec 为空时写入），所以重入不会污染状态。
+        lifecycle.mark_initial_skeleton(&ev.family_id, placed_ids.clone());
 
         tracing::info!(
             family = %ev.family_id,
             source = ?source,
             requested = count,
-            placed = placed_total,
+            placed = placed_ids.len(),
             mid = placed_mid,
             deep = placed_deep,
             "[bong][tsy-loot] spawned ancient relics on first family entry"
@@ -179,8 +200,9 @@ fn family_seed(family_id: &str) -> u64 {
     hasher.finish()
 }
 
-/// 在指定 depth 上 spawn `count` 件遗物。返回**实际 placed 数量**（zone/池缺失
-/// 时可能 < count，由 caller 判断是否标记 family 为已 spawn）。
+/// 在指定 depth 上 spawn `count` 件遗物。把 placed 的 `instance_id` 追加到
+/// `placed_ids`（caller 负责跨层共享同一 vec，方便回写到 lifecycle.initial_skeleton）。
+/// zone/池缺失时可能放下 < count，由 caller 判断是否标记 family 为已 spawn。
 #[allow(clippy::too_many_arguments)]
 fn spawn_for_layer(
     family_id: &str,
@@ -192,15 +214,15 @@ fn spawn_for_layer(
     relic_pool: &AncientRelicPool,
     allocator: &mut InventoryInstanceIdAllocator,
     drops: &mut DroppedLootRegistry,
-) -> u32 {
-    let mut placed: u32 = 0;
+    placed_ids: &mut Vec<u64>,
+) {
     for i in 0..count {
         let seed = base_seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9);
         let Some(template) = relic_pool.sample(source, seed) else {
             tracing::warn!(
                 "[bong][tsy-loot] empty relic pool — skipping spawn for family={family_id} depth={depth:?}"
             );
-            return placed;
+            return;
         };
         let Some(pos) = sample_position_in_layer(zones, family_id, depth, seed) else {
             tracing::debug!(
@@ -209,7 +231,7 @@ fn spawn_for_layer(
                 "[bong][tsy-loot] no zone at this depth yet — skipping {} drops",
                 count - i
             );
-            return placed;
+            return;
         };
         let instance = match template.to_item_instance(allocator) {
             Ok(item) => item,
@@ -217,7 +239,7 @@ fn spawn_for_layer(
                 tracing::warn!(
                     "[bong][tsy-loot] allocator overflow / failure: {err}; aborting layer"
                 );
-                return placed;
+                return;
             }
         };
         let entry = DroppedLootEntry {
@@ -228,10 +250,9 @@ fn spawn_for_layer(
             world_pos: [pos.x, pos.y, pos.z],
             item: instance,
         };
+        placed_ids.push(entry.instance_id);
         drops.entries.insert(entry.instance_id, entry);
-        placed += 1;
     }
-    placed
 }
 
 /// 测试辅助：返回 seed 起始时的 ancient relics 总池大小。
