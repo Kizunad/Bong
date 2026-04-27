@@ -62,7 +62,15 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataV1,
 } from "./server-data.js";
-import { TsyCorpseSpawnEventV1, TsyEnterEventV1, TsyExitEventV1 } from "./tsy.js";
+import {
+  DaoxiangSpawnedV1,
+  TsyCollapseCompletedV1,
+  TsyCollapseStartedV1,
+  TsyCorpseSpawnEventV1,
+  TsyEnterEventV1,
+  TsyExitEventV1,
+  TsyZoneActivatedV1,
+} from "./tsy.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -133,6 +141,11 @@ export const SCHEMA_REGISTRY = {
   tsyExitEventV1: TsyExitEventV1,
   // plan-tsy-loot-v1 §4.4
   tsyCorpseSpawnEventV1: TsyCorpseSpawnEventV1,
+  // plan-tsy-lifecycle-v1 §1.5 / §3.1 / §4
+  tsyZoneActivatedV1: TsyZoneActivatedV1,
+  tsyCollapseStartedV1: TsyCollapseStartedV1,
+  tsyCollapseCompletedV1: TsyCollapseCompletedV1,
+  daoxiangSpawnedV1: DaoxiangSpawnedV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -227,6 +240,11 @@ export const GENERATED_SCHEMA_FILES = {
   "tsy-exit-event-v1.json": SCHEMA_REGISTRY.tsyExitEventV1,
   // plan-tsy-loot-v1 §4.4
   "tsy-corpse-spawn-event-v1.json": SCHEMA_REGISTRY.tsyCorpseSpawnEventV1,
+  // plan-tsy-lifecycle-v1 §1.5 / §3.1 / §4
+  "tsy-zone-activated-v1.json": SCHEMA_REGISTRY.tsyZoneActivatedV1,
+  "tsy-collapse-started-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedV1,
+  "tsy-collapse-completed-v1.json": SCHEMA_REGISTRY.tsyCollapseCompletedV1,
+  "daoxiang-spawned-v1.json": SCHEMA_REGISTRY.daoxiangSpawnedV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

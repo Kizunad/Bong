@@ -110,3 +110,101 @@ export type TsyCorpseSpawnEventV1 = Static<typeof TsyCorpseSpawnEventV1>;
 export function validateTsyCorpseSpawnEventV1Contract(data: unknown): ValidationResult {
   return validate(TsyCorpseSpawnEventV1, data);
 }
+
+/** plan-tsy-lifecycle-v1 §1.5 / §3.1 — 某 TSY family 进入 Active 状态。
+ *
+ *  Server → Agent 单向；agent 用此事件做"某座坍缩渊被发现"narration / 风险评估。
+ *  - `source_class`: 来源大类（"dao_lord" / "sect_ruins" / "battle_sediment"）—
+ *    与 Rust `AncientRelicSource` 的 serde 形态对齐。
+ */
+export const TsyZoneActivatedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("tsy_zone_activated"),
+    tick: Type.Number({ minimum: 0 }),
+    family_id: Type.String({ minLength: 1 }),
+    source_class: Type.Union([
+      Type.Literal("dao_lord"),
+      Type.Literal("sect_ruins"),
+      Type.Literal("battle_sediment"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+export type TsyZoneActivatedV1 = Static<typeof TsyZoneActivatedV1>;
+
+export function validateTsyZoneActivatedV1Contract(data: unknown): ValidationResult {
+  return validate(TsyZoneActivatedV1, data);
+}
+
+/** plan-tsy-lifecycle-v1 §3.1 — 塌缩窗口开始（剩余 30 秒倒计时）。
+ *
+ *  Client 端 HUD 倒计时直接从此 event 起算（client 自行减时不依赖 server tick push）。
+ *  agent narration 在此 event 上挂"某 TSY 进入塌缩"广播。
+ */
+export const TsyCollapseStartedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("tsy_collapse_started"),
+    tick: Type.Number({ minimum: 0 }),
+    family_id: Type.String({ minLength: 1 }),
+    /** 默认 600 = 30 秒 × 20 tick；server 端常量变化时此字段告知 client。 */
+    duration_ticks: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type TsyCollapseStartedV1 = Static<typeof TsyCollapseStartedV1>;
+
+export function validateTsyCollapseStartedV1Contract(data: unknown): ValidationResult {
+  return validate(TsyCollapseStartedV1, data);
+}
+
+/** plan-tsy-lifecycle-v1 §3.3 — 塌缩完成；family 永久作废。
+ *
+ *  agent narration 据此发"某 TSY 化为虚无"信号；亡者博物馆（library-web 后续 plan）
+ *  存档即用 `at_tick` 锚定时间。
+ */
+export const TsyCollapseCompletedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("tsy_collapse_completed"),
+    tick: Type.Number({ minimum: 0 }),
+    family_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type TsyCollapseCompletedV1 = Static<typeof TsyCollapseCompletedV1>;
+
+export function validateTsyCollapseCompletedV1Contract(data: unknown): ValidationResult {
+  return validate(TsyCollapseCompletedV1, data);
+}
+
+/** plan-tsy-lifecycle-v1 §4 — 道伥 spawn 事件（自然激活 / 塌缩加速 共用）。
+ *
+ *  - `daoxiang_entity_id`: 同 `corpse_entity_id` 命名约定 `"npc_{idx}v{gen}"`
+ *  - `from_corpse_death_cause`: 原干尸的死亡原因（lore 用）；与 `CorpseEmbalmed.death_cause` 一致
+ *  - `from_family`: 道伥诞生于哪个 TSY family
+ *  - `pos`: 激活点世界坐标
+ *  - `mode`: 激活方式 `"natural"`（6000 tick 自然累积）/ `"collapse_accelerated"`（塌缩瞬间）
+ */
+export const DaoxiangSpawnedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("daoxiang_spawned"),
+    tick: Type.Number({ minimum: 0 }),
+    daoxiang_entity_id: Type.String({ minLength: 1 }),
+    from_family: Type.String({ minLength: 1 }),
+    from_corpse_death_cause: Type.String({ minLength: 1 }),
+    pos: Type.Array(Type.Number(), { minItems: 3, maxItems: 3 }),
+    mode: Type.Union([
+      Type.Literal("natural"),
+      Type.Literal("collapse_accelerated"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+export type DaoxiangSpawnedV1 = Static<typeof DaoxiangSpawnedV1>;
+
+export function validateDaoxiangSpawnedV1Contract(data: unknown): ValidationResult {
+  return validate(DaoxiangSpawnedV1, data);
+}

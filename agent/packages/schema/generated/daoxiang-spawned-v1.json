@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "daoxiang_entity_id",
+    "from_family",
+    "from_corpse_death_cause",
+    "pos",
+    "mode"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "daoxiang_spawned",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "daoxiang_entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "from_family": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "from_corpse_death_cause": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "pos": {
+      "minItems": 3,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "const": "natural",
+          "type": "string"
+        },
+        {
+          "const": "collapse_accelerated",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}
