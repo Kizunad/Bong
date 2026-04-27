@@ -20,6 +20,9 @@ import io.wispforest.owo.ui.core.*;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
@@ -105,7 +108,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -1597,6 +1600,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if ("ningmai_powder".equals(item.itemId())) {
             actions.add(new PillMenuAction("外敷（选经脉）", ActionKind.MERIDIAN_TARGET));
         }
+        if (forgeStationTier(item) > 0) {
+            actions.add(new PillMenuAction("放置炼器砧", ActionKind.PLACE_FORGE_STATION));
+        }
         return actions;
     }
 
@@ -1641,7 +1647,66 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
                 pendingMeridianUse = new PendingMeridianUse(item);
             }
+            case PLACE_FORGE_STATION -> {
+                pendingMeridianUse = null;
+                dispatchPlaceForgeStation(item);
+            }
         }
+    }
+
+    boolean dispatchPlaceForgeStation(InventoryItem item) {
+        BlockPos pos = targetForgeStationPlacementPos();
+        return dispatchPlaceForgeStationAt(item, pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    boolean dispatchPlaceForgeStationAt(InventoryItem item, int x, int y, int z) {
+        if (item == null || item.instanceId() == 0L) {
+            return false;
+        }
+        int tier = forgeStationTier(item);
+        if (tier <= 0) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchPlaceForgeStation instance={} item={} tier={} pos=[{},{},{}]",
+            item.instanceId(), item.itemId(), tier, x, y, z);
+        com.bong.client.network.ClientRequestSender.sendForgeStationPlace(
+            x,
+            y,
+            z,
+            item.instanceId(),
+            tier
+        );
+        return true;
+    }
+
+    static int forgeStationTier(InventoryItem item) {
+        if (item == null || item.itemId() == null) {
+            return 0;
+        }
+        return switch (item.itemId()) {
+            case "fan_iron_anvil" -> 1;
+            case "ling_iron_anvil" -> 2;
+            case "xuan_iron_anvil" -> 3;
+            case "dao_anvil" -> 4;
+            default -> 0;
+        };
+    }
+
+    private static BlockPos targetForgeStationPlacementPos() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.crosshairTarget instanceof BlockHitResult hit
+            && hit.getType() == HitResult.Type.BLOCK) {
+            return hit.getBlockPos().offset(hit.getSide());
+        }
+        if (client.player != null) {
+            return new BlockPos(
+                (int) Math.floor(client.player.getX()),
+                (int) Math.floor(client.player.getY()),
+                (int) Math.floor(client.player.getZ())
+            );
+        }
+        return new BlockPos(0, 64, 0);
     }
 
     boolean confirmPendingMeridianUse() {

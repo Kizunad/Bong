@@ -169,6 +169,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendForgeStationPlaceUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendForgeStationPlace(-12, 64, 38, 4242L, 2);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"forge_station_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242,\"station_tier\":2}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

@@ -320,6 +320,16 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeForgeStationPlace(int x, int y, int z, long itemInstanceId, int stationTier) {
+        JsonObject obj = envelope("forge_station_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        obj.addProperty("station_tier", stationTier);
+        return obj.toString();
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static String encodeUseQuickSlot(int slot) {

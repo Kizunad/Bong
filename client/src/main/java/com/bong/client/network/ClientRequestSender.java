@@ -102,6 +102,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeRepairWeapon(instanceId, x, y, z));
     }
 
+    public static void sendForgeStationPlace(int x, int y, int z, long itemInstanceId, int stationTier) {
+        dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

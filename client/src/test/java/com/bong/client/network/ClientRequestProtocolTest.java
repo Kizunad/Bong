@@ -156,6 +156,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeStationPlace() {
+        String json = ClientRequestProtocol.encodeForgeStationPlace(-12, 64, 38, 4242L, 2);
+        assertEquals(
+            "{\"type\":\"forge_station_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242,\"station_tier\":2}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(
