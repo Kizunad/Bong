@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "family_id",
+    "container_entity_id",
+    "phase",
+    "max_phase",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_sentinel_phase_changed",
+      "type": "string"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "container_entity_id": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "phase": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "max_phase": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

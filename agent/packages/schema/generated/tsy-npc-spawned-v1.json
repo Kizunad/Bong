@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "family_id",
+    "archetype",
+    "count",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_npc_spawned",
+      "type": "string"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "archetype": {
+      "anyOf": [
+        {
+          "const": "daoxiang",
+          "type": "string"
+        },
+        {
+          "const": "zhinian",
+          "type": "string"
+        },
+        {
+          "const": "guardian_relic_sentinel",
+          "type": "string"
+        },
+        {
+          "const": "fuya",
+          "type": "string"
+        }
+      ]
+    },
+    "count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}
