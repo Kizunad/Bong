@@ -437,7 +437,10 @@ mod tests {
     fn use_quick_slot_roundtrip() {
         let json = r#"{"type":"use_quick_slot","v":1,"slot":3}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
-        assert!(matches!(req, ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }));
+        assert!(matches!(
+            req,
+            ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }
+        ));
     }
 
     #[test]

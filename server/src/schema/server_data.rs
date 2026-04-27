@@ -4,17 +4,16 @@ use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
-use super::forge::{
-    ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1,
-    WeaponForgeStationDataV1,
-};
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
-    SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1,
-    WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
+    SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1,
+    WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::cultivation::SkillMilestoneSnapshotV1;
+use super::forge::{
+    ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1, WeaponForgeStationDataV1,
+};
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
@@ -888,9 +887,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::QuickSlotConfig { config } => {
                 Ok(Self::QuickSlotConfig(config))
             }
-            ServerDataPayloadWireV1::SkillBarConfig { config } => {
-                Ok(Self::SkillBarConfig(config))
-            }
+            ServerDataPayloadWireV1::SkillBarConfig { config } => Ok(Self::SkillBarConfig(config)),
             ServerDataPayloadWireV1::TechniquesSnapshot { snapshot } => {
                 Ok(Self::TechniquesSnapshot(snapshot))
             }
@@ -999,7 +996,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ForgeStation { data } => Ok(Self::ForgeStation(data)),
             ServerDataPayloadWireV1::ForgeSession { data } => Ok(Self::ForgeSession(data)),
             ServerDataPayloadWireV1::ForgeOutcome { data } => Ok(Self::ForgeOutcome(data)),
-            ServerDataPayloadWireV1::ForgeBlueprintBook { data } => Ok(Self::ForgeBlueprintBook(data)),
+            ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
+                Ok(Self::ForgeBlueprintBook(data))
+            }
         }
     }
 }
@@ -1269,9 +1268,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ForgeStation(data) => Self::ForgeStation { data: data.clone() },
             ServerDataPayloadV1::ForgeSession(data) => Self::ForgeSession { data: data.clone() },
             ServerDataPayloadV1::ForgeOutcome(data) => Self::ForgeOutcome { data: data.clone() },
-            ServerDataPayloadV1::ForgeBlueprintBook(data) => Self::ForgeBlueprintBook {
-                data: data.clone(),
-            },
+            ServerDataPayloadV1::ForgeBlueprintBook(data) => {
+                Self::ForgeBlueprintBook { data: data.clone() }
+            }
         }
     }
 }
