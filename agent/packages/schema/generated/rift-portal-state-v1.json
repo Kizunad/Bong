@@ -4,8 +4,10 @@
   "required": [
     "entity_id",
     "kind",
+    "direction",
     "family_id",
     "world_pos",
+    "trigger_radius",
     "current_extract_ticks"
   ],
   "properties": {
@@ -24,6 +26,18 @@
         },
         {
           "const": "collapse_tear",
+          "type": "string"
+        }
+      ]
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "const": "entry",
+          "type": "string"
+        },
+        {
+          "const": "exit",
           "type": "string"
         }
       ]
@@ -48,6 +62,10 @@
       "additionalItems": false,
       "minItems": 3,
       "maxItems": 3
+    },
+    "trigger_radius": {
+      "minimum": 0,
+      "type": "number"
     },
     "current_extract_ticks": {
       "minimum": 0,

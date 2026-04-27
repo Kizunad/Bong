@@ -6,6 +6,7 @@ import {
   ExtractFailedV1,
   ExtractProgressV1,
   ExtractStartedV1,
+  RiftPortalRemovedV1,
   RiftPortalStateV1,
   TsyCollapseStartedIpcV1,
   validateExtractStartedV1Contract,
@@ -16,6 +17,7 @@ import {
   ServerDataExtractFailedV1,
   ServerDataExtractProgressV1,
   ServerDataExtractStartedV1,
+  ServerDataRiftPortalRemovedV1,
   ServerDataRiftPortalStateV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
@@ -27,11 +29,14 @@ describe("plan-tsy-extract-v1 §4.1 extract-v1 schema", () => {
     expect(validate(RiftPortalStateV1, {
       entity_id: 42,
       kind: "collapse_tear",
+      direction: "exit",
       family_id: "tsy_lingxu_01",
       world_pos: [1, 2, 3],
+      trigger_radius: 1.5,
       current_extract_ticks: 60,
       activation_window_end: 1234,
     }).ok).toBe(true);
+    expect(validate(RiftPortalRemovedV1, { entity_id: 42 }).ok).toBe(true);
   });
 
   it("accepts started/progress/completed/aborted/failed payloads", () => {
@@ -56,6 +61,7 @@ describe("plan-tsy-extract-v1 §4.1 extract-v1 schema", () => {
       at_tick: 260,
     }).ok).toBe(true);
     expect(validate(ExtractAbortedV1, { player_id: "offline:Kiz", reason: "damaged" }).ok).toBe(true);
+    expect(validate(ExtractAbortedV1, { player_id: "offline:Kiz", reason: "out_of_range" }).ok).toBe(true);
     expect(validate(ExtractFailedV1, { player_id: "offline:Kiz", reason: "spirit_qi_drained" }).ok).toBe(true);
   });
 
@@ -88,9 +94,19 @@ describe("plan-tsy-extract-v1 §4.1 extract-v1 schema", () => {
           type: "rift_portal_state",
           entity_id: 42,
           kind: "main_rift",
+          direction: "exit",
           family_id: "tsy_lingxu_01",
           world_pos: [1, 2, 3],
+          trigger_radius: 2,
           current_extract_ticks: 160,
+        },
+      },
+      {
+        schema: ServerDataRiftPortalRemovedV1,
+        value: {
+          v: 1,
+          type: "rift_portal_removed",
+          entity_id: 42,
         },
       },
       {

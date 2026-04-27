@@ -31,6 +31,22 @@
         {
           "const": "portal_expired",
           "type": "string"
+        },
+        {
+          "const": "out_of_range",
+          "type": "string"
+        },
+        {
+          "const": "not_in_tsy",
+          "type": "string"
+        },
+        {
+          "const": "already_busy",
+          "type": "string"
+        },
+        {
+          "const": "cannot_exit",
+          "type": "string"
         }
       ]
     }

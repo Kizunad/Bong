@@ -5490,8 +5490,10 @@
         "type",
         "entity_id",
         "kind",
+        "direction",
         "family_id",
         "world_pos",
+        "trigger_radius",
         "current_extract_ticks"
       ],
       "properties": {
@@ -5522,6 +5524,18 @@
             }
           ]
         },
+        "direction": {
+          "anyOf": [
+            {
+              "const": "entry",
+              "type": "string"
+            },
+            {
+              "const": "exit",
+              "type": "string"
+            }
+          ]
+        },
         "family_id": {
           "minLength": 1,
           "type": "string"
@@ -5543,12 +5557,38 @@
           "minItems": 3,
           "maxItems": 3
         },
+        "trigger_radius": {
+          "minimum": 0,
+          "type": "number"
+        },
         "current_extract_ticks": {
           "minimum": 0,
           "type": "number"
         },
         "activation_window_end": {
           "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "rift_portal_removed",
+          "type": "string"
+        },
+        "entity_id": {
           "type": "number"
         }
       }
@@ -5754,6 +5794,22 @@
             },
             {
               "const": "portal_expired",
+              "type": "string"
+            },
+            {
+              "const": "out_of_range",
+              "type": "string"
+            },
+            {
+              "const": "not_in_tsy",
+              "type": "string"
+            },
+            {
+              "const": "already_busy",
+              "type": "string"
+            },
+            {
+              "const": "cannot_exit",
               "type": "string"
             }
           ]

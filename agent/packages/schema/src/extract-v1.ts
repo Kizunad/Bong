@@ -9,18 +9,34 @@ export const RiftPortalKindV1 = Type.Union([
 ]);
 export type RiftPortalKindV1 = Static<typeof RiftPortalKindV1>;
 
+export const RiftPortalDirectionV1 = Type.Union([
+  Type.Literal("entry"),
+  Type.Literal("exit"),
+]);
+export type RiftPortalDirectionV1 = Static<typeof RiftPortalDirectionV1>;
+
 export const RiftPortalStateV1 = Type.Object(
   {
     entity_id: Type.Number(),
     kind: RiftPortalKindV1,
+    direction: RiftPortalDirectionV1,
     family_id: Type.String({ minLength: 1 }),
     world_pos: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+    trigger_radius: Type.Number({ minimum: 0 }),
     current_extract_ticks: Type.Number({ minimum: 0 }),
     activation_window_end: Type.Optional(Type.Number({ minimum: 0 })),
   },
   { additionalProperties: false },
 );
 export type RiftPortalStateV1 = Static<typeof RiftPortalStateV1>;
+
+export const RiftPortalRemovedV1 = Type.Object(
+  {
+    entity_id: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+export type RiftPortalRemovedV1 = Static<typeof RiftPortalRemovedV1>;
 
 export const ExtractStartedV1 = Type.Object(
   {
@@ -63,6 +79,10 @@ export const ExtractAbortedReasonV1 = Type.Union([
   Type.Literal("damaged"),
   Type.Literal("cancelled"),
   Type.Literal("portal_expired"),
+  Type.Literal("out_of_range"),
+  Type.Literal("not_in_tsy"),
+  Type.Literal("already_busy"),
+  Type.Literal("cannot_exit"),
 ]);
 export type ExtractAbortedReasonV1 = Static<typeof ExtractAbortedReasonV1>;
 

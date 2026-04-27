@@ -50,6 +50,7 @@ import {
   ExtractFailedV1,
   ExtractProgressV1,
   ExtractStartedV1,
+  RiftPortalRemovedV1,
   RiftPortalStateV1,
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
@@ -72,6 +73,7 @@ import {
   ServerDataExtractFailedV1,
   ServerDataExtractProgressV1,
   ServerDataExtractStartedV1,
+  ServerDataRiftPortalRemovedV1,
   ServerDataRiftPortalStateV1,
   ServerDataSkillCapChangedV1,
   ServerDataSkillLvUpV1,
@@ -179,6 +181,7 @@ export const SCHEMA_REGISTRY = {
   daoxiangSpawnedV1: DaoxiangSpawnedV1,
   // plan-tsy-extract-v1 §4.1
   riftPortalStateV1: RiftPortalStateV1,
+  riftPortalRemovedV1: RiftPortalRemovedV1,
   extractStartedV1: ExtractStartedV1,
   extractProgressV1: ExtractProgressV1,
   extractCompletedV1: ExtractCompletedV1,
@@ -186,6 +189,7 @@ export const SCHEMA_REGISTRY = {
   extractFailedV1: ExtractFailedV1,
   tsyCollapseStartedIpcV1: TsyCollapseStartedIpcV1,
   serverDataRiftPortalStateV1: ServerDataRiftPortalStateV1,
+  serverDataRiftPortalRemovedV1: ServerDataRiftPortalRemovedV1,
   serverDataExtractStartedV1: ServerDataExtractStartedV1,
   serverDataExtractProgressV1: ServerDataExtractProgressV1,
   serverDataExtractCompletedV1: ServerDataExtractCompletedV1,
@@ -306,6 +310,7 @@ export const GENERATED_SCHEMA_FILES = {
   "daoxiang-spawned-v1.json": SCHEMA_REGISTRY.daoxiangSpawnedV1,
   // plan-tsy-extract-v1 §4.1
   "rift-portal-state-v1.json": SCHEMA_REGISTRY.riftPortalStateV1,
+  "rift-portal-removed-v1.json": SCHEMA_REGISTRY.riftPortalRemovedV1,
   "extract-started-v1.json": SCHEMA_REGISTRY.extractStartedV1,
   "extract-progress-v1.json": SCHEMA_REGISTRY.extractProgressV1,
   "extract-completed-v1.json": SCHEMA_REGISTRY.extractCompletedV1,
@@ -314,6 +319,8 @@ export const GENERATED_SCHEMA_FILES = {
   "tsy-collapse-started-ipc-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedIpcV1,
   "server-data-rift-portal-state-v1.json":
     SCHEMA_REGISTRY.serverDataRiftPortalStateV1,
+  "server-data-rift-portal-removed-v1.json":
+    SCHEMA_REGISTRY.serverDataRiftPortalRemovedV1,
   "server-data-extract-started-v1.json":
     SCHEMA_REGISTRY.serverDataExtractStartedV1,
   "server-data-extract-progress-v1.json":

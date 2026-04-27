@@ -24,6 +24,7 @@ import {
   ExtractFailedV1,
   ExtractProgressV1,
   ExtractStartedV1,
+  RiftPortalRemovedV1,
   RiftPortalStateV1,
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
@@ -98,6 +99,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
   Type.Literal("rift_portal_state"),
+  Type.Literal("rift_portal_removed"),
   Type.Literal("extract_started"),
   Type.Literal("extract_progress"),
   Type.Literal("extract_completed"),
@@ -495,6 +497,18 @@ export const ServerDataRiftPortalStateV1 = Type.Object(
 );
 export type ServerDataRiftPortalStateV1 = Static<typeof ServerDataRiftPortalStateV1>;
 
+export const ServerDataRiftPortalRemovedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("rift_portal_removed"),
+    ...RiftPortalRemovedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRiftPortalRemovedV1 = Static<
+  typeof ServerDataRiftPortalRemovedV1
+>;
+
 export const ServerDataExtractStartedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -583,6 +597,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
   ServerDataRiftPortalStateV1,
+  ServerDataRiftPortalRemovedV1,
   ServerDataExtractStartedV1,
   ServerDataExtractProgressV1,
   ServerDataExtractCompletedV1,
