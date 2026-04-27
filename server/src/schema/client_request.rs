@@ -232,6 +232,56 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
+    /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
+    ForgeStartSession {
+        v: u8,
+        station_id: String,
+        blueprint_id: String,
+        materials: Vec<(String, u32)>,
+    },
+    /// plan §1.3.2 — 淬炼击键上报。
+    ForgeTemperingHit {
+        v: u8,
+        session_id: u64,
+        beat: String,
+        ticks_remaining: u32,
+    },
+    /// plan §1.3.3 — 铭文残卷投入。
+    ForgeInscriptionScroll {
+        v: u8,
+        session_id: u64,
+        inscription_id: String,
+    },
+    /// plan §1.3.4 — 开光真元注入。
+    ForgeConsecrationInject {
+        v: u8,
+        session_id: u64,
+        qi_amount: f64,
+    },
+    /// plan §1.3 — 步骤推进（当前步骤完成，进下一步）。
+    ForgeStepAdvance {
+        v: u8,
+        session_id: u64,
+    },
+    /// plan §1.4 — 图谱书翻页。
+    ForgeBlueprintTurnPage {
+        v: u8,
+        delta: i32,
+    },
+    /// plan §1.4 — 学习图谱（客户端拖残卷到图谱区）。
+    ForgeLearnBlueprint {
+        v: u8,
+        blueprint_id: String,
+    },
+    /// plan §1.2 — 玩家手持砧类物品，客户端拦截右键放砧方块。
+    ForgeStationPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
 }
 
 #[cfg(test)]

@@ -6079,6 +6079,511 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "station_id",
+        "tier",
+        "integrity",
+        "owner_name",
+        "has_session"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_station",
+          "type": "string"
+        },
+        "station_id": {
+          "type": "string"
+        },
+        "tier": {
+          "minimum": 1,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "integrity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "owner_name": {
+          "type": "string"
+        },
+        "has_session": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "blueprint_id",
+        "blueprint_name",
+        "active",
+        "current_step",
+        "step_index",
+        "achieved_tier",
+        "step_state"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_session",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blueprint_id": {
+          "type": "string"
+        },
+        "blueprint_name": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "current_step": {
+          "description": "plan §1.3 四步进程",
+          "anyOf": [
+            {
+              "const": "billet",
+              "type": "string"
+            },
+            {
+              "const": "tempering",
+              "type": "string"
+            },
+            {
+              "const": "inscription",
+              "type": "string"
+            },
+            {
+              "const": "consecration",
+              "type": "string"
+            },
+            {
+              "const": "done",
+              "type": "string"
+            }
+          ]
+        },
+        "step_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "achieved_tier": {
+          "minimum": 0,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "step_state": {
+          "description": "plan §1.3 各步实时状态",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "materials_in",
+                "resolved_tier_cap"
+              ],
+              "properties": {
+                "step": {
+                  "const": "billet",
+                  "type": "string"
+                },
+                "materials_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    ],
+                    "additionalItems": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                },
+                "active_carrier": {
+                  "type": "string"
+                },
+                "resolved_tier_cap": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "pattern",
+                "beat_cursor",
+                "hits",
+                "misses",
+                "deviation",
+                "qi_spent"
+              ],
+              "properties": {
+                "step": {
+                  "const": "tempering",
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "array",
+                  "items": {
+                    "description": "plan §1.3.2 淬炼击键",
+                    "anyOf": [
+                      {
+                        "const": "L",
+                        "type": "string"
+                      },
+                      {
+                        "const": "H",
+                        "type": "string"
+                      },
+                      {
+                        "const": "F",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "beat_cursor": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hits": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "misses": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deviation": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "qi_spent": {
+                  "minimum": 0,
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "filled_slots",
+                "max_slots",
+                "failed"
+              ],
+              "properties": {
+                "step": {
+                  "const": "inscription",
+                  "type": "string"
+                },
+                "filled_slots": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "max_slots": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "failed": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "qi_injected",
+                "qi_required"
+              ],
+              "properties": {
+                "step": {
+                  "const": "consecration",
+                  "type": "string"
+                },
+                "qi_injected": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "qi_required": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "color_imprint": {
+                  "description": "十种真元染色",
+                  "anyOf": [
+                    {
+                      "const": "Sharp",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Heavy",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Mellow",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Solid",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Light",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Intricate",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Gentle",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Insidious",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Violent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Turbid",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step"
+              ],
+              "properties": {
+                "step": {
+                  "const": "none",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "blueprint_id",
+        "bucket",
+        "quality",
+        "side_effects",
+        "achieved_tier",
+        "flawed_path"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_outcome",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blueprint_id": {
+          "type": "string"
+        },
+        "bucket": {
+          "description": "plan §1.3 结果分桶",
+          "anyOf": [
+            {
+              "const": "perfect",
+              "type": "string"
+            },
+            {
+              "const": "good",
+              "type": "string"
+            },
+            {
+              "const": "flawed",
+              "type": "string"
+            },
+            {
+              "const": "waste",
+              "type": "string"
+            },
+            {
+              "const": "explode",
+              "type": "string"
+            }
+          ]
+        },
+        "weapon_item": {
+          "type": "string"
+        },
+        "quality": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "color": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "side_effects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "achieved_tier": {
+          "minimum": 0,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "flawed_path": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "learned",
+        "current_index"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_blueprint_book",
+          "type": "string"
+        },
+        "learned": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "tier_cap",
+              "step_count"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "tier_cap": {
+                "minimum": 1,
+                "maximum": 4,
+                "type": "integer"
+              },
+              "step_count": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "current_index": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
     }
   ]
 }

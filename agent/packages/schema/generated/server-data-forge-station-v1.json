@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "station_id",
+    "tier",
+    "integrity",
+    "owner_name",
+    "has_session"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "forge_station",
+      "type": "string"
+    },
+    "station_id": {
+      "type": "string"
+    },
+    "tier": {
+      "minimum": 1,
+      "maximum": 4,
+      "type": "integer"
+    },
+    "integrity": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "owner_name": {
+      "type": "string"
+    },
+    "has_session": {
+      "type": "boolean"
+    }
+  }
+}

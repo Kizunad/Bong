@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "session_id",
+    "qi_amount"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "forge_consecration_inject",
+      "type": "string"
+    },
+    "session_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "qi_amount": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

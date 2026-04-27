@@ -41,6 +41,14 @@ import {
   ClientRequestV1,
   DuoSheRequestV1,
   ForgeRequestV1,
+  ForgeStartSessionRequestV1,
+  ForgeTemperingHitRequestV1,
+  ForgeInscriptionScrollRequestV1,
+  ForgeConsecrationInjectRequestV1,
+  ForgeStepAdvanceRequestV1,
+  ForgeBlueprintTurnPageRequestV1,
+  ForgeLearnBlueprintRequestV1,
+  ForgeStationPlaceRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
@@ -74,6 +82,18 @@ import {
   TsyCollapseStartedIpcV1,
 } from "./extract-v1.js";
 import { ForgeEventV1 } from "./forge-event.js";
+import {
+  ForgeBlueprintBookDataV1,
+  ForgeBlueprintEntryV1,
+  ForgeOutcomeBucket,
+  ForgeOutcomeDataV1,
+  ForgeSessionDataV1,
+  ForgeStep,
+  ForgeStepState,
+  TemperBeat,
+  WeaponForgeStationDataV1,
+  WeaponTier,
+} from "./forge.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
@@ -103,6 +123,10 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
+  ServerDataForgeStationV1,
+  ServerDataForgeSessionV1,
+  ServerDataForgeOutcomeV1,
+  ServerDataForgeBlueprintBookV1,
 } from "./server-data.js";
 import {
   DaoxiangSpawnedV1,
@@ -253,6 +277,29 @@ export const SCHEMA_REGISTRY = {
   tsyHostileArchetypeV1: TsyHostileArchetypeV1,
   tsyNpcSpawnedV1: TsyNpcSpawnedV1,
   tsySentinelPhaseChangedV1: TsySentinelPhaseChangedV1,
+  // ─── 炼器（武器）（plan-forge-v1 §4） ──────────
+  forgeStep: ForgeStep,
+  weaponTier: WeaponTier,
+  temperBeat: TemperBeat,
+  forgeOutcomeBucket: ForgeOutcomeBucket,
+  forgeStepState: ForgeStepState,
+  forgeBlueprintEntryV1: ForgeBlueprintEntryV1,
+  weaponForgeStationDataV1: WeaponForgeStationDataV1,
+  forgeSessionDataV1: ForgeSessionDataV1,
+  forgeOutcomeDataV1: ForgeOutcomeDataV1,
+  forgeBlueprintBookDataV1: ForgeBlueprintBookDataV1,
+  serverDataForgeStationV1: ServerDataForgeStationV1,
+  serverDataForgeSessionV1: ServerDataForgeSessionV1,
+  serverDataForgeOutcomeV1: ServerDataForgeOutcomeV1,
+  serverDataForgeBlueprintBookV1: ServerDataForgeBlueprintBookV1,
+  clientRequestForgeStartSessionV1: ForgeStartSessionRequestV1,
+  clientRequestForgeTemperingHitV1: ForgeTemperingHitRequestV1,
+  clientRequestForgeInscriptionScrollV1: ForgeInscriptionScrollRequestV1,
+  clientRequestForgeConsecrationInjectV1: ForgeConsecrationInjectRequestV1,
+  clientRequestForgeStepAdvanceV1: ForgeStepAdvanceRequestV1,
+  clientRequestForgeBlueprintTurnPageV1: ForgeBlueprintTurnPageRequestV1,
+  clientRequestForgeLearnBlueprintV1: ForgeLearnBlueprintRequestV1,
+  clientRequestForgeStationPlaceV1: ForgeStationPlaceRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -417,6 +464,29 @@ export const GENERATED_SCHEMA_FILES = {
   "tsy-hostile-archetype-v1.json": SCHEMA_REGISTRY.tsyHostileArchetypeV1,
   "tsy-npc-spawned-v1.json": SCHEMA_REGISTRY.tsyNpcSpawnedV1,
   "tsy-sentinel-phase-changed-v1.json": SCHEMA_REGISTRY.tsySentinelPhaseChangedV1,
+  // ─── 炼器（武器）（plan-forge-v1 §4） ──────────
+  "forge-step.json": SCHEMA_REGISTRY.forgeStep,
+  "weapon-tier.json": SCHEMA_REGISTRY.weaponTier,
+  "temper-beat.json": SCHEMA_REGISTRY.temperBeat,
+  "forge-outcome-bucket.json": SCHEMA_REGISTRY.forgeOutcomeBucket,
+  "forge-step-state.json": SCHEMA_REGISTRY.forgeStepState,
+  "forge-blueprint-entry-v1.json": SCHEMA_REGISTRY.forgeBlueprintEntryV1,
+  "weapon-forge-station-data-v1.json": SCHEMA_REGISTRY.weaponForgeStationDataV1,
+  "forge-session-data-v1.json": SCHEMA_REGISTRY.forgeSessionDataV1,
+  "forge-outcome-data-v1.json": SCHEMA_REGISTRY.forgeOutcomeDataV1,
+  "forge-blueprint-book-data-v1.json": SCHEMA_REGISTRY.forgeBlueprintBookDataV1,
+  "server-data-forge-station-v1.json": SCHEMA_REGISTRY.serverDataForgeStationV1,
+  "server-data-forge-session-v1.json": SCHEMA_REGISTRY.serverDataForgeSessionV1,
+  "server-data-forge-outcome-v1.json": SCHEMA_REGISTRY.serverDataForgeOutcomeV1,
+  "server-data-forge-blueprint-book-v1.json": SCHEMA_REGISTRY.serverDataForgeBlueprintBookV1,
+  "client-request-forge-start-session-v1.json": SCHEMA_REGISTRY.clientRequestForgeStartSessionV1,
+  "client-request-forge-tempering-hit-v1.json": SCHEMA_REGISTRY.clientRequestForgeTemperingHitV1,
+  "client-request-forge-inscription-scroll-v1.json": SCHEMA_REGISTRY.clientRequestForgeInscriptionScrollV1,
+  "client-request-forge-consecration-inject-v1.json": SCHEMA_REGISTRY.clientRequestForgeConsecrationInjectV1,
+  "client-request-forge-step-advance-v1.json": SCHEMA_REGISTRY.clientRequestForgeStepAdvanceV1,
+  "client-request-forge-blueprint-turn-page-v1.json": SCHEMA_REGISTRY.clientRequestForgeBlueprintTurnPageV1,
+  "client-request-forge-learn-blueprint-v1.json": SCHEMA_REGISTRY.clientRequestForgeLearnBlueprintV1,
+  "client-request-forge-station-place-v1.json": SCHEMA_REGISTRY.clientRequestForgeStationPlaceV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

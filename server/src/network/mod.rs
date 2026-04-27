@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod forge_snapshot_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -289,6 +290,8 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_npc_spawned_events
                 .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            forge_snapshot_emit::emit_join_forge_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
     );
     app.add_systems(

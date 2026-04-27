@@ -38,6 +38,9 @@ export * from "./insight-request.js";
 // 炼丹 (plan-alchemy-v1 §4)
 export * from "./alchemy.js";
 
+// 炼器（武器）（plan-forge-v1 §4）
+export * from "./forge.js";
+
 // 子技能 (plan-skill-v1 §8)
 export * from "./skill.js";
 

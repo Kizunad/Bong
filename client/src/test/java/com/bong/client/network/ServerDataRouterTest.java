@@ -73,7 +73,12 @@ public class ServerDataRouterTest {
             "skill_lv_up",
             "skill_cap_changed",
             "skill_scroll_used",
-            "skill_snapshot"
+            "skill_snapshot",
+            // plan-forge-v1 §4 — 炼器（武器）
+            "forge_station",
+            "forge_session",
+            "forge_outcome",
+            "forge_blueprint_book"
         ), router.registeredTypes());
     }
 
