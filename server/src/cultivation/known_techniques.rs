@@ -114,7 +114,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 4] = [
     TechniqueDefinition {
         id: "burst_meridian.ni_mai_hu_ti",
         display_name: "逆脉护体",
-        grade: "black",
+        grade: "profound",
         description: "逆转真元护住要害，短时压住外伤冲击。",
         required_realm: "Solidify",
         required_meridians: &[TechniqueRequiredMeridian {

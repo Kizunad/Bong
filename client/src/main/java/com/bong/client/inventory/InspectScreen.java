@@ -1355,7 +1355,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     return true;
                 }
             }
-            if (button == 1 && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
+            if (button == 1 && activeTab == 3 && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
                 if (combatTrainingPanel != null && combatTrainingPanel.clearSkillSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;

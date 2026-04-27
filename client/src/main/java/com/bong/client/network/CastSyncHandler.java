@@ -58,7 +58,7 @@ public final class CastSyncHandler implements ServerDataHandler {
 
     private static CastState.Source sourceFor(int slot) {
         CastState current = CastStateStore.snapshot();
-        if (current.slot() == slot && current.source() == CastState.Source.SKILL_BAR) {
+        if (current.isCasting() && current.slot() == slot && current.source() == CastState.Source.SKILL_BAR) {
             return CastState.Source.SKILL_BAR;
         }
         return CastState.Source.QUICK_SLOT;
