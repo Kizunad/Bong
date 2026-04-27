@@ -1,0 +1,107 @@
+{
+  "task": "weapon-v1.1 task 4 persistence",
+  "source": "SQLite inventories.inventory_json printed by server/src/player/state.rs tests",
+  "cases": {
+    "equipped_main_hand": {
+      "bone_coins": 17,
+      "containers": [
+        {
+          "cols": 7,
+          "id": "main_pack",
+          "items": [],
+          "name": "Main Pack",
+          "rows": 5
+        }
+      ],
+      "equipped": {
+        "main_hand": {
+          "description": "weapon persistence fixture",
+          "display_name": "Iron Sword",
+          "durability": 0.87,
+          "freshness": null,
+          "grid_h": 2,
+          "grid_w": 1,
+          "instance_id": 9001,
+          "rarity": "Common",
+          "spirit_quality": 1.0,
+          "stack_count": 1,
+          "template_id": "iron_sword",
+          "weight": 1.2
+        }
+      },
+      "hotbar": [null, null, null, null, null, null, null, null, null],
+      "max_weight": 45.0,
+      "revision": 41
+    },
+    "unequipped_main_hand": {
+      "bone_coins": 17,
+      "containers": [
+        {
+          "cols": 7,
+          "id": "main_pack",
+          "items": [
+            {
+              "col": 0,
+              "instance": {
+                "description": "weapon persistence fixture",
+                "display_name": "Iron Sword",
+                "durability": 0.62,
+                "freshness": null,
+                "grid_h": 2,
+                "grid_w": 1,
+                "instance_id": 9001,
+                "rarity": "Common",
+                "spirit_quality": 1.0,
+                "stack_count": 1,
+                "template_id": "iron_sword",
+                "weight": 1.2
+              },
+              "row": 0
+            }
+          ],
+          "name": "Main Pack",
+          "rows": 5
+        }
+      ],
+      "equipped": {},
+      "hotbar": [null, null, null, null, null, null, null, null, null],
+      "max_weight": 45.0,
+      "revision": 42
+    },
+    "broken_after_inventory_slice_flush": {
+      "bone_coins": 17,
+      "containers": [
+        {
+          "cols": 7,
+          "id": "main_pack",
+          "items": [
+            {
+              "col": 0,
+              "instance": {
+                "description": "weapon persistence fixture",
+                "display_name": "Iron Sword",
+                "durability": 0.0,
+                "freshness": null,
+                "grid_h": 2,
+                "grid_w": 1,
+                "instance_id": 9001,
+                "rarity": "Common",
+                "spirit_quality": 1.0,
+                "stack_count": 1,
+                "template_id": "iron_sword",
+                "weight": 1.2
+              },
+              "row": 0
+            }
+          ],
+          "name": "Main Pack",
+          "rows": 5
+        }
+      ],
+      "equipped": {},
+      "hotbar": [null, null, null, null, null, null, null, null, null],
+      "max_weight": 45.0,
+      "revision": 43
+    }
+  }
+}

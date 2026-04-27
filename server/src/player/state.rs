@@ -1743,10 +1743,16 @@ mod player_state_tests {
     use super::*;
     use crate::combat::components::TICKS_PER_SECOND;
     use crate::cultivation::lifespan::LifespanCapTable;
+    use crate::inventory::{
+        move_equipped_item_to_first_container_slot, set_item_instance_durability, ContainerState,
+        InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
+        MAIN_PACK_CONTAINER_ID,
+    };
     use crate::network::agent_bridge::serialize_server_data_payload;
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
     use rusqlite::{params, Connection};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::{Arc, Barrier};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1780,6 +1786,89 @@ mod player_state_tests {
             PlayerStatePersistence::with_db_path(&data_dir, &db_path),
             data_dir,
         )
+    }
+
+    fn iron_sword_instance(instance_id: u64, durability: f64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "iron_sword".to_string(),
+            display_name: "Iron Sword".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 1.2,
+            rarity: ItemRarity::Common,
+            description: "weapon persistence fixture".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+        }
+    }
+
+    fn empty_weapon_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(41),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "Main Pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 17,
+            max_weight: 45.0,
+        }
+    }
+
+    fn equipped_iron_sword_inventory(durability: f64) -> PlayerInventory {
+        let mut inventory = empty_weapon_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            iron_sword_instance(9_001, durability),
+        );
+        inventory
+    }
+
+    fn persisted_inventory_snapshot(
+        persistence: &PlayerStatePersistence,
+        username: &str,
+    ) -> serde_json::Value {
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let inventory_json: String = connection
+            .query_row(
+                "SELECT inventory_json FROM inventories WHERE username = ?1",
+                params![username],
+                |row| row.get(0),
+            )
+            .expect("persisted inventory row should exist");
+
+        serde_json::from_str(&inventory_json).expect("persisted inventory JSON should decode")
+    }
+
+    fn persist_player_with_inventory(
+        persistence: &PlayerStatePersistence,
+        username: &str,
+        inventory: &PlayerInventory,
+    ) {
+        save_player_slices(
+            persistence,
+            username,
+            &PlayerState::default(),
+            [11.0, 70.0, -2.0],
+            DimensionKind::default(),
+            Some(inventory),
+            None,
+            &SkillSet::default(),
+        )
+        .expect("player slices with inventory should persist");
+    }
+
+    fn only_container_item(inventory: &PlayerInventory) -> &ItemInstance {
+        &inventory.containers[0].items[0].instance
     }
 
     #[test]
@@ -2060,6 +2149,107 @@ mod player_state_tests {
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert_eq!(loaded_lifespan.years_lived, 12.0);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn equipped_weapon_persists_across_player_reload() {
+        let (persistence, data_dir) = sqlite_persistence("equipped-weapon-reload");
+        let inventory = equipped_iron_sword_inventory(0.87);
+
+        persist_player_with_inventory(&persistence, "Azure", &inventory);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_inventory = loaded.inventory.expect("inventory should reload");
+        let main_hand = loaded_inventory
+            .equipped
+            .get(EQUIP_SLOT_MAIN_HAND)
+            .expect("main_hand iron_sword should reload from sqlite");
+        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
+
+        assert_eq!(main_hand.instance_id, 9_001);
+        assert_eq!(main_hand.template_id, "iron_sword");
+        approx_eq(main_hand.durability, 0.87);
+        assert_eq!(
+            snapshot
+                .pointer("/equipped/main_hand/template_id")
+                .and_then(serde_json::Value::as_str),
+            Some("iron_sword")
+        );
+        println!(
+            "weapon_persistence_snapshot equipped={}",
+            serde_json::to_string(&snapshot).expect("snapshot should serialize")
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn unequipped_weapon_persists_empty_main_hand_across_reload() {
+        let (persistence, data_dir) = sqlite_persistence("unequipped-weapon-reload");
+        let mut inventory = equipped_iron_sword_inventory(0.62);
+        move_equipped_item_to_first_container_slot(&mut inventory, 9_001)
+            .expect("equipped sword should move back into the main pack");
+
+        persist_player_with_inventory(&persistence, "Azure", &inventory);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_inventory = loaded.inventory.expect("inventory should reload");
+        let packed_sword = only_container_item(&loaded_inventory);
+        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
+
+        assert!(!loaded_inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        assert_eq!(packed_sword.instance_id, 9_001);
+        assert_eq!(packed_sword.template_id, "iron_sword");
+        approx_eq(packed_sword.durability, 0.62);
+        assert!(snapshot.pointer("/equipped/main_hand").is_none());
+        assert_eq!(
+            snapshot
+                .pointer("/containers/0/items/0/instance/template_id")
+                .and_then(serde_json::Value::as_str),
+            Some("iron_sword")
+        );
+        println!(
+            "weapon_persistence_snapshot unequipped={}",
+            serde_json::to_string(&snapshot).expect("snapshot should serialize")
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn broken_weapon_state_persists_after_inventory_slice_flush() {
+        let (persistence, data_dir) = sqlite_persistence("broken-weapon-reload");
+        let mut inventory = equipped_iron_sword_inventory(1.0);
+        persist_player_with_inventory(&persistence, "Azure", &inventory);
+
+        set_item_instance_durability(&mut inventory, 9_001, 0.0)
+            .expect("weapon durability should update to broken");
+        move_equipped_item_to_first_container_slot(&mut inventory, 9_001)
+            .expect("broken weapon should move back into the main pack");
+        save_player_inventory_slice(&persistence, "Azure", Some(&inventory))
+            .expect("changed inventory slice should persist");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_inventory = loaded.inventory.expect("inventory should reload");
+        let broken_sword = only_container_item(&loaded_inventory);
+        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
+
+        assert!(!loaded_inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        assert_eq!(broken_sword.instance_id, 9_001);
+        assert_eq!(broken_sword.template_id, "iron_sword");
+        approx_eq(broken_sword.durability, 0.0);
+        assert_eq!(
+            snapshot
+                .pointer("/containers/0/items/0/instance/durability")
+                .and_then(serde_json::Value::as_f64),
+            Some(0.0)
+        );
+        println!(
+            "weapon_persistence_snapshot broken={}",
+            serde_json::to_string(&snapshot).expect("snapshot should serialize")
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }
