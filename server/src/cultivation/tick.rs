@@ -9,9 +9,11 @@
 
 use valence::prelude::{bevy_ecs, Position, Query, ResMut, Resource};
 
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{Cultivation, MeridianSystem};
+use super::lifespan::LifespanComponent;
 
 /// 全局 tick 计数器 — 用于标记 last_qi_zero_at 等时间戳。
 #[derive(Debug, Default, Resource)]
@@ -47,10 +49,17 @@ pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) 
 }
 
 /// QiRegenTick + ZoneQiDrainTick 合并实现。零和：玩家 qi 增量 = zone 浓度减量 × coef。
+#[allow(clippy::type_complexity)]
 pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
-    mut players: Query<(&Position, &MeridianSystem, &mut Cultivation)>,
+    mut players: Query<(
+        &Position,
+        Option<&CurrentDimension>,
+        &MeridianSystem,
+        &mut Cultivation,
+        Option<&LifespanComponent>,
+    )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
 
@@ -58,9 +67,12 @@ pub fn qi_regen_and_zone_drain_tick(
         return;
     };
 
-    for (pos, meridians, mut cultivation) in players.iter_mut() {
-        // 通过 pos 找到 zone 的 name（不持可变借用）
-        let Some(zone_name) = zones.find_zone(pos.0).map(|z| z.name.clone()) else {
+    for (pos, current_dim, meridians, mut cultivation, lifespan) in players.iter_mut() {
+        // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
+        // 时按 Overworld 处理（NPC 暂未跨位面）。Player 在 spawn 时一定带
+        // CurrentDimension（apply_spawn_defaults / restore_player_dimension）。
+        let dim = current_dim.map(|c| c.0).unwrap_or(DimensionKind::Overworld);
+        let Some(zone_name) = zones.find_zone(dim, pos.0).map(|z| z.name.clone()) else {
             continue;
         };
         let Some(zone) = zones.find_zone_mut(&zone_name) else {
@@ -90,7 +102,17 @@ pub fn qi_regen_and_zone_drain_tick(
         let effective_max = cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0);
         let qi_room = (effective_max - cultivation.qi_current).max(0.0);
 
-        let (gain, drain) = compute_regen(zone.spirit_qi, rate, avg_integrity, qi_room);
+        let wind_candle_multiplier = if lifespan.is_some_and(LifespanComponent::is_wind_candle) {
+            0.5
+        } else {
+            1.0
+        };
+        let (gain, drain) = compute_regen(
+            zone.spirit_qi,
+            rate * wind_candle_multiplier,
+            avg_integrity,
+            qi_room,
+        );
         if gain <= 0.0 {
             continue;
         }
@@ -107,6 +129,10 @@ pub fn qi_regen_and_zone_drain_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::MeridianId;
+    use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::{App, Update};
 
     #[test]
     fn no_gain_in_dead_zone() {
@@ -160,5 +186,55 @@ mod tests {
         let (g_full, _) = compute_regen(0.5, 1.0, 1.0, 1e9);
         let (g_half, _) = compute_regen(0.5, 1.0, 0.5, 1e9);
         assert!((g_half - g_full * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn wind_candle_halves_qi_regen() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        lifespan.years_lived = 73.0;
+
+        let normal = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians.clone(),
+                Cultivation::default(),
+                LifespanComponent::new(LifespanCapTable::MORTAL),
+            ))
+            .id();
+        let wind_candle = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+                lifespan,
+            ))
+            .id();
+
+        app.update();
+
+        let normal_qi = app
+            .world()
+            .entity(normal)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let wind_candle_qi = app
+            .world()
+            .entity(wind_candle)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+
+        assert!(normal_qi > 0.0);
+        assert!((wind_candle_qi - normal_qi * 0.5).abs() < 1e-6);
     }
 }

@@ -10,7 +10,9 @@ use std::collections::HashMap;
 
 use valence::prelude::Resource;
 
-use super::types::{DecayProfile, DecayProfileId};
+use super::types::{DecayFormula, DecayProfile, DecayProfileId};
+
+const TICKS_PER_REAL_DAY: u64 = 20 * 60 * 60 * 24;
 
 /// DecayProfile 全局注册表。**Bevy Resource** — 通过 ECS world 存取。
 #[derive(Debug, Default, Clone)]
@@ -52,6 +54,73 @@ impl DecayProfileRegistry {
     /// 列出所有已注册 profile ID — 调试 / 工具用。
     pub fn iter_ids(&self) -> impl Iterator<Item = &DecayProfileId> {
         self.profiles.keys()
+    }
+}
+
+/// Production defaults owned by active plans.
+///
+/// plan-mineral-v1 §1.4 / §3: four `ling_shi_*` fuel-layer profiles are
+/// Exponential decay resources, distinct from slow/freezable bone-coin profiles.
+pub fn build_default_registry() -> DecayProfileRegistry {
+    let mut registry = DecayProfileRegistry::new();
+
+    // plan-mineral-v1 §1.4: 四档灵石 Exponential Decay
+    for profile in [
+        ling_shi_profile("ling_shi_fan_v1", 3),
+        ling_shi_profile("ling_shi_zhong_v1", 5),
+        ling_shi_profile("ling_shi_shang_v1", 7),
+        ling_shi_profile("ling_shi_yi_v1", 14),
+    ] {
+        registry
+            .insert(profile)
+            .expect("built-in ling_shi profile should validate");
+    }
+
+    // plan-shelflife-v1 M6: 骨币 Linear Decay（~1y 完全衰减）
+    registry
+        .insert(DecayProfile::Decay {
+            id: DecayProfileId::new("bone_coin_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 100.0 / (TICKS_PER_REAL_DAY as f32 * 365.0),
+            },
+            floor_qi: 0.0,
+        })
+        .expect("built-in bone_coin profile should validate");
+
+    // plan-shelflife-v1 M6: 陈酒 Age PeakAndFall → 过峰迁 Spoil（chen_cu_v1）
+    // chen_cu_v1 作为 Spoil profile 先注册，chen_jiu_v1 引用它
+    registry
+        .insert(DecayProfile::Spoil {
+            id: DecayProfileId::new("chen_cu_v1"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 365 * TICKS_PER_REAL_DAY,
+            },
+            spoil_threshold: 10.0,
+        })
+        .expect("built-in chen_cu profile should validate");
+
+    registry
+        .insert(DecayProfile::Age {
+            id: DecayProfileId::new("chen_jiu_v1"),
+            peak_at_ticks: 365 * TICKS_PER_REAL_DAY, // 1 real-year
+            peak_bonus: 0.5,
+            peak_window_ratio: 0.1,
+            post_peak_half_life_ticks: 365 * TICKS_PER_REAL_DAY,
+            post_peak_spoil_threshold: 30.0,
+            post_peak_spoil_profile: DecayProfileId::new("chen_cu_v1"),
+        })
+        .expect("built-in chen_jiu profile should validate");
+
+    registry
+}
+
+fn ling_shi_profile(id: &'static str, half_life_days: u64) -> DecayProfile {
+    DecayProfile::Decay {
+        id: DecayProfileId::new(id),
+        formula: DecayFormula::Exponential {
+            half_life_ticks: half_life_days * TICKS_PER_REAL_DAY,
+        },
+        floor_qi: 0.0,
     }
 }
 
@@ -148,5 +217,42 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&"ling_shi_fan_v1"));
         assert!(ids.contains(&"chen_jiu_v1"));
+    }
+
+    #[test]
+    fn default_registry_registers_all_ling_shi_profiles() {
+        let r = build_default_registry();
+        for id in [
+            "ling_shi_fan_v1",
+            "ling_shi_zhong_v1",
+            "ling_shi_shang_v1",
+            "ling_shi_yi_v1",
+        ] {
+            assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
+        }
+        // M6 新增 bone_coin_v1 + chen_cu_v1 + chen_jiu_v1
+        assert_eq!(r.len(), 7);
+    }
+
+    #[test]
+    fn ling_shi_half_lives_match_plan_table() {
+        let r = build_default_registry();
+        let cases = [
+            ("ling_shi_fan_v1", 3),
+            ("ling_shi_zhong_v1", 5),
+            ("ling_shi_shang_v1", 7),
+            ("ling_shi_yi_v1", 14),
+        ];
+        for (id, days) in cases {
+            let profile = r.get(&DecayProfileId::new(id)).expect("profile exists");
+            assert!(matches!(
+                profile,
+                DecayProfile::Decay {
+                    formula: DecayFormula::Exponential { half_life_ticks },
+                    floor_qi: 0.0,
+                    ..
+                } if *half_life_ticks == days * TICKS_PER_REAL_DAY
+            ));
+        }
     }
 }

@@ -2,118 +2,128 @@
 import Base from "../../layouts/Base.astro";
 ---
 
-<Base title="亡者博物馆" description="终结角色的生平卷，于此长存。">
-  <section class="museum-shell">
-    <header class="text-center mb-16 ink-reveal">
-      <div class="museum-kicker font-kai">终结归档</div>
+<Base title="亡者博物馆" description="末法残土亡者博物馆 — 终结者入卷，供后来者翻阅">
+  <section class="deceased-page">
+    <a href="/" class="back-link inline-block mb-12 font-kai ink-reveal">← 返回总目</a>
+
+    <header class="deceased-hero ink-reveal">
+      <div class="deceased-kicker">终结后 · 公开生平卷</div>
       <h1 class="lib-title text-5xl mb-5 ink-brush">亡者博物馆</h1>
-      <p class="lib-subtitle font-kai text-base leading-relaxed max-w-2xl mx-auto">
-        生者只带记忆前行，死者把生平留在纸上。此间所录，不授一分修为，只把前路照亮半寸。
+      <p class="lib-subtitle font-kai text-base leading-relaxed">
+        这里不授新人功法，不返还前世资质。只留下终局、死因与不可篡改的生平残页。
       </p>
-      <div class="museum-topbar mt-8">
-        <a href="/" class="back-link font-kai">← 返回总目</a>
-        <div class="museum-stats font-kai">
-          <span>藏卷 <strong id="deceased-count">-</strong> 部</span>
-          <span style="opacity:0.18">·</span>
-          <span id="deceased-last-update">静候新卷</span>
-        </div>
+      <div class="deceased-stats" aria-live="polite">
+        <span>入馆 <strong id="deceased-total" class="ct">0</strong> 人</span>
+        <span style="opacity:0.2">·</span>
+        <span>当前 <strong id="deceased-visible" class="gd">0</strong> 人</span>
       </div>
     </header>
 
-    <div class="museum-status ink-reveal" id="deceased-status">正在翻检卷目……</div>
-    <div class="deceased-grid ink-reveal" id="deceased-grid"></div>
+    <nav class="deceased-filters ink-reveal" aria-label="亡者分类筛选">
+      <button type="button" class="deceased-filter active" data-filter="all">全部</button>
+      <button type="button" class="deceased-filter" data-filter="善终">善终</button>
+      <button type="button" class="deceased-filter" data-filter="横死">横死</button>
+      <button type="button" class="deceased-filter" data-filter="自主归隐">自主归隐</button>
+      <button type="button" class="deceased-filter" data-filter="夺舍者">夺舍者</button>
+    </nav>
+
+    <div id="deceased-state" class="deceased-state font-kai ink-reveal">
+      正在翻检亡者索引……
+    </div>
+    <section id="deceased-list" class="deceased-list" aria-live="polite"></section>
   </section>
 
   <script is:inline>
-    function initDeceasedIndexPage() {
-      var grid = document.getElementById("deceased-grid");
-      var status = document.getElementById("deceased-status");
-      var count = document.getElementById("deceased-count");
-      var lastUpdate = document.getElementById("deceased-last-update");
-      if (!grid || !status || !count || !lastUpdate) return;
+    (function() {
+      var entries = [];
+      var active = "all";
+      var list = document.getElementById("deceased-list");
+      var state = document.getElementById("deceased-state");
+      var total = document.getElementById("deceased-total");
+      var visible = document.getElementById("deceased-visible");
+      var filters = Array.prototype.slice.call(document.querySelectorAll(".deceased-filter"));
 
-      grid.innerHTML = "";
-      status.textContent = "正在翻检卷目……";
-      count.textContent = "-";
-      lastUpdate.textContent = "静候新卷";
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function labelClass(category) {
+        if (category === "善终") return "good-end";
+        if (category === "自主归隐") return "retired";
+        if (category === "夺舍者") return "duoshe";
+        return "violent";
+      }
+
+      function render() {
+        var filtered = active === "all"
+          ? entries
+          : entries.filter(function(entry) { return entry.termination_category === active; });
+        visible.textContent = String(filtered.length);
+        total.textContent = String(entries.length);
+
+        if (entries.length === 0) {
+          state.textContent = "尚无亡者入馆。待 server 终结角色后，会写入 public/deceased/_index.json。";
+          state.hidden = false;
+          list.innerHTML = "";
+          return;
+        }
+        if (filtered.length === 0) {
+          state.textContent = "此分类暂无亡者。";
+          state.hidden = false;
+          list.innerHTML = "";
+          return;
+        }
+
+        state.hidden = true;
+        list.innerHTML = filtered.map(function(entry) {
+          var category = entry.termination_category || "横死";
+          var charId = entry.char_id || "unknown";
+          var path = entry.path || "";
+          var detailHref = path ? "/deceased/view?path=" + encodeURIComponent(path.replace(/^\/+/, "")) : "#";
+          return "<article class=\"deceased-card ink-reveal visible\">" +
+            "<div>" +
+              "<div class=\"deceased-card-id\">" + escapeHtml(charId) + "</div>" +
+              "<h2 class=\"deceased-card-title\">" + escapeHtml(charId.replace(/^offline:/, "")) + "</h2>" +
+              "<p class=\"deceased-card-meta font-kai\">死于第 " + escapeHtml(entry.died_at_tick) + " tick · 公开快照不可篡改</p>" +
+            "</div>" +
+            "<div class=\"deceased-card-side\">" +
+              "<span class=\"deceased-category " + labelClass(category) + "\">" + escapeHtml(category) + "</span>" +
+              "<a class=\"deceased-json-link font-kai\" href=\"" + escapeHtml(detailHref) + "\">查看生平卷</a>" +
+            "</div>" +
+          "</article>";
+        }).join("");
+      }
+
+      filters.forEach(function(button) {
+        button.addEventListener("click", function() {
+          active = button.dataset.filter || "all";
+          filters.forEach(function(item) { item.classList.toggle("active", item === button); });
+          render();
+        });
+      });
 
       fetch("/deceased/_index.json", { cache: "no-store" })
-        .then(function(res) {
-          if (!res.ok) {
-            throw new Error("HTTP " + res.status);
-          }
-          return res.json();
+        .then(function(response) {
+          if (!response.ok) throw new Error("missing deceased index");
+          return response.json();
         })
-        .then(function(entries) {
-          var rows = Array.isArray(entries) ? entries.slice() : [];
-          rows.sort(function(a, b) {
-            return Number(b.died_at_tick || 0) - Number(a.died_at_tick || 0);
+        .then(function(data) {
+          entries = Array.isArray(data) ? data.slice() : [];
+          entries.sort(function(left, right) {
+            return Number(right.died_at_tick || 0) - Number(left.died_at_tick || 0)
+              || String(left.char_id || "").localeCompare(String(right.char_id || ""));
           });
-
-          count.textContent = String(rows.length);
-          if (rows.length > 0) {
-            lastUpdate.textContent = "最近终结 t" + Number(rows[0].died_at_tick || 0);
-          }
-
-          if (rows.length === 0) {
-            status.innerHTML = '<p class="museum-empty-title">馆中尚无亡者卷。</p><p class="museum-empty-note">当角色终结时，server 会把生平快照直写到 <code>/public/deceased/</code>。</p>';
-            return;
-          }
-
-          status.textContent = "共得 " + rows.length + " 部亡者生平卷。";
-          var fragment = document.createDocumentFragment();
-          rows.forEach(function(entry) {
-            var card = document.createElement("a");
-            card.className = "deceased-card";
-            card.href = "/deceased/view?path=" + encodeURIComponent(String(entry.path || ""));
-
-            var display = formatCharId(String(entry.char_id || "无名之人"));
-            var diedAt = Number(entry.died_at_tick || 0);
-            var escapedName = escapeHtml(display.name);
-            var prefixHtml = display.prefix
-              ? '<span class="deceased-prefix">' + escapeHtml(display.prefix) + '</span>'
-              : "";
-
-            card.innerHTML =
-              '<div class="deceased-card-head">' +
-                '<div>' +
-                  '<div class="deceased-name">' + prefixHtml + escapedName + '</div>' +
-                  '<div class="deceased-subtitle">终结于 t' + diedAt + '</div>' +
-                '</div>' +
-                '<div class="deceased-chevron">›</div>' +
-              '</div>' +
-              '<div class="deceased-card-meta">' +
-                '<span class="status-chip">公开卷宗</span>' +
-                '<span class="deceased-mono">' + escapeHtml(String(entry.char_id || "")) + '</span>' +
-              '</div>';
-            fragment.appendChild(card);
-          });
-          grid.appendChild(fragment);
+          render();
         })
-        .catch(function(error) {
-          status.innerHTML = '<p class="museum-empty-title">卷目暂不可读。</p><p class="museum-empty-note">未能读取 <code>/deceased/_index.json</code>：' + escapeHtml(String(error && error.message ? error.message : error)) + '</p>';
+        .catch(function() {
+          entries = [];
+          render();
         });
-    }
-
-    function formatCharId(charId) {
-      var cut = charId.indexOf(":");
-      if (cut === -1) return { prefix: "", name: charId };
-      return {
-        prefix: charId.slice(0, cut + 1),
-        name: charId.slice(cut + 1) || charId,
-      };
-    }
-
-    function escapeHtml(value) {
-      return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/\"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-    }
-
-    initDeceasedIndexPage();
-    document.addEventListener("astro:page-load", initDeceasedIndexPage);
+    })();
   </script>
 </Base>

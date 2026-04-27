@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot",
+    "item_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "quick_slot_bind",
+      "type": "string"
+    },
+    "slot": {
+      "minimum": 0,
+      "maximum": 8,
+      "type": "integer"
+    },
+    "item_id": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "minLength": 1,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

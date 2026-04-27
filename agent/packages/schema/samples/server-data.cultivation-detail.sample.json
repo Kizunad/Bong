@@ -134,5 +134,13 @@
     2,
     2
   ],
-  "contamination_total": 3.75
+  "contamination_total": 3.75,
+  "lifespan": {
+    "years_lived": 42.0,
+    "cap_by_realm": 200,
+    "remaining_years": 158.0,
+    "death_penalty_years": 10,
+    "tick_rate_multiplier": 1.0,
+    "is_wind_candle": false
+  }
 }

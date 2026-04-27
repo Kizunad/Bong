@@ -79,7 +79,7 @@ public class InventorySnapshotHandlerTest {
         assertEquals(57L, snapshot.boneCoins());
         assertEquals(3.5, snapshot.currentWeight(), 0.0001);
         assertEquals(50.0, snapshot.maxWeight(), 0.0001);
-        assertEquals("qi_refining_1", snapshot.realm());
+        assertEquals("Awaken", snapshot.realm());
         assertEquals(24.0, snapshot.qiCurrent(), 0.0001);
         assertEquals(100.0, snapshot.qiMax(), 0.0001);
         assertEquals(0.18, snapshot.bodyLevel(), 0.0001);
@@ -99,7 +99,7 @@ public class InventorySnapshotHandlerTest {
                 "hotbar": [],
                 "bone_coins": 1,
                 "weight": {"current": 0, "max": 50},
-                "realm": "qi_refining_1",
+                "realm": "Awaken",
                 "qi_current": 1,
                 "qi_max": 1,
                 "body_level": 0.1
@@ -168,7 +168,7 @@ public class InventorySnapshotHandlerTest {
               "hotbar": [null, null, null, null, null, null, null, null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
-              "realm": "qi_refining_1",
+              "realm": "Awaken",
               "qi_current": 24,
               "qi_max": 100,
               "body_level": 0.18
@@ -278,7 +278,7 @@ public class InventorySnapshotHandlerTest {
               "hotbar": [null, null, null, null, null, null, null, null, null],
               "bone_coins": 0,
               "weight": {"current": 0.23, "max": 50.0},
-              "realm": "qi_refining_1",
+              "realm": "Awaken",
               "qi_current": 24,
               "qi_max": 100,
               "body_level": 0.18

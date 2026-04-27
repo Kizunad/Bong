@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Query, Res, ResMut,
-    Resource, Username,
+    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Events, Query, Res,
+    ResMut, Resource, Username, With,
 };
 
 use crate::alchemy::{
@@ -21,15 +21,21 @@ use crate::alchemy::{
     PlaceFurnaceRequest, RecipeRegistry,
 };
 use crate::combat::components::{
-    Casting, DefenseStance, DefenseStanceKind, QuickSlotBindings, UnlockedStyles,
+    CastSource, Casting, QuickSlotBindings, SkillBarBindings, SkillSlot,
 };
-use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
+use crate::combat::events::{
+    ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
+    StatusEffectKind,
+};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
+use crate::cultivation::known_techniques::technique_definition;
+use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
+use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::inventory::{
     apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
@@ -47,6 +53,8 @@ use crate::lingtian::events::{
 use crate::lingtian::session::{ReplenishSource, SessionMode};
 use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
 use crate::lingtian::PlotEnvironment;
+use crate::mineral::probe::is_probe_target_in_range;
+use crate::mineral::MineralProbeIntent;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -54,18 +62,25 @@ use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
     current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::dropped_loot_sync_emit::send_dropped_loot_sync_to_client;
+// dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::send_server_data_payload;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
-use crate::player::state::{canonical_player_id, PlayerState};
-use crate::schema::client_request::ClientRequestV1;
+use crate::player::state::{
+    canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
+};
+use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::extract_system::{
+    CancelExtractRequest as CancelExtractRequestEvent,
+    StartExtractRequest as StartExtractRequestEvent,
+};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -75,17 +90,18 @@ pub struct AlchemyMockState {
     pub recipe_index: HashMap<String, i32>,
 }
 
-/// 把 cast / quickslot / 防御姿态相关查询打包，避免 `handle_client_request_payloads`
+/// 把 cast / quickslot 相关查询打包，避免 `handle_client_request_payloads`
 /// 顶部参数 tuple 超出 Bevy 0.14 SystemParam 16-tuple 上限。
 #[derive(SystemParam)]
 pub struct CombatRequestParams<'w, 's> {
     pub casting_q: Query<'w, 's, &'static Casting>,
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
-    pub defense_stance_q: Query<'w, 's, &'static mut DefenseStance>,
-    pub unlocked_q: Query<'w, 's, &'static UnlockedStyles>,
+    pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+    pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
+    pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
 }
 
 #[derive(SystemParam)]
@@ -105,7 +121,7 @@ pub struct LingtianRequestParams<'w, 's> {
     pub harvest_tx: EventWriter<'w, StartHarvestRequest>,
     pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
     pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
-    pub layers: Query<'w, 's, &'static ChunkLayer>,
+    pub layers: Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 }
 
 /// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
@@ -120,11 +136,27 @@ pub struct AlchemyRequestParams<'w, 's> {
 }
 
 #[derive(SystemParam)]
+pub struct ClientRequestDispatchParams<'w> {
+    pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
+    pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
+    pub forge_tx: EventWriter<'w, ForgeRequest>,
+    pub insight_tx: EventWriter<'w, InsightChosen>,
+    pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
+    pub duo_she_tx: Option<ResMut<'w, Events<DuoSheRequestEvent>>>,
+    pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
+    pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
+    pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
+}
+
+#[derive(SystemParam)]
 pub struct SkillScrollRequestParams<'w, 's> {
-    pub skill_xp_tx: EventWriter<'w, SkillXpGain>,
-    pub skill_scroll_used_tx: EventWriter<'w, SkillScrollUsed>,
+    pub skill_xp_tx: Option<ResMut<'w, Events<SkillXpGain>>>,
+    pub skill_scroll_used_tx: Option<ResMut<'w, Events<SkillScrollUsed>>>,
+    pub mineral_probe_tx: Option<ResMut<'w, Events<MineralProbeIntent>>>,
     pub skill_sets: Query<'w, 's, &'static mut SkillSet>,
     pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
 }
 
 const CHANNEL: &str = "bong:client_request";
@@ -136,14 +168,11 @@ const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
-    mut gameplay_queue: Option<valence::prelude::ResMut<GameplayActionQueue>>,
-    mut breakthrough_tx: EventWriter<BreakthroughRequest>,
-    mut forge_tx: EventWriter<ForgeRequest>,
-    mut insight_tx: EventWriter<InsightChosen>,
-    mut defense_tx: EventWriter<DefenseIntent>,
+    mut dispatch: ClientRequestDispatchParams,
     combat_clock: Res<CombatClock>,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
+    persistence: Option<Res<PlayerStatePersistence>>,
     mut alchemy_params: AlchemyRequestParams,
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
@@ -205,17 +234,34 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
+            | ClientRequestV1::DuoSheRequest { v, .. }
+            | ClientRequestV1::UseLifeCore { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
-            | ClientRequestV1::SwitchDefenseStance { v, .. }
+            | ClientRequestV1::SkillBarCast { v, .. }
+            | ClientRequestV1::SkillBarBind { v, .. }
+            | ClientRequestV1::CombatReincarnate { v }
+            | ClientRequestV1::CombatTerminate { v }
+            | ClientRequestV1::CombatCreateNewCharacter { v }
+            | ClientRequestV1::StartExtractRequest { v, .. }
+            | ClientRequestV1::CancelExtractRequest { v }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
             | ClientRequestV1::LingtianStartHarvest { v, .. }
             | ClientRequestV1::LingtianStartReplenish { v, .. }
-            | ClientRequestV1::LingtianStartDrainQi { v, .. } => *v,
+            | ClientRequestV1::LingtianStartDrainQi { v, .. }
+            | ClientRequestV1::ForgeStartSession { v, .. }
+            | ClientRequestV1::ForgeTemperingHit { v, .. }
+            | ClientRequestV1::ForgeInscriptionScroll { v, .. }
+            | ClientRequestV1::ForgeConsecrationInject { v, .. }
+            | ClientRequestV1::ForgeStepAdvance { v, .. }
+            | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
+            | ClientRequestV1::ForgeLearnBlueprint { v, .. }
+            | ClientRequestV1::ForgeStationPlace { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -242,7 +288,7 @@ pub fn handle_client_request_payloads(
                 // material_bonus 的实际来源是玩家身上 StatusEffects 里的
                 // BreakthroughBoost buff（由 AlchemyTakePill 吃丹挂上），
                 // 在 breakthrough_system 内聚合消费。client 请求本身不传额外 bonus。
-                breakthrough_tx.send(BreakthroughRequest {
+                dispatch.breakthrough_tx.send(BreakthroughRequest {
                     entity: ev.client,
                     material_bonus: 0.0,
                 });
@@ -258,7 +304,7 @@ pub fn handle_client_request_payloads(
                     trigger_id,
                     choice_idx
                 );
-                insight_tx.send(InsightChosen {
+                dispatch.insight_tx.send(InsightChosen {
                     entity: ev.client,
                     trigger_id,
                     choice_idx: choice_idx.map(|n| n as usize),
@@ -271,7 +317,7 @@ pub fn handle_client_request_payloads(
                     meridian,
                     axis
                 );
-                forge_tx.send(ForgeRequest {
+                dispatch.forge_tx.send(ForgeRequest {
                     entity: ev.client,
                     meridian,
                     axis,
@@ -280,7 +326,7 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::BotanyHarvestRequest {
                 session_id, mode, ..
             } => {
-                let Some(queue) = gameplay_queue.as_deref_mut() else {
+                let Some(queue) = dispatch.gameplay_queue.as_deref_mut() else {
                     tracing::warn!(
                         "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
                     );
@@ -336,7 +382,7 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::AlchemyOpenFurnace { furnace_id, .. } => {
                 // 当前 MVP:每玩家一个虚拟炉,furnace_id 仅作日志记录;触发一次完整 snapshot 重推。
                 if let Ok((username, mut client)) = clients.get_mut(ev.client) {
-                    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+                    let player_id = canonical_player_id(username.0.as_str());
                     if let Ok(learned) = alchemy_params.learned.get(ev.client) {
                         alchemy_snapshot_emit::send_recipe_book_from_learned(
                             &mut client,
@@ -357,7 +403,9 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut combat_params,
+                    &mut dispatch.lifespan_extension_tx,
                 );
             }
             ClientRequestV1::AlchemyFurnacePlace {
@@ -412,6 +460,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                 );
             }
             ClientRequestV1::InventoryDiscardItem {
@@ -425,6 +474,7 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
             }
@@ -439,6 +489,7 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
             }
@@ -455,6 +506,7 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                 );
             }
             ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
@@ -465,8 +517,44 @@ pub fn handle_client_request_payloads(
                     &mut dropped_loot_params.registry,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
+            }
+            ClientRequestV1::MineralProbe { x, y, z, .. } => {
+                let position = valence::prelude::BlockPos::new(x, y, z);
+                let Ok(player_position) = skill_scroll_params.positions.get(ev.client) else {
+                    tracing::warn!(
+                        "[bong][network] client_request mineral_probe rejected: entity={:?} has no Position",
+                        ev.client
+                    );
+                    continue;
+                };
+                let player_pos = player_position.get();
+                if !is_probe_target_in_range(player_pos, position) {
+                    tracing::warn!(
+                        "[bong][network] client_request mineral_probe rejected: entity={:?} pos=[{x},{y},{z}] out of range",
+                        ev.client
+                    );
+                    continue;
+                }
+                let dimension = skill_scroll_params
+                    .dimensions
+                    .get(ev.client)
+                    .map(|current| current.0)
+                    .unwrap_or(DimensionKind::Overworld);
+                tracing::info!(
+                    "[bong][network] client_request mineral_probe entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                if let Some(mineral_probe_tx) = skill_scroll_params.mineral_probe_tx.as_deref_mut()
+                {
+                    mineral_probe_tx.send(MineralProbeIntent {
+                        player: ev.client,
+                        dimension,
+                        position,
+                    });
+                }
             }
             ClientRequestV1::ApplyPill {
                 instance_id,
@@ -481,8 +569,26 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut combat_params,
+                    &mut dispatch.lifespan_extension_tx,
                 );
+            }
+            ClientRequestV1::DuoSheRequest { target_id, .. } => {
+                if let Some(duo_she_tx) = dispatch.duo_she_tx.as_deref_mut() {
+                    duo_she_tx.send(DuoSheRequestEvent {
+                        host: ev.client,
+                        target_id,
+                    });
+                }
+            }
+            ClientRequestV1::UseLifeCore { instance_id, .. } => {
+                if let Some(life_core_tx) = dispatch.life_core_tx.as_deref_mut() {
+                    life_core_tx.send(UseLifeCoreEvent {
+                        entity: ev.client,
+                        instance_id,
+                    });
+                }
             }
             ClientRequestV1::Jiemai { .. } => {
                 tracing::info!(
@@ -490,10 +596,12 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     combat_clock.tick
                 );
-                defense_tx.send(DefenseIntent {
-                    defender: ev.client,
-                    issued_at_tick: combat_clock.tick,
-                });
+                if let Some(defense_tx) = dispatch.defense_tx.as_deref_mut() {
+                    defense_tx.send(DefenseIntent {
+                        defender: ev.client,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
             }
             ClientRequestV1::UseQuickSlot { slot, .. } => {
                 handle_use_quick_slot(
@@ -513,15 +621,89 @@ pub fn handle_client_request_payloads(
                     item_id,
                     &mut combat_params.bindings_q,
                     &inventories,
+                    &clients,
+                    persistence.as_deref(),
                 );
             }
-            ClientRequestV1::SwitchDefenseStance { stance, .. } => {
-                handle_switch_defense_stance(
+            ClientRequestV1::SkillBarCast { slot, target, .. } => {
+                handle_skill_bar_cast(
                     ev.client,
-                    &stance,
-                    &mut combat_params.defense_stance_q,
-                    &combat_params.unlocked_q,
+                    slot,
+                    target,
+                    &combat_clock,
+                    &mut commands,
+                    &mut clients,
+                    &mut combat_params,
                 );
+            }
+            ClientRequestV1::SkillBarBind { slot, binding, .. } => {
+                handle_skill_bar_bind(
+                    ev.client,
+                    slot,
+                    binding,
+                    &mut combat_params.skillbar_bindings_q,
+                    &inventories,
+                    &clients,
+                    persistence.as_deref(),
+                );
+            }
+            ClientRequestV1::CombatReincarnate { .. } => {
+                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
+                    revival_tx.send(RevivalActionIntent {
+                        entity: ev.client,
+                        action: RevivalActionKind::Reincarnate,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::CombatTerminate { .. } => {
+                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
+                    revival_tx.send(RevivalActionIntent {
+                        entity: ev.client,
+                        action: RevivalActionKind::Terminate,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::CombatCreateNewCharacter { .. } => {
+                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
+                    revival_tx.send(RevivalActionIntent {
+                        entity: ev.client,
+                        action: RevivalActionKind::CreateNewCharacter,
+                        issued_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::StartExtractRequest {
+                portal_entity_id, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request start_extract entity={:?} portal_bits={portal_entity_id}",
+                    ev.client
+                );
+                let Some(start_extract_tx) = combat_params.start_extract_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped start_extract because StartExtractRequest event resource is missing"
+                    );
+                    continue;
+                };
+                start_extract_tx.send(StartExtractRequestEvent {
+                    player: ev.client,
+                    portal: Entity::from_bits(portal_entity_id),
+                });
+            }
+            ClientRequestV1::CancelExtractRequest { .. } => {
+                tracing::info!(
+                    "[bong][network] client_request cancel_extract entity={:?}",
+                    ev.client
+                );
+                let Some(cancel_extract_tx) = combat_params.cancel_extract_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped cancel_extract because CancelExtractRequest event resource is missing"
+                    );
+                    continue;
+                };
+                cancel_extract_tx.send(CancelExtractRequestEvent { player: ev.client });
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
@@ -634,6 +816,19 @@ pub fn handle_client_request_payloads(
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
             }
+            // ─── 炼器（武器）（plan-forge-v1 §1.2-§1.4）── wait for wiring ───
+            ClientRequestV1::ForgeStartSession { .. }
+            | ClientRequestV1::ForgeTemperingHit { .. }
+            | ClientRequestV1::ForgeInscriptionScroll { .. }
+            | ClientRequestV1::ForgeConsecrationInject { .. }
+            | ClientRequestV1::ForgeStepAdvance { .. }
+            | ClientRequestV1::ForgeBlueprintTurnPage { .. }
+            | ClientRequestV1::ForgeLearnBlueprint { .. }
+            | ClientRequestV1::ForgeStationPlace { .. } => {
+                tracing::debug!(
+                    "[bong][forge][network] plan-forge-v1 client_request not yet wired"
+                );
+            }
         }
     }
 }
@@ -671,21 +866,23 @@ fn handle_learn_skill_scroll(
     };
 
     if is_duplicate {
-        skill_scroll_params
-            .skill_scroll_used_tx
-            .send(SkillScrollUsed {
+        if let Some(skill_scroll_used_tx) = skill_scroll_params.skill_scroll_used_tx.as_deref_mut()
+        {
+            skill_scroll_used_tx.send(SkillScrollUsed {
                 char_entity: entity,
                 scroll_id,
                 skill,
                 xp_granted: 0,
                 was_duplicate: true,
             });
+        }
         if let Ok(inventory) = inventories.get(entity) {
             resync_snapshot(
                 entity,
                 inventory,
                 clients,
                 player_states,
+                &skill_scroll_params.cultivations,
                 "skill_scroll_duplicate",
             );
         }
@@ -722,26 +919,31 @@ fn handle_learn_skill_scroll(
         return;
     }
 
-    skill_scroll_params.skill_xp_tx.send(SkillXpGain {
-        char_entity: entity,
-        skill,
-        amount: xp_grant,
-        source: XpGainSource::Scroll {
-            scroll_id: scroll_id.clone(),
-            xp_grant,
-        },
-    });
-    skill_scroll_params
-        .skill_scroll_used_tx
-        .send(SkillScrollUsed {
+    if let Some(skill_xp_tx) = skill_scroll_params.skill_xp_tx.as_deref_mut() {
+        skill_xp_tx.send(SkillXpGain {
+            char_entity: entity,
+            skill,
+            amount: xp_grant,
+            source: XpGainSource::Scroll {
+                scroll_id: scroll_id.clone(),
+                xp_grant,
+            },
+        });
+    }
+    if let Some(skill_scroll_used_tx) = skill_scroll_params.skill_scroll_used_tx.as_deref_mut() {
+        skill_scroll_used_tx.send(SkillScrollUsed {
             char_entity: entity,
             scroll_id,
             skill,
             xp_granted: xp_grant,
             was_duplicate: false,
         });
+    }
 
     let Ok(player_state) = player_states.get(entity) else {
+        return;
+    };
+    let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
         return;
     };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
@@ -752,13 +954,11 @@ fn handle_learn_skill_scroll(
                 username.0.as_str(),
                 inventory,
                 player_state,
+                cultivation,
                 "skill_scroll_consumed",
             );
         }
         if let Ok(skill_set) = skill_scroll_params.skill_sets.get(entity) {
-            let Ok(cultivation) = skill_scroll_params.cultivations.get(entity) else {
-                return;
-            };
             send_skill_snapshot_to_client(
                 entity,
                 &mut client,
@@ -783,12 +983,14 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::combat::components::UnlockedStyles;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
     use crate::skill::components::SkillSet;
-    use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
+    use valence::prelude::{
+        ident, App, DVec3, EventReader, IntoSystemConfigs, Position, ResMut, Update,
+    };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -806,6 +1008,11 @@ mod tests {
     struct CapturedInsightChoices(Vec<InsightChosen>);
 
     impl valence::prelude::Resource for CapturedInsightChoices {}
+
+    #[derive(Default)]
+    struct CapturedMineralProbes(Vec<MineralProbeIntent>);
+
+    impl valence::prelude::Resource for CapturedMineralProbes {}
 
     fn capture_breakthrough_requests(
         mut events: EventReader<BreakthroughRequest>,
@@ -828,6 +1035,13 @@ mod tests {
         captured.0.extend(events.read().cloned());
     }
 
+    fn capture_mineral_probes(
+        mut events: EventReader<MineralProbeIntent>,
+        mut captured: ResMut<CapturedMineralProbes>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
     fn skill_scroll_item(instance_id: u64, template_id: &str) -> ItemInstance {
         ItemInstance {
             instance_id,
@@ -842,6 +1056,8 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -858,6 +1074,23 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -894,6 +1127,35 @@ mod tests {
         false
     }
 
+    fn register_request_app(app: &mut App) {
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(Update, handle_client_request_payloads);
+    }
+
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
@@ -911,6 +1173,7 @@ mod tests {
         app.add_event::<ForgeRequest>();
         app.add_event::<InsightChosen>();
         app.add_event::<DefenseIntent>();
+        app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<StartTillRequest>();
@@ -919,6 +1182,9 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(
@@ -971,6 +1237,176 @@ mod tests {
     }
 
     #[test]
+    fn mineral_probe_request_emits_probe_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedMineralProbes::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_mineral_probes).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position(DVec3::new(8.5, 32.0, 8.5)));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedMineralProbes>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(
+            captured.0[0].position,
+            valence::prelude::BlockPos::new(8, 32, 8)
+        );
+        assert_eq!(captured.0[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn mineral_probe_request_out_of_range_is_rejected() {
+        let mut app = App::new();
+        app.insert_resource(CapturedMineralProbes::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_mineral_probes).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position(DVec3::ZERO));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"mineral_probe","v":1,"x":128,"y":64,"z":128}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedMineralProbes>();
+        assert!(captured.0.is_empty());
+    }
+
+    #[test]
+    fn mineral_probe_request_uses_player_dimension() {
+        let mut app = App::new();
+        app.insert_resource(CapturedMineralProbes::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_mineral_probes).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position(DVec3::new(8.5, 32.0, 8.5)),
+            CurrentDimension(DimensionKind::Tsy),
+        ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedMineralProbes>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
@@ -992,6 +1428,9 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(Update, handle_client_request_payloads);
@@ -1009,7 +1448,6 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
-                DefenseStance::default(),
                 UnlockedStyles::default(),
             ))
             .id();
@@ -1072,6 +1510,9 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(Update, handle_client_request_payloads);
@@ -1093,7 +1534,6 @@ mod tests {
                 Cultivation::default(),
                 PlayerState::default(),
                 QuickSlotBindings::default(),
-                DefenseStance::default(),
                 UnlockedStyles::default(),
             ))
             .id();
@@ -1131,6 +1571,131 @@ mod tests {
         assert!(used_events[0].was_duplicate);
         assert_eq!(used_events[0].xp_granted, 0);
     }
+
+    #[test]
+    fn skill_bar_bind_skill_then_cast_starts_skillbar_cast() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"npc:1"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(
+            &bindings.slots[0],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        let casting = app.world().get::<Casting>(entity).unwrap();
+        assert_eq!(casting.source, CastSource::SkillBar);
+        assert_eq!(casting.slot, 0);
+        assert_eq!(casting.bound_instance_id, None);
+        assert_eq!(casting.duration_ticks, 8);
+        assert_eq!(casting.complete_cooldown_ticks, 60);
+    }
+
+    #[test]
+    fn skill_bar_cast_empty_item_or_cooldown_does_not_start_cast() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(1, SkillSlot::Item { instance_id: 7 }));
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        skill_bar.set_cooldown(2, 100);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        for slot in [0_u8, 1, 2] {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                        v: 1,
+                        slot,
+                        target: None,
+                    })
+                    .unwrap()
+                    .into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+    }
+
+    #[test]
+    fn skill_bar_bind_rejects_unknown_skill() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                empty_inventory(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"unknown.skill"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+    }
 }
 
 fn parse_session_mode(raw: &str) -> SessionMode {
@@ -1150,55 +1715,6 @@ fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
     }
 }
 
-fn handle_switch_defense_stance(
-    entity: valence::prelude::Entity,
-    stance_str: &str,
-    defense_stance_q: &mut Query<&mut DefenseStance>,
-    unlocked_q: &Query<&UnlockedStyles>,
-) {
-    let new_stance = match stance_str.to_ascii_uppercase().as_str() {
-        "NONE" => DefenseStanceKind::None,
-        "JIEMAI" => DefenseStanceKind::Jiemai,
-        "TISHI" => DefenseStanceKind::Tishi,
-        "JUELING" => DefenseStanceKind::Jueling,
-        other => {
-            tracing::warn!(
-                "[bong][network] switch_defense_stance entity={entity:?} ignored: unknown stance '{other}'"
-            );
-            return;
-        }
-    };
-    let unlocked = unlocked_q.get(entity).copied().unwrap_or(UnlockedStyles {
-        jiemai: false,
-        tishi: false,
-        jueling: false,
-    });
-    let allowed = match new_stance {
-        DefenseStanceKind::None => true,
-        DefenseStanceKind::Jiemai => unlocked.jiemai,
-        DefenseStanceKind::Tishi => unlocked.tishi,
-        DefenseStanceKind::Jueling => unlocked.jueling,
-    };
-    if !allowed {
-        tracing::debug!(
-            "[bong][network] switch_defense_stance entity={entity:?} ignored: stance {new_stance:?} not unlocked"
-        );
-        return;
-    }
-    let Ok(mut stance) = defense_stance_q.get_mut(entity) else {
-        tracing::warn!(
-            "[bong][network] switch_defense_stance entity={entity:?} has no DefenseStance Component"
-        );
-        return;
-    };
-    if stance.stance == new_stance {
-        // Bevy 不会触发 Changed，但也不报错；client 已经知道状态。
-        return;
-    }
-    stance.stance = new_stance;
-    tracing::info!("[bong][network] switch_defense_stance entity={entity:?} -> {new_stance:?}");
-}
-
 fn handle_use_quick_slot(
     entity: valence::prelude::Entity,
     slot: u8,
@@ -1214,42 +1730,16 @@ fn handle_use_quick_slot(
         );
         return;
     }
-    // plan §4.2: 已 cast 时——同 slot 静默忽略；不同 slot 视为 UserCancel + 启新 cast。
+    // plan §4.2: 已 cast 时——同来源同 slot 静默忽略；否则 UserCancel + 启新 cast。
     if let Ok(prev) = combat_params.casting_q.get(entity) {
-        if prev.slot == slot {
+        if prev.source == CastSource::QuickSlot && prev.slot == slot {
             tracing::debug!(
                 "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
             );
             return;
         }
-        // 不同 slot → 取消旧 cast。
-        let prev_slot = prev.slot;
-        let prev_duration_ms = prev.duration_ms;
-        let prev_started_at_ms = prev.started_at_ms;
-        commands.entity(entity).remove::<Casting>();
-        if let Ok(mut bindings) = combat_params.bindings_q.get_mut(entity) {
-            bindings.set_cooldown(
-                prev_slot,
-                clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
-            );
-        }
-        if let Ok((username, mut client)) = clients.get_mut(entity) {
-            push_cast_sync(
-                &mut client,
-                CastSyncV1 {
-                    phase: CastPhaseV1::Interrupt,
-                    slot: prev_slot,
-                    duration_ms: prev_duration_ms,
-                    started_at_ms: prev_started_at_ms,
-                    outcome: CastOutcomeV1::UserCancel,
-                },
-                username.0.as_str(),
-                entity,
-            );
-        }
-        tracing::info!(
-            "[bong][network][cast] user_cancel entity={entity:?} prev_slot={prev_slot} → switching to slot={slot}"
-        );
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
         // 继续到下面启动新 cast。
     }
     let (bound_instance_id, on_cooldown) = combat_params
@@ -1312,6 +1802,7 @@ fn handle_use_quick_slot(
         .map(|p| p.get())
         .unwrap_or(valence::prelude::DVec3::ZERO);
     commands.entity(entity).insert(Casting {
+        source: CastSource::QuickSlot,
         slot,
         started_at_tick: clock.tick,
         duration_ticks,
@@ -1369,6 +1860,8 @@ fn handle_quick_slot_bind(
     item_id: Option<String>,
     bindings_q: &mut Query<&mut QuickSlotBindings>,
     inventories: &Query<&mut PlayerInventory>,
+    clients: &Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
 ) {
     let mut bindings = match bindings_q.get_mut(entity) {
         Ok(b) => b,
@@ -1382,8 +1875,9 @@ fn handle_quick_slot_bind(
     // 把 item_id (template) 解析成实际持有的第一个 instance_id。
     // None / "" → 清空。Plan §10.4 wire 是 ItemId（template id），server 自己
     // 在 player inventory 里查匹配的 instance。
-    let instance_id = match item_id.as_deref() {
-        None | Some("") => None,
+    let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let instance_id = match persisted_item_id {
+        None => None,
         Some(template) => inventories.get(entity).ok().and_then(|inv| {
             for c in &inv.containers {
                 if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
@@ -1403,11 +1897,298 @@ fn handle_quick_slot_bind(
         );
         return;
     }
+    let persisted_item_id = persisted_item_id.map(str::to_string);
+    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
+        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+            prefs.quick_slots[slot as usize] = persisted_item_id.clone()
+        }) {
+            tracing::warn!(
+                "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
+                username.0
+            );
+        }
+    }
     tracing::info!(
         "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?}",
         item_id,
         instance_id
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_skill_bar_cast(
+    entity: valence::prelude::Entity,
+    slot: u8,
+    target: Option<String>,
+    clock: &CombatClock,
+    commands: &mut Commands,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &mut CombatRequestParams,
+) {
+    if slot >= SkillBarBindings::SLOT_COUNT as u8 {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} ignored: slot {slot} out of range"
+        );
+        return;
+    }
+    let bound_skill_id = combat_params
+        .skillbar_bindings_q
+        .get(entity)
+        .ok()
+        .and_then(|bindings| match bindings.get(slot) {
+            Some(SkillSlot::Skill { skill_id }) => Some(skill_id.clone()),
+            Some(SkillSlot::Item { .. }) | Some(SkillSlot::Empty) | None => None,
+        });
+    let Some(skill_id) = bound_skill_id else {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: empty or item binding"
+        );
+        return;
+    };
+    let Some(definition) = technique_definition(&skill_id) else {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: unknown skill `{skill_id}`"
+        );
+        return;
+    };
+    if combat_params
+        .skillbar_bindings_q
+        .get(entity)
+        .map(|bindings| bindings.is_on_cooldown(slot, clock.tick))
+        .unwrap_or(false)
+    {
+        tracing::debug!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} ignored: on cooldown"
+        );
+        return;
+    }
+
+    if let Ok(prev) = combat_params.casting_q.get(entity) {
+        if prev.source == CastSource::SkillBar && prev.slot == slot {
+            tracing::debug!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} ignored: same-slot during cast"
+            );
+            return;
+        }
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
+    }
+
+    let duration_ticks = u64::from(definition.cast_ticks).max(1);
+    let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
+    let duration_ms = definition.cast_ticks.saturating_mul(50);
+    let started_at_ms = current_unix_millis();
+    let start_position = combat_params
+        .positions
+        .get(entity)
+        .map(|position| position.get())
+        .unwrap_or(valence::prelude::DVec3::ZERO);
+    commands.entity(entity).insert(Casting {
+        source: CastSource::SkillBar,
+        slot,
+        started_at_tick: clock.tick,
+        duration_ticks,
+        started_at_ms,
+        duration_ms,
+        bound_instance_id: None,
+        start_position,
+        complete_cooldown_ticks,
+    });
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        push_cast_sync(
+            &mut client,
+            CastSyncV1 {
+                phase: CastPhaseV1::Casting,
+                slot,
+                duration_ms,
+                started_at_ms,
+                outcome: CastOutcomeV1::None,
+            },
+            username.0.as_str(),
+            entity,
+        );
+    }
+    tracing::info!(
+        "[bong][network] skill cast started entity={entity:?} slot={slot} skill={skill_id} target={target:?} duration_ticks={} cooldown_ticks={} tick={}",
+        definition.cast_ticks,
+        definition.cooldown_ticks,
+        clock.tick
+    );
+}
+
+fn cancel_previous_cast(
+    entity: valence::prelude::Entity,
+    prev: CastCancelSnapshot,
+    clock: &CombatClock,
+    commands: &mut Commands,
+    clients: &mut Query<(&Username, &mut Client)>,
+    combat_params: &mut CombatRequestParams,
+    next_slot: u8,
+) {
+    let prev_source = prev.source;
+    let prev_slot = prev.slot;
+    commands.entity(entity).remove::<Casting>();
+    match prev_source {
+        CastSource::QuickSlot => {
+            if let Ok(mut bindings) = combat_params.bindings_q.get_mut(entity) {
+                bindings.set_cooldown(
+                    prev_slot,
+                    clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+                );
+            }
+        }
+        CastSource::SkillBar => {
+            if let Ok(mut bindings) = combat_params.skillbar_bindings_q.get_mut(entity) {
+                bindings.set_cooldown(
+                    prev_slot,
+                    clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+                );
+            }
+        }
+    }
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        push_cast_sync(
+            &mut client,
+            CastSyncV1 {
+                phase: CastPhaseV1::Interrupt,
+                slot: prev_slot,
+                duration_ms: prev.duration_ms,
+                started_at_ms: prev.started_at_ms,
+                outcome: CastOutcomeV1::UserCancel,
+            },
+            username.0.as_str(),
+            entity,
+        );
+    }
+    tracing::info!(
+        "[bong][network][cast] user_cancel entity={entity:?} prev_source={prev_source:?} prev_slot={prev_slot} → switching to slot={next_slot}"
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CastCancelSnapshot {
+    source: CastSource,
+    slot: u8,
+    duration_ms: u32,
+    started_at_ms: u64,
+}
+
+impl From<&Casting> for CastCancelSnapshot {
+    fn from(casting: &Casting) -> Self {
+        Self {
+            source: casting.source,
+            slot: casting.slot,
+            duration_ms: casting.duration_ms,
+            started_at_ms: casting.started_at_ms,
+        }
+    }
+}
+
+fn handle_skill_bar_bind(
+    entity: valence::prelude::Entity,
+    slot: u8,
+    binding: Option<SkillBarBindingV1>,
+    bindings_q: &mut Query<&mut SkillBarBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
+) {
+    if slot >= SkillBarBindings::SLOT_COUNT as u8 {
+        tracing::warn!("[bong][network] skill_bar_bind entity={entity:?} slot={slot} out of range");
+        return;
+    }
+    let slot_value = match binding.as_ref() {
+        None => SkillSlot::Empty,
+        Some(SkillBarBindingV1::Item { template_id }) => {
+            let instance_id = inventories
+                .get(entity)
+                .ok()
+                .and_then(|inventory| first_instance_for_template(inventory, template_id));
+            let Some(instance_id) = instance_id else {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: item template `{template_id}` not in inventory"
+                );
+                return;
+            };
+            SkillSlot::Item { instance_id }
+        }
+        Some(SkillBarBindingV1::Skill { skill_id }) => {
+            if technique_definition(skill_id).is_none() {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            }
+            SkillSlot::Skill {
+                skill_id: skill_id.clone(),
+            }
+        }
+    };
+    let mut bindings = match bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] skill_bar_bind entity={entity:?} has no SkillBarBindings"
+            );
+            return;
+        }
+    };
+    if !bindings.set(slot, slot_value.clone()) {
+        tracing::warn!("[bong][network] skill_bar_bind entity={entity:?} slot={slot} out of range");
+        return;
+    }
+    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
+        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+            prefs.skill_bar[slot as usize] = binding_to_persist(binding.clone())
+        }) {
+            tracing::warn!(
+                "[bong][network] failed to persist skill_bar_bind for `{}` slot={slot}: {error}",
+                username.0
+            );
+        }
+    }
+    tracing::info!(
+        "[bong][network] skill_bar_bind entity={entity:?} slot={slot} binding={binding:?} → {slot_value:?}"
+    );
+}
+
+fn binding_to_persist(
+    binding: Option<SkillBarBindingV1>,
+) -> crate::player::state::SkillSlotPersist {
+    match binding {
+        None => crate::player::state::SkillSlotPersist::Empty,
+        Some(SkillBarBindingV1::Item { template_id }) => {
+            crate::player::state::SkillSlotPersist::Item { template_id }
+        }
+        Some(SkillBarBindingV1::Skill { skill_id }) => {
+            crate::player::state::SkillSlotPersist::Skill { skill_id }
+        }
+    }
+}
+
+fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -> Option<u64> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == template_id)
+        {
+            return Some(placed.instance.instance_id);
+        }
+    }
+    if let Some(item) = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+    {
+        return Some(item.instance_id);
+    }
+    inventory
+        .equipped
+        .values()
+        .find(|item| item.template_id == template_id)
+        .map(|item| item.instance_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1420,6 +2201,7 @@ fn handle_inventory_move(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
 ) {
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
@@ -1450,7 +2232,14 @@ fn handle_inventory_move(
             // Two ordered Moved events would have an intermediate inconsistent
             // state on the client (the first event would clobber the second
             // item). Push a fresh snapshot instead — correct, idempotent.
-            resync_snapshot(entity, &inventory, clients, player_states, "swap");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "swap",
+            );
         }
         Err(reason) => {
             tracing::warn!(
@@ -1458,7 +2247,14 @@ fn handle_inventory_move(
             );
             // Client did optimistic update but server didn't move. Resync to
             // overwrite the diverged client state with authoritative truth.
-            resync_snapshot(entity, &inventory, clients, player_states, "rejection");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "rejection",
+            );
         }
     }
 }
@@ -1505,6 +2301,7 @@ fn resync_snapshot(
     inventory: &PlayerInventory,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     reason: &str,
 ) {
     let player_state = match player_states.get(entity) {
@@ -1516,6 +2313,15 @@ fn resync_snapshot(
             return;
         }
     };
+    let cultivation = match cultivations.get(entity) {
+        Ok(cultivation) => cultivation,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
+            );
+            return;
+        }
+    };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         send_inventory_snapshot_to_client(
             entity,
@@ -1523,6 +2329,7 @@ fn resync_snapshot(
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             reason,
         );
     }
@@ -1547,6 +2354,7 @@ fn handle_inventory_discard(
     dropped_loot_registry: &mut DroppedLootRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
 ) {
     let player_pos = client_position(positions, entity);
@@ -1563,7 +2371,6 @@ fn handle_inventory_discard(
     match discard_inventory_item_to_dropped_loot(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
         &from,
@@ -1573,10 +2380,15 @@ fn handle_inventory_discard(
                 "[bong][network][inventory] discarded instance={instance_id} from {from:?} revision={}",
                 outcome.revision.0
             );
-            resync_snapshot(entity, &inventory, clients, player_states, "discard_item");
-            if let Ok((_username, mut client)) = clients.get_mut(entity) {
-                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
-            }
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "discard_item",
+            );
+            // Dropped loot sync is broadcast by dropped_loot_sync_emit.
         }
         Err(reason) => {
             tracing::warn!(
@@ -1587,12 +2399,14 @@ fn handle_inventory_discard(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "discard_rejection",
             );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_pickup_dropped_item(
     entity: Entity,
     instance_id: u64,
@@ -1600,6 +2414,7 @@ fn handle_pickup_dropped_item(
     dropped_loot_registry: &mut DroppedLootRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
 ) {
     let player_pos = client_position(positions, entity);
@@ -1616,7 +2431,6 @@ fn handle_pickup_dropped_item(
     match pickup_dropped_loot_instance(
         &mut inventory,
         dropped_loot_registry,
-        entity,
         player_pos,
         instance_id,
     ) {
@@ -1630,11 +2444,10 @@ fn handle_pickup_dropped_item(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "pickup_dropped_item",
             );
-            if let Ok((_username, mut client)) = clients.get_mut(entity) {
-                send_dropped_loot_sync_to_client(entity, &mut client, dropped_loot_registry);
-            }
+            // Dropped loot sync is broadcast by dropped_loot_sync_emit.
         }
         Err(reason) => {
             tracing::warn!(
@@ -1645,12 +2458,14 @@ fn handle_pickup_dropped_item(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "pickup_rejection",
             );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_repair_weapon(
     entity: Entity,
     instance_id: u64,
@@ -1659,6 +2474,7 @@ fn handle_repair_weapon(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
 ) {
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
@@ -1680,7 +2496,14 @@ fn handle_repair_weapon(
                 station_pos[1],
                 station_pos[2]
             );
-            resync_snapshot(entity, &inventory, clients, player_states, "repair_weapon");
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "repair_weapon",
+            );
         }
         Err(reason) => {
             tracing::warn!(
@@ -1691,6 +2514,7 @@ fn handle_repair_weapon(
                 &inventory,
                 clients,
                 player_states,
+                cultivations,
                 "repair_rejection",
             );
         }
@@ -1706,7 +2530,9 @@ fn handle_apply_pill(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
+    lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
 ) {
     let template_id = inventories
         .get(entity)
@@ -1728,7 +2554,9 @@ fn handle_apply_pill(
         inventories,
         clients,
         player_states,
+        cultivations,
         combat_params,
+        lifespan_extension_tx,
     );
 }
 
@@ -1742,7 +2570,7 @@ fn handle_alchemy_turn_page(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     if let Ok(mut learned) = learned_q.get_mut(entity) {
         if !learned.ids.is_empty() {
             for _ in 0..delta.unsigned_abs() {
@@ -1781,7 +2609,7 @@ fn handle_alchemy_learn(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     if registry.get(&recipe_id).is_none() {
         tracing::warn!(
             "[bong][network][alchemy] learn unknown recipe `{recipe_id}` from `{player_id}`"
@@ -1811,7 +2639,7 @@ fn handle_alchemy_intervention(
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
-    let player_id = crate::player::state::canonical_player_id(username.0.as_str());
+    let player_id = canonical_player_id(username.0.as_str());
     let Ok(mut furnace) = furnaces.get_mut(entity) else {
         return;
     };
@@ -1835,6 +2663,7 @@ fn handle_alchemy_intervention(
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
 /// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
+#[allow(clippy::too_many_arguments)]
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
@@ -1842,7 +2671,9 @@ fn handle_alchemy_take_pill(
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
+    lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
 ) {
     let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
         tracing::warn!(
@@ -1886,6 +2717,18 @@ fn handle_alchemy_take_pill(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
             );
         }
+        ItemEffect::LifespanExtension { years, source } => {
+            if let Some(lifespan_extension_tx) = lifespan_extension_tx.as_deref_mut() {
+                lifespan_extension_tx.send(LifespanExtensionIntent {
+                    entity,
+                    requested_years: years,
+                    source: source.clone(),
+                });
+            }
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} lifespan extension {years} years source={source}"
+            );
+        }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             // 需对应 tick 系统（meridian_heal / contamination_cleanse）消费，当前尚未 wire。
             tracing::warn!(
@@ -1895,7 +2738,14 @@ fn handle_alchemy_take_pill(
         }
     }
 
-    resync_snapshot(entity, &inventory, clients, player_states, "take_pill");
+    resync_snapshot(
+        entity,
+        &inventory,
+        clients,
+        player_states,
+        cultivations,
+        "take_pill",
+    );
 }
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
@@ -1967,6 +2817,8 @@ mod take_pill_tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 

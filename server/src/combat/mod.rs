@@ -1,4 +1,8 @@
+pub mod armor;
+pub mod armor_sync;
 pub mod components;
+#[cfg(test)]
+mod death_event_attacker_chain_test;
 pub mod debug;
 pub mod events;
 pub mod lifecycle;
@@ -7,19 +11,26 @@ pub mod resolve;
 pub mod status;
 pub mod weapon;
 
+use std::path::Path;
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, IntoSystemConfigs, IntoSystemSetConfigs, Query,
     SystemSet, Update, Username, Without,
 };
 
+#[cfg(test)]
+mod tests;
+
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
-use crate::player::state::canonical_player_id;
+use crate::player::state::{
+    canonical_player_id, load_current_character_id, load_player_shrine_anchor_slice,
+    player_character_id, PlayerStatePersistence,
+};
 
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
-    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DebugCombatCommand,
-    DefenseIntent,
+    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DeathInsightRequested,
+    DebugCombatCommand, DefenseIntent, RevivalActionIntent,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
@@ -46,8 +57,23 @@ fn attach_combat_bundle_to_joined_clients(
         JoinedClientsWithoutCombatBundle<'_>,
         JoinedClientsWithoutCombatBundleFilter,
     >,
+    player_persistence: Option<valence::prelude::Res<PlayerStatePersistence>>,
 ) {
     for (entity, username) in &joined_clients {
+        let persistence = player_persistence.as_deref();
+        let spawn_anchor = persistence.and_then(|persistence| {
+            load_player_shrine_anchor_slice(persistence, username.0.as_str())
+                .ok()
+                .flatten()
+        });
+        let character_id = persistence
+            .and_then(|persistence| {
+                load_current_character_id(persistence, username.0.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
+            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
@@ -55,7 +81,8 @@ fn attach_combat_bundle_to_joined_clients(
             StatusEffects::default(),
             DerivedAttrs::default(),
             Lifecycle {
-                character_id: canonical_player_id(username.0.as_str()),
+                character_id,
+                spawn_anchor,
                 ..Default::default()
             },
         ));
@@ -87,12 +114,27 @@ fn attach_combat_bundle_to_joined_npcs(
 pub fn register(app: &mut App) {
     tracing::info!("[bong][combat] registering combat skeleton systems");
 
+    // plan-armor-v1 §1.1：启动期加载护甲 profile 蓝图（template_id -> ArmorProfile）。
+    // 失败不 panic: 允许空 registry（未配置护甲数据时不会有减免）。
+    let armor_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(armor::DEFAULT_ARMOR_PROFILES_DIR);
+    let armor_registry = armor::ArmorProfileRegistry::load_dir(armor_dir).unwrap_or_else(|e| {
+        tracing::error!("[bong][combat][armor] armor profile load failed: {e}");
+        armor::ArmorProfileRegistry::new()
+    });
+    tracing::info!(
+        "[bong][combat][armor] loaded {} armor profile(s)",
+        armor_registry.len()
+    );
+    app.insert_resource(armor_registry);
+
     app.insert_resource(CombatClock::default());
     app.add_event::<AttackIntent>();
     app.add_event::<DefenseIntent>();
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
+    app.add_event::<DeathInsightRequested>();
+    app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
 
     app.configure_sets(
@@ -109,7 +151,9 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_combat_bundle_to_joined_clients.in_set(CombatSystemSet::Intent),
+            attach_combat_bundle_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients)
+                .in_set(CombatSystemSet::Intent),
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
             resolve::apply_defense_intents.in_set(CombatSystemSet::Intent),
@@ -129,6 +173,12 @@ pub fn register(app: &mut App) {
             lifecycle::near_death_tick
                 .in_set(CombatSystemSet::Resolve)
                 .after(lifecycle::death_arbiter_tick),
+            lifecycle::handle_revival_action_intents
+                .in_set(CombatSystemSet::Resolve)
+                .after(lifecycle::near_death_tick),
+            lifecycle::auto_confirm_revival_decisions
+                .in_set(CombatSystemSet::Resolve)
+                .after(lifecycle::handle_revival_action_intents),
             debug::drain_combat_events_for_debug
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
@@ -138,6 +188,8 @@ pub fn register(app: &mut App) {
             // plan-weapon-v1 §2.3: 装备槽 → Weapon component 同步。放 Intent 阶段,
             // 让 resolve 阶段查 Weapon 时已经是当前 tick 的最新装备状态。
             weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),
+            // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
+            armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
     );
 }

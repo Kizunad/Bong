@@ -1,0 +1,74 @@
+# plan-shelflife-v1 M6 — 死物 / 腐败变体 item 模板。
+#
+# 仅对"有独立经济市场 / 文化命名"的物品做 item ID 切换。
+# Spoil 路径（兽肉 / 兽血 / 丹药）走 NBT is_spoiled 标识，不在此注册。
+# Age 路径常规丹药也只走 NBT；仅 chen_jiu → chen_cu 有文化语义故做 ID 切换。
+
+# ─── 死灵石（Decay track floor_qi 触发）────────────────────────────────────
+[[item]]
+id = "dead_mineral_ling_shi_fan"
+name = "死·凡品灵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵气已耗尽的一颗凡品灵石残骸。可作堆肥 / 杂料回收。"
+
+[[item]]
+id = "dead_mineral_ling_shi_zhong"
+name = "死·中品灵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵气已耗尽的一颗中品灵石残骸。可作堆肥 / 杂料回收。"
+
+[[item]]
+id = "dead_mineral_ling_shi_shang"
+name = "死·上品灵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "灵气已耗尽的一颗上品灵石残骸。可作堆肥 / 杂料回收。"
+
+[[item]]
+id = "dead_mineral_ling_shi_yi"
+name = "死·遗品灵石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "灵气已耗尽的一颗遗品灵石残骸。纵已死，残壳仍可作辅料。"
+
+# ─── 腐骨币（Decay track floor_qi 触发）────────────────────────────────────
+[[item]]
+id = "rotten_bone_coin"
+name = "腐骨币"
+category = "bone_coin"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "封灵已尽的骨币，化为一枚酥朽兽骨。次级市场可回收。"
+
+# ─── 陈醋（Age → Spoil 路径迁移触发）───────────────────────────────────────
+[[item]]
+id = "chen_cu"
+name = "陈醋"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "陈酒放过了头，灵气泄尽，化为一壶酸醋。可作料理辅料，不可直接饮。"

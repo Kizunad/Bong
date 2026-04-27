@@ -39,14 +39,15 @@ use valence::prelude::{
     EventReader, EventWriter, Query, Update, Username, With, Without,
 };
 
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
-type JoinedAlchemyClientQueryItem<'a> = (Entity, &'a Username);
-type JoinedAlchemyClientQueryFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
+type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
+type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
 
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
@@ -175,7 +176,7 @@ pub fn handle_alchemy_furnace_place(
     mut events: EventReader<PlaceFurnaceRequest>,
     mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     existing: Query<&AlchemyFurnace>,
     mut clients: Query<(&Username, &mut Client, &PlayerState)>,
 ) {
@@ -241,6 +242,7 @@ pub fn handle_alchemy_furnace_place(
                 username.0.as_str(),
                 &inv,
                 player_state,
+                &Cultivation::default(),
                 "alchemy_furnace_place_consumed",
             );
         }
@@ -258,9 +260,10 @@ pub fn handle_alchemy_furnace_place(
 ///
 /// plan §1.2：炉必须由玩家手持物品右键地面放置（`ClientRequestV1::AlchemyFurnacePlace`）。
 /// 没有世界炉 = 炼不了丹 — 不再给玩家挂自带虚拟炉作保底。
+#[allow(clippy::type_complexity)]
 pub(crate) fn attach_alchemy_to_joined_clients(
     mut commands: Commands,
-    joined: Query<JoinedAlchemyClientQueryItem, JoinedAlchemyClientQueryFilter>,
+    joined: Query<JoinedClientsWithoutRecipes<'_>, JoinedClientsWithoutRecipesFilter>,
 ) {
     for (entity, username) in &joined {
         let mut learned = LearnedRecipes::default();
@@ -393,6 +396,8 @@ mod integration_tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, Component};
 
 use crate::combat::events::StatusEffectKind;
@@ -12,6 +13,7 @@ pub const TICKS_PER_SECOND: u64 = 20;
 pub const ATTACK_STAMINA_COST: f32 = 3.0;
 pub const IN_COMBAT_WINDOW_TICKS: u64 = 15 * TICKS_PER_SECOND;
 pub const NEAR_DEATH_WINDOW_TICKS: u64 = 30 * TICKS_PER_SECOND;
+pub const REVIVAL_CONFIRM_WINDOW_TICKS: u64 = 60 * TICKS_PER_SECOND;
 pub const REVIVE_WEAKENED_TICKS: u64 = 180 * TICKS_PER_SECOND;
 pub const BLEED_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const STAMINA_TICK_INTERVAL_TICKS: u64 = 4;
@@ -29,7 +31,8 @@ pub const LEG_SLOWED_DURATION_TICKS: u64 = 40;
 pub const HEAD_STUN_SEVERITY_THRESHOLD: f32 = 0.5;
 pub const HEAD_STUN_DURATION_TICKS: u64 = 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BodyPart {
     Head,
     Chest,
@@ -40,7 +43,8 @@ pub enum BodyPart {
     LegR,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WoundKind {
     Cut,
     Blunt,
@@ -165,6 +169,28 @@ pub enum LifecycleState {
     Terminated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RevivalDecision {
+    Fortune { chance: f64 },
+    Tribulation { chance: f64 },
+}
+
+impl RevivalDecision {
+    pub fn chance_shown(self) -> f64 {
+        match self {
+            Self::Fortune { chance } | Self::Tribulation { chance } => chance,
+        }
+    }
+
+    pub fn can_reincarnate(self) -> bool {
+        true
+    }
+
+    pub fn can_terminate(self) -> bool {
+        matches!(self, Self::Tribulation { .. })
+    }
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct Lifecycle {
     pub character_id: String,
@@ -172,8 +198,17 @@ pub struct Lifecycle {
     pub fortune_remaining: u8,
     pub last_death_tick: Option<u64>,
     pub last_revive_tick: Option<u64>,
+    /// 玩家灵龛坐标（如有）。
+    ///
+    /// 仅用于重生点选择与“拥有灵龛归属”判定；灵龛保护/揭露等社交语义由 plan-social-v1 承接。
+    #[serde(default)]
+    pub spawn_anchor: Option<[f64; 3]>,
     #[serde(default)]
     pub near_death_deadline_tick: Option<u64>,
+    #[serde(default)]
+    pub awaiting_decision: Option<RevivalDecision>,
+    #[serde(default)]
+    pub revival_decision_deadline_tick: Option<u64>,
     pub weakened_until_tick: Option<u64>,
     pub state: LifecycleState,
 }
@@ -186,7 +221,10 @@ impl Default for Lifecycle {
             fortune_remaining: DEFAULT_FORTUNE_REMAINING,
             last_death_tick: None,
             last_revive_tick: None,
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: LifecycleState::Alive,
         }
@@ -208,13 +246,24 @@ impl Lifecycle {
     pub fn revive(&mut self, now_tick: u64) {
         self.last_revive_tick = Some(now_tick);
         self.near_death_deadline_tick = None;
+        self.awaiting_decision = None;
+        self.revival_decision_deadline_tick = None;
         self.weakened_until_tick = Some(now_tick.saturating_add(REVIVE_WEAKENED_TICKS));
         self.state = LifecycleState::Alive;
+    }
+
+    pub fn await_revival_decision(&mut self, decision: RevivalDecision, deadline_tick: u64) {
+        self.near_death_deadline_tick = None;
+        self.awaiting_decision = Some(decision);
+        self.revival_decision_deadline_tick = Some(deadline_tick);
+        self.state = LifecycleState::AwaitingRevival;
     }
 
     pub fn terminate(&mut self, now_tick: u64) {
         self.last_death_tick = Some(now_tick);
         self.near_death_deadline_tick = None;
+        self.awaiting_decision = None;
+        self.revival_decision_deadline_tick = None;
         self.state = LifecycleState::Terminated;
     }
 }
@@ -224,6 +273,10 @@ pub struct DerivedAttrs {
     pub attack_power: f32,
     pub defense_power: f32,
     pub move_speed_multiplier: f32,
+    /// plan-armor-v1 §1.2：被动护甲二维矩阵（BodyPart × WoundKind -> mitigation）。
+    /// 查询 miss 表示该部位/伤害类型无护甲减免。
+    #[serde(default)]
+    pub defense_profile: HashMap<(BodyPart, WoundKind), f32>,
 }
 
 impl Default for DerivedAttrs {
@@ -232,9 +285,17 @@ impl Default for DerivedAttrs {
             attack_power: 1.0,
             defense_power: 1.0,
             move_speed_multiplier: 1.0,
+            defense_profile: HashMap::new(),
         }
     }
 }
+
+/// plan-armor-v1 §4.2 — 体修流派标记 component（MVP：仅标记，buff 由 status.rs 应用）。
+///
+/// 体修"不依赖外物"：通过 defense_power 基础加成（1.0/1.3 ≈ 0.77）替代护甲。
+/// 此 component 可穿护甲，但 buff 与护甲 kind_mitigation 独立相乘。
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct BodyRefiningMarker;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveStatusEffect {
@@ -248,10 +309,11 @@ pub struct StatusEffects {
     pub active: Vec<ActiveStatusEffect>,
 }
 
-/// plan-HUD-v1 §4 玩家正在 cast F1-F9 快捷槽时挂在 Player 实体上。
+/// plan-HUD-v1 §4 玩家正在 cast 快捷槽时挂在 Player 实体上。
 /// 完成 / 中断后移除。
 #[derive(Debug, Clone, Component)]
 pub struct Casting {
+    pub source: CastSource,
     pub slot: u8,
     pub started_at_tick: u64,
     pub duration_ticks: u64,
@@ -267,40 +329,14 @@ pub struct Casting {
     pub complete_cooldown_ticks: u64,
 }
 
-/// plan-HUD-v1 §3.4 / §11.4 玩家当前防御姿态 + 流派状态指示。
-/// `stance` 同时受 `UnlockedStyles` 门禁约束（switch 时校验）。
-#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
-pub struct DefenseStance {
-    pub stance: DefenseStanceKind,
-    /// 替尸流剩余伪皮层数（被攻击替死后递减）。
-    pub fake_skin_layers: u32,
-    /// 绝灵涡流是否激活中。
-    pub vortex_active: bool,
-    /// 涡流冷却结束 server tick；0 表示无冷却。
-    pub vortex_ready_at_tick: u64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefenseStanceKind {
-    None,
-    Jiemai,
-    Tishi,
-    Jueling,
+pub enum CastSource {
+    QuickSlot,
+    SkillBar,
 }
 
-impl Default for DefenseStance {
-    fn default() -> Self {
-        Self {
-            stance: DefenseStanceKind::None,
-            fake_skin_layers: 0,
-            vortex_active: false,
-            vortex_ready_at_tick: 0,
-        }
-    }
-}
-
-/// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制三个流派指示器
-/// （截脉环 / 替尸层数 / 绝灵涡流）的条件渲染门禁——未解锁完全不渲染（§1.4）。
+/// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制流派指示器的
+/// 条件渲染门禁——未解锁完全不渲染（§1.4）。
 ///
 /// v1 默认全部解锁以便观察 HUD；后续接入修炼系统按真实解锁条件 mutate。
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
@@ -345,6 +381,59 @@ impl QuickSlotBindings {
             return false;
         }
         self.slots[slot as usize] = instance_id;
+        true
+    }
+
+    pub fn is_on_cooldown(&self, slot: u8, now_tick: u64) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.cooldown_until_tick[slot as usize] > now_tick
+    }
+
+    pub fn set_cooldown(&mut self, slot: u8, until_tick: u64) {
+        if (slot as usize) < Self::SLOT_COUNT {
+            self.cooldown_until_tick[slot as usize] = until_tick;
+        }
+    }
+}
+
+/// plan-hotbar-modify-v1 §3.1 玩家 1-9 技能栏槽位。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SkillSlot {
+    #[default]
+    Empty,
+    Item {
+        instance_id: u64,
+    },
+    Skill {
+        skill_id: String,
+    },
+}
+
+/// plan-hotbar-modify-v1 §3.1 玩家 1-9 技能栏绑定 + 冷却。
+#[derive(Debug, Clone, Component, Default)]
+pub struct SkillBarBindings {
+    pub slots: [SkillSlot; 9],
+    pub cooldown_until_tick: [u64; 9],
+}
+
+impl SkillBarBindings {
+    pub const SLOT_COUNT: usize = 9;
+
+    pub fn get(&self, slot: u8) -> Option<&SkillSlot> {
+        if slot as usize >= Self::SLOT_COUNT {
+            return None;
+        }
+        Some(&self.slots[slot as usize])
+    }
+
+    pub fn set(&mut self, slot: u8, value: SkillSlot) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.slots[slot as usize] = value;
+        self.cooldown_until_tick[slot as usize] = 0;
         true
     }
 

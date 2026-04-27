@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "character_id": "offline:Ancestor",
+  "at_tick": 84000,
+  "kind": "wind_candle",
+  "years_lived": 940.5,
+  "cap_by_realm": 1000,
+  "remaining_years": 59.5,
+  "tick_rate_multiplier": 2.0,
+  "source": "zone_negative"
+}

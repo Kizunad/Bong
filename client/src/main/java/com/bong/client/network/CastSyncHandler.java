@@ -30,14 +30,15 @@ public final class CastSyncHandler implements ServerDataHandler {
             );
         }
 
+        CastState.Source source = sourceFor(slot.intValue());
         CastState next = switch (phaseStr) {
             case "idle" -> CastState.idle();
-            case "casting" -> CastState.casting(slot.intValue(), durationMs.intValue(), startedAtMs);
+            case "casting" -> CastState.casting(source, slot.intValue(), durationMs.intValue(), startedAtMs);
             case "complete" -> CastState
-                .casting(slot.intValue(), durationMs.intValue(), startedAtMs)
+                .casting(source, slot.intValue(), durationMs.intValue(), startedAtMs)
                 .transitionToComplete(System.currentTimeMillis());
             case "interrupt" -> CastState
-                .casting(slot.intValue(), durationMs.intValue(), startedAtMs)
+                .casting(source, slot.intValue(), durationMs.intValue(), startedAtMs)
                 .transitionToInterrupt(parseOutcome(outcomeStr), System.currentTimeMillis());
             default -> null;
         };
@@ -53,6 +54,14 @@ public final class CastSyncHandler implements ServerDataHandler {
             "Applied cast_sync (phase=" + phaseStr + " slot=" + slot
                 + " outcome=" + outcomeStr + ")"
         );
+    }
+
+    private static CastState.Source sourceFor(int slot) {
+        CastState current = CastStateStore.snapshot();
+        if (current.isCasting() && current.slot() == slot && current.source() == CastState.Source.SKILL_BAR) {
+            return CastState.Source.SKILL_BAR;
+        }
+        return CastState.Source.QUICK_SLOT;
     }
 
     private static CastOutcome parseOutcome(String wire) {

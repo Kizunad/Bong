@@ -7,57 +7,143 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, Resource};
 
+use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::lifespan::{
+    lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
+};
 use crate::inventory::PlayerInventory;
 use crate::persistence::DEFAULT_DATABASE_PATH;
+use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::PlayerPowerBreakdown;
 use crate::skill::components::SkillSet;
+use crate::world::dimension::DimensionKind;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
-const DEFAULT_REALM: &str = "mortal";
-const DEFAULT_SPIRIT_QI_MAX: f64 = 100.0;
-const REALM_SCORE_QI_REFINING_DIVISOR: f64 = 12.0;
-const REALM_SCORE_FOUNDATION_BASE: f64 = 0.7;
-const REALM_SCORE_FOUNDATION_STEP: f64 = 0.08;
-const EXPERIENCE_SCORE_DIVISOR: f64 = 10_000.0;
 const PLAYER_ROW_SCHEMA_VERSION: i32 = 1;
 const DEFAULT_INVENTORY_JSON: &str = "null";
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
-    pub realm: String,
-    pub spirit_qi: f64,
-    pub spirit_qi_max: f64,
     pub karma: f64,
-    pub experience: u64,
     pub inventory_score: f64,
 }
 
 impl Default for PlayerState {
     fn default() -> Self {
         Self {
-            realm: DEFAULT_REALM.to_string(),
-            spirit_qi: 0.0,
-            spirit_qi_max: DEFAULT_SPIRIT_QI_MAX,
             karma: 0.0,
-            experience: 0,
             inventory_score: 0.0,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-struct PlayerUiPrefs {
-    quick_slots: [Option<String>; 9],
+pub(crate) struct PlayerUiPrefs {
+    #[serde(default)]
+    pub quick_slots: [Option<String>; 9],
+    #[serde(default)]
+    pub skill_bar: [SkillSlotPersist; 9],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum SkillSlotPersist {
+    #[default]
+    Empty,
+    Item {
+        template_id: String,
+    },
+    Skill {
+        skill_id: String,
+    },
+}
+
+impl PlayerUiPrefs {
+    pub(crate) fn quick_slot_bindings(
+        &self,
+        inventory: Option<&PlayerInventory>,
+    ) -> QuickSlotBindings {
+        let mut bindings = QuickSlotBindings::default();
+        let Some(inventory) = inventory else {
+            return bindings;
+        };
+
+        for (slot, template_id) in self.quick_slots.iter().enumerate() {
+            let Some(template_id) = template_id.as_deref() else {
+                continue;
+            };
+            if let Some(instance_id) = first_inventory_instance_for_template(inventory, template_id)
+            {
+                bindings.set(slot as u8, Some(instance_id));
+            }
+        }
+        bindings
+    }
+
+    pub(crate) fn skill_bar_bindings(
+        &self,
+        inventory: Option<&PlayerInventory>,
+    ) -> SkillBarBindings {
+        let mut bindings = SkillBarBindings::default();
+        for (slot, persist) in self.skill_bar.iter().enumerate() {
+            let slot_value = match persist {
+                SkillSlotPersist::Empty => SkillSlot::Empty,
+                SkillSlotPersist::Item { template_id } => inventory
+                    .and_then(|inventory| {
+                        first_inventory_instance_for_template(inventory, template_id)
+                    })
+                    .map(|instance_id| SkillSlot::Item { instance_id })
+                    .unwrap_or_default(),
+                SkillSlotPersist::Skill { skill_id } => SkillSlot::Skill {
+                    skill_id: skill_id.clone(),
+                },
+            };
+            bindings.set(slot as u8, slot_value);
+        }
+        bindings
+    }
+}
+
+fn first_inventory_instance_for_template(
+    inventory: &PlayerInventory,
+    template_id: &str,
+) -> Option<u64> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == template_id)
+        {
+            return Some(placed.instance.instance_id);
+        }
+    }
+    if let Some(item) = inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+    {
+        return Some(item.instance_id);
+    }
+    inventory
+        .equipped
+        .values()
+        .find(|item| item.template_id == template_id)
+        .map(|item| item.instance_id)
 }
 
 #[derive(Debug, Clone)]
 pub struct LoadedPlayerSlices {
     pub state: PlayerState,
     pub position: [f64; 3],
+    pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
+    pub lifespan: Option<LifespanComponent>,
     pub skill_set: SkillSet,
+    pub(crate) ui_prefs: PlayerUiPrefs,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +153,8 @@ pub struct PlayerExportBundle {
     pub current_char_id: String,
     pub state: PlayerState,
     pub position: [f64; 3],
+    #[serde(default)]
+    pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
     pub skill_set: SkillSet,
     pub ui_prefs: serde_json::Value,
@@ -74,29 +162,16 @@ pub struct PlayerExportBundle {
 
 impl PlayerState {
     pub fn normalized(&self) -> Self {
-        let spirit_qi_max = self.spirit_qi_max.max(1.0);
-        let realm = if self.realm.trim().is_empty() {
-            DEFAULT_REALM.to_string()
-        } else {
-            self.realm.trim().to_string()
-        };
-
         Self {
-            realm,
-            spirit_qi: self.spirit_qi.clamp(0.0, spirit_qi_max),
-            spirit_qi_max,
             karma: self.karma.clamp(-1.0, 1.0),
-            experience: self.experience,
             inventory_score: clamp_unit(self.inventory_score),
         }
     }
 
-    pub fn power_breakdown(&self) -> PlayerPowerBreakdown {
+    pub fn power_breakdown(&self, cultivation: &Cultivation) -> PlayerPowerBreakdown {
         let normalized = self.normalized();
-        let realm_score = realm_progress_score(normalized.realm.as_str());
-        let qi_ratio = ratio_score(normalized.spirit_qi, normalized.spirit_qi_max);
-        let experience_score =
-            (normalized.experience as f64 / EXPERIENCE_SCORE_DIVISOR).clamp(0.0, 1.0);
+        let realm_score = realm_progress_score(cultivation.realm);
+        let qi_ratio = ratio_score(cultivation.qi_current, cultivation.qi_max);
         let wealth = clamp_unit(normalized.inventory_score);
         let karma_alignment = ((normalized.karma + 1.0) * 0.5).clamp(0.0, 1.0);
         let karma_influence = normalized.karma.abs().clamp(0.0, 1.0);
@@ -104,14 +179,14 @@ impl PlayerState {
         PlayerPowerBreakdown {
             combat: clamp_unit(realm_score * 0.6 + qi_ratio * 0.4),
             wealth,
-            social: clamp_unit(experience_score * 0.6 + karma_alignment * 0.4),
+            social: clamp_unit(realm_score * 0.6 + karma_alignment * 0.4),
             karma: karma_influence,
-            territory: clamp_unit(experience_score * 0.5 + wealth * 0.5),
+            territory: clamp_unit(realm_score * 0.5 + wealth * 0.5),
         }
     }
 
-    pub fn composite_power(&self) -> f64 {
-        let breakdown = self.power_breakdown();
+    pub fn composite_power(&self, cultivation: &Cultivation) -> f64 {
+        let breakdown = self.power_breakdown(cultivation);
 
         clamp_unit(
             breakdown.combat * 0.4
@@ -122,16 +197,29 @@ impl PlayerState {
         )
     }
 
-    pub fn server_payload(&self, player: Option<String>, zone: impl Into<String>) -> ServerDataV1 {
+    pub fn server_payload(
+        &self,
+        cultivation: &Cultivation,
+        player: Option<String>,
+        zone: impl Into<String>,
+    ) -> ServerDataV1 {
         let normalized = self.normalized();
+        let breakdown = normalized.power_breakdown(cultivation);
+        let composite_power = clamp_unit(
+            breakdown.combat * 0.4
+                + breakdown.wealth * 0.15
+                + breakdown.social * 0.15
+                + breakdown.karma * 0.15
+                + breakdown.territory * 0.15,
+        );
 
         ServerDataV1::new(ServerDataPayloadV1::PlayerState {
             player,
-            realm: normalized.realm.clone(),
-            spirit_qi: normalized.spirit_qi,
+            realm: realm_to_string(cultivation.realm).to_string(),
+            spirit_qi: cultivation.qi_current,
             karma: normalized.karma,
-            composite_power: normalized.composite_power(),
-            breakdown: normalized.power_breakdown(),
+            composite_power,
+            breakdown,
             zone: zone.into(),
         })
     }
@@ -192,6 +280,40 @@ impl Resource for PlayerStateAutosaveTimer {}
 
 pub fn canonical_player_id(username: &str) -> String {
     format!("offline:{username}")
+}
+
+pub fn player_character_id(username: &str, current_char_id: &str) -> String {
+    if current_char_id.trim().is_empty() {
+        canonical_player_id(username)
+    } else {
+        format!("{}:{current_char_id}", canonical_player_id(username))
+    }
+}
+
+pub fn player_username_from_character_id(character_id: &str) -> Option<&str> {
+    let rest = character_id.strip_prefix("offline:")?;
+    let username = rest.split_once(':').map_or(rest, |(username, _)| username);
+    if username.is_empty() {
+        None
+    } else {
+        Some(username)
+    }
+}
+
+pub fn load_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<String>> {
+    let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
+    connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)
 }
 
 pub fn load_player_state(persistence: &PlayerStatePersistence, username: &str) -> PlayerState {
@@ -271,22 +393,25 @@ pub fn load_player_slices(
             return LoadedPlayerSlices {
                 state,
                 position: crate::player::spawn_position(),
+                last_dimension: DimensionKind::default(),
                 inventory: None,
+                lifespan: None,
                 skill_set: SkillSet::default(),
+                ui_prefs: PlayerUiPrefs::default(),
             };
         }
     };
 
-    let position = match load_player_position_from_sqlite(&connection, username) {
-        Ok(Some(position)) => position,
-        Ok(None) => crate::player::spawn_position(),
+    let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
+        Ok(Some((pos, dim))) => (pos, dim),
+        Ok(None) => (crate::player::spawn_position(), DimensionKind::default()),
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted position for `{}` from sqlite {}: {error}; using spawn position",
+                "[bong][player] failed to load persisted position/dimension for `{}` from sqlite {}: {error}; using spawn defaults",
                 username,
                 persistence.db_path().display()
             );
-            crate::player::spawn_position()
+            (crate::player::spawn_position(), DimensionKind::default())
         }
     };
     let inventory = match load_player_inventory_from_sqlite(&connection, username) {
@@ -294,6 +419,17 @@ pub fn load_player_slices(
         Err(error) => {
             tracing::warn!(
                 "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using default inventory fallback",
+                username,
+                persistence.db_path().display()
+            );
+            None
+        }
+    };
+    let lifespan = match load_player_lifespan_from_sqlite(&connection, username) {
+        Ok(lifespan) => lifespan,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
                 username,
                 persistence.db_path().display()
             );
@@ -311,13 +447,45 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
+    let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
+        Ok(ui_prefs) => ui_prefs,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted UI prefs for `{}` from sqlite {}: {error}; using default UI prefs",
+                username,
+                persistence.db_path().display()
+            );
+            PlayerUiPrefs::default()
+        }
+    };
 
     LoadedPlayerSlices {
         state,
         position,
+        last_dimension,
         inventory,
+        lifespan,
         skill_set,
+        ui_prefs,
     }
+}
+
+pub fn load_player_shrine_anchor_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<[f64; 3]>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_shrine_anchor_from_sqlite(&connection, username)
+}
+
+pub fn save_player_shrine_anchor_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    anchor: Option<[f64; 3]>,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_shrine_anchor_slice_in_sqlite(&mut connection, username, anchor)?;
+    Ok(persistence.db_path().to_path_buf())
 }
 
 pub fn save_player_state(
@@ -330,17 +498,22 @@ pub fn save_player_state(
         username,
         state,
         crate::player::spawn_position(),
+        DimensionKind::default(),
+        None,
         None,
         &SkillSet::default(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn save_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
     state: &PlayerState,
     position: [f64; 3],
+    last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
@@ -349,9 +522,21 @@ pub fn save_player_slices(
         username,
         state,
         position,
+        last_dimension,
         inventory,
+        lifespan,
         skill_set,
     )?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_lifespan_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    lifespan: &LifespanComponent,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -369,19 +554,10 @@ pub fn save_player_slow_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
     position: [f64; 3],
+    last_dimension: DimensionKind,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_slow_slice_in_sqlite(&mut connection, username, position)?;
-    Ok(persistence.db_path().to_path_buf())
-}
-
-pub fn save_player_progression_slice(
-    persistence: &PlayerStatePersistence,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<PathBuf> {
-    let mut connection = open_player_connection(persistence)?;
-    persist_player_progression_slice_in_sqlite(&mut connection, username, state)?;
+    persist_player_slow_slice_in_sqlite(&mut connection, username, position, last_dimension)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -395,6 +571,60 @@ pub fn save_player_inventory_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+pub fn rotate_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<String> {
+    let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
+    let next_char_id = Uuid::now_v7().to_string();
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                karma,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, 0.0, 0.0, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                next_char_id,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(next_char_id)
+}
+
+fn ensure_player_schema(connection: &Connection) -> io::Result<()> {
+    let has_player_core: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_core'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(io::Error::other)?;
+    if has_player_core == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "player_core table is missing; bootstrap sqlite before loading character ids",
+        ));
+    }
+    Ok(())
+}
+
 pub fn save_player_skill_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -402,6 +632,21 @@ pub fn save_player_skill_slice(
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_skill_slice_in_sqlite(&mut connection, username, skill_set)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub(crate) fn update_player_ui_prefs<F>(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    update: F,
+) -> io::Result<PathBuf>
+where
+    F: FnOnce(&mut PlayerUiPrefs),
+{
+    let mut connection = open_player_connection(persistence)?;
+    let mut ui_prefs = load_player_ui_prefs_from_sqlite(&connection, username)?;
+    update(&mut ui_prefs);
+    persist_player_ui_prefs_slice_in_sqlite(&mut connection, username, &ui_prefs)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -434,6 +679,7 @@ pub fn export_player_bundle(
         current_char_id,
         state: loaded.state,
         position: loaded.position,
+        last_dimension: loaded.last_dimension,
         inventory: loaded.inventory,
         skill_set: loaded.skill_set,
         ui_prefs,
@@ -460,7 +706,6 @@ pub fn import_player_bundle(
     let inventory_json = serialize_inventory_json(bundle.inventory.as_ref())?;
     let skill_set_json = serialize_skill_set_json(&bundle.skill_set)?;
     let normalized = bundle.state.normalized();
-    let experience = experience_to_sql(normalized.experience)?;
     let [pos_x, pos_y, pos_z] = bundle.position;
     let last_updated_wall = current_unix_seconds();
     let mut connection = open_player_connection(persistence)?;
@@ -472,22 +717,14 @@ pub fn import_player_bundle(
             INSERT INTO player_core (
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(username) DO UPDATE SET
                 current_char_id = excluded.current_char_id,
-                realm = excluded.realm,
-                spirit_qi = excluded.spirit_qi,
-                spirit_qi_max = excluded.spirit_qi_max,
                 karma = excluded.karma,
-                experience = excluded.experience,
                 inventory_score = excluded.inventory_score,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -495,11 +732,7 @@ pub fn import_player_bundle(
             params![
                 bundle.username,
                 bundle.current_char_id,
-                normalized.realm,
-                normalized.spirit_qi,
-                normalized.spirit_qi_max,
                 normalized.karma,
-                experience,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
@@ -514,13 +747,15 @@ pub fn import_player_bundle(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -529,6 +764,7 @@ pub fn import_player_bundle(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(bundle.last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -616,64 +852,61 @@ fn load_player_state_from_sqlite(
     connection: &Connection,
     username: &str,
 ) -> io::Result<Option<PlayerState>> {
-    let row: Option<(String, f64, f64, f64, i64, f64)> = connection
+    let row: Option<(f64, f64)> = connection
         .query_row(
             "
-            SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+            SELECT karma, inventory_score
             FROM player_core
             WHERE username = ?1
             ",
             params![username],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some((realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score)) = row else {
+    let Some((karma, inventory_score)) = row else {
         return Ok(None);
     };
 
     Ok(Some(
         PlayerState {
-            realm,
-            spirit_qi,
-            spirit_qi_max,
             karma,
-            experience: u64::try_from(experience)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
             inventory_score,
         }
         .normalized(),
     ))
 }
 
-fn load_player_position_from_sqlite(
+fn load_player_slow_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<Option<[f64; 3]>> {
-    let row: Option<(f64, f64, f64)> = connection
+) -> io::Result<Option<([f64; 3], DimensionKind)>> {
+    let row: Option<(f64, f64, f64, String)> = connection
         .query_row(
             "
-            SELECT pos_x, pos_y, pos_z
+            SELECT pos_x, pos_y, pos_z, last_dimension
             FROM player_slow
             WHERE username = ?1
             ",
             params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    Ok(row.map(|(pos_x, pos_y, pos_z)| [pos_x, pos_y, pos_z]))
+    let Some((pos_x, pos_y, pos_z, dimension_text)) = row else {
+        return Ok(None);
+    };
+
+    let last_dimension = dimension_kind_from_sql(&dimension_text).unwrap_or_else(|error| {
+        tracing::warn!(
+            "[bong][player] unknown last_dimension `{dimension_text}` for `{username}`: {error}; defaulting to overworld"
+        );
+        DimensionKind::default()
+    });
+
+    Ok(Some(([pos_x, pos_y, pos_z], last_dimension)))
 }
 
 fn load_player_inventory_from_sqlite(
@@ -704,6 +937,216 @@ fn load_player_inventory_from_sqlite(
     serde_json::from_str::<PlayerInventory>(&inventory_json)
         .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn load_player_ui_prefs_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<PlayerUiPrefs> {
+    let prefs_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT prefs_json
+            FROM player_ui_prefs
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(prefs_json) = prefs_json else {
+        return Ok(PlayerUiPrefs::default());
+    };
+
+    serde_json::from_str::<PlayerUiPrefs>(&prefs_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn persist_player_ui_prefs_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    prefs: &PlayerUiPrefs,
+) -> io::Result<()> {
+    let prefs_json = serde_json::to_string(prefs)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_ui_prefs (
+                username,
+                prefs_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                prefs_json = excluded.prefs_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+fn load_player_lifespan_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<LifespanComponent>> {
+    let row: Option<(u64, f64, u32, i64)> = connection
+        .query_row(
+            "
+            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall
+            FROM player_lifespan
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall)) = row else {
+        return Ok(None);
+    };
+    let now_wall = current_unix_seconds();
+    let offline_seconds = if offline_pause_wall > 0 {
+        u64::try_from(now_wall.saturating_sub(offline_pause_wall)).unwrap_or(0)
+    } else {
+        0
+    };
+    let years_lived = years_lived
+        + lifespan_delta_years_for_real_seconds(offline_seconds, LIFESPAN_OFFLINE_MULTIPLIER);
+    let mut lifespan = LifespanComponent {
+        born_at_tick,
+        years_lived: years_lived.min(cap_by_realm as f64),
+        cap_by_realm,
+        offline_pause_tick: None,
+    };
+    lifespan.apply_cap(cap_by_realm.max(1));
+    Ok(Some(lifespan))
+}
+
+fn load_player_shrine_anchor_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<[f64; 3]>> {
+    let row: Option<(f64, f64, f64)> = connection
+        .query_row(
+            "
+            SELECT anchor_x, anchor_y, anchor_z
+            FROM player_shrine
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(row.map(|(x, y, z)| [x, y, z]))
+}
+
+fn persist_player_shrine_anchor_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    anchor: Option<[f64; 3]>,
+) -> io::Result<()> {
+    let last_updated_wall = current_unix_seconds();
+
+    match anchor {
+        Some([x, y, z]) => {
+            connection
+                .execute(
+                    "
+                    INSERT INTO player_shrine (
+                        username,
+                        anchor_x,
+                        anchor_y,
+                        anchor_z,
+                        schema_version,
+                        last_updated_wall
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ON CONFLICT(username) DO UPDATE SET
+                        anchor_x = excluded.anchor_x,
+                        anchor_y = excluded.anchor_y,
+                        anchor_z = excluded.anchor_z,
+                        schema_version = excluded.schema_version,
+                        last_updated_wall = excluded.last_updated_wall
+                    ",
+                    params![
+                        username,
+                        x,
+                        y,
+                        z,
+                        PLAYER_ROW_SCHEMA_VERSION,
+                        last_updated_wall
+                    ],
+                )
+                .map_err(io::Error::other)?;
+        }
+        None => {
+            connection
+                .execute(
+                    "DELETE FROM player_shrine WHERE username = ?1",
+                    params![username],
+                )
+                .map_err(io::Error::other)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn persist_player_lifespan_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    lifespan: &LifespanComponent,
+    offline_pause_wall: Option<i64>,
+) -> io::Result<()> {
+    let last_updated_wall = current_unix_seconds();
+    let offline_pause_wall = offline_pause_wall.unwrap_or(last_updated_wall).max(0);
+    connection
+        .execute(
+            "
+            INSERT INTO player_lifespan (
+                username,
+                born_at_tick,
+                years_lived,
+                cap_by_realm,
+                offline_pause_wall,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(username) DO UPDATE SET
+                born_at_tick = excluded.born_at_tick,
+                years_lived = excluded.years_lived,
+                cap_by_realm = excluded.cap_by_realm,
+                offline_pause_wall = excluded.offline_pause_wall,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                lifespan.born_at_tick,
+                lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                lifespan.cap_by_realm,
+                offline_pause_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
 }
 
 fn load_player_skill_set_from_sqlite(
@@ -742,16 +1185,14 @@ fn persist_player_core_slice_in_sqlite(
         .execute(
             "
             UPDATE player_core
-            SET spirit_qi = ?2,
-                karma = ?3,
-                inventory_score = ?4,
-                schema_version = ?5,
-                last_updated_wall = ?6
+            SET karma = ?2,
+                inventory_score = ?3,
+                schema_version = ?4,
+                last_updated_wall = ?5
             WHERE username = ?1
             ",
             params![
                 username,
-                normalized.spirit_qi,
                 normalized.karma,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
@@ -766,6 +1207,8 @@ fn persist_player_core_slice_in_sqlite(
             username,
             state,
             crate::player::spawn_position(),
+            DimensionKind::default(),
+            None,
             None,
             &SkillSet::default(),
         )?;
@@ -778,6 +1221,7 @@ fn persist_player_slow_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
     position: [f64; 3],
+    last_dimension: DimensionKind,
 ) -> io::Result<()> {
     let [pos_x, pos_y, pos_z] = position;
     let last_updated_wall = current_unix_seconds();
@@ -791,13 +1235,15 @@ fn persist_player_slow_slice_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -806,6 +1252,7 @@ fn persist_player_slow_slice_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -840,50 +1287,6 @@ fn persist_player_slow_slice_in_sqlite(
             params![username, PLAYER_ROW_SCHEMA_VERSION, last_updated_wall],
         )
         .map_err(io::Error::other)?;
-
-    Ok(())
-}
-
-fn persist_player_progression_slice_in_sqlite(
-    connection: &mut Connection,
-    username: &str,
-    state: &PlayerState,
-) -> io::Result<()> {
-    let normalized = state.normalized();
-    let experience = experience_to_sql(normalized.experience)?;
-    let last_updated_wall = current_unix_seconds();
-    let updated = connection
-        .execute(
-            "
-            UPDATE player_core
-            SET realm = ?2,
-                spirit_qi_max = ?3,
-                experience = ?4,
-                schema_version = ?5,
-                last_updated_wall = ?6
-            WHERE username = ?1
-            ",
-            params![
-                username,
-                normalized.realm,
-                normalized.spirit_qi_max,
-                experience,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-
-    if updated == 0 {
-        persist_player_slices_in_sqlite(
-            connection,
-            username,
-            state,
-            crate::player::spawn_position(),
-            None,
-            &SkillSet::default(),
-        )?;
-    }
 
     Ok(())
 }
@@ -956,20 +1359,19 @@ fn persist_player_skill_slice_in_sqlite(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_player_slices_in_sqlite(
     connection: &mut Connection,
     username: &str,
     state: &PlayerState,
     position: [f64; 3],
+    last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
 ) -> io::Result<()> {
     let normalized = state.normalized();
-    let realm = normalized.realm;
-    let spirit_qi = normalized.spirit_qi;
-    let spirit_qi_max = normalized.spirit_qi_max;
     let karma = normalized.karma;
-    let experience = experience_to_sql(normalized.experience)?;
     let inventory_score = normalized.inventory_score;
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
@@ -994,22 +1396,14 @@ fn persist_player_slices_in_sqlite(
             INSERT INTO player_core (
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(username) DO UPDATE SET
                 current_char_id = excluded.current_char_id,
-                realm = excluded.realm,
-                spirit_qi = excluded.spirit_qi,
-                spirit_qi_max = excluded.spirit_qi_max,
                 karma = excluded.karma,
-                experience = excluded.experience,
                 inventory_score = excluded.inventory_score,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -1017,11 +1411,7 @@ fn persist_player_slices_in_sqlite(
             params![
                 username,
                 current_char_id,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
                 karma,
-                experience,
                 inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
@@ -1037,13 +1427,15 @@ fn persist_player_slices_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                last_dimension,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(username) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
                 pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -1052,6 +1444,7 @@ fn persist_player_slices_in_sqlite(
                 pos_x,
                 pos_y,
                 pos_z,
+                dimension_kind_to_sql(last_dimension),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -1119,6 +1512,40 @@ fn persist_player_slices_in_sqlite(
             ],
         )
         .map_err(io::Error::other)?;
+    if let Some(lifespan) = lifespan {
+        let offline_pause_wall = last_updated_wall;
+        transaction
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(username) DO UPDATE SET
+                    born_at_tick = excluded.born_at_tick,
+                    years_lived = excluded.years_lived,
+                    cap_by_realm = excluded.cap_by_realm,
+                    offline_pause_wall = excluded.offline_pause_wall,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                params![
+                    username,
+                    lifespan.born_at_tick,
+                    lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                    lifespan.cap_by_realm,
+                    offline_pause_wall,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
     transaction.commit().map_err(io::Error::other)
 }
 
@@ -1148,15 +1575,17 @@ fn insert_default_player_slice_rows(
             pos_x,
             pos_y,
             pos_z,
+            last_dimension,
             schema_version,
             last_updated_wall
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ",
         params![
             username,
             pos_x,
             pos_y,
             pos_z,
+            dimension_kind_to_sql(DimensionKind::default()),
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -1233,6 +1662,8 @@ fn migrate_legacy_player_json_to_sqlite(
         username,
         &state,
         crate::player::spawn_position(),
+        DimensionKind::default(),
+        None,
         None,
         &SkillSet::default(),
     )?;
@@ -1258,10 +1689,23 @@ fn serialize_skill_set_json(skill_set: &SkillSet) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn experience_to_sql(experience: u64) -> io::Result<i64> {
-    i64::try_from(experience).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+fn dimension_kind_to_sql(kind: DimensionKind) -> &'static str {
+    match kind {
+        DimensionKind::Overworld => "overworld",
+        DimensionKind::Tsy => "tsy",
+    }
 }
 
+fn dimension_kind_from_sql(value: &str) -> io::Result<DimensionKind> {
+    match value {
+        "overworld" => Ok(DimensionKind::Overworld),
+        "tsy" => Ok(DimensionKind::Tsy),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown dimension kind `{other}`"),
+        )),
+    }
+}
 fn current_unix_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1281,34 +1725,16 @@ fn clamp_unit(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
-fn realm_progress_score(realm: &str) -> f64 {
-    let normalized = realm.trim().to_ascii_lowercase();
-
-    if normalized == DEFAULT_REALM {
-        return 0.05;
-    }
-
-    if let Some(stage) = normalized
-        .strip_prefix("qi_refining_")
-        .and_then(|value| value.parse::<u8>().ok())
-    {
-        return clamp_unit(stage as f64 / REALM_SCORE_QI_REFINING_DIVISOR);
-    }
-
-    if let Some(stage) = normalized
-        .strip_prefix("foundation_establishment_")
-        .or_else(|| normalized.strip_prefix("foundation_"))
-        .and_then(|value| value.parse::<u8>().ok())
-    {
-        return clamp_unit(
-            REALM_SCORE_FOUNDATION_BASE + stage as f64 * REALM_SCORE_FOUNDATION_STEP,
-        );
-    }
-
-    match normalized.as_str() {
-        "golden_core" => 0.92,
-        "nascent_soul" => 1.0,
-        _ => 0.0,
+fn realm_progress_score(realm: Realm) -> f64 {
+    // Realm score is only used for coarse power estimation in player/world snapshots.
+    // Keep the mapping stable and monotonic across the six realms.
+    match realm {
+        Realm::Awaken => 0.05,
+        Realm::Induce => 0.25,
+        Realm::Condense => 0.4,
+        Realm::Solidify => 0.55,
+        Realm::Spirit => 0.75,
+        Realm::Void => 1.0,
     }
 }
 
@@ -1316,6 +1742,7 @@ fn realm_progress_score(realm: &str) -> f64 {
 mod player_state_tests {
     use super::*;
     use crate::combat::components::TICKS_PER_SECOND;
+    use crate::cultivation::lifespan::LifespanCapTable;
     use crate::network::agent_bridge::serialize_server_data_payload;
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
@@ -1361,11 +1788,7 @@ mod player_state_tests {
         let autosave_interval_ticks = 60 * TICKS_PER_SECOND;
 
         let persisted = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
             karma: 0.2,
-            experience: 1_200,
             inventory_score: 0.4,
         };
 
@@ -1426,11 +1849,7 @@ mod player_state_tests {
     fn player_export_bundle_roundtrips_back_into_sqlite() {
         let (source_persistence, source_data_dir) = sqlite_persistence("export-bundle-source");
         let exported_state = PlayerState {
-            realm: "qi_refining_4".to_string(),
-            spirit_qi: 88.0,
-            spirit_qi_max: 120.0,
             karma: 0.25,
-            experience: 2_400,
             inventory_score: 0.7,
         };
         save_player_slices(
@@ -1438,6 +1857,8 @@ mod player_state_tests {
             "Azure",
             &exported_state,
             [64.0, 80.0, -12.0],
+            DimensionKind::Tsy,
+            None,
             None,
             &SkillSet::default(),
         )
@@ -1459,38 +1880,22 @@ mod player_state_tests {
                 |row| row.get(0),
             )
             .expect("player_core row should exist after import");
-        let (realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score): (
-            String,
-            f64,
-            f64,
-            f64,
-            i64,
-            f64,
-        ) = connection
+        let (karma, inventory_score): (f64, f64) = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params!["Azure"],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("player_core payload should exist after import");
-        let (pos_x, pos_y, pos_z): (f64, f64, f64) = connection
+        let (pos_x, pos_y, pos_z, last_dimension_text): (f64, f64, f64, String) = connection
             .query_row(
-                "SELECT pos_x, pos_y, pos_z FROM player_slow WHERE username = ?1",
+                "SELECT pos_x, pos_y, pos_z, last_dimension FROM player_slow WHERE username = ?1",
                 params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("player_slow row should exist after import");
         let inventory_json: String = connection
@@ -1510,13 +1915,11 @@ mod player_state_tests {
 
         assert_eq!(bundle.kind, "player_export_v1");
         assert_eq!(current_char_id, bundle.current_char_id);
-        assert_eq!(realm, "qi_refining_4");
-        assert_eq!(spirit_qi, 88.0);
-        assert_eq!(spirit_qi_max, 120.0);
         assert_eq!(karma, 0.25);
-        assert_eq!(experience, 2_400);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
+        assert_eq!(last_dimension_text, "tsy");
+        assert_eq!(bundle.last_dimension, DimensionKind::Tsy);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1533,6 +1936,212 @@ mod player_state_tests {
     }
 
     #[test]
+    fn player_lifespan_slice_roundtrips_with_offline_pause_wall() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-roundtrip");
+        let player_state = PlayerState::default();
+        let lifespan = LifespanComponent {
+            born_at_tick: 144,
+            years_lived: 12.5,
+            cap_by_realm: LifespanCapTable::CONDENSE,
+            offline_pause_tick: Some(120),
+        };
+
+        save_player_slices(
+            &persistence,
+            "Azure",
+            &player_state,
+            [11.0, 70.0, -2.0],
+            DimensionKind::default(),
+            None,
+            Some(&lifespan),
+            &SkillSet::default(),
+        )
+        .expect("lifespan slice should persist with player slices");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let offline_pause_wall: i64 = connection
+            .query_row(
+                "SELECT offline_pause_wall FROM player_lifespan WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_lifespan row should exist");
+
+        assert_eq!(loaded_lifespan.born_at_tick, lifespan.born_at_tick);
+        assert_eq!(loaded_lifespan.cap_by_realm, lifespan.cap_by_realm);
+        assert!(loaded_lifespan.years_lived >= lifespan.years_lived);
+        assert!(loaded_lifespan.years_lived < lifespan.years_lived + 0.01);
+        assert!(offline_pause_wall > 0);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_load_applies_offline_delta_from_pause_wall() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-offline-delta");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let offline_pause_wall = current_unix_seconds()
+            - (crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10);
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    "Azure",
+                    0_u64,
+                    6.0_f64,
+                    LifespanCapTable::AWAKEN,
+                    offline_pause_wall,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    offline_pause_wall,
+                ],
+            )
+            .expect("lifespan fixture should insert");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(
+            (6.99..=7.01).contains(&loaded_lifespan.years_lived),
+            "expected ten offline real hours at x0.1 to add about one year, got {}",
+            loaded_lifespan.years_lived
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_load_treats_zero_pause_wall_as_no_offline_delta() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-zero-pause-wall");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    "Azure",
+                    0_u64,
+                    12.0_f64,
+                    LifespanCapTable::AWAKEN,
+                    0_i64,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    0_i64,
+                ],
+            )
+            .expect("legacy zero-pause lifespan fixture should insert");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert_eq!(loaded_lifespan.years_lived, 12.0);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
+        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "quick_slots": ["tea", null, null, null, null, null, null, null, null]
+        }))
+        .expect("legacy prefs should decode with default skill_bar");
+
+        assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
+        assert!(prefs
+            .skill_bar
+            .iter()
+            .all(|slot| matches!(slot, SkillSlotPersist::Empty)));
+    }
+
+    #[test]
+    fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
+        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "quick_slots": ["tea", null, null, null, null, null, null, null, null],
+            "skill_bar": [
+                {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
+                {"kind":"item","template_id":"tea"},
+                {"kind":"item","template_id":"missing"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"}
+            ]
+        }))
+        .expect("prefs should decode");
+        let inventory = PlayerInventory {
+            revision: crate::inventory::InventoryRevision(0),
+            containers: vec![crate::inventory::ContainerState {
+                id: "main".to_string(),
+                name: "main".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![crate::inventory::PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: crate::inventory::ItemInstance {
+                        instance_id: 42,
+                        template_id: "tea".to_string(),
+                        display_name: "tea".to_string(),
+                        grid_w: 1,
+                        grid_h: 1,
+                        weight: 0.1,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                    },
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+
+        let quick = prefs.quick_slot_bindings(Some(&inventory));
+        let skill_bar = prefs.skill_bar_bindings(Some(&inventory));
+
+        assert_eq!(quick.slots[0], Some(42));
+        assert!(matches!(
+            &skill_bar.slots[0],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        assert_eq!(skill_bar.slots[1], SkillSlot::Item { instance_id: 42 });
+        assert_eq!(skill_bar.slots[2], SkillSlot::Empty);
+    }
+
+    #[test]
     fn import_player_bundle_rejects_invalid_current_char_id() {
         let (persistence, data_dir) = sqlite_persistence("import-invalid-char-id");
         let bundle = PlayerExportBundle {
@@ -1540,14 +2149,11 @@ mod player_state_tests {
             username: "Azure".to_string(),
             current_char_id: "not-a-uuid".to_string(),
             state: PlayerState {
-                realm: "qi_refining_4".to_string(),
-                spirit_qi: 88.0,
-                spirit_qi_max: 120.0,
                 karma: 0.25,
-                experience: 2_400,
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
+            last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({
@@ -1609,14 +2215,11 @@ mod player_state_tests {
             username: "Azure".to_string(),
             current_char_id: Uuid::now_v7().to_string(),
             state: PlayerState {
-                realm: "qi_refining_4".to_string(),
-                spirit_qi: 88.0,
-                spirit_qi_max: 120.0,
                 karma: 0.25,
-                experience: 2_400,
                 inventory_score: 0.7,
             },
             position: [64.0, 80.0, -12.0],
+            last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
             ui_prefs: serde_json::json!({
@@ -1673,34 +2276,45 @@ mod player_state_tests {
     #[test]
     fn computes_composite_power() {
         let state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 60.0,
-            spirit_qi_max: 100.0,
             karma: 0.25,
-            experience: 2_000,
             inventory_score: 0.4,
         };
 
-        let breakdown = state.power_breakdown();
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let breakdown = state.power_breakdown(&cultivation);
         approx_eq(breakdown.combat, 0.39);
         approx_eq(breakdown.wealth, 0.4);
-        approx_eq(breakdown.social, 0.37);
+        approx_eq(breakdown.social, 0.4);
         approx_eq(breakdown.karma, 0.25);
-        approx_eq(breakdown.territory, 0.3);
-        approx_eq(state.composite_power(), 0.354);
+        approx_eq(breakdown.territory, 0.325);
+        approx_eq(state.composite_power(&cultivation), 0.36225);
     }
 
     #[test]
     fn serializes_player_state_payload() {
         let state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
             karma: 0.2,
-            experience: 1_200,
             inventory_score: 0.4,
         };
-        let payload = state.server_payload(Some(canonical_player_id("Steve")), "blood_valley");
+
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 78.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let payload = state.server_payload(
+            &cultivation,
+            Some(canonical_player_id("Steve")),
+            "blood_valley",
+        );
         let bytes =
             serialize_server_data_payload(&payload).expect("PlayerState payload should serialize");
         let json: serde_json::Value =
@@ -1712,7 +2326,7 @@ mod player_state_tests {
             json.get("player"),
             Some(&serde_json::json!("offline:Steve"))
         );
-        assert_eq!(json.get("realm"), Some(&serde_json::json!("qi_refining_3")));
+        assert_eq!(json.get("realm"), Some(&serde_json::json!("Induce")));
         assert_eq!(json.get("spirit_qi"), Some(&serde_json::json!(78.0)));
         assert_eq!(json.get("karma"), Some(&serde_json::json!(0.2)));
         assert_eq!(json.get("zone"), Some(&serde_json::json!("blood_valley")));
@@ -1723,12 +2337,15 @@ mod player_state_tests {
                 breakdown,
                 ..
             } => {
-                approx_eq(composite_power, state.composite_power());
-                approx_eq(breakdown.combat, state.power_breakdown().combat);
-                approx_eq(breakdown.wealth, state.power_breakdown().wealth);
-                approx_eq(breakdown.social, state.power_breakdown().social);
-                approx_eq(breakdown.karma, state.power_breakdown().karma);
-                approx_eq(breakdown.territory, state.power_breakdown().territory);
+                approx_eq(composite_power, state.composite_power(&cultivation));
+                approx_eq(breakdown.combat, state.power_breakdown(&cultivation).combat);
+                approx_eq(breakdown.wealth, state.power_breakdown(&cultivation).wealth);
+                approx_eq(breakdown.social, state.power_breakdown(&cultivation).social);
+                approx_eq(breakdown.karma, state.power_breakdown(&cultivation).karma);
+                approx_eq(
+                    breakdown.territory,
+                    state.power_breakdown(&cultivation).territory,
+                );
             }
             other => panic!("expected PlayerState payload, got {other:?}"),
         }
@@ -1737,12 +2354,27 @@ mod player_state_tests {
     #[test]
     fn migrate_legacy_player_json_to_sqlite_once() {
         let (persistence, data_dir) = sqlite_persistence("legacy-migrate");
-        let legacy_state = PlayerState {
-            realm: "qi_refining_3".to_string(),
+
+        #[derive(serde::Serialize)]
+        struct LegacyPlayerStateV0 {
+            realm: String,
+            spirit_qi: f64,
+            spirit_qi_max: f64,
+            karma: f64,
+            experience: u64,
+            inventory_score: f64,
+        }
+
+        let legacy_state = LegacyPlayerStateV0 {
+            realm: "Induce".to_string(),
             spirit_qi: 78.0,
             spirit_qi_max: 100.0,
             karma: 0.2,
             experience: 1_200,
+            inventory_score: 0.4,
+        };
+        let expected_state = PlayerState {
+            karma: 0.2,
             inventory_score: 0.4,
         };
         let save_path = persistence.path_for_username("CorruptCultivator");
@@ -1773,8 +2405,8 @@ mod player_state_tests {
             )
             .expect("reloaded player_core row should exist");
 
-        assert_eq!(migrated, legacy_state.normalized());
-        assert_eq!(reloaded, legacy_state.normalized());
+        assert_eq!(migrated, expected_state.normalized());
+        assert_eq!(reloaded, expected_state.normalized());
         assert!(
             !save_path.exists(),
             "legacy json should be renamed after migration"
@@ -1802,11 +2434,7 @@ mod player_state_tests {
         let corrupted_path = persistence.path_for_username(corrupted_username);
         let corrupted_migrated_path = persistence.migrated_path_for_username(corrupted_username);
         let healthy_state = PlayerState {
-            realm: "foundation_2".to_string(),
-            spirit_qi: 64.0,
-            spirit_qi_max: 128.0,
             karma: -0.3,
-            experience: 2_400,
             inventory_score: 0.55,
         };
 
@@ -1832,67 +2460,41 @@ mod player_state_tests {
         );
 
         let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let corrupted_row: Option<(String, f64, f64, f64, i64, f64)> = connection
+        let corrupted_row: Option<(f64, f64)> = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params![corrupted_username],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .expect("corrupted player_core row query should succeed");
-        let healthy_row: (String, f64, f64, f64, i64, f64) = connection
+        let healthy_row: (f64, f64) = connection
             .query_row(
                 "
-                SELECT realm, spirit_qi, spirit_qi_max, karma, experience, inventory_score
+                SELECT karma, inventory_score
                 FROM player_core
                 WHERE username = ?1
                 ",
                 params![healthy_username],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("healthy player_core row should exist");
 
         assert_eq!(
             corrupted_row,
             Some((
-                PlayerState::default().realm,
-                PlayerState::default().spirit_qi,
-                PlayerState::default().spirit_qi_max,
                 PlayerState::default().karma,
-                PlayerState::default().experience as i64,
                 PlayerState::default().inventory_score,
             ))
         );
         assert_eq!(
             healthy_row,
             (
-                healthy_state.normalized().realm,
-                healthy_state.normalized().spirit_qi,
-                healthy_state.normalized().spirit_qi_max,
                 healthy_state.normalized().karma,
-                healthy_state.normalized().experience as i64,
                 healthy_state.normalized().inventory_score,
             )
         );
@@ -1905,11 +2507,7 @@ mod player_state_tests {
         let (persistence, data_dir) = sqlite_persistence("core-slice-concurrency");
         let writer_count = 50usize;
         let baseline_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
 
@@ -1931,11 +2529,7 @@ mod player_state_tests {
                 std::thread::spawn(move || {
                     let username = format!("Player{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 20.0 + index as f64,
-                        spirit_qi_max: 140.0,
                         karma: ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 2_000 + index as u64,
                         inventory_score: (index as f64 / writer_count as f64).clamp(0.0, 1.0),
                     };
 
@@ -1965,43 +2559,23 @@ mod player_state_tests {
 
         for index in 0..writer_count {
             let username = format!("Player{index}");
-            let (spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience): (
-                f64,
-                f64,
-                f64,
-                String,
-                f64,
-                i64,
-            ) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
                     "
-                    SELECT spirit_qi, karma, inventory_score, realm, spirit_qi_max, experience
+                    SELECT karma, inventory_score
                     FROM player_core
                     WHERE username = ?1
                     ",
                     params![username.as_str()],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                        ))
-                    },
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("updated player_core row should exist");
 
-            assert_eq!(spirit_qi, 20.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
                 (index as f64 / writer_count as f64).clamp(0.0, 1.0)
             );
-            assert_eq!(realm, baseline_state.realm);
-            assert_eq!(spirit_qi_max, baseline_state.spirit_qi_max);
-            assert_eq!(experience, baseline_state.experience as i64);
         }
 
         let _ = fs::remove_dir_all(&data_dir);

@@ -170,6 +170,10 @@
                   {
                     "const": "legendary",
                     "type": "string"
+                  },
+                  {
+                    "const": "ancient",
+                    "type": "string"
                   }
                 ]
               },
@@ -295,6 +299,16 @@
                     ]
                   }
                 }
+              },
+              "mineral_id": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "charges": {
+                "minimum": 0,
+                "maximum": 5,
+                "type": "integer"
               }
             }
           }
@@ -387,6 +401,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -512,6 +530,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -589,6 +617,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -714,6 +746,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -791,6 +833,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -916,6 +962,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -993,6 +1049,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1118,6 +1178,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -1195,6 +1265,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1320,6 +1394,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -1397,6 +1481,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1522,6 +1610,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -1599,6 +1697,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1724,6 +1826,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -1801,6 +1913,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -1926,6 +2042,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -2003,6 +2129,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -2128,6 +2258,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -2205,6 +2345,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -2330,6 +2474,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -2407,6 +2561,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -2532,6 +2690,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             },
@@ -2614,6 +2782,10 @@
                   },
                   {
                     "const": "legendary",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ancient",
                     "type": "string"
                   }
                 ]
@@ -2740,6 +2912,16 @@
                     ]
                   }
                 }
+              },
+              "mineral_id": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "charges": {
+                "minimum": 0,
+                "maximum": 5,
+                "type": "integer"
               }
             }
           },

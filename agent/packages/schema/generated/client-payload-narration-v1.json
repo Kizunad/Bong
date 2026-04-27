@@ -70,6 +70,10 @@
                 "type": "string"
               }
             ]
+          },
+          "kind": {
+            "const": "death_insight",
+            "type": "string"
           }
         }
       }

@@ -248,6 +248,7 @@ mod tests {
                 required: vec![IngredientSpec {
                     material: "m".into(),
                     count: 1,
+                    mineral_id: None,
                 }],
                 window: 0,
             }],
@@ -284,6 +285,7 @@ mod tests {
             required: vec![IngredientSpec {
                 material: "n".into(),
                 count: 1,
+                mineral_id: None,
             }],
             window: 2,
         });

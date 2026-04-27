@@ -1,0 +1,17 @@
+{
+  "description": "plan §1.3.2 淬炼击键",
+  "anyOf": [
+    {
+      "const": "L",
+      "type": "string"
+    },
+    {
+      "const": "H",
+      "type": "string"
+    },
+    {
+      "const": "F",
+      "type": "string"
+    }
+  ]
+}

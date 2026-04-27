@@ -22,7 +22,7 @@ pub enum ApplyPillTargetV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub enum ClientRequestV1 {
     SetMeridianTarget {
         v: u8,
@@ -124,10 +124,25 @@ pub enum ClientRequestV1 {
         v: u8,
         instance_id: u64,
     },
+    /// plan-mineral-v1 §3 — 凝脉+ 右键矿块，server 反查 MineralOreIndex。
+    MineralProbe {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     ApplyPill {
         v: u8,
         instance_id: u64,
         target: ApplyPillTargetV1,
+    },
+    DuoSheRequest {
+        v: u8,
+        target_id: String,
+    },
+    UseLifeCore {
+        v: u8,
+        instance_id: u64,
     },
     /// plan-HUD-v1 §3.2 截脉弹反反应键。无 payload。
     /// server 翻译为 `DefenseIntent` Bevy event，立即开 200ms `incoming_window`，
@@ -140,21 +155,47 @@ pub enum ClientRequestV1 {
     /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。
     UseQuickSlot {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
     },
     /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
     /// `item_id` 为 None 表示清空槽位。
     QuickSlotBind {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         item_id: Option<String>,
     },
-    /// plan-HUD-v1 §7.3 / §11.3 切换防御姿态。`stance` 一个：
-    /// "JIEMAI" / "TISHI" / "JUELING" / "NONE"（与 client `Stance.name()` 对齐）。
-    /// server 校验 UnlockedStyles 后写入 DefenseStance Component。
-    SwitchDefenseStance {
+    /// plan-hotbar-modify-v1 §3.2：触发 1-9 技能栏槽位。
+    SkillBarCast {
         v: u8,
-        stance: String,
+        #[serde(deserialize_with = "deserialize_slot_index")]
+        slot: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
+    /// plan-hotbar-modify-v1 §3.2：配置 1-9 技能栏；None 表示清空槽位。
+    SkillBarBind {
+        v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
+        slot: u8,
+        binding: Option<SkillBarBindingV1>,
+    },
+    CombatReincarnate {
+        v: u8,
+    },
+    CombatTerminate {
+        v: u8,
+    },
+    CombatCreateNewCharacter {
+        v: u8,
+    },
+    StartExtractRequest {
+        v: u8,
+        portal_entity_id: u64,
+    },
+    CancelExtractRequest {
+        v: u8,
     },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
@@ -208,6 +249,75 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
+    /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
+    ForgeStartSession {
+        v: u8,
+        station_id: String,
+        blueprint_id: String,
+        materials: Vec<(String, u32)>,
+    },
+    /// plan §1.3.2 — 淬炼击键上报。
+    ForgeTemperingHit {
+        v: u8,
+        session_id: u64,
+        beat: String,
+        ticks_remaining: u32,
+    },
+    /// plan §1.3.3 — 铭文残卷投入。
+    ForgeInscriptionScroll {
+        v: u8,
+        session_id: u64,
+        inscription_id: String,
+    },
+    /// plan §1.3.4 — 开光真元注入。
+    ForgeConsecrationInject {
+        v: u8,
+        session_id: u64,
+        qi_amount: f64,
+    },
+    /// plan §1.3 — 步骤推进（当前步骤完成，进下一步）。
+    ForgeStepAdvance {
+        v: u8,
+        session_id: u64,
+    },
+    /// plan §1.4 — 图谱书翻页。
+    ForgeBlueprintTurnPage {
+        v: u8,
+        delta: i32,
+    },
+    /// plan §1.4 — 学习图谱（客户端拖残卷到图谱区）。
+    ForgeLearnBlueprint {
+        v: u8,
+        blueprint_id: String,
+    },
+    /// plan §1.2 — 玩家手持砧类物品，客户端拦截右键放砧方块。
+    ForgeStationPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum SkillBarBindingV1 {
+    Item { template_id: String },
+    Skill { skill_id: String },
+}
+
+fn deserialize_slot_index<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let slot = u8::deserialize(deserializer)?;
+    if slot < 9 {
+        Ok(slot)
+    } else {
+        Err(serde::de::Error::custom("slot must be between 0 and 8"))
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +450,175 @@ mod tests {
     }
 
     #[test]
+    fn use_quick_slot_roundtrip() {
+        let json = r#"{"type":"use_quick_slot","v":1,"slot":3}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }
+        ));
+    }
+
+    #[test]
+    fn quick_slot_bind_roundtrip_and_clear() {
+        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::QuickSlotBind {
+                v: 1,
+                slot: 1,
+                item_id: Some(ref item_id),
+            } if item_id == "kai_mai_pill"
+        ));
+
+        let clear_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null}"#;
+        let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::QuickSlotBind {
+                v: 1,
+                slot: 1,
+                item_id: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn skill_bar_cast_roundtrip_with_optional_target() {
+        let json = r#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"entity:42"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SkillBarCast { v, slot, target } => {
+                assert_eq!(v, 1);
+                assert_eq!(slot, 0);
+                assert_eq!(target.as_deref(), Some("entity:42"));
+            }
+            other => panic!("expected SkillBarCast, got {other:?}"),
+        }
+
+        let no_target = ClientRequestV1::SkillBarCast {
+            v: 1,
+            slot: 2,
+            target: None,
+        };
+        let serialized = serde_json::to_string(&no_target).unwrap();
+        assert!(
+            !serialized.contains("target"),
+            "target None should be omitted: {serialized}"
+        );
+    }
+
+    #[test]
+    fn skill_bar_bind_roundtrip_for_null_item_and_skill() {
+        let clear_json = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":null}"#;
+        let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 0,
+                binding: None,
+            }
+        ));
+
+        let item_json = r#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"item","template_id":"iron_sword"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(item_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 1,
+                binding: Some(SkillBarBindingV1::Item { ref template_id }),
+            } if template_id == "iron_sword"
+        ));
+
+        let skill_json = r#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(skill_json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 2,
+                binding: Some(SkillBarBindingV1::Skill { ref skill_id }),
+            } if skill_id == "burst_meridian.beng_quan"
+        ));
+    }
+
+    #[test]
+    fn skill_bar_binding_rejects_unknown_kind_and_extra_fields() {
+        let wrong_kind = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"unknown","skill_id":"x"}}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(wrong_kind).is_err());
+
+        let extra_field = r#"{"type":"skill_bar_cast","v":1,"slot":0,"extra":1}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(extra_field).is_err());
+    }
+
+    #[test]
+    fn hotbar_slot_indices_reject_out_of_range_values() {
+        for json in [
+            r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null}"#,
+            r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
+            r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
+        ] {
+            let error = serde_json::from_str::<ClientRequestV1>(json)
+                .expect_err("slot 9 should be rejected by schema");
+            assert!(error.to_string().contains("slot must be between 0 and 8"));
+        }
+    }
+
+    #[test]
+    fn duo_she_request_roundtrip() {
+        let json = r#"{"type":"duo_she_request","v":1,"target_id":"npc_12v0"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::DuoSheRequest { v, target_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(target_id, "npc_12v0");
+            }
+            other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_life_core_roundtrip() {
+        let json = r#"{"type":"use_life_core","v":1,"instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::UseLifeCore { v, instance_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 4242);
+            }
+            other => panic!("expected UseLifeCore, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn combat_reincarnate_roundtrip() {
+        let json = r#"{"type":"combat_reincarnate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatReincarnate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_terminate_roundtrip() {
+        let json = r#"{"type":"combat_terminate","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequestV1::CombatTerminate { v: 1 }));
+    }
+
+    #[test]
+    fn combat_create_new_character_roundtrip() {
+        let json = r#"{"type":"combat_create_new_character","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CombatCreateNewCharacter { v: 1 }
+        ));
+    }
+
+    #[test]
     fn pickup_dropped_item_roundtrip() {
         let json = r#"{"type":"pickup_dropped_item","v":1,"instance_id":3003}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
@@ -349,6 +628,19 @@ mod tests {
                 assert_eq!(instance_id, 3003);
             }
             other => panic!("expected PickupDroppedItem, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mineral_probe_roundtrip() {
+        let json = r#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MineralProbe { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 32, 8));
+            }
+            other => panic!("expected MineralProbe, got {other:?}"),
         }
     }
 
@@ -533,5 +825,28 @@ mod tests {
             }
             other => panic!("expected AlchemyIgnite, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn extract_requests_roundtrip() {
+        let start = r#"{"type":"start_extract_request","v":1,"portal_entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(start).unwrap();
+        match req {
+            ClientRequestV1::StartExtractRequest {
+                v,
+                portal_entity_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(portal_entity_id, 42);
+            }
+            other => panic!("expected StartExtractRequest, got {other:?}"),
+        }
+
+        let cancel = r#"{"type":"cancel_extract_request","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(cancel).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CancelExtractRequest { v: 1 }
+        ));
     }
 }

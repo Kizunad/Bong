@@ -1,7 +1,9 @@
 # TSY 物资与秘境死亡 · plan-tsy-loot-v1
 
 > 给 TSY 搭物资层：99 探索者遗物 + 1 上古遗物的分布规则；秘境所得 100% 掉落；干尸化；Fabric 禁用原生 keepInventory；DeathEvent 扩展 attacker 链路。
-> 交叉引用：`plan-tsy-v1.md §2`（横切任务）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `worldview.md §十六.三`（物资 99+1）· `worldview.md §十六.四`（入场/出关）· `worldview.md §十六.六`（死亡结算）· `plan-inventory-v1.md`（DroppedLoot 基础）· `plan-death-lifecycle-v1.md`（§十二 死亡规则）
+> 交叉引用：`plan-tsy-v1.md §2`（横切任务）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `worldview.md §十六.三`（物资 99+1）· `worldview.md §十六.四`（入场/出关）· `worldview.md §十六.六`（死亡结算）· `plan-inventory-v1.md`（DroppedLoot 基础）· `plan-death-lifecycle-v1.md`（§十二 死亡规则）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面。本 plan 的"秘境内死亡"判定仍走 `TsyPresence` Component 存在性（不直接依赖位面信息），不受反转影响；但 `CorpseEmbalmed` 和 dropped loot 挂在 **TSY layer** 下（玩家在 TSY dim 内死亡 → 尸体/掉落物 entity 挂 `DimensionLayers.tsy`，不会漏到主世界）。P2 lifecycle 塌缩 cleanup 时这些 entity 随 zone 一起被清理。
 
 ---
 
@@ -805,3 +807,18 @@ pub struct DeathEvent {
 - **P3 plan-tsy-polish-v1** — 封灵匣 / UI tooltip / 入口感知 HUD
 - **plan-HUD-v1 扩展** — 耐久可视化（tooltip 显示 durability）
 - **plan-shelflife-v1** — 凡物的"灵气流失税"在 TSY 内外的行为（MVP 不变，后续看）
+
+---
+
+## §13 进度日志
+
+- 2026-04-25：本 plan 仍为纯设计骨架，server 端 0 行落地。核查实际代码：
+  - `ItemRarity` 仅 5 档（Common/Uncommon/Rare/Epic/Legendary），未扩 `Ancient`（§1.1 未做）
+  - `server/src/inventory/` 下无 `ancient_relics.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs`（§1–§4 未做）
+  - `DroppedLootRegistry` 无 `ownerless` 字段（§2.3 未做）
+  - `DeathEvent` 仍是 `{ target, cause, at_tick }`，未扩 `attacker / attacker_player_id`（§6 未做）
+  - `TsyPresence` 在 server 端 grep 无命中，§-1 现状表中标注的"P0 新增"实际尚未落地，本 plan 的前置依赖（plan-tsy-zone-v1）未 merge
+  - client mixin 列表无 `MixinPlayerEntityDrop`，仅有 Camera/GameRenderer/HeldItemRenderer/InGameHud/MinecraftClient/Mouse/PlayerEntityHeldItem（§5 未做）
+  - 全部 `[ ]` 维持未勾选状态。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面 API / `Zone.dimension` / `CurrentDimension` 全部就位。本 plan 仍 blocking on **P0 `tsy-zone`**（`TsyPresence` component 由 P0 引入），需 P0 demoable 后才能开 `/consume-plan tsy-loot`。横切依赖 `plan-death-lifecycle-v1 §6 DeathEvent.attacker` 仍未启动。
+- **2026-04-27**：**主体 merged** — PR #53（merge 9fb8d2b7）已合并。代码核对：`server/src/inventory/` 下 `ancient_relics.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs` 全部确认；`ItemRarity::Ancient` variant 已加；`DeathEvent.attacker` / `attacker_player_id` 已扩；`DroppedLootRegistry.ownerless` 字段已建；`tsy_loot_integration_test.rs` 存在；client `MixinPlayerEntityDrop` 已加。横切 `plan-death-lifecycle-v1 §6 DeathEvent.attacker` 已被本 plan 顺手实装。剩余 ~8%：smoke 全链路 e2e 与文档自审清单全勾未跑。dashboard percent 92%。

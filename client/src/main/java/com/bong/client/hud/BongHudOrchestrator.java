@@ -112,12 +112,14 @@ public final class BongHudOrchestrator {
             commands.addAll(MiniBodyHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(),
                 combatSnapshot.physicalBody(),
+                com.bong.client.inventory.state.InventoryStateStore.snapshot().equipped(),
                 nowMillis,
                 screenWidth,
                 screenHeight
             ));
             commands.addAll(QuickBarHudPlanner.buildCommands(
                 combatSnapshot.quickSlotConfig(),
+                combatSnapshot.skillBarConfig(),
                 combatSnapshot.selectedHotbarSlot(),
                 combatSnapshot.castState(),
                 com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),
@@ -179,6 +181,13 @@ public final class BongHudOrchestrator {
                 botanyAnchor
             ));
         }
+        commands.addAll(ExtractProgressHudPlanner.buildCommands(
+            com.bong.client.tsy.ExtractStateStore.snapshot(),
+            widthMeasurer,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
 
         return List.copyOf(commands);
     }

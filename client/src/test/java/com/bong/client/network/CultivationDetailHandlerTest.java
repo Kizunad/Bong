@@ -129,6 +129,31 @@ public class CultivationDetailHandlerTest {
     }
 
     @Test
+    void appliesLifespanPreviewWhenProvided() {
+        var payload = fullPayload(twenty(true), twenty(1.0), twenty(5.0), twenty(1.0));
+        JsonObject lifespan = new JsonObject();
+        lifespan.addProperty("years_lived", 74.5);
+        lifespan.addProperty("cap_by_realm", 80);
+        lifespan.addProperty("remaining_years", 5.5);
+        lifespan.addProperty("death_penalty_years", 4);
+        lifespan.addProperty("tick_rate_multiplier", 2.0);
+        lifespan.addProperty("is_wind_candle", true);
+        payload.add("lifespan", lifespan);
+
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertTrue(body.hasLifespanPreview());
+        assertEquals(74.5, body.yearsLived(), 1e-9);
+        assertEquals(80, body.lifespanCapByRealm());
+        assertEquals(5.5, body.remainingYears(), 1e-9);
+        assertEquals(4, body.deathPenaltyYears());
+        assertEquals(2.0, body.lifespanTickRateMultiplier(), 1e-9);
+        assertTrue(body.isWindCandle());
+    }
+
+    @Test
     void appliesRealmAndOpenProgressWhenProvided() {
         var opened = twenty(false);
         var openProg = new ArrayList<Double>();
@@ -182,7 +207,7 @@ public class CultivationDetailHandlerTest {
         assertEquals(8, CultivationDetailHandler.skillCapForRealm("Solidify"));
         assertEquals(9, CultivationDetailHandler.skillCapForRealm("Spirit"));
         assertEquals(10, CultivationDetailHandler.skillCapForRealm("Void"));
-        assertNull(CultivationDetailHandler.skillCapForRealm("炼气三层"));
+        assertNull(CultivationDetailHandler.skillCapForRealm("MysteryRealm"));
     }
 
     @Test

@@ -101,27 +101,62 @@ pub struct QuickSlotEntryV1 {
     pub icon_texture: String,
 }
 
-/// plan-HUD-v1 §3.4 / §11.4 当前防御姿态 + 替尸伪皮层数 + 绝灵涡流冷却。
-/// 仅在玩家解锁了对应流派时才有意义（client 端配合 `unlocks_sync` 做条件渲染）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DefenseStanceV1 {
-    None,
-    Jiemai,
-    Tishi,
-    Jueling,
+/// plan-hotbar-modify-v1 §5.3 1-9 技能栏完整配置 + 当前 cooldown。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillBarConfigV1 {
+    pub slots: Vec<Option<SkillBarEntryV1>>,
+    /// 0 表示无冷却；否则为 unix ms 截止时间。
+    pub cooldown_until_ms: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum SkillBarEntryV1 {
+    Item {
+        template_id: String,
+        display_name: String,
+        cast_duration_ms: u32,
+        cooldown_ms: u32,
+        icon_texture: String,
+    },
+    Skill {
+        skill_id: String,
+        display_name: String,
+        cast_duration_ms: u32,
+        cooldown_ms: u32,
+        icon_texture: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DefenseSyncV1 {
-    pub stance: DefenseStanceV1,
-    /// 替尸流剩余伪皮层数（§3.4）。0 = 不渲染。
-    pub fake_skin_layers: u32,
-    /// 绝灵流涡流是否激活中（§3.4 蓝色转圈）。
-    pub vortex_active: bool,
-    /// 涡流冷却结束的 unix ms；0 = 无冷却。
-    pub vortex_ready_at_ms: u64,
+pub struct TechniquesSnapshotV1 {
+    pub entries: Vec<TechniqueEntryV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TechniqueEntryV1 {
+    pub id: String,
+    pub display_name: String,
+    pub grade: String,
+    pub proficiency: f32,
+    pub active: bool,
+    pub description: String,
+    pub required_realm: String,
+    pub required_meridians: Vec<TechniqueRequiredMeridianV1>,
+    pub qi_cost: u32,
+    pub cast_ticks: u32,
+    pub cooldown_ticks: u32,
+    pub range: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TechniqueRequiredMeridianV1 {
+    pub channel: String,
+    pub min_health: f32,
 }
 
 /// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派（截脉/替尸/绝灵）。
@@ -396,6 +431,65 @@ mod tests {
     }
 
     #[test]
+    fn skillbar_config_roundtrip_preserves_item_skill_and_empty_slots() {
+        let original = SkillBarConfigV1 {
+            slots: vec![
+                Some(SkillBarEntryV1::Skill {
+                    skill_id: "burst_meridian.beng_quan".to_string(),
+                    display_name: "崩拳".to_string(),
+                    cast_duration_ms: 400,
+                    cooldown_ms: 3000,
+                    icon_texture: "bong:textures/gui/skill/beng_quan.png".to_string(),
+                }),
+                Some(SkillBarEntryV1::Item {
+                    template_id: "iron_sword".to_string(),
+                    display_name: "铁剑".to_string(),
+                    cast_duration_ms: 0,
+                    cooldown_ms: 0,
+                    icon_texture: "bong:textures/item/iron_sword.png".to_string(),
+                }),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            cooldown_until_ms: vec![1_700_000_003_000, 0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: SkillBarConfigV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn techniques_snapshot_roundtrip_preserves_detail_fields() {
+        let original = TechniquesSnapshotV1 {
+            entries: vec![TechniqueEntryV1 {
+                id: "burst_meridian.beng_quan".to_string(),
+                display_name: "崩拳".to_string(),
+                grade: "yellow".to_string(),
+                proficiency: 0.5,
+                active: true,
+                description: "以臂经爆发短劲，近身破防。".to_string(),
+                required_realm: "Condense".to_string(),
+                required_meridians: vec![TechniqueRequiredMeridianV1 {
+                    channel: "Lung".to_string(),
+                    min_health: 0.45,
+                }],
+                qi_cost: 30,
+                cast_ticks: 8,
+                cooldown_ticks: 60,
+                range: 1.8,
+            }],
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: TechniquesSnapshotV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
     fn unlocks_sync_roundtrip_preserves_content() {
         let original = UnlocksSyncV1 {
             jiemai: true,
@@ -419,19 +513,6 @@ mod tests {
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: EventStreamPushV1 = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn defense_sync_roundtrip_preserves_content() {
-        let original = DefenseSyncV1 {
-            stance: DefenseStanceV1::Tishi,
-            fake_skin_layers: 3,
-            vortex_active: false,
-            vortex_ready_at_ms: 1_700_000_005_000,
-        };
-        let json = serde_json::to_string(&original).expect("serialize");
-        let parsed: DefenseSyncV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
     }
 

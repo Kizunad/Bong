@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "player_id",
+    "portal_entity_id",
+    "elapsed_ticks",
+    "required_ticks"
+  ],
+  "properties": {
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "portal_entity_id": {
+      "type": "number"
+    },
+    "elapsed_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "required_ticks": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

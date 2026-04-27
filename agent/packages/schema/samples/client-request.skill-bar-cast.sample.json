@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "skill_bar_cast",
+  "slot": 0,
+  "target": "entity:42"
+}

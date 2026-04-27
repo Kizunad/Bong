@@ -8,9 +8,11 @@
     "MixinCamera",
     "MixinGameRenderer",
     "MixinHeldItemRenderer",
+    "MixinKeyboardSkillKeys",
     "MixinInGameHud",
     "MixinMinecraftClient",
     "MixinMouse",
+    "MixinPlayerEntityDrop",
     "MixinPlayerEntityHeldItem"
   ],
   "injectors": {

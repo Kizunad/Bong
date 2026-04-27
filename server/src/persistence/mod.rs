@@ -15,8 +15,8 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
-use crate::cultivation::components::Cultivation;
-use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 12;
+const CURRENT_USER_VERSION: i32 = 13;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -140,14 +140,23 @@ pub struct DeceasedIndexEntry {
     pub char_id: String,
     pub died_at_tick: u64,
     pub path: String,
+    #[serde(default = "default_termination_category")]
+    pub termination_category: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeceasedSnapshot {
     pub char_id: String,
     pub died_at_tick: u64,
+    #[serde(default = "default_termination_category")]
+    pub termination_category: String,
     pub lifecycle: Lifecycle,
     pub life_record: LifeRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeathInsightEventPayload {
+    death_insight: DeathInsightRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1011,6 +1020,15 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         let transaction = connection.transaction()?;
         transaction.execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS player_lifespan (
+                username TEXT PRIMARY KEY,
+                born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
             CREATE TABLE IF NOT EXISTS player_skills (
                 username TEXT PRIMARY KEY,
                 skill_set_json TEXT NOT NULL,
@@ -1020,6 +1038,70 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             PRAGMA user_version = 12;
             ",
         )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 13 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_shrine (
+                username TEXT PRIMARY KEY,
+                anchor_x REAL NOT NULL,
+                anchor_y REAL NOT NULL,
+                anchor_z REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+        let has_column: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('player_slow') WHERE name = 'last_dimension'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_column == 0 {
+            transaction.execute_batch(
+                "
+                ALTER TABLE player_slow
+                ADD COLUMN last_dimension TEXT NOT NULL DEFAULT 'overworld'
+                CHECK (last_dimension IN ('overworld', 'tsy'));
+                ",
+            )?;
+        }
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_cultivation (
+                username TEXT PRIMARY KEY,
+                cultivation_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+
+        // SQLite might already have a pruned player_core schema (e.g. older
+        // dev databases). Drop columns only when they exist.
+        let player_core_columns: Vec<String> = {
+            let mut stmt = transaction.prepare("PRAGMA table_info(player_core)")?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns
+        };
+        backfill_legacy_player_cultivation(&transaction, &player_core_columns)?;
+        for legacy_col in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
+            if player_core_columns.iter().any(|name| name == legacy_col) {
+                transaction.execute(
+                    &format!("ALTER TABLE player_core DROP COLUMN {legacy_col}"),
+                    [],
+                )?;
+            }
+        }
+
+        transaction.execute_batch("PRAGMA user_version = 13;")?;
         transaction.commit()?;
     }
 
@@ -1034,6 +1116,106 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     }
 
     Ok(())
+}
+
+fn backfill_legacy_player_cultivation(
+    transaction: &rusqlite::Transaction<'_>,
+    player_core_columns: &[String],
+) -> rusqlite::Result<()> {
+    let has_column = |column: &str| player_core_columns.iter().any(|name| name == column);
+    if !(has_column("username")
+        && has_column("realm")
+        && has_column("spirit_qi")
+        && has_column("spirit_qi_max"))
+    {
+        return Ok(());
+    }
+
+    let legacy_rows = {
+        let mut stmt = transaction.prepare(
+            "
+            SELECT username, realm, spirit_qi, spirit_qi_max
+            FROM player_core
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let wall_clock = current_unix_seconds();
+    for (username, realm, spirit_qi, spirit_qi_max) in legacy_rows {
+        let mut cultivation = Cultivation::default();
+        if let Some(restored_realm) = legacy_player_realm_to_cultivation(realm.as_str()) {
+            cultivation.realm = restored_realm;
+        }
+        if spirit_qi.is_finite() {
+            cultivation.qi_current = spirit_qi.max(0.0);
+        }
+        if spirit_qi_max.is_finite() && spirit_qi_max > 0.0 {
+            cultivation.qi_max = spirit_qi_max;
+        }
+
+        let bundle = serde_json::json!({
+            "v": 1,
+            "cultivation": cultivation,
+            "meridians": crate::cultivation::components::MeridianSystem::default(),
+            "qi_color": crate::cultivation::components::QiColor::default(),
+            "karma": crate::cultivation::components::Karma::default(),
+            "contamination": crate::cultivation::components::Contamination::default(),
+            "life_record": crate::cultivation::life_record::LifeRecord::new(
+                canonical_player_id(username.as_str()),
+            ),
+            "practice_log": crate::cultivation::color::PracticeLog::default(),
+            "insight_quota": crate::cultivation::insight::InsightQuota::default(),
+            "unlocked_perceptions": crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            "insight_modifiers": crate::cultivation::insight_apply::InsightModifiers::new(),
+        });
+        let cultivation_json = serde_json::to_string(&bundle)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+
+        transaction.execute(
+            "
+            INSERT INTO player_cultivation (
+                username,
+                cultivation_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO NOTHING
+            ",
+            params![
+                username,
+                cultivation_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {
+    match realm {
+        "mortal" => Some(Realm::Awaken),
+        "qi_refining_1" => Some(Realm::Induce),
+        "qi_refining_2" => Some(Realm::Condense),
+        "qi_refining_3" | "foundation_establishment_1" => Some(Realm::Spirit),
+        "Awaken" => Some(Realm::Awaken),
+        "Induce" => Some(Realm::Induce),
+        "Condense" => Some(Realm::Condense),
+        "Solidify" => Some(Realm::Solidify),
+        "Spirit" => Some(Realm::Spirit),
+        "Void" => Some(Realm::Void),
+        _ => None,
+    }
 }
 
 fn ensure_agent_world_model_table(connection: &Connection) -> rusqlite::Result<()> {
@@ -1558,17 +1740,91 @@ pub fn persist_revival_transition(
     transaction.commit().map_err(io::Error::other)
 }
 
+pub fn persist_lifespan_event(
+    settings: &PersistenceSettings,
+    char_id: &str,
+    event: &LifespanEventRecord,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    append_lifespan_event(&transaction, char_id, event, wall_clock)?;
+
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn persist_life_record_death_insight(
+    settings: &PersistenceSettings,
+    life_record: &LifeRecord,
+) -> io::Result<()> {
+    let Some(death_insight) = life_record.death_insights.last() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "life_record must contain at least one death insight before persistence",
+        ));
+    };
+
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    upsert_life_record(&transaction, life_record, wall_clock)?;
+    append_death_insight_event(
+        &transaction,
+        life_record.character_id.as_str(),
+        death_insight,
+        wall_clock,
+    )?;
+    update_deceased_snapshot_life_record(
+        &transaction,
+        life_record.character_id.as_str(),
+        life_record,
+        wall_clock,
+    )?;
+
+    transaction.commit().map_err(io::Error::other)
+}
+
 pub fn persist_termination_transition(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
+    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
+}
+
+pub fn persist_termination_transition_with_death_context(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
+) -> io::Result<()> {
+    persist_termination_transition_inner(
+        settings,
+        lifecycle,
+        life_record,
+        death_registry_cause,
+        lifespan_event,
+    )
+}
+
+fn persist_termination_transition_inner(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
+) -> io::Result<()> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
     let died_at_tick = biography_tick(entry);
+    let termination_category = termination_category_from_entry(entry);
     let snapshot = DeceasedSnapshot {
         char_id: life_record.character_id.clone(),
         died_at_tick,
+        termination_category: termination_category.clone(),
         lifecycle: lifecycle.clone(),
         life_record: life_record.clone(),
     };
@@ -1580,6 +1836,7 @@ pub fn persist_termination_transition(
             life_record.character_id.as_str(),
             snapshot_json.as_str(),
             died_at_tick,
+            termination_category.as_str(),
         )?)
     } else {
         None
@@ -1595,6 +1852,23 @@ pub fn persist_termination_transition(
             entry,
             wall_clock,
         )?;
+        if let Some(death_registry_cause) = death_registry_cause {
+            upsert_death_registry(
+                &transaction,
+                life_record.character_id.as_str(),
+                lifecycle,
+                death_registry_cause,
+                wall_clock,
+            )?;
+        }
+        if let Some(lifespan_event) = lifespan_event {
+            append_lifespan_event(
+                &transaction,
+                life_record.character_id.as_str(),
+                lifespan_event,
+                wall_clock,
+            )?;
+        }
         upsert_deceased_snapshot(
             &transaction,
             life_record.character_id.as_str(),
@@ -2720,6 +2994,91 @@ fn load_agent_eras_from_connection(connection: &Connection) -> io::Result<Vec<Ag
     Ok(records)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
+pub fn persist_player_cultivation_bundle(
+    settings: &PersistenceSettings,
+    username: &str,
+    cultivation: &crate::cultivation::components::Cultivation,
+    meridians: &crate::cultivation::components::MeridianSystem,
+    qi_color: &crate::cultivation::components::QiColor,
+    karma: &crate::cultivation::components::Karma,
+    contamination: &crate::cultivation::components::Contamination,
+    life_record: &crate::cultivation::life_record::LifeRecord,
+    practice_log: &crate::cultivation::color::PracticeLog,
+    insight_quota: &crate::cultivation::insight::InsightQuota,
+    unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
+    insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let bundle = serde_json::json!({
+        "v": 1,
+        "cultivation": cultivation,
+        "meridians": meridians,
+        "qi_color": qi_color,
+        "karma": karma,
+        "contamination": contamination,
+        "life_record": life_record,
+        "practice_log": practice_log,
+        "insight_quota": insight_quota,
+        "unlocked_perceptions": unlocked_perceptions,
+        "insight_modifiers": insight_modifiers,
+    });
+    let cultivation_json = serde_json::to_string(&bundle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "
+            INSERT INTO player_cultivation (
+                username,
+                cultivation_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                cultivation_json = excluded.cultivation_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                cultivation_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_player_cultivation_bundle(
+    settings: &PersistenceSettings,
+    username: &str,
+) -> io::Result<Option<serde_json::Value>> {
+    let connection = open_persistence_connection(settings)?;
+    let row: Option<String> = connection
+        .query_row(
+            "
+            SELECT cultivation_json
+            FROM player_cultivation
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some(json) = row else {
+        return Ok(None);
+    };
+    let decoded = serde_json::from_str(&json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Some(decoded))
+}
+
 fn load_agent_decisions_from_connection(
     connection: &Connection,
 ) -> io::Result<Vec<AgentDecisionRecord>> {
@@ -3303,6 +3662,9 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::NearDeath { .. } => "near_death",
         BiographyEntry::Terminated { .. } => "terminated",
+        BiographyEntry::LifespanExtended { .. } => "lifespan_extended",
+        BiographyEntry::DuoShePerformed { .. } => "duoshe_performed",
+        BiographyEntry::PossessedBy { .. } => "possessed_by",
         BiographyEntry::AlchemyAttempt { .. } => "alchemy_attempt",
         BiographyEntry::PlotHarvestedByOther { .. } => "plot_harvested_by_other",
         BiographyEntry::PlotHarvestedFromOther { .. } => "plot_harvested_from_other",
@@ -3310,6 +3672,50 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::PlotQiDrainedFromOther { .. } => "plot_qi_drained_from_other",
         BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
     }
+}
+
+fn append_death_insight_event(
+    transaction: &rusqlite::Transaction<'_>,
+    char_id: &str,
+    death_insight: &DeathInsightRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let payload_json = serde_json::to_string(&DeathInsightEventPayload {
+        death_insight: death_insight.clone(),
+    })
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let event_id = format!(
+        "{}:death_insight:{}:{}",
+        char_id, death_insight.tick, wall_clock
+    );
+
+    transaction
+        .execute(
+            "
+            INSERT OR IGNORE INTO life_events (
+                event_id,
+                char_id,
+                event_type,
+                payload_json,
+                payload_version,
+                game_tick,
+                wall_clock,
+                schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ",
+            params![
+                event_id,
+                char_id,
+                "death_insight",
+                payload_json,
+                EVENT_PAYLOAD_VERSION,
+                tick_to_sql(death_insight.tick)?,
+                wall_clock,
+                EVENT_SCHEMA_VERSION
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
 }
 
 fn biography_tick(entry: &BiographyEntry) -> u64 {
@@ -3327,6 +3733,9 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::NearDeath { tick, .. }
         | BiographyEntry::Terminated { tick, .. }
+        | BiographyEntry::LifespanExtended { tick, .. }
+        | BiographyEntry::DuoShePerformed { tick, .. }
+        | BiographyEntry::PossessedBy { tick, .. }
         | BiographyEntry::AlchemyAttempt { tick, .. }
         | BiographyEntry::PlotHarvestedByOther { tick, .. }
         | BiographyEntry::PlotHarvestedFromOther { tick, .. }
@@ -3521,6 +3930,44 @@ fn upsert_deceased_snapshot(
     Ok(())
 }
 
+fn update_deceased_snapshot_life_record(
+    transaction: &rusqlite::Transaction<'_>,
+    char_id: &str,
+    life_record: &LifeRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let Some(existing_snapshot_json) = transaction
+        .query_row(
+            "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+            params![char_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?
+    else {
+        return Ok(());
+    };
+
+    let mut snapshot: DeceasedSnapshot = serde_json::from_str(existing_snapshot_json.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    snapshot.life_record = life_record.clone();
+    let snapshot_json = serde_json::to_string_pretty(&snapshot)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    transaction
+        .execute(
+            "
+            UPDATE deceased_snapshots
+            SET snapshot_json = ?2,
+                last_updated_wall = ?3
+            WHERE char_id = ?1
+            ",
+            params![char_id, snapshot_json, wall_clock],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn tick_to_sql(tick: u64) -> io::Result<i64> {
     i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
@@ -3529,11 +3976,29 @@ fn should_export_public_snapshot(char_id: &str) -> bool {
     char_id.starts_with("offline:")
 }
 
+fn default_termination_category() -> String {
+    "横死".to_string()
+}
+
+fn termination_category_from_entry(entry: &BiographyEntry) -> String {
+    let BiographyEntry::Terminated { cause, .. } = entry else {
+        return default_termination_category();
+    };
+    match cause.as_str() {
+        "natural_end" => "善终",
+        "voluntary_retire" => "自主归隐",
+        "duo_she" => "夺舍者",
+        _ => "横死",
+    }
+    .to_string()
+}
+
 fn stage_public_deceased_export(
     settings: &PersistenceSettings,
     char_id: &str,
     snapshot_json: &str,
     died_at_tick: u64,
+    termination_category: &str,
 ) -> io::Result<StagedDeceasedExport> {
     fs::create_dir_all(settings.deceased_public_dir())?;
 
@@ -3552,6 +4017,7 @@ fn stage_public_deceased_export(
         char_id: char_id.to_string(),
         died_at_tick,
         path: relative_snapshot_path.clone(),
+        termination_category: termination_category.to_string(),
     });
     entries.sort_by(|left, right| {
         left.died_at_tick
@@ -4008,6 +4474,110 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task13_migration_backfills_legacy_player_cultivation() {
+        let db_path = database_path("task13-legacy-cultivation-backfill");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_core (
+                    username TEXT PRIMARY KEY,
+                    current_char_id TEXT NOT NULL,
+                    realm TEXT NOT NULL,
+                    spirit_qi REAL NOT NULL,
+                    spirit_qi_max REAL NOT NULL,
+                    karma REAL NOT NULL,
+                    experience INTEGER NOT NULL,
+                    inventory_score REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                CREATE TABLE player_slow (
+                    username TEXT PRIMARY KEY,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                PRAGMA user_version = 12;
+                ",
+            )
+            .expect("legacy schema should be created");
+        connection
+            .execute(
+                "
+                INSERT INTO player_core (
+                    username,
+                    current_char_id,
+                    realm,
+                    spirit_qi,
+                    spirit_qi_max,
+                    karma,
+                    experience,
+                    inventory_score,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ",
+                params![
+                    "Azure",
+                    canonical_player_id("Azure"),
+                    "qi_refining_3",
+                    77.5_f64,
+                    123.0_f64,
+                    0.25_f64,
+                    900_i64,
+                    0.5_f64,
+                    CURRENT_SCHEMA_VERSION,
+                    1_i64,
+                ],
+            )
+            .expect("legacy player should be inserted");
+
+        apply_migrations(&mut connection).expect("v13 migration should succeed");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        for dropped_column in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('player_core') WHERE name = ?1",
+                    params![dropped_column],
+                    |row| row.get(0),
+                )
+                .expect("player_core table_info should be readable");
+            assert_eq!(count, 0, "{dropped_column} should be dropped");
+        }
+
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("backfilled cultivation row should exist");
+        let bundle: Value =
+            serde_json::from_str(&cultivation_json).expect("cultivation bundle should deserialize");
+
+        assert_eq!(bundle["cultivation"]["realm"].as_str(), Some("Spirit"));
+        assert_eq!(bundle["cultivation"]["qi_current"].as_f64(), Some(77.5));
+        assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(123.0));
+        assert_eq!(
+            bundle["life_record"]["character_id"].as_str(),
+            Some(canonical_player_id("Azure").as_str())
+        );
+
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
     fn startup_backup_creates_pre_bootstrap_snapshot_for_existing_db() {
         let (settings, root) = persistence_settings("startup-backup-pre-bootstrap");
         let wall_clock = 1_735_689_600;
@@ -4423,6 +4993,85 @@ mod persistence_tests {
                 .optional()
                 .expect("sqlite_master query should succeed");
             assert_eq!(exists.as_deref(), Some(table_name));
+        }
+    }
+
+    #[test]
+    fn task12_migration_creates_player_lifespan_table() {
+        let db_path = database_path("task12-player-lifespan");
+        bootstrap_sqlite(&db_path, "task12-player-lifespan").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_lifespan'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master player_lifespan query should succeed");
+        assert_eq!(exists.as_deref(), Some("player_lifespan"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_lifespan)")
+            .expect("player_lifespan table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_lifespan table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_lifespan columns should collect");
+        for column in [
+            "username",
+            "born_at_tick",
+            "years_lived",
+            "cap_by_realm",
+            "offline_pause_wall",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_lifespan should include {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn task13_migration_creates_player_shrine_table() {
+        let db_path = database_path("task13-player-shrine");
+        bootstrap_sqlite(&db_path, "task13-player-shrine").expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_shrine'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master player_shrine query should succeed");
+        assert_eq!(exists.as_deref(), Some("player_shrine"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_shrine)")
+            .expect("player_shrine table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_shrine columns should collect");
+        for column in [
+            "username",
+            "anchor_x",
+            "anchor_y",
+            "anchor_z",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_shrine should include {column}"
+            );
         }
     }
 
@@ -4862,6 +5511,7 @@ mod persistence_tests {
         let zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.42,
                 danger_level: 3,
@@ -5029,6 +5679,7 @@ mod persistence_tests {
         let zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.31,
                 danger_level: 2,
@@ -5072,6 +5723,7 @@ mod persistence_tests {
         let existing_zones = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: -0.55,
                 danger_level: 5,
@@ -5258,6 +5910,7 @@ mod persistence_tests {
         let persisted = crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: -0.15,
                 danger_level: 4,
@@ -5290,6 +5943,7 @@ mod persistence_tests {
         app.insert_resource(crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: crate::world::zone::default_spawn_bounds(),
                 spirit_qi: 0.25,
                 danger_level: 1,
@@ -5340,6 +5994,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
@@ -5349,7 +6004,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5378,6 +6036,7 @@ mod persistence_tests {
 
         assert_eq!(snapshot.char_id, "offline:Ancestor");
         assert_eq!(snapshot.died_at_tick, 77);
+        assert_eq!(snapshot.termination_category, "横死");
         assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
         assert_eq!(snapshot.lifecycle.death_count, lifecycle.death_count);
         assert_eq!(
@@ -5407,6 +6066,7 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 77);
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].termination_category, "横死");
         assert_eq!(public_path, "deceased/offline:Ancestor.json");
 
         let _ = fs::remove_dir_all(root);
@@ -5427,6 +6087,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: vec![crate::cultivation::life_record::SkillMilestone {
                 skill: crate::skill::components::SkillId::Alchemy,
                 new_lv: 4,
@@ -5442,7 +6103,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5498,6 +6162,7 @@ mod persistence_tests {
                 tick: 77,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
@@ -5507,7 +6172,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5522,6 +6190,7 @@ mod persistence_tests {
                 tick: 99,
             }],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
         };
@@ -5531,7 +6200,10 @@ mod persistence_tests {
             fortune_remaining: 0,
             last_death_tick: Some(99),
             last_revive_tick: Some(55),
+            spawn_anchor: None,
             near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: crate::combat::components::LifecycleState::Terminated,
         };
@@ -5559,6 +6231,7 @@ mod persistence_tests {
 
         assert_eq!(snapshot.char_id, "offline:Ancestor");
         assert_eq!(snapshot.died_at_tick, 99);
+        assert_eq!(snapshot.termination_category, "横死");
         assert!(matches!(
             snapshot.life_record.biography.last(),
             Some(BiographyEntry::Terminated { tick: 99, .. })
@@ -5567,6 +6240,7 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Ancestor");
         assert_eq!(index[0].died_at_tick, 99);
         assert_eq!(index[0].path, "deceased/offline:Ancestor.json");
+        assert_eq!(index[0].termination_category, "横死");
         assert_eq!(died_at_tick, 99);
         assert_eq!(public_path, "deceased/offline:Ancestor.json");
 
@@ -5594,6 +6268,7 @@ mod persistence_tests {
                     tick: died_at_tick as u64,
                 }],
                 insights_taken: Vec::new(),
+                death_insights: Vec::new(),
                 skill_milestones: Vec::new(),
                 spirit_root_first: None,
             };
@@ -5603,7 +6278,10 @@ mod persistence_tests {
                 fortune_remaining: 0,
                 last_death_tick: Some(died_at_tick as u64),
                 last_revive_tick: None,
+                spawn_anchor: None,
                 near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
                 weakened_until_tick: None,
                 state: crate::combat::components::LifecycleState::Terminated,
             };
@@ -5622,14 +6300,87 @@ mod persistence_tests {
         assert_eq!(index[0].char_id, "offline:Bronze");
         assert_eq!(index[0].died_at_tick, 77);
         assert_eq!(index[0].path, "deceased/offline:Bronze.json");
+        assert_eq!(index[0].termination_category, "横死");
 
         assert_eq!(index[1].char_id, "offline:Azure");
         assert_eq!(index[1].died_at_tick, 90);
         assert_eq!(index[1].path, "deceased/offline:Azure.json");
+        assert_eq!(index[1].termination_category, "横死");
 
         assert_eq!(index[2].char_id, "offline:Crimson");
         assert_eq!(index[2].died_at_tick, 90);
         assert_eq!(index[2].path, "deceased/offline:Crimson.json");
+        assert_eq!(index[2].termination_category, "横死");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_termination_transition_classifies_good_end_and_voluntary_retire() {
+        let (settings, root) = persistence_settings("deceased-export-category");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        for (char_id, cause, expected_category, tick) in [
+            ("offline:OldOne", "natural_end", "善终", 88_u64),
+            ("offline:Hermit", "voluntary_retire", "自主归隐", 89_u64),
+        ] {
+            let life_record = LifeRecord {
+                character_id: char_id.to_string(),
+                created_at: 11,
+                biography: vec![BiographyEntry::Terminated {
+                    cause: cause.to_string(),
+                    tick,
+                }],
+                insights_taken: Vec::new(),
+                death_insights: Vec::new(),
+                skill_milestones: Vec::new(),
+                spirit_root_first: None,
+            };
+            let lifecycle = Lifecycle {
+                character_id: life_record.character_id.clone(),
+                death_count: 1,
+                fortune_remaining: 0,
+                last_death_tick: Some(tick),
+                last_revive_tick: None,
+                spawn_anchor: None,
+                near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
+                weakened_until_tick: None,
+                state: crate::combat::components::LifecycleState::Terminated,
+            };
+
+            persist_termination_transition(&settings, &lifecycle, &life_record)
+                .expect("terminated snapshot should persist");
+
+            let snapshot: DeceasedSnapshot = serde_json::from_str(
+                &fs::read_to_string(
+                    settings
+                        .deceased_public_dir()
+                        .join(format!("{char_id}.json")),
+                )
+                .expect("snapshot json should exist"),
+            )
+            .expect("snapshot json should deserialize");
+            assert_eq!(snapshot.termination_category, expected_category);
+        }
+
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index json should exist"),
+        )
+        .expect("index json should deserialize");
+        assert!(
+            index
+                .iter()
+                .any(|entry| entry.char_id == "offline:OldOne"
+                    && entry.termination_category == "善终")
+        );
+        assert!(index
+            .iter()
+            .any(|entry| entry.char_id == "offline:Hermit"
+                && entry.termination_category == "自主归隐"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5652,6 +6403,7 @@ mod persistence_tests {
                 },
             ],
             insights_taken: Vec::new(),
+            death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             spirit_root_first: None,
         }
@@ -5691,7 +6443,10 @@ mod persistence_tests {
                 fortune_remaining: 2,
                 last_death_tick: Some(55),
                 last_revive_tick: Some(66),
+                spawn_anchor: None,
                 near_death_deadline_tick: None,
+                awaiting_decision: None,
+                revival_decision_deadline_tick: None,
                 weakened_until_tick: None,
                 state: LifecycleState::Alive,
             },
@@ -5736,6 +6491,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
@@ -5745,7 +6501,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -5816,11 +6575,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -5848,11 +6603,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedPlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 25.0 + index as f64,
-                        spirit_qi_max: 160.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 3_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -5878,6 +6629,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
@@ -5887,7 +6639,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -5953,14 +6708,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed load");
-            assert_eq!(spirit_qi, 25.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -5982,11 +6736,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -6015,11 +6765,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedNpcPlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 35.0 + index as f64,
-                        spirit_qi_max: 180.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 5_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -6046,6 +6792,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
@@ -6055,7 +6802,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -6147,14 +6897,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedNpcPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed npc load");
-            assert_eq!(spirit_qi, 35.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -6176,11 +6925,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let player_writer_count = 10usize;
@@ -6210,11 +6955,7 @@ mod persistence_tests {
                 std::thread::spawn(move || {
                     let username = format!("MixedZonePlayer{index}");
                     let updated_state = PlayerState {
-                        realm: "qi_refining_3".to_string(),
-                        spirit_qi: 45.0 + index as f64,
-                        spirit_qi_max: 200.0,
                         karma: ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0),
-                        experience: 7_000 + index as u64,
                         inventory_score: (index as f64 / player_writer_count as f64)
                             .clamp(0.0, 1.0),
                     };
@@ -6241,6 +6982,7 @@ mod persistence_tests {
                             tick,
                         }],
                         insights_taken: Vec::new(),
+                        death_insights: Vec::new(),
                         skill_milestones: Vec::new(),
                         spirit_root_first: None,
                     };
@@ -6250,7 +6992,10 @@ mod persistence_tests {
                         fortune_remaining: 1,
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
+                        spawn_anchor: None,
                         near_death_deadline_tick: Some(tick + 30),
+                        awaiting_decision: None,
+                        revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::NearDeath,
                     };
@@ -6293,6 +7038,7 @@ mod persistence_tests {
                     let registry = crate::world::zone::ZoneRegistry {
                         zones: vec![crate::world::zone::Zone {
                             name: format!("mixed_zone_{index}"),
+                            dimension: crate::world::dimension::DimensionKind::Overworld,
                             bounds: crate::world::zone::default_spawn_bounds(),
                             spirit_qi: 0.1 + index as f64,
                             danger_level: 1 + index as u8,
@@ -6370,14 +7116,13 @@ mod persistence_tests {
 
         for index in 0..player_writer_count {
             let username = format!("MixedZonePlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after mixed zone load");
-            assert_eq!(spirit_qi, 45.0 + index as f64);
             assert_eq!(karma, ((index as f64 / 5.0) - 1.0).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,
@@ -6412,11 +7157,7 @@ mod persistence_tests {
             settings.db_path(),
         );
         let player_seed = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 12.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 640,
             inventory_score: 0.2,
         };
         let batch_count = 3usize;
@@ -6454,11 +7195,7 @@ mod persistence_tests {
                     std::thread::spawn(move || {
                         let username = format!("BatchPlayer{index}");
                         let updated_state = PlayerState {
-                            realm: "qi_refining_3".to_string(),
-                            spirit_qi: 10.0 * batch as f64 + index as f64,
-                            spirit_qi_max: 220.0,
                             karma: (0.1 * batch as f64).clamp(-1.0, 1.0),
-                            experience: 10_000 + (batch as u64 * 100) + index as u64,
                             inventory_score: (0.01 * ((batch * 10 + index) as f64)).clamp(0.0, 1.0),
                         };
 
@@ -6488,6 +7225,7 @@ mod persistence_tests {
                                 tick,
                             }],
                             insights_taken: Vec::new(),
+                            death_insights: Vec::new(),
                             skill_milestones: Vec::new(),
                             spirit_root_first: None,
                         };
@@ -6497,7 +7235,10 @@ mod persistence_tests {
                             fortune_remaining: 1,
                             last_death_tick: Some(tick),
                             last_revive_tick: Some(tick.saturating_sub(1)),
+                            spawn_anchor: None,
                             near_death_deadline_tick: Some(tick + 30),
+                            awaiting_decision: None,
+                            revival_decision_deadline_tick: None,
                             weakened_until_tick: Some(tick + 5),
                             state: LifecycleState::NearDeath,
                         };
@@ -6541,6 +7282,7 @@ mod persistence_tests {
                         let registry = crate::world::zone::ZoneRegistry {
                             zones: vec![crate::world::zone::Zone {
                                 name: format!("mixed_zone_{batch}_{index}"),
+                                dimension: crate::world::dimension::DimensionKind::Overworld,
                                 bounds: crate::world::zone::default_spawn_bounds(),
                                 spirit_qi: 0.1 + batch as f64 + index as f64,
                                 danger_level: 1 + batch as u8 + index as u8,
@@ -6625,14 +7367,13 @@ mod persistence_tests {
         let final_batch = batch_count - 1;
         for index in 0..player_writer_count {
             let username = format!("BatchPlayer{index}");
-            let (spirit_qi, karma, inventory_score): (f64, f64, f64) = connection
+            let (karma, inventory_score): (f64, f64) = connection
                 .query_row(
-                    "SELECT spirit_qi, karma, inventory_score FROM player_core WHERE username = ?1",
+                    "SELECT karma, inventory_score FROM player_core WHERE username = ?1",
                     params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .expect("player core row should exist after multi-batch load");
-            assert_eq!(spirit_qi, 10.0 * final_batch as f64 + index as f64);
             assert_eq!(karma, (0.1 * final_batch as f64).clamp(-1.0, 1.0));
             assert_eq!(
                 inventory_score,

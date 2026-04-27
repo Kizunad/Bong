@@ -1,0 +1,24 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "use_quick_slot",
+      "type": "string"
+    },
+    "slot": {
+      "minimum": 0,
+      "maximum": 8,
+      "type": "integer"
+    }
+  }
+}

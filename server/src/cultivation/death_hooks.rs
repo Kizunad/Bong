@@ -19,7 +19,6 @@ use valence::prelude::Res;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CultivationDeathCause {
     BreakthroughBackfire,
-    TribulationFailure,
     MeridianCollapse,
     NegativeZoneDrain,
     ContaminationOverflow,
@@ -261,6 +260,7 @@ mod tests {
                         tick: 42,
                     }],
                     insights_taken: Vec::new(),
+                    death_insights: Vec::new(),
                     skill_milestones: Vec::new(),
                     spirit_root_first: None,
                 },

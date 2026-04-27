@@ -4,11 +4,54 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Component, Entity, Position, Query, Resource, Update,
-    Without,
+    bevy_ecs, Added, App, Client, Commands, Component, Despawned, Entity, EntityInteraction,
+    EntityLayerId, Hand, InteractEntityEvent, Position, Query, Resource, Update, Username, Without,
 };
 
-use crate::cultivation::death_hooks::PlayerRevived;
+use crate::cultivation::death_hooks::{PlayerRevived, PlayerTerminated};
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+
+/// Worldview §十二：死亡掉落应落在「死亡点」而不是「重生点」。
+///
+/// Combat 生命周期在判定死亡时把死亡瞬间坐标暂存到玩家实体上，
+/// `apply_death_drop_on_revive` 在玩家重生结算时读取该坐标用于掉落落点。
+///
+/// 该组件只用于“死亡 → 重生”窗口内的临时锚点，不做持久化。
+#[derive(Debug, Clone, Copy, Component, PartialEq)]
+pub struct DeathDropAnchor {
+    pub pos: [f64; 3],
+}
+
+/// plan-death-lifecycle-v1 §4b：寿元耗尽（老死）后，不应把遗物散落为地面掉落点。
+/// 遗物应以“遗骸容器”的形式留在世界中供他人搜刮。
+///
+/// MVP：用假玩家实体承载遗骸，并在右键交互时把内容转移到拾取者背包。
+#[derive(Debug, Component)]
+pub struct RemainsContainer {
+    pub items: Vec<RemainsItemRecord>,
+    pub bone_coins: u64,
+    pub player_list_entry: Entity,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemainsItemRecord {
+    pub source_container_id: String,
+    pub source_row: u8,
+    pub source_col: u8,
+    pub item: ItemInstance,
+}
+
+// plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
+pub mod ancient_relics;
+// plan-tsy-loot-v1 §4 — 干尸 component。
+pub mod corpse;
+// plan-tsy-loot-v1 §3 — 秘境内死亡分流。
+pub mod tsy_death_drop;
+// plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
+pub mod tsy_loot_spawn;
+// plan-tsy-loot-v1 §8.2 — 端到端集成测试。
+#[cfg(test)]
+mod tsy_loot_integration_test;
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
@@ -90,6 +133,9 @@ pub enum ItemRarity {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.1 — 上古遗物，仅由 TSY 自然 spawn 产生，
+    /// 灵质恒为 0（"无灵"），耐久作为"剩余使用次数"语义。
+    Ancient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,6 +143,7 @@ pub enum ItemEffect {
     BreakthroughBonus { magnitude: f64 },
     MeridianHeal { magnitude: f64, target: String },
     ContaminationCleanse { magnitude: f64 },
+    LifespanExtension { years: u32, source: String },
 }
 
 #[derive(Debug, Default)]
@@ -147,6 +194,17 @@ pub struct ItemInstance {
     /// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT。
     /// `None` = 无时间敏感（凡俗工具 / 瑶器 等），`Some` = 接 shelflife 路径计算。
     pub freshness: Option<crate::shelflife::Freshness>,
+    /// plan-mineral-v1 §2.2 — 矿物来源 item 的正典 mineral_id（如 `"fan_tie"`）。
+    /// `None` = 非矿物物品 / 凡俗 item（打怪掉落 / creative 给的 vanilla 方块）；
+    /// `Some` = `MineralDropEvent` 产出，`MineralRegistry::is_valid_mineral_id(..)` 保证正典性。
+    /// 序列化省略 None 以兼容旧 snapshot（见 freshness）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
+    /// plan-tsy-loot-v1 §1.3 — "剩余使用次数"。Ancient rarity 物品用此存 tier
+    /// 1/3/5 的初始剩余次数，每次使用 -= 1，归零销毁。非 ancient 物品恒为 None；
+    /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -228,8 +286,302 @@ pub fn register(app: &mut App) {
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
+    // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
+    app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
+    app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
     app.add_event::<DroppedItemEvent>();
-    app.add_systems(Update, (apply_death_drop_on_revive, sync_overloaded_marker));
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_systems(
+        Update,
+        (
+            apply_death_drop_on_revive,
+            apply_termination_drop_on_terminate,
+            handle_remains_interactions,
+            sync_overloaded_marker,
+            // plan-tsy-loot-v1 §2.2 — 玩家踏入 family 时 spawn 1% 上古遗物（idempotent）。
+            tsy_loot_spawn::tsy_loot_spawn_on_enter,
+        ),
+    );
+}
+
+fn last_termination_cause(life_record: Option<&LifeRecord>) -> Option<&str> {
+    match life_record.and_then(|record| record.biography.last()) {
+        Some(BiographyEntry::Terminated { cause, .. }) => Some(cause.as_str()),
+        _ => None,
+    }
+}
+
+/// Worldview §十二：角色终结后，身上物品应全部留世，掉在死亡点供他人拾取。
+///
+/// 例外：plan-death-lifecycle-v1 §3「自主归隐」走善终路径，不掉物品。
+#[allow(clippy::too_many_arguments)]
+pub fn apply_termination_drop_on_terminate(
+    mut terminated: bevy_ecs::event::EventReader<PlayerTerminated>,
+    mut commands: Commands,
+    life_records: Query<&LifeRecord>,
+    mut inventories: Query<&mut PlayerInventory>,
+    positions: Query<&Position>,
+    anchors: Query<&DeathDropAnchor>,
+    layer_ids: Query<&EntityLayerId>,
+    mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
+) {
+    for ev in terminated.read() {
+        let Ok(mut inventory) = inventories.get_mut(ev.entity) else {
+            continue;
+        };
+
+        let cause = last_termination_cause(life_records.get(ev.entity).ok());
+        let should_spawn_remains = cause == Some("natural_end");
+        let should_drop_to_world = !should_spawn_remains && cause != Some("voluntary_retire");
+
+        let base = anchors
+            .get(ev.entity)
+            .map(|anchor| anchor.pos)
+            .or_else(|_| {
+                positions.get(ev.entity).map(|pos| {
+                    let p = pos.0;
+                    [p.x, p.y, p.z]
+                })
+            })
+            .unwrap_or([0.0, 64.0, 0.0]);
+
+        let mut drained = Vec::new();
+        for container in &mut inventory.containers {
+            let container_id = container.id.clone();
+            for placed in container.items.drain(..) {
+                drained.push((
+                    container_id.clone(),
+                    placed.row,
+                    placed.col,
+                    placed.instance,
+                ));
+            }
+        }
+        for (slot, item) in inventory.equipped.drain() {
+            drained.push((slot, 0, 0, item));
+        }
+        for idx in 0..inventory.hotbar.len() {
+            if let Some(item) = inventory.hotbar[idx].take() {
+                drained.push(("hotbar".to_string(), 0, idx as u8, item));
+            }
+        }
+
+        let drained_bone_coins = inventory.bone_coins;
+        inventory.bone_coins = 0;
+
+        if should_spawn_remains && (!drained.is_empty() || drained_bone_coins > 0) {
+            let Ok(layer_id) = layer_ids.get(ev.entity) else {
+                tracing::warn!(
+                    "[bong][inventory] natural_end terminate entity={:?} missing EntityLayerId; falling back to world drops",
+                    ev.entity
+                );
+                // Fall back to world drops if we can't place a remains entity.
+                let start_idx = dropped_registry.entries.len();
+                for (idx, (source_container_id, source_row, source_col, item)) in
+                    drained.into_iter().enumerate()
+                {
+                    let entry = DroppedLootEntry {
+                        instance_id: item.instance_id,
+                        source_container_id,
+                        source_row,
+                        source_col,
+                        world_pos: [
+                            base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
+                            base[1],
+                            base[2] + 0.35,
+                        ],
+                        item,
+                    };
+                    dropped_registry.entries.insert(entry.instance_id, entry);
+                }
+                commands.entity(ev.entity).remove::<DeathDropAnchor>();
+                bump_revision(&mut inventory);
+                continue;
+            };
+
+            let (remains_entity, entry_entity) =
+                spawn_player_remains_entity(&mut commands, layer_id.0, base);
+            let items = drained
+                .into_iter()
+                .map(
+                    |(source_container_id, source_row, source_col, item)| RemainsItemRecord {
+                        source_container_id,
+                        source_row,
+                        source_col,
+                        item,
+                    },
+                )
+                .collect::<Vec<_>>();
+            commands.entity(remains_entity).insert(RemainsContainer {
+                items,
+                bone_coins: drained_bone_coins,
+                player_list_entry: entry_entity,
+            });
+        } else if should_drop_to_world && !drained.is_empty() {
+            let start_idx = dropped_registry.entries.len();
+            for (idx, (source_container_id, source_row, source_col, item)) in
+                drained.into_iter().enumerate()
+            {
+                let entry = DroppedLootEntry {
+                    instance_id: item.instance_id,
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    world_pos: [
+                        base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
+                        base[1],
+                        base[2] + 0.35,
+                    ],
+                    item,
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
+            }
+        }
+
+        commands.entity(ev.entity).remove::<DeathDropAnchor>();
+        bump_revision(&mut inventory);
+    }
+}
+
+fn spawn_player_remains_entity(
+    commands: &mut Commands,
+    layer: Entity,
+    pos: [f64; 3],
+) -> (Entity, Entity) {
+    use valence::entity::entity::{CustomName, NameVisible, NoGravity, Pose as PoseComponent};
+    use valence::entity::player::PlayerEntityBundle;
+    use valence::player_list::{DisplayName, Listed, PlayerListEntryBundle};
+    use valence::prelude::Text;
+
+    let uuid = valence::prelude::UniqueId::default();
+    let raw_hex = format!("{:032x}", uuid.0.as_u128());
+    let suffix = &raw_hex[raw_hex.len().saturating_sub(8)..];
+    let username = format!("Remains_{suffix}");
+
+    let remains_entity = commands
+        .spawn(PlayerEntityBundle {
+            layer: EntityLayerId(layer),
+            uuid,
+            position: Position::new(pos),
+            // Keep it in-place and visibly "dead".
+            entity_no_gravity: NoGravity(true),
+            entity_pose: PoseComponent(valence::entity::Pose::Dying),
+            entity_custom_name: CustomName(Some(Text::text("Remains"))),
+            entity_name_visible: NameVisible(true),
+            ..Default::default()
+        })
+        .id();
+
+    // In order for the player entity to be visible to other players, there must
+    // be an entry in the player list.
+    let entry_entity = commands
+        .spawn(PlayerListEntryBundle {
+            uuid,
+            username: Username(username),
+            display_name: DisplayName(Some(Text::text("Remains"))),
+            listed: Listed(false),
+            ..Default::default()
+        })
+        .id();
+
+    (remains_entity, entry_entity)
+}
+
+pub fn handle_remains_interactions(
+    mut interactions: bevy_ecs::event::EventReader<InteractEntityEvent>,
+    mut commands: Commands,
+    mut remains_q: Query<(Entity, &mut RemainsContainer, &Position, &EntityLayerId)>,
+    mut inventories: Query<(&mut PlayerInventory, &Position, &EntityLayerId)>,
+) {
+    const PICKUP_RANGE_SQ: f64 = 2.5 * 2.5;
+
+    for ev in interactions.read() {
+        match ev.interact {
+            EntityInteraction::Interact(Hand::Main)
+            | EntityInteraction::InteractAt {
+                hand: Hand::Main, ..
+            } => {}
+            _ => continue,
+        }
+
+        let Ok((remains_entity, mut remains, remains_pos, remains_layer)) =
+            remains_q.get_mut(ev.entity)
+        else {
+            continue;
+        };
+        let Ok((mut inventory, player_pos, player_layer)) = inventories.get_mut(ev.client) else {
+            continue;
+        };
+        if remains_layer.0 != player_layer.0 {
+            continue;
+        }
+
+        let rp = remains_pos.get();
+        let pp = player_pos.get();
+        let dx = rp.x - pp.x;
+        let dy = rp.y - pp.y;
+        let dz = rp.z - pp.z;
+        if dx * dx + dy * dy + dz * dz > PICKUP_RANGE_SQ {
+            continue;
+        }
+
+        let mut moved_any = false;
+
+        // Transfer wallet bone coins first (no slot requirements).
+        if remains.bone_coins > 0 && inventory.bone_coins < JS_SAFE_INTEGER_MAX {
+            let available = JS_SAFE_INTEGER_MAX.saturating_sub(inventory.bone_coins);
+            let transfer = remains.bone_coins.min(available);
+            if transfer > 0 {
+                inventory.bone_coins = inventory.bone_coins.saturating_add(transfer);
+                remains.bone_coins = remains.bone_coins.saturating_sub(transfer);
+                moved_any = true;
+            }
+        }
+
+        // Transfer item instances into the looter's containers.
+        if !remains.items.is_empty() {
+            let mut leftover = Vec::with_capacity(remains.items.len());
+            for record in remains.items.drain(..) {
+                let RemainsItemRecord {
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    item,
+                } = record;
+
+                let Some(location) = find_first_fit_container_location(&inventory, &item) else {
+                    leftover.push(RemainsItemRecord {
+                        source_container_id,
+                        source_row,
+                        source_col,
+                        item,
+                    });
+                    continue;
+                };
+                if let Err(reason) = attach_at_location(&mut inventory, item.clone(), &location) {
+                    tracing::warn!("[bong][inventory] remains loot attach rejected: {reason}");
+                    leftover.push(RemainsItemRecord {
+                        source_container_id,
+                        source_row,
+                        source_col,
+                        item,
+                    });
+                    continue;
+                }
+                moved_any = true;
+            }
+            remains.items = leftover;
+        }
+
+        if moved_any {
+            bump_revision(&mut inventory);
+        }
+
+        if remains.items.is_empty() && remains.bone_coins == 0 {
+            commands.entity(remains_entity).insert(Despawned);
+            commands.entity(remains.player_list_entry).insert(Despawned);
+        }
+    }
 }
 
 pub(crate) fn attach_inventory_to_joined_clients(
@@ -247,19 +599,10 @@ pub(crate) fn attach_inventory_to_joined_clients(
             });
 
         commands.entity(entity).insert(player_inventory);
-        // plan-HUD-v1 §10.4 quickslot bindings — 加入空 default，后续 quick_slot_bind
-        // 客户端 intent 会写入。挂在 inventory attach 旁边方便一起看。
-        commands
-            .entity(entity)
-            .insert(crate::combat::components::QuickSlotBindings::default());
         // plan-HUD-v1 §1.3 默认全解锁（v1 演示）。后续接入修炼系统按真实条件 mutate。
         commands
             .entity(entity)
             .insert(crate::combat::components::UnlockedStyles::default());
-        // plan-HUD-v1 §3.4 默认 stance=None，伪皮 0，涡流未激活。switch 后才出现指示器。
-        commands
-            .entity(entity)
-            .insert(crate::combat::components::DefenseStance::default());
         // plan-skill-v1 §8 SkillSet 挂玩家 entity；consumed_scrolls 一生累积（死透重生由
         // plan-death-lifecycle §4/§5 新建 default 实例，不迁移）。
         commands
@@ -269,7 +612,7 @@ pub(crate) fn attach_inventory_to_joined_clients(
     }
 }
 
-fn instantiate_inventory_from_loadout(
+pub fn instantiate_inventory_from_loadout(
     loadout: &LoadoutSpec,
     allocator: &mut InventoryInstanceIdAllocator,
 ) -> Result<PlayerInventory, String> {
@@ -333,6 +676,8 @@ fn instantiate_item_instance(
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     })
 }
 
@@ -470,6 +815,8 @@ pub fn add_item_to_player_inventory(
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     };
 
     let Some(main_pack) = inventory
@@ -752,6 +1099,16 @@ fn parse_item_effect(
         "contamination_cleanse" => Ok(ItemEffect::ContaminationCleanse {
             magnitude: effect.magnitude,
         }),
+        "lifespan_extension" => {
+            let source = effect
+                .target
+                .filter(|target| !target.trim().is_empty())
+                .unwrap_or_else(|| "life_extension_pill".to_string());
+            Ok(ItemEffect::LifespanExtension {
+                years: effect.magnitude.floor() as u32,
+                source,
+            })
+        }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
             source_path.display()
@@ -1041,6 +1398,18 @@ pub struct InventoryDurabilityUpdate {
     pub durability: f64,
 }
 
+/// Inventory item durability changed for a specific client entity.
+///
+/// This event exists to allow low-frequency incremental updates (e.g. armor hit
+/// durability ticks) without requiring a full `inventory_snapshot` UI refresh.
+#[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
+pub struct InventoryDurabilityChangedEvent {
+    pub entity: Entity,
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub durability: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryConsumeOutcome {
     pub revision: InventoryRevision,
@@ -1080,7 +1449,12 @@ pub struct DroppedLootEntry {
 
 #[derive(Default, Resource, Debug)]
 pub struct DroppedLootRegistry {
-    pub by_owner: HashMap<Entity, Vec<DroppedLootEntry>>,
+    /// World-visible drops keyed by `instance_id`.
+    ///
+    /// The pickup request only carries `instance_id`, so the registry must be
+    /// addressable without an implicit owner. `instance_id` values are globally
+    /// unique within a running server.
+    pub entries: HashMap<u64, DroppedLootEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1357,11 +1731,15 @@ pub fn consume_item_instance_once(
     Err(format!("instance {instance_id} not found in inventory"))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
     registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
+    anchors: Query<&DeathDropAnchor>,
+    presences: Query<&crate::world::tsy::TsyPresence>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
 ) {
@@ -1370,31 +1748,107 @@ pub fn apply_death_drop_on_revive(
             continue;
         };
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
+        let base = positions
+            .get(ev.entity)
+            .map(|pos| pos.0)
+            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
 
+        // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
+        // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
+        if let Ok(presence) = presences.get(ev.entity) {
+            let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
+                &mut inventory,
+                &registry,
+                presence,
+                base,
+                seed,
+            );
+            if tsy_outcome.total_dropped() == 0 {
+                continue;
+            }
+            let mut combined: Vec<DroppedItemRecord> = Vec::new();
+            for (idx, record) in tsy_outcome
+                .entry_carry_dropped
+                .iter()
+                .chain(tsy_outcome.tsy_acquired_dropped.iter())
+                .enumerate()
+            {
+                // plan-tsy-lifecycle-v1 §3.3 — 把 family 写进 source_container_id 前缀，
+                // 让 lifecycle cleanup 能精确识别"属于本 family 的塌缩残留"，避免
+                // 主世界同 XYZ 的 entries 被误删（Codex review P1）。
+                let entry = DroppedLootEntry {
+                    instance_id: record.instance.instance_id,
+                    source_container_id: format!(
+                        "tsy_corpse:{}/{}",
+                        presence.family_id, record.container_id
+                    ),
+                    source_row: record.row,
+                    source_col: record.col,
+                    world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                    item: record.instance.clone(),
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
+                combined.push(record.clone());
+            }
+
+            // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
+            // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
+            let drop_ids: Vec<u64> = combined.iter().map(|r| r.instance.instance_id).collect();
+            commands.spawn((
+                Position(tsy_outcome.corpse_pos),
+                corpse::CorpseEmbalmed {
+                    family_id: presence.family_id.clone(),
+                    died_at_tick: presence.entered_at_tick, // MVP：用 entered_tick 占位；P2 lifecycle 用真 death tick
+                    death_cause: "tsy_death".to_string(),
+                    drops: drop_ids,
+                    activated_to_daoxiang: false,
+                },
+            ));
+
+            dropped_events.send(DroppedItemEvent {
+                entity: ev.entity,
+                revision: inventory.revision,
+                dropped: combined,
+            });
+            continue;
+        }
+
+        // ----- 主世界路径（保持原 §十二 50% 行为） -----
         let outcome = apply_death_drop_to_inventory(&mut inventory, &registry, seed);
 
         if outcome.dropped.is_empty() {
             continue;
         }
 
-        let base = positions
+        let base = anchors
             .get(ev.entity)
-            .map(|pos| pos.0)
-            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
-        let drops = outcome
-            .dropped
-            .iter()
-            .enumerate()
-            .map(|(idx, dropped)| DroppedLootEntry {
+            .map(|anchor| anchor.pos)
+            .or_else(|_| {
+                positions.get(ev.entity).map(|pos| {
+                    let p = pos.0;
+                    [p.x, p.y, p.z]
+                })
+            })
+            .unwrap_or([0.0, 64.0, 0.0]);
+        let start_idx = dropped_registry.entries.len();
+        for (idx, dropped) in outcome.dropped.iter().enumerate() {
+            let entry = DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
                 source_container_id: dropped.container_id.clone(),
                 source_row: dropped.row,
                 source_col: dropped.col,
-                world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                world_pos: [
+                    base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
+                    base[1],
+                    base[2] + 0.35,
+                ],
                 item: dropped.instance.clone(),
-            })
-            .collect::<Vec<_>>();
-        dropped_registry.by_owner.insert(ev.entity, drops);
+            };
+            dropped_registry.entries.insert(entry.instance_id, entry);
+        }
+
+        // Anchor is only needed until the revive-drop is materialized.
+        commands.entity(ev.entity).remove::<DeathDropAnchor>();
 
         dropped_events.send(DroppedItemEvent {
             entity: ev.entity,
@@ -1541,30 +1995,24 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
     container_weight + equipped_weight + hotbar_weight
 }
 
-pub fn dropped_loot_snapshot(
-    registry: &DroppedLootRegistry,
-    owner: Entity,
-) -> Vec<DroppedLootEntry> {
-    registry.by_owner.get(&owner).cloned().unwrap_or_default()
+pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
+    let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
+    // Deterministic ordering avoids client-side insertionOrder churn.
+    drops.sort_by_key(|entry| entry.instance_id);
+    drops
 }
 
 pub fn pickup_dropped_loot_instance(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
-    owner: Entity,
     player_pos: [f64; 3],
     instance_id: u64,
 ) -> Result<InventoryRevision, String> {
-    let entries = registry
-        .by_owner
-        .get_mut(&owner)
-        .ok_or_else(|| format!("no dropped loot registered for {owner:?}"))?;
-    let idx = entries
-        .iter()
-        .position(|entry| entry.instance_id == instance_id)
+    let entry = registry
+        .entries
+        .get(&instance_id)
+        .cloned()
         .ok_or_else(|| format!("dropped instance {instance_id} not found"))?;
-
-    let entry = entries[idx].clone();
     let dx = entry.world_pos[0] - player_pos[0];
     let dy = entry.world_pos[1] - player_pos[1];
     let dz = entry.world_pos[2] - player_pos[2];
@@ -1579,10 +2027,7 @@ pub fn pickup_dropped_loot_instance(
     attach_at_location(inventory, entry.item, &location)?;
     bump_revision(inventory);
 
-    entries.remove(idx);
-    if entries.is_empty() {
-        registry.by_owner.remove(&owner);
-    }
+    registry.entries.remove(&instance_id);
 
     Ok(inventory.revision)
 }
@@ -1590,7 +2035,6 @@ pub fn pickup_dropped_loot_instance(
 pub fn discard_inventory_item_to_dropped_loot(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
-    owner: Entity,
     player_pos: [f64; 3],
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
@@ -1625,11 +2069,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         }
     };
 
-    let next_idx = registry
-        .by_owner
-        .get(&owner)
-        .map(|entries| entries.len())
-        .unwrap_or(0);
+    let next_idx = registry.entries.len();
     let dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
@@ -1642,11 +2082,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         ],
         item,
     };
-    registry
-        .by_owner
-        .entry(owner)
-        .or_default()
-        .push(dropped.clone());
+    registry.entries.insert(instance_id, dropped.clone());
 
     Ok(InventoryDiscardOutcome {
         revision: inventory.revision,
@@ -1687,7 +2123,7 @@ fn death_drop_seed(entity: Entity, revision: u64) -> u64 {
         .wrapping_add(revision.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn select_drop_instance_ids(
+pub(crate) fn select_drop_instance_ids(
     mut instance_ids: Vec<u64>,
     drop_count: usize,
     mut seed: u64,
@@ -1711,7 +2147,7 @@ fn xorshift64(mut x: u64) -> u64 {
     x
 }
 
-fn bump_revision(inventory: &mut PlayerInventory) {
+pub(crate) fn bump_revision(inventory: &mut PlayerInventory) {
     inventory.revision = InventoryRevision(inventory.revision.0.saturating_add(1));
 }
 
@@ -2301,6 +2737,8 @@ fn build_item_instance_from_template(
         spirit_quality,
         durability,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     })
 }
 
@@ -2443,6 +2881,20 @@ mod tests {
             load_item_registry().expect("item registry should load from assets/items/*.toml");
         assert!(registry.len() >= 1);
         assert!(registry.get("starter_talisman").is_some());
+        assert!(matches!(
+            registry.get("life_extension_pill").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::LifespanExtension {
+                years: 10,
+                source,
+            }) if source == "life_extension_pill"
+        ));
+        assert!(matches!(
+            registry.get("life_core").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::LifespanExtension {
+                years: 25,
+                source,
+            }) if source == "collapse_core"
+        ));
     }
 
     #[test]
@@ -2841,6 +3293,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -2950,6 +3404,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3002,6 +3458,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         });
 
@@ -3174,6 +3632,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3213,6 +3673,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3242,6 +3704,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3310,6 +3774,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3325,6 +3791,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3341,6 +3809,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.5,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3400,6 +3870,8 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
             });
         }
@@ -3415,15 +3887,266 @@ cols = 4
     }
 
     #[test]
+    fn terminated_player_drops_all_items_except_on_voluntary_retire() {
+        use valence::prelude::{App, EntityLayerId, InteractEntityEvent, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_event::<InteractEntityEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_interactions,
+            ),
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                LifeRecord {
+                    character_id: "offline:Azure".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "tribulation_failed".to_string(),
+                        tick: 1,
+                    }],
+                    insights_taken: Vec::new(),
+                    death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
+                    spirit_root_first: None,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<DroppedLootRegistry>();
+        let dropped_count = registry.entries.len();
+        assert!(
+            dropped_count >= 1,
+            "terminated player should drop inventory"
+        );
+
+        // Voluntary retire should not create drops, but inventory should still be drained.
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_event::<InteractEntityEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_interactions,
+            ),
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                LifeRecord {
+                    character_id: "offline:Azure".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "voluntary_retire".to_string(),
+                        tick: 1,
+                    }],
+                    insights_taken: Vec::new(),
+                    death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
+                    spirit_root_first: None,
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            registry.entries.is_empty(),
+            "voluntary_retire should not create drops"
+        );
+
+        let inv = app.world().get::<PlayerInventory>(entity).unwrap();
+        let remaining_items = inv.containers.iter().flat_map(|c| c.items.iter()).count()
+            + inv.equipped.len()
+            + inv.hotbar.iter().flatten().count();
+        assert_eq!(
+            remaining_items, 0,
+            "inventory should be drained on terminate"
+        );
+        assert_eq!(
+            inv.bone_coins, 0,
+            "bone_coins should be cleared on terminate"
+        );
+    }
+
+    #[test]
+    fn natural_end_spawns_remains_and_allows_looting_via_interact() {
+        use valence::prelude::{
+            App, Despawned, EntityInteraction, Hand, InteractEntityEvent, Position, Update,
+        };
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<InteractEntityEvent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_interactions,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    insights_taken: Vec::new(),
+                    death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
+                    spirit_root_first: None,
+                },
+            ))
+            .id();
+        {
+            let mut inv = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(terminated)
+                .expect("terminated player should have inventory");
+            inv.bone_coins = 7;
+        }
+
+        // Looter starts with an empty inventory.
+        let mut looter_inv = make_test_inventory_with_one_item();
+        for container in &mut looter_inv.containers {
+            container.items.clear();
+        }
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        looter_inv.bone_coins = 0;
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        // natural_end should not create world dropped loot entries.
+        let registry = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            registry.entries.is_empty(),
+            "natural_end should not create DroppedLootRegistry entries"
+        );
+
+        // Terminated player's inventory should be drained.
+        let inv = app.world().get::<PlayerInventory>(terminated).unwrap();
+        let remaining_items = inv.containers.iter().flat_map(|c| c.items.iter()).count()
+            + inv.equipped.len()
+            + inv.hotbar.iter().flatten().count();
+        assert_eq!(remaining_items, 0);
+        assert_eq!(inv.bone_coins, 0);
+
+        // Remains should exist and hold the drained items/coins.
+        let (
+            remains_entity,
+            remains_item_count,
+            remains_bone_coins,
+            remains_pos,
+            remains_player_list_entry,
+        ) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &RemainsContainer, &Position)>();
+            let mut iter = q.iter(app.world());
+            let (e, remains, pos) = iter.next().expect("expected exactly one remains container");
+            assert!(
+                iter.next().is_none(),
+                "expected exactly one remains container"
+            );
+            let p = pos.get();
+            (
+                e,
+                remains.items.len(),
+                remains.bone_coins,
+                [p.x, p.y, p.z],
+                remains.player_list_entry,
+            )
+        };
+        assert_eq!(remains_item_count, 1);
+        assert_eq!(remains_bone_coins, 7);
+        assert_eq!(remains_pos[0], 10.0);
+        assert_eq!(remains_pos[1], 66.0);
+        assert_eq!(remains_pos[2], 10.0);
+        assert!(
+            app.world().get_entity(remains_player_list_entry).is_some(),
+            "player_list entry for remains should exist"
+        );
+
+        // Right click loots into the looter inventory.
+        app.world_mut().send_event(InteractEntityEvent {
+            client: looter,
+            entity: remains_entity,
+            sneaking: false,
+            interact: EntityInteraction::Interact(Hand::Main),
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        let has_item = looter_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 42);
+        assert!(has_item, "looter should receive the remains item");
+        assert_eq!(looter_inv.bone_coins, 7, "looter should receive bone_coins");
+
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_some(),
+            "remains entity should be marked Despawned after looting"
+        );
+        assert!(
+            app.world()
+                .get::<Despawned>(remains_player_list_entry)
+                .is_some(),
+            "remains player_list entry should be marked Despawned after looting"
+        );
+    }
+
+    #[test]
     fn pickup_dropped_loot_instance_reinserts_item_and_clears_registry_entry() {
         let mut inventory = make_test_inventory_with_one_item();
         inventory.containers[0].items.clear();
 
         let owner = Entity::PLACEHOLDER;
         let mut registry = DroppedLootRegistry::default();
-        registry.by_owner.insert(
-            owner,
-            vec![DroppedLootEntry {
+        registry.entries.insert(
+            42,
+            DroppedLootEntry {
                 instance_id: 42,
                 source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
                 source_row: 0,
@@ -3442,22 +4165,20 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
-            }],
+            },
         );
 
-        let revision = pickup_dropped_loot_instance(
-            &mut inventory,
-            &mut registry,
-            owner,
-            [0.0, 64.0, 0.0],
-            42,
-        )
-        .expect("pickup should succeed");
+        let revision =
+            pickup_dropped_loot_instance(&mut inventory, &mut registry, [0.0, 64.0, 0.0], 42)
+                .expect("pickup should succeed");
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);
-        assert!(registry.by_owner.get(&owner).is_none());
+        assert!(!registry.entries.contains_key(&42));
+        let _ = owner;
     }
 
     #[test]
@@ -3469,7 +4190,6 @@ cols = 4
         let outcome = discard_inventory_item_to_dropped_loot(
             &mut inventory,
             &mut registry,
-            owner,
             [0.0, 64.0, 0.0],
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
@@ -3482,13 +4202,13 @@ cols = 4
 
         assert_eq!(outcome.revision, InventoryRevision(8));
         assert!(inventory.containers[0].items.is_empty());
-        let drops = registry
-            .by_owner
-            .get(&owner)
+        let entry = registry
+            .entries
+            .get(&42)
             .expect("registry should contain dropped item");
-        assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].instance_id, 42);
-        assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+        assert_eq!(entry.instance_id, 42);
+        assert_eq!(entry.source_container_id, MAIN_PACK_CONTAINER_ID);
+        let _ = owner;
     }
 
     #[test]
@@ -3534,6 +4254,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.75,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3591,6 +4313,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.25,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3618,6 +4342,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3634,6 +4360,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3688,6 +4416,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 

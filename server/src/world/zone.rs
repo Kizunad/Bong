@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::Deserialize;
 use valence::prelude::{App, Commands, DVec3, Resource, Startup};
 
+use super::dimension::DimensionKind;
 use super::TEST_AREA_BLOCK_EXTENT;
 use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord};
 
@@ -22,6 +23,9 @@ const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
     pub name: String,
+    /// Dimension this zone lives in. Defaults to overworld for backwards compatibility
+    /// with `zones.json` snapshots that pre-date the TSY dim.
+    pub dimension: DimensionKind,
     pub bounds: (DVec3, DVec3),
     pub spirit_qi: f64,
     pub danger_level: u8,
@@ -54,6 +58,7 @@ impl Zone {
     fn spawn() -> Self {
         Self {
             name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            dimension: DimensionKind::Overworld,
             bounds: default_spawn_bounds(),
             spirit_qi: DEFAULT_SPAWN_SPIRIT_QI,
             danger_level: 0,
@@ -103,6 +108,68 @@ impl Zone {
             self.patrol_anchors[anchor_index % self.patrol_anchors.len()]
         }
     }
+
+    /// plan-tsy-zone-v1 §0 axiom 1 — TSY 系列 zone 通过 `tsy_` 名前缀识别，不改 Zone struct。
+    pub fn is_tsy(&self) -> bool {
+        self.name.starts_with("tsy_")
+    }
+
+    /// plan-tsy-zone-v1 §1.2 — 解析 TSY 层深（None = 不是 TSY 或后缀不规范）。
+    ///
+    /// 当前 P0 暴露公共 API，由 `!tsy-spawn` 调试命令（plan §3.1）/ worldgen plan /
+    /// loot plan 后续消费；P0 自身 drain / portal 不使用层深字段。
+    #[allow(dead_code)]
+    pub fn tsy_depth(&self) -> Option<TsyDepth> {
+        if !self.is_tsy() {
+            return None;
+        }
+        if self.name.ends_with("_shallow") {
+            Some(TsyDepth::Shallow)
+        } else if self.name.ends_with("_mid") {
+            Some(TsyDepth::Mid)
+        } else if self.name.ends_with("_deep") {
+            Some(TsyDepth::Deep)
+        } else {
+            None
+        }
+    }
+
+    /// plan-tsy-zone-v1 §1.2 — TSY 系列 id（"tsy_lingxu_01_shallow" → "tsy_lingxu_01"）。
+    ///
+    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn`（用于 family→3-subzone 检索）
+    /// 与后续 worldgen plan。
+    #[allow(dead_code)]
+    pub fn tsy_family_id(&self) -> Option<String> {
+        if !self.is_tsy() {
+            return None;
+        }
+        // 仅当后缀属于已知层深时切除，避免不规范命名错误归一。
+        match self.tsy_depth() {
+            Some(_) => self.name.rsplit_once('_').map(|(head, _)| head.to_string()),
+            None => None,
+        }
+    }
+
+    /// plan-tsy-zone-v1 §1.1 — 入口层标记（active_events 含 `tsy_entry` tag）。
+    ///
+    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn` 调试命令（plan §3.1）+ worldgen plan
+    /// 用于"哪一层是着陆点"的查询。
+    #[allow(dead_code)]
+    pub fn is_tsy_entry(&self) -> bool {
+        self.active_events.iter().any(|e| e == "tsy_entry")
+    }
+}
+
+/// plan-tsy-zone-v1 §1.2 — 坍缩渊层深枚举。
+///
+/// 命名为 `TsyDepth` 而非 plan 文档原文的 `TsyLayer`，避免与
+/// `world::dimension::TsyLayer`（marker component for the bong:tsy `LayerBundle`）冲突。
+#[allow(dead_code)] // P0 仅由测试 + 公共 API 消费；运行时使用方在后续 plan 接入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TsyDepth {
+    Shallow,
+    Mid,
+    Deep,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -184,12 +251,31 @@ impl ZoneRegistry {
         self.zones.iter().find(|zone| zone.name == name)
     }
 
-    pub fn find_zone(&self, pos: DVec3) -> Option<&Zone> {
-        self.zones.iter().find(|zone| zone.contains(pos))
+    /// Find the zone at `pos` within `dim`. Zones registered to other dimensions
+    /// are skipped even if their AABB happens to overlap on the same XYZ in their
+    /// own coordinate system.
+    pub fn find_zone(&self, dim: DimensionKind, pos: DVec3) -> Option<&Zone> {
+        self.zones
+            .iter()
+            .find(|zone| zone.dimension == dim && zone.contains(pos))
     }
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
         self.zones.iter_mut().find(|zone| zone.name == name)
+    }
+
+    /// plan-tsy-zone-v1 §-1 隐形前置 — 运行时动态 add 一个 zone（如 `!tsy-spawn`
+    /// 调试命令追加 TSY subzone）。同名 zone 已存在则拒绝（idempotent guard）。
+    /// 不做 AABB 相交校验：调用方负责保证语义正确（同 family 三层共享 XZ 是合法例外）。
+    pub fn register_runtime_zone(&mut self, zone: Zone) -> Result<(), String> {
+        if self.zones.iter().any(|existing| existing.name == zone.name) {
+            return Err(format!(
+                "zone `{}` already registered; runtime add rejected",
+                zone.name
+            ));
+        }
+        self.zones.push(zone);
+        Ok(())
     }
 
     pub fn apply_runtime_records(&mut self, runtime_records: &[ZoneRuntimeRecord]) {
@@ -332,6 +418,9 @@ struct ZonesFileConfig {
 #[derive(Debug, Deserialize)]
 struct ZoneConfig {
     name: String,
+    /// Dimension; defaults to overworld for backwards-compat with pre-TSY snapshots.
+    #[serde(default)]
+    dimension: DimensionKind,
     aabb: ZoneAabbConfig,
     spirit_qi: f64,
     danger_level: u8,
@@ -458,6 +547,7 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
 
     Ok(Zone {
         name: name.to_string(),
+        dimension: zone.dimension,
         bounds: (min, max),
         spirit_qi: zone.spirit_qi,
         danger_level: zone.danger_level,
@@ -581,10 +671,16 @@ mod zone_tests {
 
         let registry = ZoneRegistry::load_from_path(&valid_path);
         let spawn = registry
-            .find_zone(DVec3::new(14.0, 66.0, 14.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(14.0, 66.0, 14.0),
+            )
             .expect("valid config should load spawn zone");
         let blood_valley = registry
-            .find_zone(DVec3::new(110.0, 66.0, 110.0))
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(110.0, 66.0, 110.0),
+            )
             .expect("valid config should load blood_valley zone");
 
         assert_eq!(registry.zones.len(), 2);
@@ -606,6 +702,105 @@ mod zone_tests {
         let fallback_registry = ZoneRegistry::load_from_path(&fallback_path);
         assert_eq!(fallback_registry.zones.len(), 1);
         assert_eq!(fallback_registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    #[test]
+    fn zones_json_without_dimension_field_defaults_to_overworld() {
+        // Backwards-compat: pre-TSY zones.json snapshots have no `dimension` key.
+        // `#[serde(default)]` on `ZoneConfig::dimension` must yield Overworld.
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-default-dim", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn zones_json_with_explicit_tsy_dimension_loads_correctly() {
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-explicit-tsy", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "dimension": "overworld",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    },
+    {
+      "name": "tsy_test",
+      "dimension": "tsy",
+      "aabb": { "min": [-100.0, 0.0, -100.0], "max": [100.0, 128.0, 100.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 5
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 2);
+        let tsy_zone = registry
+            .zones
+            .iter()
+            .find(|z| z.name == "tsy_test")
+            .expect("tsy_test zone should be present");
+        assert_eq!(tsy_zone.dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn find_zone_filters_by_dimension() {
+        use crate::world::dimension::DimensionKind;
+        let path = unique_temp_path("bong-zones-find-by-dim", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    },
+    {
+      "name": "tsy_overlap",
+      "dimension": "tsy",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 5
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        // Same XYZ, but `find_zone` must return only the matching dimension.
+        let pos = DVec3::new(8.0, 66.0, 8.0);
+        let overworld_match = registry
+            .find_zone(DimensionKind::Overworld, pos)
+            .expect("overworld query should find spawn");
+        let tsy_match = registry
+            .find_zone(DimensionKind::Tsy, pos)
+            .expect("tsy query should find tsy_overlap");
+        assert_eq!(overworld_match.name, "spawn");
+        assert_eq!(tsy_match.name, "tsy_overlap");
     }
 
     #[test]
@@ -802,5 +997,121 @@ mod zone_tests {
             .as_nanos();
 
         std::env::temp_dir().join(format!("{prefix}-{nanos}{suffix}"))
+    }
+
+    // ----- plan-tsy-zone-v1 §1.2 / §-1 helper unit tests -----
+
+    fn make_zone(name: &str, dim: crate::world::dimension::DimensionKind) -> super::Zone {
+        super::Zone {
+            name: name.to_string(),
+            dimension: dim,
+            bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 10.0)),
+            spirit_qi: 0.0,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn is_tsy_recognises_prefix() {
+        assert!(make_zone(
+            "tsy_lingxu_01_shallow",
+            crate::world::dimension::DimensionKind::Tsy
+        )
+        .is_tsy());
+        assert!(!make_zone(
+            "blood_valley",
+            crate::world::dimension::DimensionKind::Overworld
+        )
+        .is_tsy());
+        assert!(!make_zone("", crate::world::dimension::DimensionKind::Overworld).is_tsy());
+    }
+
+    #[test]
+    fn tsy_depth_parses_layer_suffix() {
+        use super::TsyDepth;
+        let dim = crate::world::dimension::DimensionKind::Tsy;
+        assert_eq!(
+            make_zone("tsy_lingxu_01_shallow", dim).tsy_depth(),
+            Some(TsyDepth::Shallow)
+        );
+        assert_eq!(
+            make_zone("tsy_lingxu_01_mid", dim).tsy_depth(),
+            Some(TsyDepth::Mid)
+        );
+        assert_eq!(
+            make_zone("tsy_lingxu_01_deep", dim).tsy_depth(),
+            Some(TsyDepth::Deep)
+        );
+        // Non-tsy zone returns None even if suffix matches.
+        assert_eq!(
+            make_zone(
+                "foo_shallow",
+                crate::world::dimension::DimensionKind::Overworld
+            )
+            .tsy_depth(),
+            None
+        );
+        // Malformed depth suffix returns None.
+        assert_eq!(make_zone("tsy_lingxu_01_abyss", dim).tsy_depth(), None);
+    }
+
+    #[test]
+    fn tsy_family_id_strips_depth_suffix() {
+        let dim = crate::world::dimension::DimensionKind::Tsy;
+        assert_eq!(
+            make_zone("tsy_lingxu_01_shallow", dim).tsy_family_id(),
+            Some("tsy_lingxu_01".to_string())
+        );
+        assert_eq!(
+            make_zone("tsy_a_b_c_deep", dim).tsy_family_id(),
+            Some("tsy_a_b_c".to_string())
+        );
+        // Malformed suffix → None (we refuse to chop arbitrary trailing tokens).
+        assert_eq!(make_zone("tsy_lingxu_01_abyss", dim).tsy_family_id(), None);
+    }
+
+    #[test]
+    fn is_tsy_entry_checks_active_events() {
+        let mut z = make_zone(
+            "tsy_lingxu_01_shallow",
+            crate::world::dimension::DimensionKind::Tsy,
+        );
+        assert!(!z.is_tsy_entry());
+        z.active_events.push("tsy_entry".to_string());
+        assert!(z.is_tsy_entry());
+    }
+
+    #[test]
+    fn register_runtime_zone_appends_unique_zone() {
+        let mut registry = ZoneRegistry::fallback();
+        let initial_len = registry.zones.len();
+        let zone = make_zone(
+            "tsy_lingxu_01_shallow",
+            crate::world::dimension::DimensionKind::Tsy,
+        );
+        registry.register_runtime_zone(zone).expect("first add ok");
+        assert_eq!(registry.zones.len(), initial_len + 1);
+        assert!(registry
+            .find_zone_by_name("tsy_lingxu_01_shallow")
+            .is_some());
+    }
+
+    #[test]
+    fn register_runtime_zone_rejects_duplicate_name() {
+        let mut registry = ZoneRegistry::fallback();
+        let zone = make_zone(
+            "tsy_lingxu_01_shallow",
+            crate::world::dimension::DimensionKind::Tsy,
+        );
+        registry
+            .register_runtime_zone(zone.clone())
+            .expect("first add ok");
+        let err = registry
+            .register_runtime_zone(zone)
+            .expect_err("duplicate name should be rejected");
+        assert!(err.contains("already registered"), "got: {err}");
     }
 }

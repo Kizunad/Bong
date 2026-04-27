@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "skill_bar_bind",
+  "slot": 0,
+  "binding": {
+    "kind": "skill",
+    "skill_id": "burst_meridian.beng_quan"
+  }
+}

@@ -5,6 +5,9 @@ import net.minecraft.client.particle.SpriteBillboardParticle;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.shape.VoxelShape;
 
 /**
  * 水平贴地的符圈粒子（plan-particle-system-v1 §1.3）。
@@ -18,8 +21,8 @@ import net.minecraft.client.world.ClientWorld;
  *   <li>{@link #yLift} 微抬防止 z-fighting（默认 0.02）</li>
  * </ul>
  *
- * <p>地形贴合（plan §1.3 "按下方方块 bounding box 微调 Y"）留到 Phase 2 —— 需要访问
- * {@link net.minecraft.world.World#getBlockState} 查方块高度，目前仅用玩家当前 Y。
+ * <p>构建几何时会采样当前位置与下方方块的 collision / outline shape，将 decal 中心 Y 吸附到
+ * 可见顶面，再叠加 {@link #yLift} 防止 z-fighting。
  */
 public class BongGroundDecalParticle extends SpriteBillboardParticle {
     protected double halfSize = 0.5;
@@ -89,7 +92,8 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
     public void buildGeometry(VertexConsumer vertexConsumer, Camera camera, float tickDelta) {
         net.minecraft.util.math.Vec3d camPos = camera.getPos();
         double cx = net.minecraft.util.math.MathHelper.lerp((double) tickDelta, this.prevPosX, this.x) - camPos.x;
-        double cy = net.minecraft.util.math.MathHelper.lerp((double) tickDelta, this.prevPosY, this.y) - camPos.y;
+        double worldY = net.minecraft.util.math.MathHelper.lerp((double) tickDelta, this.prevPosY, this.y);
+        double cy = terrainFittedCenterY(worldY) - camPos.y;
         double cz = net.minecraft.util.math.MathHelper.lerp((double) tickDelta, this.prevPosZ, this.z) - camPos.z;
 
         float[] quad = BongParticleGeometry.buildGroundDecalQuad(
@@ -110,5 +114,27 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
         vertexConsumer.vertex(quad[3],  quad[4],  quad[5]).texture(u0, v0).color(this.red, this.green, this.blue, this.alpha).light(light).next();
         vertexConsumer.vertex(quad[6],  quad[7],  quad[8]).texture(u1, v0).color(this.red, this.green, this.blue, this.alpha).light(light).next();
         vertexConsumer.vertex(quad[9],  quad[10], quad[11]).texture(u1, v1).color(this.red, this.green, this.blue, this.alpha).light(light).next();
+    }
+
+    private double terrainFittedCenterY(double worldY) {
+        BlockPos base = BlockPos.ofFloored(this.x, worldY, this.z);
+        double[] candidates = {
+            supportTopY(base),
+            supportTopY(base.down()),
+            supportTopY(base.down(2)),
+        };
+        return BongParticleGeometry.fitGroundDecalY(worldY, candidates);
+    }
+
+    private double supportTopY(BlockPos pos) {
+        net.minecraft.block.BlockState state = this.world.getBlockState(pos);
+        VoxelShape shape = state.getCollisionShape(this.world, pos);
+        if (shape.isEmpty()) {
+            shape = state.getOutlineShape(this.world, pos);
+        }
+        if (shape.isEmpty()) {
+            return Double.NaN;
+        }
+        return pos.getY() + shape.getMax(Direction.Axis.Y);
     }
 }

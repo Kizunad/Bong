@@ -9,6 +9,14 @@ import {
 } from "../src/agent-command.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { DeathInsightRequestV1 } from "../src/death-insight.js";
+import {
+  AgingEventV1,
+  DeceasedIndexEntryV1,
+  DeceasedSnapshotV1,
+  DuoSheEventV1,
+  LifespanEventV1,
+} from "../src/death-lifecycle.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
   INTENSITY_MAX,
@@ -22,6 +30,10 @@ import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
+import {
+  TsyNpcSpawnedV1,
+  TsySentinelPhaseChangedV1,
+} from "../src/tsy-hostile-v1.js";
 import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
@@ -143,6 +155,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("tsy-npc-spawned.sample.json", () => {
+    const data = loadSample("tsy-npc-spawned.sample.json");
+    const result = validate(TsyNpcSpawnedV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("tsy-sentinel-phase-changed.sample.json", () => {
+    const data = loadSample("tsy-sentinel-phase-changed.sample.json");
+    const result = validate(TsySentinelPhaseChangedV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.botany-harvest-progress.sample.json", () => {
     const data = loadSample("server-data.botany-harvest-progress.sample.json");
     const result = validate(ServerDataV1, data);
@@ -157,6 +181,12 @@ describe("sample files pass schema validation", () => {
 
   it("server-data.cultivation-detail.sample.json", () => {
     const data = loadSample("server-data.cultivation-detail.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.death-screen.sample.json", () => {
+    const data = loadSample("server-data.death-screen.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -227,6 +257,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.skillbar-config.sample.json", () => {
+    const data = loadSample("server-data.skillbar-config.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.techniques-snapshot.sample.json", () => {
+    const data = loadSample("server-data.techniques-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.alchemy-feed-slot.sample.json", () => {
     const data = loadSample("client-request.alchemy-feed-slot.sample.json");
     const result = validate(ClientRequestV1, data);
@@ -257,14 +299,56 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.duo-she-request.sample.json", () => {
+    const data = loadSample("client-request.duo-she-request.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.use-life-core.sample.json", () => {
+    const data = loadSample("client-request.use-life-core.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.pickup-dropped-item.sample.json", () => {
     const data = loadSample("client-request.pickup-dropped-item.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.mineral-probe.sample.json", () => {
+    const data = loadSample("client-request.mineral-probe.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.inventory-discard-item.sample.json", () => {
     const data = loadSample("client-request.inventory-discard-item.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.use-quick-slot.sample.json", () => {
+    const data = loadSample("client-request.use-quick-slot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.quick-slot-bind.sample.json", () => {
+    const data = loadSample("client-request.quick-slot-bind.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.skill-bar-bind.sample.json", () => {
+    const data = loadSample("client-request.skill-bar-bind.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.skill-bar-cast.sample.json", () => {
+    const data = loadSample("client-request.skill-bar-cast.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -278,6 +362,42 @@ describe("sample files pass schema validation", () => {
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("death-insight-request.sample.json", () => {
+    const data = loadSample("death-insight-request.sample.json");
+    const result = validate(DeathInsightRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("deceased-index-entry.sample.json", () => {
+    const data = loadSample("deceased-index-entry.sample.json");
+    const result = validate(DeceasedIndexEntryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("deceased-snapshot.sample.json", () => {
+    const data = loadSample("deceased-snapshot.sample.json");
+    const result = validate(DeceasedSnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("lifespan-event.sample.json", () => {
+    const data = loadSample("lifespan-event.sample.json");
+    const result = validate(LifespanEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("aging-event.sample.json", () => {
+    const data = loadSample("aging-event.sample.json");
+    const result = validate(AgingEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("duo-she-event.sample.json", () => {
+    const data = loadSample("duo-she-event.sample.json");
+    const result = validate(DuoSheEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
@@ -374,6 +494,31 @@ describe("negative sample files fail schema validation", () => {
 
   it("server-data.invalid-unknown-type.sample.json", () => {
     const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects invalid skill bar binding union", () => {
+    const data = {
+      v: 1,
+      type: "skill_bar_bind",
+      slot: 0,
+      binding: { kind: "skill", template_id: "wrong_field" },
+    };
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects out-of-range quick slot request", () => {
+    const data = { v: 1, type: "use_quick_slot", slot: 9 };
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects malformed skillbar_config slot entry", () => {
+    const data = loadObjectSample("server-data.skillbar-config.sample.json");
+    const slots = data.slots as Array<Record<string, unknown> | null>;
+    slots[0] = { kind: "skill", display_name: "崩拳" };
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });

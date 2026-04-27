@@ -4,6 +4,7 @@ use valence::prelude::{
     ResMut, Username, With,
 };
 
+use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::status::has_active_status;
 use crate::combat::weapon::{Weapon, WeaponBroken};
 use crate::combat::CombatClock;
@@ -27,7 +28,8 @@ use crate::cultivation::components::{
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     discard_inventory_item_to_dropped_loot, move_equipped_item_to_first_container_slot,
-    set_item_instance_durability, DroppedLootRegistry, PlayerInventory,
+    set_item_instance_durability, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -36,6 +38,35 @@ use crate::schema::common::GameEventType;
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::world::events::ActiveEventsResource;
+
+const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
+const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
+
+fn apply_armor_mitigation(
+    wound: &mut Wound,
+    derived: &DerivedAttrs,
+    contam: &mut f64,
+) -> Option<f32> {
+    let &m = derived.defense_profile.get(&(wound.location, wound.kind))?;
+    if m <= 0.0 {
+        return None;
+    }
+
+    let m = m.clamp(0.0, ARMOR_MITIGATION_CAP);
+    if m <= 0.0 {
+        return None;
+    }
+    wound.severity *= 1.0 - m;
+    wound.bleeding_per_sec *= 1.0 - m;
+    // plan-armor-v1 §Q10: armor 把 severity 压低 (1-m) -> contam 一阶要随之减少；
+    // 然后整体再压 ARMOR_HIT_CONTAMINATION_MULTIPLIER (0.1) 实现 "甲挡住基本不污染"。
+    // 两段叠乘是有意为之 —— 1-m 让强弱甲仍有量级区分（顶甲 0.015×、弱甲 0.095×），
+    // 0.1 整体闸门保证哪怕弱甲也不会推 contam 失控。改公式必须同步更新
+    // `armor_hit_scales_contamination_and_ticks_item_durability` 的 expected_contam。
+    *contam *= 1.0 - f64::from(m);
+    *contam *= ARMOR_HIT_CONTAMINATION_MULTIPLIER;
+    Some(m)
+}
 
 const DEBUG_ATTACK_STAMINA_COST: f32 = 12.0;
 const DEBUG_ATTACK_CONTAMINATION_FACTOR: f64 = 0.25;
@@ -93,9 +124,10 @@ pub fn apply_defense_intents(
         });
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn resolve_attack_intents(
     clock: Res<CombatClock>,
+    armor_profiles: Option<Res<ArmorProfileRegistry>>,
     mut intents: EventReader<AttackIntent>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     clients: Query<CombatClientItem<'_>, CombatClientFilter>,
@@ -107,8 +139,9 @@ pub fn resolve_attack_intents(
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
+    mut durability_changed_tx: EventWriter<InventoryDurabilityChangedEvent>,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
-    mut weapon_break: (
+    weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
         Commands,
@@ -260,7 +293,7 @@ pub fn resolve_attack_intents(
             let mut broken_dislodged = false;
             if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
                 let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
-                    (item.instance_id == instance_id).then(|| match slot.as_str() {
+                    (item.instance_id == instance_id).then_some(match slot.as_str() {
                         crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
                         crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
                         crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
@@ -289,7 +322,6 @@ pub fn resolve_attack_intents(
                                 let dropped = discard_inventory_item_to_dropped_loot(
                                     &mut inventory,
                                     dropped_loot_registry,
-                                    intent.attacker,
                                     [
                                         attacker_position.x,
                                         attacker_position.y,
@@ -335,48 +367,13 @@ pub fn resolve_attack_intents(
             }
         }
 
-        wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
-        wounds.entries.push(Wound {
-            location: hit_probe.body_part,
-            kind: intent.wound_kind,
-            severity: damage,
-            bleeding_per_sec: damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul,
-            created_at_tick: clock.tick,
-            inflicted_by: Some(attacker_id.clone()),
-        });
-        let wound_bleeding = damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul;
+        let mut emitted_contam_delta = f64::from(damage)
+            * DEBUG_ATTACK_CONTAMINATION_FACTOR
+            * f64::from(contam_multiplier)
+            * wound_profile.contam_mul;
+        let mut jiemai_success = false;
 
-        if wound_bleeding > 0.0 {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Bleeding,
-                magnitude: wound_bleeding,
-                duration_ticks: u64::MAX,
-                issued_at_tick: clock.tick,
-            });
-        }
-
-        if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
-            && damage >= LEG_SLOWED_SEVERITY_THRESHOLD
-        {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Slowed,
-                magnitude: 0.4,
-                duration_ticks: LEG_SLOWED_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
-        }
-
-        if hit_probe.body_part == BodyPart::Head && damage >= HEAD_STUN_SEVERITY_THRESHOLD {
-            status_effect_intents.send(ApplyStatusEffectIntent {
-                target: target_entity,
-                kind: StatusEffectKind::Stunned,
-                magnitude: 1.0,
-                duration_ticks: HEAD_STUN_DURATION_TICKS,
-                issued_at_tick: clock.tick,
-            });
-        }
+        // 先写入 stamina 与污染，再做截脉与护甲减免。
 
         stamina.current =
             (stamina.current - DEBUG_ATTACK_STAMINA_COST * decay).clamp(0.0, stamina.max);
@@ -388,20 +385,11 @@ pub fn resolve_attack_intents(
         };
 
         contamination.entries.push(ContamSource {
-            amount: f64::from(damage)
-                * DEBUG_ATTACK_CONTAMINATION_FACTOR
-                * f64::from(contam_multiplier)
-                * wound_profile.contam_mul,
+            amount: emitted_contam_delta,
             color: ColorKind::Mellow,
             attacker_id: Some(attacker_id.clone()),
             introduced_at: clock.tick,
         });
-
-        let mut emitted_contam_delta = f64::from(damage)
-            * DEBUG_ATTACK_CONTAMINATION_FACTOR
-            * f64::from(contam_multiplier)
-            * wound_profile.contam_mul;
-        let mut jiemai_success = false;
 
         if let (Some(mut combat_state), Some(mut defender_cultivation)) =
             (combat_state, defender_cultivation)
@@ -437,10 +425,140 @@ pub fn resolve_attack_intents(
             combat_state.incoming_window = None;
         }
 
+        let mut wound = Wound {
+            location: hit_probe.body_part,
+            kind: intent.wound_kind,
+            severity: damage,
+            bleeding_per_sec: damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul,
+            created_at_tick: clock.tick,
+            inflicted_by: Some(attacker_id.clone()),
+        };
+
+        // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
+        // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
+        if let Some(attrs) = defender_attrs {
+            let armor_mitigation =
+                apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            // 同步污染 source 的最后一条（本次命中刚 push）。
+            if let Some(last_contam) = contamination.entries.last_mut() {
+                last_contam.amount = emitted_contam_delta;
+            }
+
+            // 护甲命中：扣减装备耐久（少量）。
+            if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
+            {
+                if let Ok(mut inventory) = inventories.get_mut(target_entity) {
+                    let best: Option<(u64, u32, f64, f32)> = [
+                        EQUIP_SLOT_HEAD,
+                        EQUIP_SLOT_CHEST,
+                        EQUIP_SLOT_LEGS,
+                        EQUIP_SLOT_FEET,
+                    ]
+                    .into_iter()
+                    .filter_map(|slot| {
+                        let item = inventory.equipped.get(slot)?;
+                        let ap = armor_profiles.get(item.template_id.as_str())?;
+                        if !ap.body_coverage.contains(&hit_probe.body_part) {
+                            return None;
+                        }
+                        let base_m = *ap.kind_mitigation.get(&intent.wound_kind).unwrap_or(&0.0);
+                        if base_m <= 0.0 {
+                            return None;
+                        }
+                        let effective_mul =
+                            ap.effective_multiplier_for_durability_ratio(item.durability);
+                        let effective_m = (base_m * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
+                        if effective_m <= 0.0 {
+                            return None;
+                        }
+                        Some((
+                            item.instance_id,
+                            ap.durability_max,
+                            item.durability,
+                            effective_m,
+                        ))
+                    })
+                    .max_by(|a, b| a.3.total_cmp(&b.3));
+
+                    if let Some((instance_id, durability_max, cur_ratio, _effective_m)) = best {
+                        if durability_max > 0 && cur_ratio > 0.0 {
+                            let durability_max = f64::from(durability_max);
+                            let cur_abs = (cur_ratio * durability_max).max(0.0);
+                            let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
+                            let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
+                            if next_ratio < cur_ratio {
+                                match set_item_instance_durability(
+                                    &mut inventory,
+                                    instance_id,
+                                    next_ratio,
+                                ) {
+                                    Ok(update) => {
+                                        durability_changed_tx.send(
+                                            InventoryDurabilityChangedEvent {
+                                                entity: target_entity,
+                                                revision: update.revision,
+                                                instance_id: update.instance_id,
+                                                durability: update.durability,
+                                            },
+                                        );
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][armor] failed to persist durability for instance {}: {}",
+                                            instance_id,
+                                            error
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        wounds.health_current =
+            (wounds.health_current - wound.severity).clamp(0.0, wounds.health_max);
+        let wound_bleeding = wound.bleeding_per_sec;
+        let wound_severity = wound.severity;
+        wounds.entries.push(wound);
+
+        if wound_bleeding > 0.0 {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Bleeding,
+                magnitude: wound_bleeding,
+                duration_ticks: u64::MAX,
+                issued_at_tick: clock.tick,
+            });
+        }
+
+        if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
+            && wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD
+        {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Slowed,
+                magnitude: 0.4,
+                duration_ticks: LEG_SLOWED_DURATION_TICKS,
+                issued_at_tick: clock.tick,
+            });
+        }
+
+        if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
+            status_effect_intents.send(ApplyStatusEffectIntent {
+                target: target_entity,
+                kind: StatusEffectKind::Stunned,
+                magnitude: 1.0,
+                duration_ticks: HEAD_STUN_DURATION_TICKS,
+                issued_at_tick: clock.tick,
+            });
+        }
+
         if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
             primary_meridian.throughput_current += qi_invest * f64::from(decay);
             primary_meridian.cracks.push(MeridianCrack {
-                severity: f64::from(damage) * 0.02 * wound_profile.crack_mul,
+                severity: f64::from(wound_severity) * 0.02 * wound_profile.crack_mul,
                 healing_progress: 0.0,
                 cause: CrackCause::Attack,
                 created_at: clock.tick,
@@ -452,7 +570,7 @@ pub fn resolve_attack_intents(
                 attacker_id: attacker_id.clone(),
                 body_part: format!("{:?}", hit_probe.body_part),
                 wound_kind: format!("{:?}", intent.wound_kind),
-                damage,
+                damage: wound_severity,
                 tick: clock.tick,
             });
         }
@@ -469,7 +587,7 @@ pub fn resolve_attack_intents(
             target_id,
             hit_probe.body_part,
             intent.wound_kind,
-            damage,
+            wound_severity,
             hit_qi,
             jiemai_success,
             decay
@@ -481,7 +599,7 @@ pub fn resolve_attack_intents(
             resolved_at_tick: clock.tick,
             body_part: hit_probe.body_part,
             wound_kind: intent.wound_kind,
-            damage,
+            damage: wound_severity,
             contam_delta: emitted_contam_delta,
             description,
         });
@@ -503,7 +621,7 @@ pub fn resolve_attack_intents(
                         "wound_kind".to_string(),
                         json!(format!("{:?}", intent.wound_kind)),
                     ),
-                    ("damage".to_string(), json!(damage)),
+                    ("damage".to_string(), json!(wound_severity)),
                     ("contam_delta".to_string(), json!(emitted_contam_delta)),
                     ("qi_invest".to_string(), json!(intent.qi_invest)),
                     ("hit_qi".to_string(), json!(hit_qi)),
@@ -522,9 +640,17 @@ pub fn resolve_attack_intents(
                 )
             })
         {
+            // plan-tsy-loot-v1 §6 — 攻击链路：attacker entity 来自 intent；
+            // attacker_player_id 仅在攻击者是 player 时填（canonical id 形如
+            // "offline:Foo"），NPC 攻击者保留 None。
+            let attacker_player_id = attacker_id
+                .starts_with("offline:")
+                .then(|| attacker_id.clone());
             death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
+                attacker: Some(intent.attacker),
+                attacker_player_id,
                 at_tick: clock.tick,
             });
         }
@@ -642,11 +768,11 @@ fn resolve_debug_target(
     npc_positions: &Query<(Entity, &Position), With<NpcMarker>>,
 ) -> Option<(Entity, DVec3, f64, String)> {
     if let Some(target) = intent.target {
-        if let Ok((_, position, username, player_state)) = clients.get(target) {
+        if let Ok((_, position, username, _player_state)) = clients.get(target) {
             return Some((
                 target,
                 position.get(),
-                player_state.spirit_qi_max,
+                0.0,
                 canonical_player_id(username.0.as_str()),
             ));
         }
@@ -667,7 +793,7 @@ fn resolve_debug_target(
     if let Some(player_match) =
         clients
             .iter()
-            .find_map(|(entity, position, username, player_state)| {
+            .find_map(|(entity, position, username, _player_state)| {
                 if entity == intent.attacker {
                     return None;
                 }
@@ -675,12 +801,7 @@ fn resolve_debug_target(
                 let canonical = canonical_player_id(username.0.as_str());
                 (username.0.eq_ignore_ascii_case(target_name)
                     || canonical.eq_ignore_ascii_case(target_name))
-                .then_some((
-                    entity,
-                    position.get(),
-                    player_state.spirit_qi_max,
-                    canonical,
-                ))
+                .then_some((entity, position.get(), 0.0, canonical))
             })
     {
         return Some(player_match);
@@ -719,6 +840,7 @@ fn first_open_or_fallback_meridian(
 mod tests {
     use super::*;
 
+    use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
     use crate::combat::components::{
         BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle, StatusEffects, WoundKind,
         Wounds, JIEMAI_CONTAM_MULTIPLIER, JIEMAI_DEFENSE_QI_COST,
@@ -776,11 +898,7 @@ mod tests {
                     ..Cultivation::default()
                 },
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 60.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 0,
                     inventory_score: 0.0,
                 },
                 MeridianSystem::default(),
@@ -852,6 +970,122 @@ mod tests {
         ]))
     }
 
+    #[test]
+    fn armor_hit_scales_contamination_and_ticks_item_durability() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1500 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+
+        app.insert_resource(crate::inventory::ItemRegistry::default());
+        app.insert_resource(ArmorProfileRegistry::from_map(
+            std::collections::HashMap::from([(
+                "fake_spirit_hide".to_string(),
+                ArmorProfile {
+                    slot: EquipSlotV1::Chest,
+                    body_coverage: vec![BodyPart::Chest],
+                    kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
+                    durability_max: 100,
+                    broken_multiplier: 0.3,
+                },
+            )]),
+        ));
+
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                crate::combat::weapon::sync_weapon_component_from_equipped,
+                crate::combat::armor_sync::sync_armor_to_derived_attrs,
+                resolve_attack_intents,
+            ),
+        );
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // 给 target 装一件胸甲，初始耐久比例 1.0。
+        app.world_mut().entity_mut(target).insert(PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: std::collections::HashMap::from([(
+                crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+                ItemInstance {
+                    instance_id: 88,
+                    template_id: "fake_spirit_hide".to_string(),
+                    display_name: "假灵兽皮胸甲".to_string(),
+                    grid_w: 2,
+                    grid_h: 2,
+                    weight: 5.0,
+                    rarity: crate::inventory::ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        });
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1499,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let event = combat_events
+            .iter_current_update_events()
+            .next()
+            .expect("combat event should emit");
+        // event.damage 是 mitigation 之后的 wound_severity（已乘 1-m）。
+        // emitted_contam_delta = init_damage * 0.25 * 1 * 0.8 * (1-m) * MULTIPLIER
+        //                       = event.damage * 0.25 * 1 * 0.8 * MULTIPLIER。
+        let expected_contam =
+            f64::from(event.damage) * 0.25 * 1.0 * 0.8 * ARMOR_HIT_CONTAMINATION_MULTIPLIER;
+        assert_eq!(event.contam_delta, expected_contam);
+
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].durability < 1.0,
+            "armor hit should tick down durability"
+        );
+    }
+
     fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {
         let entity = app
             .world_mut()
@@ -893,6 +1127,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -1023,6 +1258,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1113,6 +1349,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let npc_attacker = spawn_npc(
@@ -1192,6 +1429,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let player = spawn_player(
@@ -1287,6 +1525,7 @@ mod tests {
             (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
         );
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -1358,6 +1597,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1418,6 +1658,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1493,6 +1734,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1541,6 +1783,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1600,6 +1843,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1690,6 +1934,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1767,6 +2012,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1843,6 +2089,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1913,6 +2160,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2002,6 +2250,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2058,6 +2307,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2156,6 +2406,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2260,6 +2511,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2306,6 +2558,8 @@ mod tests {
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
             )]),
             hotbar: Default::default(),
@@ -2395,6 +2649,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2436,6 +2691,8 @@ mod tests {
                         spirit_quality: 1.0,
                         durability: 0.04,
                         freshness: None,
+                        mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),
@@ -2519,6 +2776,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2559,6 +2817,8 @@ mod tests {
                             spirit_quality: 1.0,
                             durability: 1.0,
                             freshness: None,
+                            mineral_id: None,
+                            charges: None,
                         },
                     }],
                 }],
@@ -2577,6 +2837,8 @@ mod tests {
                         spirit_quality: 1.0,
                         durability: 0.04,
                         freshness: None,
+                        mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),
@@ -2638,12 +2900,11 @@ mod tests {
 
         let dropped_registry = app.world().resource::<DroppedLootRegistry>();
         let dropped = dropped_registry
-            .by_owner
-            .get(&attacker)
+            .entries
+            .get(&42)
             .expect("broken weapon should be registered as dropped loot");
-        assert_eq!(dropped.len(), 1);
-        assert_eq!(dropped[0].instance_id, 42);
-        assert_eq!(dropped[0].item.durability, 0.0);
+        assert_eq!(dropped.instance_id, 42);
+        assert_eq!(dropped.item.durability, 0.0);
     }
 
     #[test]
@@ -2655,6 +2916,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let cut_attacker = spawn_player(
@@ -2753,6 +3015,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let pierce_attacker = spawn_player(
@@ -2825,5 +3088,121 @@ mod tests {
             .amount;
 
         assert!(pierce_contam > blunt_contam);
+    }
+
+    /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
+    /// 的真实形态（**无 LifeRecord**）双方交叉 `AttackIntent`，断言 Wounds
+    /// 写入 + 致命伤触发 DeathEvent。既有测试用 test-only helper 挂了
+    /// LifeRecord，未代表生产形态；本测试补齐。
+    #[test]
+    fn npc_to_npc_duel_via_runtime_bundle_resolves_damage_and_death() {
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        // 两个 NPC 用真实生产 bundle，无 LifeRecord。
+        let npc_a = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_a = npc_runtime_bundle(npc_a, NpcArchetype::Rogue);
+        // 让 A 血量濒死以便单击致命；qi 注满以过 resolver 的 qi_invest 检查。
+        bundle_a.wounds = Wounds {
+            health_current: 3.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        };
+        bundle_a.cultivation.qi_current = 80.0;
+        bundle_a.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_a).insert(bundle_a);
+
+        let npc_b = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_b = npc_runtime_bundle(npc_b, NpcArchetype::Zombie);
+        bundle_b.cultivation.qi_current = 80.0;
+        bundle_b.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_b).insert(bundle_b);
+
+        // 双向 AttackIntent：A 打 B 一下（非致命），B 打 A 一下（致命）。
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_a,
+            target: Some(npc_b),
+            issued_at_tick: 199,
+            reach: FIST_REACH,
+            qi_invest: 8.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_b,
+            target: Some(npc_a),
+            issued_at_tick: 199,
+            reach: NpcMeleeProfile::spear().reach,
+            qi_invest: 12.0,
+            wound_kind: WoundKind::Pierce,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let a_wounds = app.world().entity(npc_a).get::<Wounds>().unwrap();
+        let b_wounds = app.world().entity(npc_b).get::<Wounds>().unwrap();
+
+        assert_eq!(
+            a_wounds.entries.len(),
+            1,
+            "A should take exactly one wound from B's pierce"
+        );
+        assert_eq!(a_wounds.entries[0].kind, WoundKind::Pierce);
+        assert!(
+            a_wounds.health_current <= 0.0,
+            "A was 3hp + pierce should be lethal, got {}",
+            a_wounds.health_current
+        );
+
+        assert_eq!(
+            b_wounds.entries.len(),
+            1,
+            "B should take exactly one wound from A's blunt"
+        );
+        assert_eq!(b_wounds.entries[0].kind, WoundKind::Blunt);
+        assert!(
+            b_wounds.health_current > 0.0,
+            "B full-hp should survive one blunt, got {}",
+            b_wounds.health_current
+        );
+
+        // Contamination 同样被写（双向都有 attacker_id = canonical_npc_id）。
+        let a_contam = app.world().entity(npc_a).get::<Contamination>().unwrap();
+        let b_contam = app.world().entity(npc_b).get::<Contamination>().unwrap();
+        assert_eq!(
+            a_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_b).as_str())
+        );
+        assert_eq!(
+            b_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_a).as_str())
+        );
+
+        // DeathEvent 应该恰为 A 触发（B 未致命）。
+        let deaths: Vec<_> = app
+            .world()
+            .resource::<Events<DeathEvent>>()
+            .get_reader()
+            .read(app.world().resource::<Events<DeathEvent>>())
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].target, npc_a);
     }
 }

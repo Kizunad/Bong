@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "realm",
+    "remaining_years",
+    "death_penalty_years",
+    "is_wind_candle"
+  ],
+  "properties": {
+    "realm": {
+      "description": "6 境界",
+      "anyOf": [
+        {
+          "const": "Awaken",
+          "type": "string"
+        },
+        {
+          "const": "Induce",
+          "type": "string"
+        },
+        {
+          "const": "Condense",
+          "type": "string"
+        },
+        {
+          "const": "Solidify",
+          "type": "string"
+        },
+        {
+          "const": "Spirit",
+          "type": "string"
+        },
+        {
+          "const": "Void",
+          "type": "string"
+        }
+      ]
+    },
+    "remaining_years": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "death_penalty_years": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "is_wind_candle": {
+      "type": "boolean"
+    }
+  }
+}

@@ -4,9 +4,9 @@ import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
-import com.bong.client.combat.DefenseStanceStore;
 import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.SpellVolumeStore;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.UnlockedStylesStore;
@@ -51,6 +51,7 @@ public class BongHud {
         // Tick cast-state + defense-window expiries so they self-clear each frame.
         CastStateStore.tick(nowMillis);
         DefenseWindowStore.tick(nowMillis);
+        com.bong.client.tsy.ExtractStateStore.tick(nowMillis);
         // Open death/terminate screens when the server activates them.
         com.bong.client.combat.screen.CombatScreenOpener.tick();
 
@@ -174,12 +175,12 @@ public class BongHud {
             CombatHudStateStore.snapshot(),
             PhysicalBodyStore.snapshot(),
             QuickUseSlotStore.snapshot(),
+            SkillBarStore.snapshot(),
             selectedSlot,
             CastStateStore.snapshot(),
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),
             DefenseWindowStore.snapshot(),
-            DefenseStanceStore.snapshot(),
             UnlockedStylesStore.snapshot()
         );
     }
@@ -198,6 +199,7 @@ public class BongHud {
                 return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
                     || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
                     || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
+                    || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
                     || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
             })
             .toList();

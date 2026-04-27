@@ -55,12 +55,14 @@ public final class ServerDataRouter {
         DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
         CastSyncHandler castSyncHandler = new CastSyncHandler();
         QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
+        SkillBarConfigHandler skillBarConfigHandler = new SkillBarConfigHandler();
+        TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
-        DefenseSyncHandler defenseSyncHandler = new DefenseSyncHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
+        ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
 
@@ -95,13 +97,36 @@ public final class ServerDataRouter {
         handlers.put("defense_window", defenseWindowHandler);
         handlers.put("cast_sync", castSyncHandler);
         handlers.put("quickslot_config", quickSlotConfigHandler);
+        handlers.put("skillbar_config", skillBarConfigHandler);
+        handlers.put("techniques_snapshot", techniquesSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
-        handlers.put("defense_sync", defenseSyncHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
+        handlers.put("rift_portal_state", extractServerDataHandler);
+        handlers.put("rift_portal_removed", extractServerDataHandler);
+        handlers.put("extract_started", extractServerDataHandler);
+        handlers.put("extract_progress", extractServerDataHandler);
+        handlers.put("extract_completed", extractServerDataHandler);
+        handlers.put("extract_aborted", extractServerDataHandler);
+        handlers.put("extract_failed", extractServerDataHandler);
+        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
+        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
         handlers.put("lingtian_session", lingtianSessionHandler);
+        // plan-forge-v1 §4 — 炼器（武器）
+        com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =
+            new com.bong.client.network.forge.ForgeStationHandler();
+        com.bong.client.network.forge.ForgeSessionHandler forgeSessionHandler =
+            new com.bong.client.network.forge.ForgeSessionHandler();
+        com.bong.client.network.forge.ForgeOutcomeHandler forgeOutcomeHandler =
+            new com.bong.client.network.forge.ForgeOutcomeHandler();
+        com.bong.client.network.forge.ForgeBlueprintBookHandler forgeBlueprintBookHandler =
+            new com.bong.client.network.forge.ForgeBlueprintBookHandler();
+        handlers.put("forge_station", forgeStationHandler);
+        handlers.put("forge_session", forgeSessionHandler);
+        handlers.put("forge_outcome", forgeOutcomeHandler);
+        handlers.put("forge_blueprint_book", forgeBlueprintBookHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());

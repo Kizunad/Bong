@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entries"
+  ],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "grade",
+          "proficiency",
+          "active",
+          "description",
+          "required_realm",
+          "required_meridians",
+          "qi_cost",
+          "cast_ticks",
+          "cooldown_ticks",
+          "range"
+        ],
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "display_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "grade": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "proficiency": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required_realm": {
+            "type": "string"
+          },
+          "required_meridians": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "channel",
+                "min_health"
+              ],
+              "properties": {
+                "channel": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "min_health": {
+                  "minimum": 0,
+                  "maximum": 1,
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "qi_cost": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cast_ticks": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cooldown_ticks": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range": {
+            "minimum": 0,
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

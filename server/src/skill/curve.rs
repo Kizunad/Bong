@@ -53,6 +53,7 @@ pub fn interp(lv: u8, pts: &[(u8, f32)]) -> f32 {
 }
 
 /// plan §4 cap 压制：`effective_lv = min(real_lv, cap)`。
+#[allow(dead_code)]
 pub fn effective_lv(real_lv: u8, cap: u8) -> u8 {
     real_lv.min(cap)
 }

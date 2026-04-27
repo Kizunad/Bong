@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "family_id",
+    "duration_ticks"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_collapse_started",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "duration_ticks": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

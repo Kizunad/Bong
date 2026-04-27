@@ -128,6 +128,26 @@ export const ApplyPillRequestV1 = Type.Object(
 );
 export type ApplyPillRequestV1 = Static<typeof ApplyPillRequestV1>;
 
+export const DuoSheRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("duo_she_request"),
+    target_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type DuoSheRequestV1 = Static<typeof DuoSheRequestV1>;
+
+export const UseLifeCoreRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("use_life_core"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type UseLifeCoreRequestV1 = Static<typeof UseLifeCoreRequestV1>;
+
 export const PickupDroppedItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -137,6 +157,18 @@ export const PickupDroppedItemRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
+
+export const MineralProbeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("mineral_probe"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type MineralProbeRequestV1 = Static<typeof MineralProbeRequestV1>;
 
 export const InventoryDiscardItemRequestV1 = Type.Object(
   {
@@ -181,6 +213,95 @@ export const BotanyHarvestRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
+
+export const CombatReincarnateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_reincarnate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatReincarnateRequestV1 = Static<typeof CombatReincarnateRequestV1>;
+
+export const CombatTerminateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_terminate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatTerminateRequestV1 = Static<typeof CombatTerminateRequestV1>;
+
+export const CombatCreateNewCharacterRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_create_new_character"),
+  },
+  { additionalProperties: false },
+);
+export type CombatCreateNewCharacterRequestV1 = Static<typeof CombatCreateNewCharacterRequestV1>;
+
+export const UseQuickSlotRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("use_quick_slot"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+  },
+  { additionalProperties: false },
+);
+export type UseQuickSlotRequestV1 = Static<typeof UseQuickSlotRequestV1>;
+
+export const QuickSlotBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("quick_slot_bind"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    item_id: Type.Union([Type.Null(), Type.String({ minLength: 1 })]),
+  },
+  { additionalProperties: false },
+);
+export type QuickSlotBindRequestV1 = Static<typeof QuickSlotBindRequestV1>;
+
+export const SkillBarCastRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_bar_cast"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    target: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type SkillBarCastRequestV1 = Static<typeof SkillBarCastRequestV1>;
+
+export const SkillBarBindingV1 = Type.Union([
+  Type.Null(),
+  Type.Object(
+    {
+      kind: Type.Literal("item"),
+      template_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("skill"),
+      skill_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type SkillBarBindingV1 = Static<typeof SkillBarBindingV1>;
+
+export const SkillBarBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skill_bar_bind"),
+    slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
+    binding: SkillBarBindingV1,
+  },
+  { additionalProperties: false },
+);
+export type SkillBarBindRequestV1 = Static<typeof SkillBarBindRequestV1>;
 
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
@@ -295,6 +416,117 @@ export const LearnSkillScrollRequestV1 = Type.Object(
 );
 export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
 
+export const StartExtractRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("start_extract_request"),
+    portal_entity_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type StartExtractRequestV1 = Static<typeof StartExtractRequestV1>;
+
+export const CancelExtractRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("cancel_extract_request"),
+  },
+  { additionalProperties: false },
+);
+export type CancelExtractRequestV1 = Static<typeof CancelExtractRequestV1>;
+
+// ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────
+export const ForgeStartSessionRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_start_session"),
+    station_id: Type.String(),
+    blueprint_id: Type.String(),
+    materials: Type.Array(
+      Type.Tuple([Type.String(), Type.Integer({ minimum: 1 })]),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ForgeStartSessionRequestV1 = Static<typeof ForgeStartSessionRequestV1>;
+
+export const ForgeTemperingHitRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_tempering_hit"),
+    session_id: Type.Integer({ minimum: 0 }),
+    beat: Type.Union([Type.Literal("L"), Type.Literal("H"), Type.Literal("F")]),
+    ticks_remaining: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ForgeTemperingHitRequestV1 = Static<typeof ForgeTemperingHitRequestV1>;
+
+export const ForgeInscriptionScrollRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_inscription_scroll"),
+    session_id: Type.Integer({ minimum: 0 }),
+    inscription_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ForgeInscriptionScrollRequestV1 = Static<typeof ForgeInscriptionScrollRequestV1>;
+
+export const ForgeConsecrationInjectRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_consecration_inject"),
+    session_id: Type.Integer({ minimum: 0 }),
+    qi_amount: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ForgeConsecrationInjectRequestV1 = Static<typeof ForgeConsecrationInjectRequestV1>;
+
+export const ForgeStepAdvanceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_step_advance"),
+    session_id: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ForgeStepAdvanceRequestV1 = Static<typeof ForgeStepAdvanceRequestV1>;
+
+export const ForgeBlueprintTurnPageRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_blueprint_turn_page"),
+    delta: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type ForgeBlueprintTurnPageRequestV1 = Static<typeof ForgeBlueprintTurnPageRequestV1>;
+
+export const ForgeLearnBlueprintRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_learn_blueprint"),
+    blueprint_id: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ForgeLearnBlueprintRequestV1 = Static<typeof ForgeLearnBlueprintRequestV1>;
+
+export const ForgeStationPlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_station_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -302,11 +534,21 @@ export const ClientRequestV1 = Type.Union([
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
+  DuoSheRequestV1,
+  UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
+  MineralProbeRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,
   BotanyHarvestRequestV1,
+  CombatReincarnateRequestV1,
+  CombatTerminateRequestV1,
+  CombatCreateNewCharacterRequestV1,
+  UseQuickSlotRequestV1,
+  QuickSlotBindRequestV1,
+  SkillBarCastRequestV1,
+  SkillBarBindRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,
@@ -317,5 +559,15 @@ export const ClientRequestV1 = Type.Union([
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
   LearnSkillScrollRequestV1,
+  StartExtractRequestV1,
+  CancelExtractRequestV1,
+  ForgeStartSessionRequestV1,
+  ForgeTemperingHitRequestV1,
+  ForgeInscriptionScrollRequestV1,
+  ForgeConsecrationInjectRequestV1,
+  ForgeStepAdvanceRequestV1,
+  ForgeBlueprintTurnPageRequestV1,
+  ForgeLearnBlueprintRequestV1,
+  ForgeStationPlaceRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

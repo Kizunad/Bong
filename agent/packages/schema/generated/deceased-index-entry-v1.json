@@ -1,0 +1,45 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "char_id",
+    "died_at_tick",
+    "path",
+    "termination_category"
+  ],
+  "properties": {
+    "char_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "died_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "path": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "termination_category": {
+      "description": "亡者博物馆公开分类",
+      "anyOf": [
+        {
+          "const": "横死",
+          "type": "string"
+        },
+        {
+          "const": "善终",
+          "type": "string"
+        },
+        {
+          "const": "自主归隐",
+          "type": "string"
+        },
+        {
+          "const": "夺舍者",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

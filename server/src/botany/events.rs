@@ -24,6 +24,7 @@ impl Resource for BotanyEventSpawnRoll {}
 
 /// 订阅 `DeathEvent`：NPC / 玩家死亡时，按概率在所在 zone 生成一株 kong_shou_hen（空兽痕）。
 /// plan §1.2.3 特殊路径：不扣 zone.spirit_qi（植物本就生于灵气极薄之地）。
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_event_triggered_plants_on_death(
     mut commands: Commands,
     mut death_events: EventReader<DeathEvent>,
@@ -54,7 +55,10 @@ pub fn spawn_event_triggered_plants_on_death(
         let Ok(position) = positions.get(ev.target) else {
             continue;
         };
-        let Some(zone) = zones.find_zone(position.get()) else {
+        let Some(zone) = zones.find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            position.get(),
+        ) else {
             continue;
         };
         let seed = event_spawn_seed(now, ev.target.to_bits());
@@ -110,6 +114,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([-10.0, 0.0, -10.0]).get(),
                     Position::new([10.0, 128.0, 10.0]).get(),
@@ -136,6 +141,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 
@@ -168,6 +175,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 
@@ -189,6 +198,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 
@@ -213,6 +224,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "blood_valley".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([0.0, 0.0, 0.0]).get(),
                     Position::new([1.0, 1.0, 1.0]).get(),

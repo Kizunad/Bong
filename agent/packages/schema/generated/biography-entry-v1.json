@@ -827,6 +827,155 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "NearDeath"
+      ],
+      "properties": {
+        "NearDeath": {
+          "type": "object",
+          "required": [
+            "cause",
+            "tick"
+          ],
+          "properties": {
+            "cause": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "Terminated"
+      ],
+      "properties": {
+        "Terminated": {
+          "type": "object",
+          "required": [
+            "cause",
+            "tick"
+          ],
+          "properties": {
+            "cause": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "LifespanExtended"
+      ],
+      "properties": {
+        "LifespanExtended": {
+          "type": "object",
+          "required": [
+            "source",
+            "delta_years",
+            "tick"
+          ],
+          "properties": {
+            "source": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "delta_years": {
+              "type": "integer"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "DuoShePerformed"
+      ],
+      "properties": {
+        "DuoShePerformed": {
+          "type": "object",
+          "required": [
+            "target_id",
+            "host_prev_age",
+            "target_age",
+            "tick"
+          ],
+          "properties": {
+            "target_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "host_prev_age": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "target_age": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "PossessedBy"
+      ],
+      "properties": {
+        "PossessedBy": {
+          "type": "object",
+          "required": [
+            "host_id",
+            "tick"
+          ],
+          "properties": {
+            "host_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
     }
   ]
 }

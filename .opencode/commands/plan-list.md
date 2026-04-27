@@ -11,6 +11,6 @@ subtask: true
 - 文件名（去掉 `plan-` 前缀和 `.md` 后缀，即 `/consume-plan <name>` 要传的参数）
 - 首行 H1 标题
 - 是否已在 `.sisyphus/plans/<name>.md` 中（表示 Prometheus 已规整过，可直接 resume）
-- 是否在 `.worktrees/plan-<name>/` 有进行中的 worktree
+- 是否在 `.worktree/plan-<name>/` 有进行中的 worktree
 
 输出紧凑表格，中文，无需其它解读。

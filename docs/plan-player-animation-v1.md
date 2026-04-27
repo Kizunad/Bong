@@ -279,7 +279,7 @@ public class BongAnimationPlayer {
 - [x] 第一个动画原型：`bong:sword_swing_horiz`（纯 Java 实现）
 - [x] 第二个动画原型：从 JSON 加载（Phase 2 已完成全量迁移——20 个 Phase 1 动画全部入 `assets/bong/player_animation/*.json`，PlayerAnimator resource reload listener 自动加载；`BongAnimationRegistry` 走 JSON-first fallback Java，Java 源现已空）
 - [x] §4.1 协议 schema：`play_anim` / `stop_anim` 加入 VfxEvent TypeBox（2026-04-14 完成：`agent/packages/schema/src/vfx-event.ts` 双 variant Union + `server/src/schema/vfx_event.rs` roundtrip + sample.json 双端对齐；客户端 `VfxEventEnvelope` / `VfxEventRouter` / `ClientAnimationBridge` 解析 `bong:vfx_event` CustomPayload 并派发到 `BongAnimationPlayer`，16 个单测覆盖 play/stop/错误三档；未包含 `speed`，待 KeyframeAnimationPlayer 接 setSpeed API 再扩）
-- [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑（schema + client receiver 已通，剩服务端广播调用点：Bevy system 把战斗事件映射到 `VfxEventV1::play_anim` 并按 §4.2 距离过滤广播）
+- [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑（schema + client receiver 已通；服务端 `network/vfx_event_emit.rs` 已实装 `VfxEventRequest::PlayAnim/StopAnim` 派发器与 `/bong-vfx play <anim_id>` 调试命令，按 `VFX_BROADCAST_RADIUS` 距离过滤广播，**手动触发链路已贯通**；剩 combat/cultivation 业务 system → `VfxEventV1::play_anim` 自动映射调用点）
 - [x] §5.1 战斗类 9 个动画批量生产（sword_swing_horiz/vert/stab、fist_punch_left/right、palm_thrust、guard_raise、dodge_back、hit_recoil）
 - [x] §5.2 修仙姿态 6 个动画（meditate_sit、cultivate_stand、levitate、sword_ride、cast_invoke、rune_draw）
 - [x] §5.3 剧情演绎 5 个动画（breakthrough_burst、tribulation_brace、enlightenment_pose、death_collapse、bow_salute）
@@ -329,3 +329,9 @@ public class BongAnimationPlayer {
 **LLM 协作样式**：
 - 鬼谷八荒招式动画（参考"剑修横扫/突刺"的视觉感）
 - 太吾绘卷武学动作设计（参考"内外功不同动作风格"）
+
+---
+
+## §11 进度日志
+
+- 2026-04-25：审计代码现状——Phase 1 全部 20 个动画 JSON 已落 `client/src/main/resources/assets/bong/player_animation/`（对应 `client/tools/gen_*.py` 生成器全套齐备）；client 侧 `BongAnimationRegistry/Player/Bridge` + `BongAnimCommand` 已就绪；server 侧 `network/vfx_event_emit.rs` 已实装 PlayAnim/StopAnim 广播器与 `/bong-vfx play` 调试命令，端到端手动链路贯通；剩 combat/cultivation system 自动映射 + §4.4 inline JSON 注入两项未启动。

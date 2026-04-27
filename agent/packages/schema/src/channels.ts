@@ -33,11 +33,32 @@ export const CHANNELS = {
   /** Server → Agent: 修炼侧致死触发（plan-cultivation §4） (Pub/Sub) */
   CULTIVATION_DEATH: "bong:cultivation_death",
 
+  /** Server → Agent: 死亡触发（plan-death-lifecycle-v1 §7） */
+  DEATH: "bong:death",
+
+  /** Server → Agent: 重生结算（plan-death-lifecycle-v1 §7） */
+  REBIRTH: "bong:rebirth",
+
+  /** Server → Agent: 遗念生成请求（plan-death-lifecycle-v1 §7） */
+  DEATH_INSIGHT: "bong:death_insight",
+
+  /** Server → Agent: 老化 / 风烛 / tick rate 变化（plan-death-lifecycle-v1 §7） */
+  AGING: "bong:aging",
+
+  /** Server → Agent: 寿元事件公开流水（plan-death-lifecycle-v1 §7） */
+  LIFESPAN_EVENT: "bong:lifespan_event",
+
+  /** Server → Agent: 夺舍公开流水（plan-death-lifecycle-v1 §7） */
+  DUO_SHE_EVENT: "bong:duo_she_event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
+
+  /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
+  ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
 
   /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
   BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
@@ -56,6 +77,17 @@ export const CHANNELS = {
 
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
+
+  /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
+   *
+   * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
+  TSY_EVENT: "bong:tsy_event",
+
+  // ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────
+  /** Server → Agent: 锻造起炉（玩家起炉时推，供 agent 生成观察叙事） */
+  FORGE_START: "bong:forge/start",
+  /** Server → Agent: 锻造结果（结算推，供 agent 记录/叙事） */
+  FORGE_OUTCOME: "bong:forge/outcome",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -69,14 +101,24 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BREAKTHROUGH_EVENT,
   CHANNELS.FORGE_EVENT,
   CHANNELS.CULTIVATION_DEATH,
+  CHANNELS.DEATH,
+  CHANNELS.REBIRTH,
+  CHANNELS.DEATH_INSIGHT,
+  CHANNELS.AGING,
+  CHANNELS.LIFESPAN_EVENT,
+  CHANNELS.DUO_SHE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.ARMOR_DURABILITY_CHANGED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
   CHANNELS.SKILL_XP_GAIN,
   CHANNELS.SKILL_LV_UP,
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
+  CHANNELS.TSY_EVENT,
+  CHANNELS.FORGE_START,
+  CHANNELS.FORGE_OUTCOME,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

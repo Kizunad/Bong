@@ -225,3 +225,9 @@ public class MixinCommonUniforms {
 - `plan-vfx-v1.md`（VFX 基础栈，必须先完成）
 - `plan-particle-system-v1.md`
 - `plan-player-animation-v1.md`
+
+---
+
+## §9 进度日志
+
+- 2026-04-25：审计 client/ 实际代码 —— `fabric.mod.json` 无 `recommends.iris` 声明，`client/src` 无 `IrisApi`/`CommonUniforms` Mixin / `BongClientState` / `bong_xianxia` shader pack 资源，全 plan 仍处 §1 调研结论阶段，§2–§5 任务全部未启动，所有 `[ ]` 维持原状。Phase A 技术验证尚未开跑；启动需待 `plan-vfx-v1.md` Phase 1 完成后再决定。

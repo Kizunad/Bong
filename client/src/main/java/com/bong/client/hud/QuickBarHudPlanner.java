@@ -3,6 +3,8 @@ package com.bong.client.hud;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.QuickSlotEntry;
+import com.bong.client.combat.SkillBarConfig;
+import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.inventory.model.InventoryItem;
 
 import java.util.ArrayList;
@@ -59,7 +61,7 @@ public final class QuickBarHudPlanner {
         int screenHeight
     ) {
         return buildCommands(
-            quickSlots, selectedHotbarSlot, castState,
+            quickSlots, SkillBarConfig.empty(), selectedHotbarSlot, castState,
             List.of(), // back-compat overload — no native hotbar items
             nowMillis, screenWidth, screenHeight
         );
@@ -67,6 +69,7 @@ public final class QuickBarHudPlanner {
 
     public static List<HudRenderCommand> buildCommands(
         QuickSlotConfig quickSlots,
+        SkillBarConfig skillBar,
         int selectedHotbarSlot,
         CastState castState,
         List<InventoryItem> nativeHotbar,
@@ -88,7 +91,7 @@ public final class QuickBarHudPlanner {
 
         // Lower row (1-9 战斗栏) —— 之前只画边框，现在与 InventoryModel.hotbar 同步
         // 物品（MC vanilla 那边没接入 Bong items，所以底部 native hotbar 也是空）。
-        appendCombatRow(out, selectedHotbarSlot, leftX, lowerY, nativeHotbar);
+        appendCombatRow(out, selectedHotbarSlot, leftX, lowerY, nativeHotbar, skillBar, castState, nowMillis);
 
         return out;
     }
@@ -130,7 +133,7 @@ public final class QuickBarHudPlanner {
             }
 
             // Cast bar for the active slot
-            if (castState != null && castState.slot() == i) {
+            if (castState != null && castState.source() == CastState.Source.QUICK_SLOT && castState.slot() == i) {
                 appendCastBar(out, x, y + SLOT_SIZE + 1, castState, nowMillis);
             }
         }
@@ -141,12 +144,35 @@ public final class QuickBarHudPlanner {
         int selectedSlot,
         int leftX,
         int y,
-        List<InventoryItem> nativeHotbar
+        List<InventoryItem> nativeHotbar,
+        SkillBarConfig skillBar,
+        CastState castState,
+        long nowMillis
     ) {
+        SkillBarConfig skills = skillBar == null ? SkillBarConfig.empty() : skillBar;
         for (int i = 0; i < TOTAL_SLOTS; i++) {
             int x = leftX + i * (SLOT_SIZE + SLOT_GAP);
             int borderColor = (selectedSlot == i) ? SELECTED_BORDER_COLOR : 0x60FFFFFF;
             appendBorder(out, HudRenderLayer.QUICK_BAR, x, y, SLOT_SIZE, SLOT_SIZE, borderColor);
+
+            SkillBarEntry skillEntry = skills.slot(i);
+            if (skillEntry != null && skillEntry.kind() == SkillBarEntry.Kind.SKILL) {
+                out.add(HudRenderCommand.rect(
+                    HudRenderLayer.QUICK_BAR,
+                    x + 1, y + 1,
+                    SLOT_SIZE - 2, SLOT_SIZE - 2,
+                    0x404080FF
+                ));
+                String label = skillLabel(skillEntry.displayName(), skillEntry.id());
+                out.add(HudRenderCommand.text(HudRenderLayer.QUICK_BAR, label, x + 4, y + 6, 0xFFE0D080));
+                if (skills.isOnCooldown(i, nowMillis)) {
+                    out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
+                }
+                if (castState != null && castState.source() == CastState.Source.SKILL_BAR && castState.slot() == i) {
+                    appendCastBar(out, x, y + SLOT_SIZE + 1, castState, nowMillis);
+                }
+                continue;
+            }
 
             InventoryItem item = (nativeHotbar != null && i < nativeHotbar.size())
                 ? nativeHotbar.get(i)
@@ -165,6 +191,13 @@ public final class QuickBarHudPlanner {
                 HudRenderLayer.QUICK_BAR, item.itemId(), x + ICON_INSET, y + ICON_INSET, iconSize
             ));
         }
+    }
+
+    private static String skillLabel(String displayName, String skillId) {
+        String source = displayName == null || displayName.isBlank() ? skillId : displayName;
+        if (source == null || source.isBlank()) return "技";
+        String trimmed = source.trim();
+        return trimmed.length() <= 2 ? trimmed : trimmed.substring(0, 1);
     }
 
     private static void appendCastBar(List<HudRenderCommand> out, int x, int y, CastState cast, long nowMs) {

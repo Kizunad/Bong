@@ -86,6 +86,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }
 
+    public static void sendMineralProbe(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
+    }
+
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }
@@ -108,12 +112,32 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
     }
 
+    public static void sendSkillBarCast(int slot) {
+        dispatch(ClientRequestProtocol.encodeSkillBarCast(slot));
+    }
+
+    public static void sendSkillBarBindClear(int slot) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindClear(slot));
+    }
+
+    public static void sendSkillBarBindSkill(int slot, String skillId) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindSkill(slot, skillId));
+    }
+
+    public static void sendSkillBarBindItem(int slot, String templateId) {
+        dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
+    }
+
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
-    public static void sendSwitchDefenseStance(String stance) {
-        dispatch(ClientRequestProtocol.encodeSwitchDefenseStance(stance));
+    public static void sendStartExtract(long portalEntityId) {
+        dispatch(ClientRequestProtocol.encodeStartExtractRequest(portalEntityId));
+    }
+
+    public static void sendCancelExtract() {
+        dispatch(ClientRequestProtocol.encodeCancelExtractRequest());
     }
 
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
@@ -160,6 +184,14 @@ public final class ClientRequestSender {
 
     public static void sendApplyPillSelf(long instanceId) {
         dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
+    }
+
+    public static void sendDuoSheRequest(String targetId) {
+        dispatch(ClientRequestProtocol.encodeDuoSheRequest(targetId));
+    }
+
+    public static void sendUseLifeCore(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeUseLifeCore(instanceId));
     }
 
     public static void sendLearnSkillScroll(long instanceId) {

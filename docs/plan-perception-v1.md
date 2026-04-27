@@ -263,3 +263,9 @@
 
 **可选上层**：
 - `plan-iris-integration-v1.md`（shader 真模糊）
+
+---
+
+## §10 进度日志
+
+- 2026-04-25：除 Phase 0 第一项（`bong:server_data` 推送通道，已通过 `server/src/schema/server_data.rs` ServerDataPayloadV1 落地）以外，本 plan 全部为模板态。仓库内 "perception" 字样仅指 narration `NarrationStyle::Perception` 旁白样式与 `InsightCategory::Perception`（顿悟类别 + `UnlockedPerceptions` 解锁集合），均与本 plan 的视觉/神识感知系统无关：未见 `BackgroundRenderer` Mixin、视距表、`PerceptionHudRenderer`、`Visual`/`Perception` 类 ServerData payload，也无服务端感知扫描 system。Phase 1/2/3 全部待启动。

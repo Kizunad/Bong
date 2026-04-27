@@ -19,7 +19,6 @@ public final class CombatHudBootstrap {
         CombatKeybindings.setQuickSlotHandler(CombatHudBootstrap::onQuickSlotPressed);
         CombatKeybindings.setJiemaiHandler(CombatHudBootstrap::onJiemaiPressed);
         CombatKeybindings.setSpellVolumeHoldHandler(CombatHudBootstrap::onSpellVolumeHold);
-        CombatKeybindings.setStanceHandler(CombatHudBootstrap::onStanceSwitch);
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(CombatHudBootstrap::resetOnDisconnect));
         BongClient.LOGGER.info("Combat HUD bootstrap ready.");
@@ -63,32 +62,13 @@ public final class CombatHudBootstrap {
         }
     }
 
-    private static void onStanceSwitch(DefenseStanceState.Stance stance) {
-        UnlockedStyles styles = UnlockedStylesStore.snapshot();
-        boolean allowed = switch (stance) {
-            case JIEMAI -> styles.jiemai();
-            case TISHI -> styles.tishi();
-            case JUELING -> styles.jueling();
-            case NONE -> true;
-        };
-        if (!allowed) return;
-        DefenseStanceState current = DefenseStanceStore.snapshot();
-        DefenseStanceStore.replace(DefenseStanceState.of(
-            stance,
-            current.fakeSkinLayers(),
-            current.vortexActive(),
-            current.vortexReadyAtMs()
-        ));
-        com.bong.client.network.ClientRequestSender.sendSwitchDefenseStance(stance.name());
-    }
-
     static void resetOnDisconnect() {
         // §8.3 hydration expects a fresh first-frame payload post-reconnect.
         CombatHudStateStore.resetForTests();
         CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
-        DefenseStanceStore.resetForTests();
         QuickUseSlotStore.resetForTests();
+        SkillBarStore.resetForTests();
         UnlockedStylesStore.resetForTests();
         UnifiedEventStore.resetForTests();
         SpellVolumeStore.resetForTests();

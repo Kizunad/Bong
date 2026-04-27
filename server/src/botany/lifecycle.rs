@@ -75,6 +75,7 @@ fn spawn_seed(now_tick: u64, kind: BotanyPlantId, spawn_idx: u32) -> u64 {
 /// plan §7：按 zone 环境决定植物变种。
 /// - `Thunder`：zone.active_events 含 "thunder" / "tribulation"（不区分大小写）
 /// - `Tainted`：zone.spirit_qi < 0 或 zone 带 NegativeField tag
+///
 /// 即使 zone 合格，也要通过 `BotanyVariantRoll` 概率掷骰才会变种（默认 1/3）。
 pub(crate) fn roll_variant_for_zone(
     zone: &Zone,
@@ -366,6 +367,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([0.0, 0.0, 0.0]).get(),
                     Position::new([1.0, 1.0, 1.0]).get(),
@@ -398,6 +400,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "spawn".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([0.0, 0.0, 0.0]).get(),
                     Position::new([1.0, 1.0, 1.0]).get(),
@@ -442,6 +445,7 @@ mod tests {
             zones: vec![
                 Zone {
                     name: "spawn".to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
                     bounds: (
                         Position::new([0.0, 0.0, 0.0]).get(),
                         Position::new([1.0, 1.0, 1.0]).get(),
@@ -454,6 +458,7 @@ mod tests {
                 },
                 Zone {
                     name: "lingquan_marsh".to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
                     bounds: (
                         Position::new([2.0, 0.0, 2.0]).get(),
                         Position::new([3.0, 1.0, 3.0]).get(),
@@ -497,6 +502,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "lingquan_marsh".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([0.0, 0.0, 0.0]).get(),
                     Position::new([1.0, 1.0, 1.0]).get(),
@@ -553,6 +559,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "lingquan_marsh".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     Position::new([0.0, 0.0, 0.0]).get(),
                     Position::new([1.0, 1.0, 1.0]).get(),
@@ -592,6 +599,7 @@ mod tests {
     fn roll_variant_produces_thunder_when_tribulation_active() {
         let zone = Zone {
             name: "qingyun_peaks".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),
@@ -611,6 +619,7 @@ mod tests {
     fn roll_variant_produces_tainted_when_spirit_qi_negative() {
         let zone = Zone {
             name: "negative_pocket".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),
@@ -632,6 +641,7 @@ mod tests {
     fn roll_variant_is_none_when_chance_zero() {
         let zone = Zone {
             name: "spawn".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),
@@ -650,6 +660,7 @@ mod tests {
     fn roll_variant_is_none_in_neutral_zone() {
         let zone = Zone {
             name: "spawn".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),
@@ -675,6 +686,7 @@ mod tests {
 
         let marsh_zone = Zone {
             name: "lingquan_marsh".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),

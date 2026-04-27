@@ -6,7 +6,7 @@
     {
       "uuid": "offline:Steve",
       "name": "Steve",
-      "realm": "qi_refining_3",
+      "realm": "Induce",
       "composite_power": 0.85,
       "breakdown": {
         "combat": 0.92,
@@ -45,7 +45,7 @@
     {
       "uuid": "offline:NewPlayer1",
       "name": "NewPlayer1",
-      "realm": "mortal",
+      "realm": "Awaken",
       "composite_power": 0.12,
       "breakdown": {
         "combat": 0.05,

@@ -51,13 +51,23 @@ public class ServerDataRouterTest {
             "defense_window",
             "cast_sync",
             "quickslot_config",
+            "skillbar_config",
+            "techniques_snapshot",
             "unlocks_sync",
             "event_stream_push",
-            "defense_sync",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
+            // plan-tsy-extract-v1 §4.1 撤离点 / 撤离进度 HUD 推送。
+            "rift_portal_state",
+            "rift_portal_removed",
+            "extract_started",
+            "extract_progress",
+            "extract_completed",
+            "extract_aborted",
+            "extract_failed",
+            "tsy_collapse_started_ipc",
             // plan-lingtian-v1 §4 active session 推送。
             "lingtian_session",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。
@@ -65,7 +75,12 @@ public class ServerDataRouterTest {
             "skill_lv_up",
             "skill_cap_changed",
             "skill_scroll_used",
-            "skill_snapshot"
+            "skill_snapshot",
+            // plan-forge-v1 §4 — 炼器（武器）
+            "forge_station",
+            "forge_session",
+            "forge_outcome",
+            "forge_blueprint_book"
         ), router.registeredTypes());
     }
 

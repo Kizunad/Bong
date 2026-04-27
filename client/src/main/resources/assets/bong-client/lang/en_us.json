@@ -3,5 +3,7 @@
   "key.bong-client.open_cultivation_screen": "Open Cultivation Screen",
   "key.bong-client.open_inspect_screen": "Open Inspect Screen",
   "key.bong-client.botany_auto_harvest": "Botany Auto Harvest",
-  "key.bong-client.open_alchemy_screen": "Open Alchemy Furnace"
+  "key.bong-client.open_alchemy_screen": "Open Alchemy Furnace",
+  "key.bong-client.tsy_extract": "Start TSY Extract",
+  "key.bong-client.tsy_extract_cancel": "Cancel TSY Extract"
 }

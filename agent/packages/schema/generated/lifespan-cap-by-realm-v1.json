@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "mortal",
+    "awaken",
+    "induce",
+    "condense",
+    "solidify",
+    "spirit",
+    "void"
+  ],
+  "properties": {
+    "mortal": {
+      "const": 80,
+      "type": "integer"
+    },
+    "awaken": {
+      "const": 120,
+      "type": "integer"
+    },
+    "induce": {
+      "const": 200,
+      "type": "integer"
+    },
+    "condense": {
+      "const": 350,
+      "type": "integer"
+    },
+    "solidify": {
+      "const": 600,
+      "type": "integer"
+    },
+    "spirit": {
+      "const": 1000,
+      "type": "integer"
+    },
+    "void": {
+      "const": 2000,
+      "type": "integer"
+    }
+  }
+}

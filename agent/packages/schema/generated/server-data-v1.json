@@ -117,6 +117,10 @@
                     "type": "string"
                   }
                 ]
+              },
+              "kind": {
+                "const": "death_insight",
+                "type": "string"
               }
             }
           }
@@ -412,6 +416,43 @@
           "minimum": 0,
           "type": "number"
         },
+        "lifespan": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "years_lived",
+            "cap_by_realm",
+            "remaining_years",
+            "death_penalty_years",
+            "tick_rate_multiplier",
+            "is_wind_candle"
+          ],
+          "properties": {
+            "years_lived": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "cap_by_realm": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "remaining_years": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "death_penalty_years": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tick_rate_multiplier": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "is_wind_candle": {
+              "type": "boolean"
+            }
+          }
+        },
         "recent_skill_milestones_summary": {
           "maxLength": 4096,
           "type": "string"
@@ -649,6 +690,10 @@
                       {
                         "const": "legendary",
                         "type": "string"
+                      },
+                      {
+                        "const": "ancient",
+                        "type": "string"
                       }
                     ]
                   },
@@ -774,6 +819,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }
@@ -866,6 +921,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -991,6 +1050,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1068,6 +1137,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1193,6 +1266,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1270,6 +1353,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1395,6 +1482,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1472,6 +1569,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1597,6 +1698,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1674,6 +1785,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1799,6 +1914,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1876,6 +2001,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2001,6 +2130,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2078,6 +2217,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2203,6 +2346,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2280,6 +2433,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2405,6 +2562,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2482,6 +2649,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2607,6 +2778,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2684,6 +2865,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2809,6 +2994,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2886,6 +3081,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -3011,6 +3210,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -3093,6 +3302,10 @@
                       },
                       {
                         "const": "legendary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "ancient",
                         "type": "string"
                       }
                     ]
@@ -3219,6 +3432,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               },
@@ -3802,6 +4025,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -3927,6 +4154,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             }
@@ -4143,6 +4380,10 @@
                       {
                         "const": "legendary",
                         "type": "string"
+                      },
+                      {
+                        "const": "ancient",
+                        "type": "string"
                       }
                     ]
                   },
@@ -4268,6 +4509,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }
@@ -4922,6 +5173,161 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "v",
+        "type",
+        "visible",
+        "cause",
+        "luck_remaining",
+        "final_words",
+        "countdown_until_ms",
+        "can_reincarnate",
+        "can_terminate"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "death_screen",
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "cause": {
+          "type": "string"
+        },
+        "luck_remaining": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "final_words": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "countdown_until_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "can_reincarnate": {
+          "type": "boolean"
+        },
+        "can_terminate": {
+          "type": "boolean"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "const": "fortune",
+              "type": "string"
+            },
+            {
+              "const": "tribulation",
+              "type": "string"
+            }
+          ]
+        },
+        "death_number": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zone_kind": {
+          "anyOf": [
+            {
+              "const": "ordinary",
+              "type": "string"
+            },
+            {
+              "const": "death",
+              "type": "string"
+            },
+            {
+              "const": "negative",
+              "type": "string"
+            }
+          ]
+        },
+        "lifespan": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "years_lived",
+            "cap_by_realm",
+            "remaining_years",
+            "death_penalty_years",
+            "tick_rate_multiplier",
+            "is_wind_candle"
+          ],
+          "properties": {
+            "years_lived": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "cap_by_realm": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "remaining_years": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "death_penalty_years": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tick_rate_multiplier": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "is_wind_candle": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "visible",
+        "final_words",
+        "epilogue",
+        "archetype_suggestion"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "terminate_screen",
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "final_words": {
+          "type": "string"
+        },
+        "epilogue": {
+          "type": "string"
+        },
+        "archetype_suggestion": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "type",
         "v",
         "char_id",
@@ -5269,6 +5675,1138 @@
             "minLength": 1,
             "type": "string"
           }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slots",
+        "cooldown_until_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "skillbar_config",
+          "type": "string"
+        },
+        "slots": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "template_id",
+                      "display_name",
+                      "cast_duration_ms",
+                      "cooldown_ms",
+                      "icon_texture"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "item",
+                        "type": "string"
+                      },
+                      "template_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "cast_duration_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cooldown_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "icon_texture": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "skill_id",
+                      "display_name",
+                      "cast_duration_ms",
+                      "cooldown_ms",
+                      "icon_texture"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "skill",
+                        "type": "string"
+                      },
+                      "skill_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "cast_duration_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cooldown_ms": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "icon_texture": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "cooldown_until_ms": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entries"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "techniques_snapshot",
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "grade",
+              "proficiency",
+              "active",
+              "description",
+              "required_realm",
+              "required_meridians",
+              "qi_cost",
+              "cast_ticks",
+              "cooldown_ticks",
+              "range"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "grade": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "proficiency": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string"
+              },
+              "required_realm": {
+                "type": "string"
+              },
+              "required_meridians": {
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "channel",
+                    "min_health"
+                  ],
+                  "properties": {
+                    "channel": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "min_health": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "qi_cost": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cast_ticks": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cooldown_ticks": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "range": {
+                "minimum": 0,
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id",
+        "kind",
+        "direction",
+        "family_id",
+        "world_pos",
+        "trigger_radius",
+        "current_extract_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "rift_portal_state",
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "number"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "const": "entry",
+              "type": "string"
+            },
+            {
+              "const": "exit",
+              "type": "string"
+            }
+          ]
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "trigger_radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "current_extract_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "activation_window_end": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "rift_portal_removed",
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_entity_id",
+        "portal_kind",
+        "required_ticks",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_started",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_entity_id": {
+          "type": "number"
+        },
+        "portal_kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "required_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_entity_id",
+        "elapsed_ticks",
+        "required_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_progress",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_entity_id": {
+          "type": "number"
+        },
+        "elapsed_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "required_ticks": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_kind",
+        "family_id",
+        "exit_world_pos",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_completed",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "exit_world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "reason"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_aborted",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "moved",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "damaged",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            },
+            {
+              "const": "portal_expired",
+              "type": "string"
+            },
+            {
+              "const": "out_of_range",
+              "type": "string"
+            },
+            {
+              "const": "not_in_tsy",
+              "type": "string"
+            },
+            {
+              "const": "already_busy",
+              "type": "string"
+            },
+            {
+              "const": "cannot_exit",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "reason"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_failed",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "const": "spirit_qi_drained",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "family_id",
+        "at_tick",
+        "remaining_ticks",
+        "collapse_tear_entity_ids"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "tsy_collapse_started_ipc",
+          "type": "string"
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "remaining_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "collapse_tear_entity_ids": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "station_id",
+        "tier",
+        "integrity",
+        "owner_name",
+        "has_session"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_station",
+          "type": "string"
+        },
+        "station_id": {
+          "type": "string"
+        },
+        "tier": {
+          "minimum": 1,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "integrity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "owner_name": {
+          "type": "string"
+        },
+        "has_session": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "blueprint_id",
+        "blueprint_name",
+        "active",
+        "current_step",
+        "step_index",
+        "achieved_tier",
+        "step_state"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_session",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blueprint_id": {
+          "type": "string"
+        },
+        "blueprint_name": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "current_step": {
+          "description": "plan §1.3 四步进程",
+          "anyOf": [
+            {
+              "const": "billet",
+              "type": "string"
+            },
+            {
+              "const": "tempering",
+              "type": "string"
+            },
+            {
+              "const": "inscription",
+              "type": "string"
+            },
+            {
+              "const": "consecration",
+              "type": "string"
+            },
+            {
+              "const": "done",
+              "type": "string"
+            }
+          ]
+        },
+        "step_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "achieved_tier": {
+          "minimum": 0,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "step_state": {
+          "description": "plan §1.3 各步实时状态",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "materials_in",
+                "resolved_tier_cap"
+              ],
+              "properties": {
+                "step": {
+                  "const": "billet",
+                  "type": "string"
+                },
+                "materials_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    ],
+                    "additionalItems": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                },
+                "active_carrier": {
+                  "type": "string"
+                },
+                "resolved_tier_cap": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "pattern",
+                "beat_cursor",
+                "hits",
+                "misses",
+                "deviation",
+                "qi_spent"
+              ],
+              "properties": {
+                "step": {
+                  "const": "tempering",
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "array",
+                  "items": {
+                    "description": "plan §1.3.2 淬炼击键",
+                    "anyOf": [
+                      {
+                        "const": "L",
+                        "type": "string"
+                      },
+                      {
+                        "const": "H",
+                        "type": "string"
+                      },
+                      {
+                        "const": "F",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "beat_cursor": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hits": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "misses": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deviation": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "qi_spent": {
+                  "minimum": 0,
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "filled_slots",
+                "max_slots",
+                "failed"
+              ],
+              "properties": {
+                "step": {
+                  "const": "inscription",
+                  "type": "string"
+                },
+                "filled_slots": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "max_slots": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "failed": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step",
+                "qi_injected",
+                "qi_required"
+              ],
+              "properties": {
+                "step": {
+                  "const": "consecration",
+                  "type": "string"
+                },
+                "qi_injected": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "qi_required": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "color_imprint": {
+                  "description": "十种真元染色",
+                  "anyOf": [
+                    {
+                      "const": "Sharp",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Heavy",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Mellow",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Solid",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Light",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Intricate",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Gentle",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Insidious",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Violent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Turbid",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "step"
+              ],
+              "properties": {
+                "step": {
+                  "const": "none",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "blueprint_id",
+        "bucket",
+        "quality",
+        "side_effects",
+        "achieved_tier",
+        "flawed_path"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_outcome",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blueprint_id": {
+          "type": "string"
+        },
+        "bucket": {
+          "description": "plan §1.3 结果分桶",
+          "anyOf": [
+            {
+              "const": "perfect",
+              "type": "string"
+            },
+            {
+              "const": "good",
+              "type": "string"
+            },
+            {
+              "const": "flawed",
+              "type": "string"
+            },
+            {
+              "const": "waste",
+              "type": "string"
+            },
+            {
+              "const": "explode",
+              "type": "string"
+            }
+          ]
+        },
+        "weapon_item": {
+          "type": "string"
+        },
+        "quality": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "color": {
+          "description": "十种真元染色",
+          "anyOf": [
+            {
+              "const": "Sharp",
+              "type": "string"
+            },
+            {
+              "const": "Heavy",
+              "type": "string"
+            },
+            {
+              "const": "Mellow",
+              "type": "string"
+            },
+            {
+              "const": "Solid",
+              "type": "string"
+            },
+            {
+              "const": "Light",
+              "type": "string"
+            },
+            {
+              "const": "Intricate",
+              "type": "string"
+            },
+            {
+              "const": "Gentle",
+              "type": "string"
+            },
+            {
+              "const": "Insidious",
+              "type": "string"
+            },
+            {
+              "const": "Violent",
+              "type": "string"
+            },
+            {
+              "const": "Turbid",
+              "type": "string"
+            }
+          ]
+        },
+        "side_effects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "achieved_tier": {
+          "minimum": 0,
+          "maximum": 4,
+          "type": "integer"
+        },
+        "flawed_path": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "learned",
+        "current_index"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_blueprint_book",
+          "type": "string"
+        },
+        "learned": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "tier_cap",
+              "step_count"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "tier_cap": {
+                "minimum": 1,
+                "maximum": 4,
+                "type": "integer"
+              },
+              "step_count": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "current_index": {
+          "minimum": 0,
+          "type": "integer"
         }
       }
     }

@@ -22,7 +22,7 @@ public class PlayerStateHandlerTest {
 
         assertTrue(dispatch.handled());
         assertTrue(dispatch.chatMessages().isEmpty());
-        assertEquals("qi_refining_3", playerState.realm());
+        assertEquals("Induce", playerState.realm());
         assertEquals(78.0, playerState.spiritQiCurrent(), 0.0001);
         assertEquals(100.0, playerState.spiritQiMax(), 0.0001);
         assertEquals(0.78, playerState.spiritQiFillRatio(), 0.0001);
@@ -40,16 +40,16 @@ public class PlayerStateHandlerTest {
     @Test
     void acceptsLegacySpiritQiAliasAndViewModelClampRules() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
-            {"v":1,"type":"player_state","realm":" foundation_1 ","spirit_qi":150.0,
+            {"v":1,"type":"player_state","realm":" Condense ","spirit_qi":150.0,
              "karma":2.0,"composite_power":-1.0,
-             "breakdown":{"combat":1.4,"wealth":-0.5,"social":0.2,"territory":2.0},
-             "zone":" azure_peak ","zone_spirit_qi":1.6}
+              "breakdown":{"combat":1.4,"wealth":-0.5,"social":0.2,"territory":2.0},
+              "zone":" azure_peak ","zone_spirit_qi":1.6}
             """));
 
         PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
 
         assertTrue(dispatch.handled());
-        assertEquals("foundation_1", playerState.realm());
+        assertEquals("Condense", playerState.realm());
         assertEquals(150.0, playerState.spiritQiMax(), 0.0001);
         assertEquals(150.0, playerState.spiritQiCurrent(), 0.0001);
         assertEquals(1.0, playerState.karma(), 0.0001);
@@ -65,16 +65,16 @@ public class PlayerStateHandlerTest {
     @Test
     void acceptsServerCompatiblePayloadWhenZoneSpiritQiIsOmitted() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
-            {"v":1,"type":"player_state","realm":"qi_refining_3","spirit_qi":78.0,
+            {"v":1,"type":"player_state","realm":"Induce","spirit_qi":78.0,
              "karma":0.2,"composite_power":0.35,
-             "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
-             "zone":"blood_valley"}
+              "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
+              "zone":"blood_valley"}
             """));
 
         PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
 
         assertTrue(dispatch.handled());
-        assertEquals("qi_refining_3", playerState.realm());
+        assertEquals("Induce", playerState.realm());
         assertEquals(78.0, playerState.spiritQiCurrent(), 0.0001);
         assertEquals(100.0, playerState.spiritQiMax(), 0.0001);
         assertEquals(0.78, playerState.spiritQiFillRatio(), 0.0001);

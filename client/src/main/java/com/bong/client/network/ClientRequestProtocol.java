@@ -104,6 +104,36 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeCombatReincarnate() {
+        return envelope("combat_reincarnate").toString();
+    }
+
+    public static String encodeCombatTerminate() {
+        return envelope("combat_terminate").toString();
+    }
+
+    public static String encodeCombatCreateNewCharacter() {
+        return envelope("combat_create_new_character").toString();
+    }
+
+    public static String encodeDuoSheRequest(String targetId) {
+        if (targetId == null || targetId.isBlank()) {
+            throw new IllegalArgumentException("targetId must not be blank");
+        }
+        JsonObject obj = envelope("duo_she_request");
+        obj.addProperty("target_id", targetId);
+        return obj.toString();
+    }
+
+    public static String encodeUseLifeCore(long instanceId) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
+        JsonObject obj = envelope("use_life_core");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static String encodeAlchemyOpenFurnace(String furnaceId) {
@@ -257,6 +287,14 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeMineralProbe(int x, int y, int z) {
+        JsonObject obj = envelope("mineral_probe");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
     public static String encodeInventoryDiscardItem(long instanceId, InvLocation from) {
         JsonObject obj = envelope("inventory_discard_item");
         obj.addProperty("instance_id", instanceId);
@@ -302,14 +340,57 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSkillBarCast(int slot) {
+        JsonObject obj = envelope("skill_bar_cast");
+        obj.addProperty("slot", slot);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindClear(int slot) {
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        obj.add("binding", com.google.gson.JsonNull.INSTANCE);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindSkill(int slot, String skillId) {
+        if (skillId == null || skillId.isBlank()) {
+            throw new IllegalArgumentException("skillId must not be blank");
+        }
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        JsonObject binding = new JsonObject();
+        binding.addProperty("kind", "skill");
+        binding.addProperty("skill_id", skillId);
+        obj.add("binding", binding);
+        return obj.toString();
+    }
+
+    public static String encodeSkillBarBindItem(int slot, String templateId) {
+        if (templateId == null || templateId.isBlank()) {
+            throw new IllegalArgumentException("templateId must not be blank");
+        }
+        JsonObject obj = envelope("skill_bar_bind");
+        obj.addProperty("slot", slot);
+        JsonObject binding = new JsonObject();
+        binding.addProperty("kind", "item");
+        binding.addProperty("template_id", templateId);
+        obj.add("binding", binding);
+        return obj.toString();
+    }
+
     public static String encodeJiemai() {
         return envelope("jiemai").toString();
     }
 
-    public static String encodeSwitchDefenseStance(String stance) {
-        JsonObject obj = envelope("switch_defense_stance");
-        obj.addProperty("stance", stance);
+    public static String encodeStartExtractRequest(long portalEntityId) {
+        JsonObject obj = envelope("start_extract_request");
+        obj.addProperty("portal_entity_id", portalEntityId);
         return obj.toString();
+    }
+
+    public static String encodeCancelExtractRequest() {
+        return envelope("cancel_extract_request").toString();
     }
 
     // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────

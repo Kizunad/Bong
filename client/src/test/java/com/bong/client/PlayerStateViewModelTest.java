@@ -38,14 +38,14 @@ public class PlayerStateViewModelTest {
     @Test
     public void viewModelFormatsCultivationFieldsForScreenDisplay() {
         PlayerStateState.record(
-                new BongServerPayload.PlayerState("qi_refining_3", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley"),
+                new BongServerPayload.PlayerState("Induce", 78.0d, 100.0d, -0.2d, 0.35d, "blood_valley"),
                 10_000L
         );
 
         PlayerStateViewModel viewModel = PlayerStateViewModel.fromCurrentState();
 
         assertTrue(viewModel.hasState());
-        assertEquals("练气三层", viewModel.realmLabel());
+        assertEquals("引气", viewModel.realmLabel());
         assertEquals("78 / 100", viewModel.spiritQiLabel());
         assertEquals("████████░░", viewModel.spiritQiBar());
         assertEquals("-0.20", viewModel.karmaLabel());

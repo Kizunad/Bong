@@ -3,6 +3,7 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use crate::combat::components::{BodyPart, WoundKind};
 use crate::player::gameplay::CombatAction;
+use crate::schema::death_insight::DeathInsightRequestV1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AttackReach {
@@ -79,11 +80,38 @@ pub struct CombatEvent {
     pub description: String,
 }
 
+/// plan-tsy-loot-v1 §6 — 死亡事件，附带攻击者链路（Option，因为环境死亡 / 修炼自爆没有"凶手"）。
+///
+/// `attacker` 是 ECS Entity（适合 server 内部 query），`attacker_player_id` 是
+/// canonical player id（如 `"offline:Foo"`），适合 IPC / agent 消费。两者独立维护：
+/// PVP 死亡两者都填；NPC 揍死玩家只填 attacker；环境死亡（tsy_drain / bleed_out
+/// without source）两者都 None。
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct DeathEvent {
     pub target: Entity,
     pub cause: String,
+    pub attacker: Option<Entity>,
+    pub attacker_player_id: Option<String>,
     pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct DeathInsightRequested {
+    pub payload: DeathInsightRequestV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RevivalActionKind {
+    Reincarnate,
+    Terminate,
+    CreateNewCharacter,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct RevivalActionIntent {
+    pub entity: Entity,
+    pub action: RevivalActionKind,
+    pub issued_at_tick: u64,
 }
 
 /// plan-combat-no_ui §13 C1 — 调试命令注入通道 (`!wound add` / `!health set` / `!stamina set`)。
@@ -107,4 +135,8 @@ pub enum DebugCombatCommandKind {
     },
     SetHealth(f32),
     SetStamina(f32),
+    /// 设置玩家重生锚点（灵龛坐标）。
+    ///
+    /// 仅 dev/MVP：由 chat dev command 写入，用于验证「灵龛 > 出生点」与运数期条件。
+    SetSpawnAnchor(Option<[f64; 3]>),
 }

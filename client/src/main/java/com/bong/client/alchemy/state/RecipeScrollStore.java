@@ -45,7 +45,7 @@ public final class RecipeScrollStore {
             List<RecipeEntry> seed = List.of(
                 new RecipeEntry("kaimai_pill", "开脉丹方", kaimaiBody, "散修 刘三", "末法 十二年", 8),
                 new RecipeEntry("huiyuan_pill", "回元丹方",
-                    "§e温补真元，低阶筑基常备。\n§7配料 / 火候 / 偏差 / 残缺规则将在 Slice B 接入 Store。",
+                    "§e温补真元，残土行走常备。\n§7配料 / 火候 / 偏差 / 残缺规则将在 Slice B 接入 Store。",
                     "散修 刘三", "末法 十二年", 8),
                 new RecipeEntry("duming_san", "赌命散方",
                     "§c烈性偏方，反噬极大。\n§7老炼丹师嗤之以鼻。",

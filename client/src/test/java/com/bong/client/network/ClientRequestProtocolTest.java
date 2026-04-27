@@ -114,6 +114,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesMineralProbe() {
+        String json = ClientRequestProtocol.encodeMineralProbe(8, 32, 8);
+        assertEquals(
+            "{\"type\":\"mineral_probe\",\"v\":1,\"x\":8,\"y\":32,\"z\":8}",
+            json
+        );
+    }
+
+    @Test
     void encodesInventoryDiscardItem() {
         String json = ClientRequestProtocol.encodeInventoryDiscardItem(
             1001L,
@@ -152,6 +161,56 @@ public class ClientRequestProtocolTest {
         assertEquals(
             "{\"type\":\"botany_harvest_request\",\"v\":1,\"session_id\":\"session-botany-01\",\"mode\":\"auto\"}",
             json
+        );
+    }
+
+    @Test
+    void encodesDuoSheRequest() {
+        String json = ClientRequestProtocol.encodeDuoSheRequest("npc_12v0");
+        assertEquals(
+            "{\"type\":\"duo_she_request\",\"v\":1,\"target_id\":\"npc_12v0\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodesUseLifeCore() {
+        String json = ClientRequestProtocol.encodeUseLifeCore(4242L);
+        assertEquals(
+            "{\"type\":\"use_life_core\",\"v\":1,\"instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
+    void encodesSkillBarRequests() {
+        assertEquals(
+            "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0}",
+            ClientRequestProtocol.encodeSkillBarCast(0)
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",
+            ClientRequestProtocol.encodeSkillBarBindSkill(1, "burst_meridian.beng_quan")
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":2,\"binding\":{\"kind\":\"item\",\"template_id\":\"kai_mai_pill_v0\"}}",
+            ClientRequestProtocol.encodeSkillBarBindItem(2, "kai_mai_pill_v0")
+        );
+        assertEquals(
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":3,\"binding\":null}",
+            ClientRequestProtocol.encodeSkillBarBindClear(3)
+        );
+    }
+
+    @Test
+    void encodesExtractRequests() {
+        assertEquals(
+            "{\"type\":\"start_extract_request\",\"v\":1,\"portal_entity_id\":42}",
+            ClientRequestProtocol.encodeStartExtractRequest(42L)
+        );
+        assertEquals(
+            "{\"type\":\"cancel_extract_request\",\"v\":1}",
+            ClientRequestProtocol.encodeCancelExtractRequest()
         );
     }
 

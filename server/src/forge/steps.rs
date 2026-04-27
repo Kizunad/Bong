@@ -360,7 +360,7 @@ mod tests {
     fn billet_profile_iron() -> BilletProfile {
         BilletProfile {
             required: vec![MaterialStack {
-                material: "iron_ingot".into(),
+                material: "fan_tie".into(),
                 count: 3,
             }],
             optional_carriers: vec![],
@@ -372,7 +372,7 @@ mod tests {
     fn billet_perfect_when_all_required_satisfied() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 3);
+        inputs.insert("fan_tie".to_string(), 3);
         let r = resolve_billet(&p, &inputs, 1).unwrap();
         assert!(r.perfect);
         assert!(!r.flawed);
@@ -383,7 +383,7 @@ mod tests {
     fn billet_flawed_when_unknown_material_present() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 3);
+        inputs.insert("fan_tie".to_string(), 3);
         inputs.insert("dirt".to_string(), 1);
         let r = resolve_billet(&p, &inputs, 1).unwrap();
         assert!(r.flawed);
@@ -393,16 +393,18 @@ mod tests {
     fn billet_waste_when_missing_beyond_tolerance() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 1);
+        inputs.insert("fan_tie".to_string(), 1);
         let err = resolve_billet(&p, &inputs, 1).unwrap_err();
         assert!(matches!(err, BilletError::ShortMaterial { .. }));
     }
 
     #[test]
     fn carrier_unlocks_higher_tier_cap() {
+        // plan-mineral-v1 §5 — placeholder 替换：xuan_iron → sui_tie。
+        // yi_beast_bone 属 fauna 范围（plan §5 依赖切分），保留 TODO 等 plan-fauna-v1 立项替换。
         let p = BilletProfile {
             required: vec![MaterialStack {
-                material: "xuan_iron".into(),
+                material: "sui_tie".into(),
                 count: 3,
             }],
             optional_carriers: vec![
@@ -411,6 +413,7 @@ mod tests {
                     unlocks_tier: 3,
                 },
                 CarrierSpec {
+                    // TODO[fauna]: yi_beast_bone → 妖兽材料正典（plan-fauna-v1 立项后替换）
                     material: "yi_beast_bone".into(),
                     unlocks_tier: 4,
                 },
@@ -418,7 +421,7 @@ mod tests {
             tolerance: BilletTolerance::default(),
         };
         let mut inputs = HashMap::new();
-        inputs.insert("xuan_iron".into(), 3);
+        inputs.insert("sui_tie".into(), 3);
         inputs.insert("yi_beast_bone".into(), 1);
         let r = resolve_billet(&p, &inputs, 4).unwrap();
         assert_eq!(r.state.resolved_tier_cap, 4);

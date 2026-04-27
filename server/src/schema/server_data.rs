@@ -5,12 +5,15 @@ use super::alchemy::{
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
 use super::combat_hud::{
-    CastSyncV1, CombatHudStateV1, DefenseSyncV1, DefenseWindowV1, EventStreamPushV1,
-    QuickSlotConfigV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1,
-    WoundsSnapshotV1,
+    CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
+    SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1,
+    WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::cultivation::SkillMilestoneSnapshotV1;
+use super::forge::{
+    ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1, WeaponForgeStationDataV1,
+};
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
@@ -22,6 +25,31 @@ use super::world_state::PlayerPowerBreakdown;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifespanPreviewV1 {
+    pub years_lived: f64,
+    pub cap_by_realm: u32,
+    pub remaining_years: f64,
+    pub death_penalty_years: u32,
+    pub tick_rate_multiplier: f64,
+    pub is_wind_candle: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenStageV1 {
+    Fortune,
+    Tribulation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenZoneKindV1 {
+    Ordinary,
+    Death,
+    Negative,
+}
 
 #[derive(Debug)]
 pub enum ServerDataBuildError {
@@ -55,18 +83,33 @@ pub enum ServerDataType {
     DefenseWindow,
     CastSync,
     QuickSlotConfig,
+    SkillBarConfig,
+    TechniquesSnapshot,
     UnlocksSync,
     EventStreamPush,
-    DefenseSync,
     WeaponEquipped,
     WeaponBroken,
     TreasureEquipped,
     LingtianSession,
+    DeathScreen,
+    TerminateScreen,
+    RiftPortalState,
+    RiftPortalRemoved,
+    ExtractStarted,
+    ExtractProgress,
+    ExtractCompleted,
+    ExtractAborted,
+    ExtractFailed,
+    TsyCollapseStartedIpc,
     SkillXpGain,
     SkillLvUp,
     SkillCapChanged,
     SkillScrollUsed,
     SkillSnapshot,
+    ForgeStation,
+    ForgeSession,
+    ForgeOutcome,
+    ForgeBlueprintBook,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +163,7 @@ pub enum ServerDataPayloadV1 {
         cracks_count: Vec<u8>,
         /// 整个实体的污染总量（所有 `Contamination.entries.amount` 求和）。
         contamination_total: f64,
+        lifespan: Option<LifespanPreviewV1>,
         /// 最近里程碑摘要，供客户端轻量展示；空串表示暂无。
         recent_skill_milestones_summary: String,
         /// 结构化 skill milestone 列表，通常只传最近若干条。
@@ -159,18 +203,50 @@ pub enum ServerDataPayloadV1 {
     DefenseWindow(DefenseWindowV1),
     CastSync(CastSyncV1),
     QuickSlotConfig(QuickSlotConfigV1),
+    SkillBarConfig(SkillBarConfigV1),
+    TechniquesSnapshot(TechniquesSnapshotV1),
     UnlocksSync(UnlocksSyncV1),
     EventStreamPush(EventStreamPushV1),
-    DefenseSync(DefenseSyncV1),
     WeaponEquipped(WeaponEquippedV1),
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+        stage: Option<DeathScreenStageV1>,
+        death_number: Option<u32>,
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        lifespan: Option<LifespanPreviewV1>,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
+    },
+    RiftPortalState(RiftPortalStateV1),
+    RiftPortalRemoved(RiftPortalRemovedV1),
+    ExtractStarted(ExtractStartedV1),
+    ExtractProgress(ExtractProgressV1),
+    ExtractCompleted(ExtractCompletedV1),
+    ExtractAborted(ExtractAbortedV1),
+    ExtractFailed(ExtractFailedV1),
+    TsyCollapseStartedIpc(TsyCollapseStartedIpcV1),
     SkillXpGain(Box<SkillXpGainPayloadV1>),
     SkillLvUp(SkillLvUpPayloadV1),
     SkillCapChanged(SkillCapChangedPayloadV1),
     SkillScrollUsed(Box<SkillScrollUsedPayloadV1>),
     SkillSnapshot(Box<SkillSnapshotPayloadV1>),
+    ForgeStation(Box<WeaponForgeStationDataV1>),
+    ForgeSession(Box<ForgeSessionDataV1>),
+    ForgeOutcome(Box<ForgeOutcomeDataV1>),
+    ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +300,8 @@ enum ServerDataPayloadWireV1 {
         open_progress: Vec<f64>,
         cracks_count: Vec<u8>,
         contamination_total: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
         #[serde(default)]
         recent_skill_milestones_summary: String,
         #[serde(default)]
@@ -308,6 +386,15 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         config: QuickSlotConfigV1,
     },
+    #[serde(rename = "skillbar_config")]
+    SkillBarConfig {
+        #[serde(flatten)]
+        config: SkillBarConfigV1,
+    },
+    TechniquesSnapshot {
+        #[serde(flatten)]
+        snapshot: TechniquesSnapshotV1,
+    },
     UnlocksSync {
         #[serde(flatten)]
         unlocks: UnlocksSyncV1,
@@ -315,10 +402,6 @@ enum ServerDataPayloadWireV1 {
     EventStreamPush {
         #[serde(flatten)]
         event: EventStreamPushV1,
-    },
-    DefenseSync {
-        #[serde(flatten)]
-        state: DefenseSyncV1,
     },
     WeaponEquipped {
         #[serde(flatten)]
@@ -335,6 +418,61 @@ enum ServerDataPayloadWireV1 {
     LingtianSession {
         #[serde(flatten)]
         lingtian_session: LingtianSessionDataV1,
+    },
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage: Option<DeathScreenStageV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        death_number: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
+    },
+    RiftPortalState {
+        #[serde(flatten)]
+        state: RiftPortalStateV1,
+    },
+    RiftPortalRemoved {
+        #[serde(flatten)]
+        removed: RiftPortalRemovedV1,
+    },
+    ExtractStarted {
+        #[serde(flatten)]
+        data: ExtractStartedV1,
+    },
+    ExtractProgress {
+        #[serde(flatten)]
+        data: ExtractProgressV1,
+    },
+    ExtractCompleted {
+        #[serde(flatten)]
+        data: ExtractCompletedV1,
+    },
+    ExtractAborted {
+        #[serde(flatten)]
+        data: ExtractAbortedV1,
+    },
+    ExtractFailed {
+        #[serde(flatten)]
+        data: ExtractFailedV1,
+    },
+    TsyCollapseStartedIpc {
+        #[serde(flatten)]
+        data: TsyCollapseStartedIpcV1,
     },
     SkillXpGain {
         char_id: u64,
@@ -363,6 +501,22 @@ enum ServerDataPayloadWireV1 {
         char_id: u64,
         skills: std::collections::BTreeMap<String, SkillEntrySnapshotV1>,
         consumed_scrolls: Vec<String>,
+    },
+    ForgeStation {
+        #[serde(flatten)]
+        data: Box<WeaponForgeStationDataV1>,
+    },
+    ForgeSession {
+        #[serde(flatten)]
+        data: Box<ForgeSessionDataV1>,
+    },
+    ForgeOutcome {
+        #[serde(flatten)]
+        data: Box<ForgeOutcomeDataV1>,
+    },
+    ForgeBlueprintBook {
+        #[serde(flatten)]
+        data: Box<ForgeBlueprintBookDataV1>,
     },
 }
 
@@ -404,6 +558,113 @@ pub struct DroppedLootEntryV1 {
     pub source_col: u64,
     pub world_pos: [f64; 3],
     pub item: InventoryItemViewV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiftPortalKindV1 {
+    MainRift,
+    DeepRift,
+    CollapseTear,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiftPortalDirectionV1 {
+    Entry,
+    Exit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RiftPortalStateV1 {
+    pub entity_id: u64,
+    pub kind: RiftPortalKindV1,
+    pub direction: RiftPortalDirectionV1,
+    pub family_id: String,
+    pub world_pos: [f64; 3],
+    pub trigger_radius: f64,
+    pub current_extract_ticks: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_window_end: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RiftPortalRemovedV1 {
+    pub entity_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractStartedV1 {
+    pub player_id: String,
+    pub portal_entity_id: u64,
+    pub portal_kind: RiftPortalKindV1,
+    pub required_ticks: u32,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractProgressV1 {
+    pub player_id: String,
+    pub portal_entity_id: u64,
+    pub elapsed_ticks: u32,
+    pub required_ticks: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractCompletedV1 {
+    pub player_id: String,
+    pub portal_kind: RiftPortalKindV1,
+    pub family_id: String,
+    pub exit_world_pos: [f64; 3],
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractAbortedReasonV1 {
+    Moved,
+    Combat,
+    Damaged,
+    Cancelled,
+    PortalExpired,
+    OutOfRange,
+    NotInTsy,
+    AlreadyBusy,
+    CannotExit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractAbortedV1 {
+    pub player_id: String,
+    pub reason: ExtractAbortedReasonV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractFailedReasonV1 {
+    SpiritQiDrained,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractFailedV1 {
+    pub player_id: String,
+    pub reason: ExtractFailedReasonV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TsyCollapseStartedIpcV1 {
+    pub family_id: String,
+    pub at_tick: u64,
+    pub remaining_ticks: u64,
+    pub collapse_tear_entity_ids: Vec<u64>,
 }
 
 impl TryFrom<ServerDataInventoryEventWireV1> for InventoryEventV1 {
@@ -542,6 +803,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             } => Ok(Self::CultivationDetail {
@@ -553,6 +815,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             }),
@@ -624,9 +887,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::QuickSlotConfig { config } => {
                 Ok(Self::QuickSlotConfig(config))
             }
+            ServerDataPayloadWireV1::SkillBarConfig { config } => Ok(Self::SkillBarConfig(config)),
+            ServerDataPayloadWireV1::TechniquesSnapshot { snapshot } => {
+                Ok(Self::TechniquesSnapshot(snapshot))
+            }
             ServerDataPayloadWireV1::UnlocksSync { unlocks } => Ok(Self::UnlocksSync(unlocks)),
             ServerDataPayloadWireV1::EventStreamPush { event } => Ok(Self::EventStreamPush(event)),
-            ServerDataPayloadWireV1::DefenseSync { state } => Ok(Self::DefenseSync(state)),
             ServerDataPayloadWireV1::WeaponEquipped { weapon_equipped } => {
                 Ok(Self::WeaponEquipped(weapon_equipped))
             }
@@ -638,6 +904,54 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
+            }
+            ServerDataPayloadWireV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            } => Ok(Self::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            }),
+            ServerDataPayloadWireV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Ok(Self::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            }),
+            ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
+            ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
+                Ok(Self::RiftPortalRemoved(removed))
+            }
+            ServerDataPayloadWireV1::ExtractStarted { data } => Ok(Self::ExtractStarted(data)),
+            ServerDataPayloadWireV1::ExtractProgress { data } => Ok(Self::ExtractProgress(data)),
+            ServerDataPayloadWireV1::ExtractCompleted { data } => Ok(Self::ExtractCompleted(data)),
+            ServerDataPayloadWireV1::ExtractAborted { data } => Ok(Self::ExtractAborted(data)),
+            ServerDataPayloadWireV1::ExtractFailed { data } => Ok(Self::ExtractFailed(data)),
+            ServerDataPayloadWireV1::TsyCollapseStartedIpc { data } => {
+                Ok(Self::TsyCollapseStartedIpc(data))
             }
             ServerDataPayloadWireV1::SkillXpGain {
                 char_id,
@@ -679,6 +993,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 skills,
                 consumed_scrolls,
             )))),
+            ServerDataPayloadWireV1::ForgeStation { data } => Ok(Self::ForgeStation(data)),
+            ServerDataPayloadWireV1::ForgeSession { data } => Ok(Self::ForgeSession(data)),
+            ServerDataPayloadWireV1::ForgeOutcome { data } => Ok(Self::ForgeOutcome(data)),
+            ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
+                Ok(Self::ForgeBlueprintBook(data))
+            }
         }
     }
 }
@@ -747,6 +1067,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             } => Self::CultivationDetail {
@@ -758,6 +1079,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress: open_progress.clone(),
                 cracks_count: cracks_count.clone(),
                 contamination_total: *contamination_total,
+                lifespan: lifespan.clone(),
                 recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
                 skill_milestones: skill_milestones.clone(),
             },
@@ -835,11 +1157,16 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::QuickSlotConfig(config) => Self::QuickSlotConfig {
                 config: config.clone(),
             },
+            ServerDataPayloadV1::SkillBarConfig(config) => Self::SkillBarConfig {
+                config: config.clone(),
+            },
+            ServerDataPayloadV1::TechniquesSnapshot(snapshot) => Self::TechniquesSnapshot {
+                snapshot: snapshot.clone(),
+            },
             ServerDataPayloadV1::UnlocksSync(unlocks) => Self::UnlocksSync { unlocks: *unlocks },
             ServerDataPayloadV1::EventStreamPush(event) => Self::EventStreamPush {
                 event: event.clone(),
             },
-            ServerDataPayloadV1::DefenseSync(state) => Self::DefenseSync { state: *state },
             ServerDataPayloadV1::WeaponEquipped(w) => Self::WeaponEquipped {
                 weapon_equipped: w.clone(),
             },
@@ -852,6 +1179,64 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
             },
+            ServerDataPayloadV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            } => Self::DeathScreen {
+                visible: *visible,
+                cause: cause.clone(),
+                luck_remaining: *luck_remaining,
+                final_words: final_words.clone(),
+                countdown_until_ms: *countdown_until_ms,
+                can_reincarnate: *can_reincarnate,
+                can_terminate: *can_terminate,
+                stage: stage.clone(),
+                death_number: *death_number,
+                zone_kind: zone_kind.clone(),
+                lifespan: lifespan.clone(),
+            },
+            ServerDataPayloadV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Self::TerminateScreen {
+                visible: *visible,
+                final_words: final_words.clone(),
+                epilogue: epilogue.clone(),
+                archetype_suggestion: archetype_suggestion.clone(),
+            },
+            ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::RiftPortalRemoved(removed) => Self::RiftPortalRemoved {
+                removed: removed.clone(),
+            },
+            ServerDataPayloadV1::ExtractStarted(data) => {
+                Self::ExtractStarted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractProgress(data) => {
+                Self::ExtractProgress { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractCompleted(data) => {
+                Self::ExtractCompleted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractAborted(data) => {
+                Self::ExtractAborted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractFailed(data) => Self::ExtractFailed { data: data.clone() },
+            ServerDataPayloadV1::TsyCollapseStartedIpc(data) => {
+                Self::TsyCollapseStartedIpc { data: data.clone() }
+            }
             ServerDataPayloadV1::SkillXpGain(data) => Self::SkillXpGain {
                 char_id: data.char_id,
                 skill: data.skill,
@@ -880,6 +1265,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 skills: data.skills.clone(),
                 consumed_scrolls: data.consumed_scrolls.clone(),
             },
+            ServerDataPayloadV1::ForgeStation(data) => Self::ForgeStation { data: data.clone() },
+            ServerDataPayloadV1::ForgeSession(data) => Self::ForgeSession { data: data.clone() },
+            ServerDataPayloadV1::ForgeOutcome(data) => Self::ForgeOutcome { data: data.clone() },
+            ServerDataPayloadV1::ForgeBlueprintBook(data) => {
+                Self::ForgeBlueprintBook { data: data.clone() }
+            }
         }
     }
 }
@@ -989,18 +1380,33 @@ impl ServerDataPayloadV1 {
             Self::DefenseWindow(..) => ServerDataType::DefenseWindow,
             Self::CastSync(..) => ServerDataType::CastSync,
             Self::QuickSlotConfig(..) => ServerDataType::QuickSlotConfig,
+            Self::SkillBarConfig(..) => ServerDataType::SkillBarConfig,
+            Self::TechniquesSnapshot(..) => ServerDataType::TechniquesSnapshot,
             Self::UnlocksSync(..) => ServerDataType::UnlocksSync,
             Self::EventStreamPush(..) => ServerDataType::EventStreamPush,
-            Self::DefenseSync(..) => ServerDataType::DefenseSync,
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
+            Self::DeathScreen { .. } => ServerDataType::DeathScreen,
+            Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
+            Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
+            Self::RiftPortalRemoved(..) => ServerDataType::RiftPortalRemoved,
+            Self::ExtractStarted(..) => ServerDataType::ExtractStarted,
+            Self::ExtractProgress(..) => ServerDataType::ExtractProgress,
+            Self::ExtractCompleted(..) => ServerDataType::ExtractCompleted,
+            Self::ExtractAborted(..) => ServerDataType::ExtractAborted,
+            Self::ExtractFailed(..) => ServerDataType::ExtractFailed,
+            Self::TsyCollapseStartedIpc(..) => ServerDataType::TsyCollapseStartedIpc,
             Self::SkillXpGain(..) => ServerDataType::SkillXpGain,
             Self::SkillLvUp(..) => ServerDataType::SkillLvUp,
             Self::SkillCapChanged(..) => ServerDataType::SkillCapChanged,
             Self::SkillScrollUsed(..) => ServerDataType::SkillScrollUsed,
             Self::SkillSnapshot(..) => ServerDataType::SkillSnapshot,
+            Self::ForgeStation(..) => ServerDataType::ForgeStation,
+            Self::ForgeSession(..) => ServerDataType::ForgeSession,
+            Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
+            Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
         }
     }
 }
@@ -1039,6 +1445,11 @@ mod tests {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
             }),
+            ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            }),
+            ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
             ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
             ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
                 channel: EventChannelV1::Combat,
@@ -1048,11 +1459,50 @@ mod tests {
                 color: 0,
                 created_at_ms: 0,
             }),
-            ServerDataPayloadV1::DefenseSync(DefenseSyncV1 {
-                stance: DefenseStanceV1::None,
-                fake_skin_layers: 0,
-                vortex_active: false,
-                vortex_ready_at_ms: 0,
+            ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
+                entity_id: 1,
+                kind: RiftPortalKindV1::MainRift,
+                direction: RiftPortalDirectionV1::Exit,
+                family_id: "tsy_lingxu_01".to_string(),
+                world_pos: [0.0, 64.0, 0.0],
+                trigger_radius: 2.0,
+                current_extract_ticks: 160,
+                activation_window_end: None,
+            }),
+            ServerDataPayloadV1::RiftPortalRemoved(RiftPortalRemovedV1 { entity_id: 1 }),
+            ServerDataPayloadV1::ExtractStarted(ExtractStartedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                portal_kind: RiftPortalKindV1::MainRift,
+                required_ticks: 160,
+                at_tick: 10,
+            }),
+            ServerDataPayloadV1::ExtractProgress(ExtractProgressV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                elapsed_ticks: 5,
+                required_ticks: 160,
+            }),
+            ServerDataPayloadV1::ExtractCompleted(ExtractCompletedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_kind: RiftPortalKindV1::MainRift,
+                family_id: "tsy_lingxu_01".to_string(),
+                exit_world_pos: [0.0, 64.0, 0.0],
+                at_tick: 170,
+            }),
+            ServerDataPayloadV1::ExtractAborted(ExtractAbortedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractAbortedReasonV1::Damaged,
+            }),
+            ServerDataPayloadV1::ExtractFailed(ExtractFailedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractFailedReasonV1::SpiritQiDrained,
+            }),
+            ServerDataPayloadV1::TsyCollapseStartedIpc(TsyCollapseStartedIpcV1 {
+                family_id: "tsy_lingxu_01".to_string(),
+                at_tick: 100,
+                remaining_ticks: 600,
+                collapse_tear_entity_ids: vec![2, 3, 4],
             }),
         ];
 
@@ -1083,6 +1533,14 @@ mod tests {
             open_progress: vec![1.0; 20],
             cracks_count: vec![0; 20],
             contamination_total: 0.0,
+            lifespan: Some(LifespanPreviewV1 {
+                years_lived: 42.0,
+                cap_by_realm: 200,
+                remaining_years: 158.0,
+                death_penalty_years: 10,
+                tick_rate_multiplier: 1.0,
+                is_wind_candle: false,
+            }),
             recent_skill_milestones_summary: "t82000:skill:herbalism:lv3".to_string(),
             skill_milestones: vec![SkillMilestoneSnapshotV1 {
                 skill: "herbalism".to_string(),
@@ -1105,6 +1563,7 @@ mod tests {
             ServerDataPayloadV1::CultivationDetail {
                 opened,
                 flow_rate,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
                 ..
@@ -1112,6 +1571,7 @@ mod tests {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
+                assert_eq!(lifespan.unwrap().death_penalty_years, 10);
                 assert_eq!(
                     recent_skill_milestones_summary,
                     "t82000:skill:herbalism:lv3"
@@ -1177,6 +1637,9 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
             ),
             include_str!(
+                "../../../agent/packages/schema/samples/server-data.death-screen.sample.json"
+            ),
+            include_str!(
                 "../../../agent/packages/schema/samples/server-data.skill-xp-gain.sample.json"
             ),
             include_str!(
@@ -1190,6 +1653,36 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.skill-snapshot.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.skillbar-config.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.techniques-snapshot.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.rift-portal-removed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-started.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-completed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-aborted.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-failed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.tsy-collapse-started-ipc.sample.json"
             ),
         ];
 

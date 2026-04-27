@@ -1,0 +1,294 @@
+{
+  "_doc": "plan-tsy-zone-v1 §1.1 / §3.1 + plan-tsy-worldgen-v1 §2.2 — TSY dim blueprint。同时被 worldgen pipeline (blueprint→manifest) 与 !tsy-spawn 调试命令读取。坐标为 TSY-internal，与主世界 XYZ 无关。每 family 100x100 XZ patch，Y 分 shallow/mid/deep。",
+  "version": 1,
+  "world": {
+    "name": "tsy_realm",
+    "spawn_zone": "tsy_zongmen_01_shallow",
+    "bounds_xz": { "min": [-2000, -2000], "max": [2000, 2000] },
+    "notes": [
+      "TSY dim blueprint. Coordinates are TSY-internal — no overworld XYZ relation.",
+      "Family spacing 500 blocks; lingxu_01 origin / zongmen_01 +0,+200 / daneng_01 +500,+500.",
+      "lingxu_01 三层是 P0 dev-command fixture（tsy_dev_command.rs tests 硬编码），保留不删。"
+    ]
+  },
+  "zones": [
+    {
+      "name": "tsy_lingxu_01_shallow",
+      "dimension": "tsy",
+      "display_name": "灵墟·浅层（第一族）",
+      "aabb": { "min": [0, 40, 0], "max": [100, 120, 100] },
+      "center_xz": [50, 50],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.4,
+      "danger_level": 4,
+      "active_events": ["tsy_entry", "portal_rift"],
+      "patrol_anchors": [[50, 80, 50]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [60, 64], "peak": 72 },
+        "surface_palette": ["cracked_stone_bricks", "andesite", "gravel", "deepslate"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "shallow",
+        "origin": "zongmen_yiji"
+      },
+      "pois": [
+        { "kind": "rift_portal", "pos_xyz": [50.0, 100.0, 50.0], "tags": ["direction:exit", "kind:main", "family_id:lingxu_01", "orientation:horizontal"] }
+      ]
+    },
+    {
+      "name": "tsy_lingxu_01_mid",
+      "dimension": "tsy",
+      "display_name": "灵墟·中层（第一族）",
+      "aabb": { "min": [0, 0, 0], "max": [100, 40, 100] },
+      "center_xz": [50, 50],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.7,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[50, 20, 50]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [4, 12], "peak": 28 },
+        "surface_palette": ["mossy_cobblestone", "deepslate", "cobbled_deepslate"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "mid",
+        "origin": "zongmen_yiji"
+      },
+      "pois": []
+    },
+    {
+      "name": "tsy_lingxu_01_deep",
+      "dimension": "tsy",
+      "display_name": "灵墟·深层（第一族）",
+      "aabb": { "min": [0, -40, 0], "max": [100, 0, 100] },
+      "center_xz": [50, 50],
+      "size_xz": [100, 100],
+      "spirit_qi": -1.1,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[50, -20, 50]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [-36, -28], "peak": -8 },
+        "surface_palette": ["deepslate", "tuff", "calcite", "soul_sand"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "deep",
+        "origin": "zongmen_yiji"
+      },
+      "pois": [
+        { "kind": "relic_core_slot", "pos_xyz": [50.0, -20.0, 50.0], "tags": ["slot_count:5"] }
+      ]
+    },
+    {
+      "name": "tsy_zongmen_01_shallow",
+      "dimension": "tsy",
+      "display_name": "宗门遗迹·浅层（第一族）",
+      "aabb": { "min": [200, 40, 200], "max": [300, 120, 300] },
+      "center_xz": [250, 250],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.4,
+      "danger_level": 4,
+      "active_events": ["tsy_entry"],
+      "patrol_anchors": [[250.0, 80.0, 250.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [60, 64], "peak": 72 },
+        "surface_palette": ["cracked_stone_bricks", "andesite", "gravel", "deepslate"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "shallow",
+        "origin": "zongmen_yiji"
+      },
+      "pois": [
+        { "kind": "rift_portal",     "pos_xyz": [250.0, 100.0, 250.0], "tags": ["direction:exit", "kind:main", "family_id:zongmen_01", "orientation:horizontal"] },
+        { "kind": "loot_container",  "pos_xyz": [260.0,  80.0, 270.0], "tags": ["archetype:storage_pouch"] },
+        { "kind": "loot_container",  "pos_xyz": [240.0,  78.0, 230.0], "tags": ["archetype:dry_corpse"] },
+        { "kind": "loot_container",  "pos_xyz": [280.0,  82.0, 260.0], "tags": ["archetype:dry_corpse"] },
+        { "kind": "npc_anchor",      "pos_xyz": [270.0,  80.0, 280.0], "tags": ["archetype:daoxiang", "trigger:on_enter", "leash_radius:8"] },
+        { "kind": "npc_anchor",      "pos_xyz": [225.0,  80.0, 225.0], "tags": ["archetype:daoxiang", "trigger:always", "leash_radius:6"] }
+      ]
+    },
+    {
+      "name": "tsy_zongmen_01_mid",
+      "dimension": "tsy",
+      "display_name": "宗门遗迹·中层（第一族）",
+      "aabb": { "min": [200, 0, 200], "max": [300, 40, 300] },
+      "center_xz": [250, 250],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.7,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[250.0, 20.0, 250.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [4, 12], "peak": 28 },
+        "surface_palette": ["mossy_cobblestone", "deepslate", "cobbled_deepslate"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "mid",
+        "origin": "zongmen_yiji"
+      },
+      "pois": [
+        { "kind": "loot_container", "pos_xyz": [255.0, 18.0, 245.0], "tags": ["archetype:skeleton"] },
+        { "kind": "loot_container", "pos_xyz": [230.0, 22.0, 265.0], "tags": ["archetype:skeleton"] },
+        { "kind": "loot_container", "pos_xyz": [275.0, 22.0, 275.0], "tags": ["archetype:storage_pouch", "locked:stone_key"] },
+        { "kind": "loot_container", "pos_xyz": [250.0, 20.0, 230.0], "tags": ["archetype:stone_casket", "locked:jade_seal"] },
+        { "kind": "npc_anchor",     "pos_xyz": [260.0, 22.0, 260.0], "tags": ["archetype:zhinian", "trigger:on_enter", "leash_radius:10"] },
+        { "kind": "npc_anchor",     "pos_xyz": [235.0, 24.0, 235.0], "tags": ["archetype:sentinel", "trigger:always", "leash_radius:12"] }
+      ]
+    },
+    {
+      "name": "tsy_zongmen_01_deep",
+      "dimension": "tsy",
+      "display_name": "宗门遗迹·深层（第一族）",
+      "aabb": { "min": [200, -40, 200], "max": [300, 0, 300] },
+      "center_xz": [250, 250],
+      "size_xz": [100, 100],
+      "spirit_qi": -1.1,
+      "danger_level": 5,
+      "active_events": ["tsy_collapse_proximity"],
+      "patrol_anchors": [[250.0, -20.0, 250.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_zongmen_ruin",
+        "shape": "rectangle",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [-36, -28], "peak": -8 },
+        "surface_palette": ["deepslate", "tuff", "calcite", "soul_sand"],
+        "biome_mix": ["mofa:tsy_ruined"],
+        "landmarks": [],
+        "depth_tier": "deep",
+        "origin": "zongmen_yiji"
+      },
+      "pois": [
+        { "kind": "relic_core_slot", "pos_xyz": [250.0, -20.0, 250.0], "tags": ["slot_count:5"] },
+        { "kind": "loot_container",  "pos_xyz": [240.0, -18.0, 240.0], "tags": ["archetype:relic_core", "locked:array_sigil"] },
+        { "kind": "loot_container",  "pos_xyz": [260.0, -18.0, 260.0], "tags": ["archetype:relic_core", "locked:array_sigil"] },
+        { "kind": "npc_anchor",      "pos_xyz": [255.0, -22.0, 255.0], "tags": ["archetype:fuya", "trigger:on_relic_touched", "leash_radius:8"] },
+        { "kind": "npc_anchor",      "pos_xyz": [245.0, -22.0, 245.0], "tags": ["archetype:fuya", "trigger:always", "leash_radius:6"] }
+      ]
+    },
+    {
+      "name": "tsy_daneng_01_shallow",
+      "dimension": "tsy",
+      "display_name": "大能陨落·浅层（第一族）",
+      "aabb": { "min": [500, 40, 500], "max": [600, 120, 600] },
+      "center_xz": [550, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.45,
+      "danger_level": 4,
+      "active_events": ["tsy_entry"],
+      "patrol_anchors": [[550.0, 80.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_daneng_crater",
+        "shape": "ellipse",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [60, 68], "peak": 78 },
+        "surface_palette": ["blackstone", "calcite", "basalt", "gravel"],
+        "biome_mix": ["mofa:tsy_crater"],
+        "landmarks": [],
+        "depth_tier": "shallow",
+        "origin": "daneng_luoluo"
+      },
+      "pois": [
+        { "kind": "rift_portal",     "pos_xyz": [550.0, 100.0, 550.0], "tags": ["direction:exit", "kind:main", "family_id:daneng_01", "orientation:horizontal"] },
+        { "kind": "loot_container",  "pos_xyz": [560.0,  80.0, 570.0], "tags": ["archetype:storage_pouch"] },
+        { "kind": "loot_container",  "pos_xyz": [540.0,  82.0, 540.0], "tags": ["archetype:storage_pouch"] },
+        { "kind": "loot_container",  "pos_xyz": [580.0,  82.0, 560.0], "tags": ["archetype:dry_corpse"] },
+        { "kind": "loot_container",  "pos_xyz": [530.0,  80.0, 580.0], "tags": ["archetype:dry_corpse"] },
+        { "kind": "npc_anchor",      "pos_xyz": [575.0,  80.0, 545.0], "tags": ["archetype:daoxiang", "trigger:on_enter", "leash_radius:8"] },
+        { "kind": "npc_anchor",      "pos_xyz": [525.0,  80.0, 565.0], "tags": ["archetype:daoxiang", "trigger:always", "leash_radius:6"] },
+        { "kind": "npc_anchor",      "pos_xyz": [555.0,  82.0, 580.0], "tags": ["archetype:daoxiang", "trigger:on_enter", "leash_radius:8"] }
+      ]
+    },
+    {
+      "name": "tsy_daneng_01_mid",
+      "dimension": "tsy",
+      "display_name": "大能陨落·中层（第一族）",
+      "aabb": { "min": [500, 0, 500], "max": [600, 40, 600] },
+      "center_xz": [550, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -0.75,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [[550.0, 20.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_daneng_crater",
+        "shape": "ellipse",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [4, 18], "peak": 28 },
+        "surface_palette": ["basalt", "blackstone", "deepslate", "magma_block"],
+        "biome_mix": ["mofa:tsy_crater"],
+        "landmarks": [],
+        "depth_tier": "mid",
+        "origin": "daneng_luoluo"
+      },
+      "pois": [
+        { "kind": "loot_container", "pos_xyz": [560.0, 18.0, 540.0], "tags": ["archetype:skeleton"] },
+        { "kind": "loot_container", "pos_xyz": [535.0, 22.0, 560.0], "tags": ["archetype:skeleton"] },
+        { "kind": "loot_container", "pos_xyz": [575.0, 22.0, 575.0], "tags": ["archetype:skeleton"] },
+        { "kind": "loot_container", "pos_xyz": [555.0, 20.0, 575.0], "tags": ["archetype:storage_pouch", "locked:stone_key"] },
+        { "kind": "loot_container", "pos_xyz": [540.0, 20.0, 535.0], "tags": ["archetype:storage_pouch", "locked:stone_key"] },
+        { "kind": "loot_container", "pos_xyz": [565.0, 22.0, 560.0], "tags": ["archetype:stone_casket", "locked:jade_seal"] },
+        { "kind": "npc_anchor",     "pos_xyz": [550.0, 22.0, 550.0], "tags": ["archetype:zhinian", "trigger:on_enter", "leash_radius:10"] },
+        { "kind": "npc_anchor",     "pos_xyz": [570.0, 22.0, 535.0], "tags": ["archetype:zhinian", "trigger:always", "leash_radius:8"] },
+        { "kind": "npc_anchor",     "pos_xyz": [535.0, 24.0, 545.0], "tags": ["archetype:sentinel", "trigger:always", "leash_radius:12"] },
+        { "kind": "npc_anchor",     "pos_xyz": [580.0, 22.0, 575.0], "tags": ["archetype:daoxiang", "trigger:on_enter", "leash_radius:6"] }
+      ]
+    },
+    {
+      "name": "tsy_daneng_01_deep",
+      "dimension": "tsy",
+      "display_name": "大能陨落·深层（第一族）",
+      "aabb": { "min": [500, -40, 500], "max": [600, 0, 600] },
+      "center_xz": [550, 550],
+      "size_xz": [100, 100],
+      "spirit_qi": -1.15,
+      "danger_level": 5,
+      "active_events": ["tsy_collapse_proximity"],
+      "patrol_anchors": [[550.0, -20.0, 550.0]],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "tsy_daneng_crater",
+        "shape": "ellipse",
+        "boundary": { "mode": "hard", "width": 4 },
+        "height_model": { "base": [-36, -22], "peak": -4 },
+        "surface_palette": ["deepslate", "calcite", "amethyst_block", "end_stone"],
+        "biome_mix": ["mofa:tsy_crater"],
+        "landmarks": [],
+        "depth_tier": "deep",
+        "origin": "daneng_luoluo"
+      },
+      "pois": [
+        { "kind": "relic_core_slot", "pos_xyz": [550.0, -20.0, 550.0], "tags": ["slot_count:5"] },
+        { "kind": "loot_container",  "pos_xyz": [540.0, -18.0, 540.0], "tags": ["archetype:relic_core", "locked:array_sigil"] },
+        { "kind": "loot_container",  "pos_xyz": [560.0, -18.0, 560.0], "tags": ["archetype:relic_core", "locked:array_sigil"] },
+        { "kind": "loot_container",  "pos_xyz": [550.0, -22.0, 575.0], "tags": ["archetype:relic_core", "locked:array_sigil"] },
+        { "kind": "npc_anchor",      "pos_xyz": [555.0, -22.0, 555.0], "tags": ["archetype:fuya", "trigger:on_relic_touched", "leash_radius:8"] },
+        { "kind": "npc_anchor",      "pos_xyz": [545.0, -22.0, 545.0], "tags": ["archetype:fuya", "trigger:always", "leash_radius:6"] },
+        { "kind": "npc_anchor",      "pos_xyz": [565.0, -22.0, 545.0], "tags": ["archetype:fuya", "trigger:on_relic_touched", "leash_radius:8"] },
+        { "kind": "npc_anchor",      "pos_xyz": [555.0, -22.0, 535.0], "tags": ["archetype:zhinian", "trigger:on_enter", "leash_radius:10"] }
+      ]
+    }
+  ]
+}

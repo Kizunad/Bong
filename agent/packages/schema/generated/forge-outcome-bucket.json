@@ -1,0 +1,25 @@
+{
+  "description": "plan §1.3 结果分桶",
+  "anyOf": [
+    {
+      "const": "perfect",
+      "type": "string"
+    },
+    {
+      "const": "good",
+      "type": "string"
+    },
+    {
+      "const": "flawed",
+      "type": "string"
+    },
+    {
+      "const": "waste",
+      "type": "string"
+    },
+    {
+      "const": "explode",
+      "type": "string"
+    }
+  ]
+}

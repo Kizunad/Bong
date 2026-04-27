@@ -1,0 +1,68 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "slot",
+    "binding"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "skill_bar_bind",
+      "type": "string"
+    },
+    "slot": {
+      "minimum": 0,
+      "maximum": 8,
+      "type": "integer"
+    },
+    "binding": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "template_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "item",
+              "type": "string"
+            },
+            "template_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "skill_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "skill",
+              "type": "string"
+            },
+            "skill_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

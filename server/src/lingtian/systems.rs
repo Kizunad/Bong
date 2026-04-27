@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, BlockState, ChunkLayer, Commands, Entity, EventReader, EventWriter, Query, Res,
-    ResMut, Resource,
+    ResMut, Resource, With,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
@@ -557,7 +557,7 @@ pub fn apply_completed_sessions(
     mut zone_qi: ResMut<ZoneQiAccount>,
     clock: Res<LingtianClock>,
     mut writers: CompletionEventWriters,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     for (player, finished) in sessions.drain_finished() {
         match finished {
@@ -894,6 +894,8 @@ fn award_item_to_inventory(
                     spirit_quality: template.spirit_quality_initial,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1125,7 +1127,7 @@ pub fn lingtian_growth_tick(
     mut zone_qi: ResMut<ZoneQiAccount>,
     registry: Res<PlantKindRegistry>,
     mut plots: Query<&mut LingtianPlot>,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     if !accumulator.step() {
         return;
@@ -1280,6 +1282,8 @@ mod tests {
             spirit_quality: 1.0,
             durability,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -1452,6 +1456,8 @@ mod tests {
                 spirit_quality: 0.8,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
         let inv = PlayerInventory {
@@ -1768,6 +1774,8 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -2213,6 +2221,8 @@ mod tests {
                     spirit_quality: 0.85,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2335,6 +2345,8 @@ mod tests {
                     spirit_quality: 0.7,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
             });
         inv

@@ -7,6 +7,10 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
+import {
+  SkillBarConfigV1,
+  TechniquesSnapshotV1,
+} from "./combat-hud.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
 import { ColorKind, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
@@ -18,6 +22,22 @@ import {
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
+import {
+  ExtractAbortedV1,
+  ExtractCompletedV1,
+  ExtractFailedV1,
+  ExtractProgressV1,
+  ExtractStartedV1,
+  RiftPortalRemovedV1,
+  RiftPortalStateV1,
+  TsyCollapseStartedIpcV1,
+} from "./extract-v1.js";
+import {
+  ForgeBlueprintBookDataV1,
+  ForgeOutcomeDataV1,
+  ForgeSessionDataV1,
+  WeaponForgeStationDataV1,
+} from "./forge.js";
 import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
@@ -63,6 +83,29 @@ const CultivationCracksArrayV1 = Type.Array(
   },
 );
 
+const LifespanPreviewV1 = Type.Object(
+  {
+    years_lived: Type.Number({ minimum: 0 }),
+    cap_by_realm: Type.Integer({ minimum: 1 }),
+    remaining_years: Type.Number({ minimum: 0 }),
+    death_penalty_years: Type.Integer({ minimum: 0 }),
+    tick_rate_multiplier: Type.Number({ minimum: 0 }),
+    is_wind_candle: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+const DeathScreenStageV1 = Type.Union([
+  Type.Literal("fortune"),
+  Type.Literal("tribulation"),
+]);
+
+const DeathScreenZoneKindV1 = Type.Union([
+  Type.Literal("ordinary"),
+  Type.Literal("death"),
+  Type.Literal("negative"),
+]);
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -83,11 +126,27 @@ export const ServerDataType = Type.Union([
   Type.Literal("alchemy_outcome_resolved"),
   Type.Literal("alchemy_recipe_book"),
   Type.Literal("alchemy_contamination"),
+  Type.Literal("death_screen"),
+  Type.Literal("terminate_screen"),
   Type.Literal("skill_xp_gain"),
   Type.Literal("skill_lv_up"),
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("skillbar_config"),
+  Type.Literal("techniques_snapshot"),
+  Type.Literal("rift_portal_state"),
+  Type.Literal("rift_portal_removed"),
+  Type.Literal("extract_started"),
+  Type.Literal("extract_progress"),
+  Type.Literal("extract_completed"),
+  Type.Literal("extract_aborted"),
+  Type.Literal("extract_failed"),
+  Type.Literal("tsy_collapse_started_ipc"),
+  Type.Literal("forge_station"),
+  Type.Literal("forge_session"),
+  Type.Literal("forge_outcome"),
+  Type.Literal("forge_blueprint_book"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -186,6 +245,7 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     open_progress: Type.Optional(CultivationProgressArrayV1),
     cracks_count: Type.Optional(CultivationCracksArrayV1),
     contamination_total: Type.Number({ minimum: 0 }),
+    lifespan: Type.Optional(LifespanPreviewV1),
     recent_skill_milestones_summary: Type.Optional(Type.String({ maxLength: 4096 })),
     skill_milestones: Type.Optional(Type.Array(SkillMilestoneSnapshotV1)),
   },
@@ -420,6 +480,39 @@ export type ServerDataAlchemyContaminationV1 = Static<
   typeof ServerDataAlchemyContaminationV1
 >;
 
+export const ServerDataDeathScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("death_screen"),
+    visible: Type.Boolean(),
+    cause: Type.String(),
+    luck_remaining: Type.Number({ minimum: 0, maximum: 1 }),
+    final_words: Type.Array(Type.String()),
+    countdown_until_ms: Type.Integer({ minimum: 0 }),
+    can_reincarnate: Type.Boolean(),
+    can_terminate: Type.Boolean(),
+    stage: Type.Optional(DeathScreenStageV1),
+    death_number: Type.Optional(Type.Integer({ minimum: 1 })),
+    zone_kind: Type.Optional(DeathScreenZoneKindV1),
+    lifespan: Type.Optional(LifespanPreviewV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDeathScreenV1 = Static<typeof ServerDataDeathScreenV1>;
+
+export const ServerDataTerminateScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("terminate_screen"),
+    visible: Type.Boolean(),
+    final_words: Type.String(),
+    epilogue: Type.String(),
+    archetype_suggestion: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTerminateScreenV1 = Static<typeof ServerDataTerminateScreenV1>;
+
 export const ServerDataSkillXpGainV1 = Type.Object(
   {
     type: Type.Literal("skill_xp_gain"),
@@ -469,6 +562,153 @@ export const ServerDataSkillSnapshotV1 = Type.Object(
 );
 export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
 
+export const ServerDataSkillBarConfigV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("skillbar_config"),
+    ...SkillBarConfigV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSkillBarConfigV1 = Static<typeof ServerDataSkillBarConfigV1>;
+
+export const ServerDataTechniquesSnapshotV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("techniques_snapshot"),
+    ...TechniquesSnapshotV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTechniquesSnapshotV1 = Static<typeof ServerDataTechniquesSnapshotV1>;
+
+export const ServerDataRiftPortalStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("rift_portal_state"),
+    ...RiftPortalStateV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRiftPortalStateV1 = Static<typeof ServerDataRiftPortalStateV1>;
+
+export const ServerDataRiftPortalRemovedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("rift_portal_removed"),
+    ...RiftPortalRemovedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRiftPortalRemovedV1 = Static<
+  typeof ServerDataRiftPortalRemovedV1
+>;
+
+export const ServerDataExtractStartedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_started"),
+    ...ExtractStartedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractStartedV1 = Static<typeof ServerDataExtractStartedV1>;
+
+export const ServerDataExtractProgressV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_progress"),
+    ...ExtractProgressV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractProgressV1 = Static<typeof ServerDataExtractProgressV1>;
+
+export const ServerDataExtractCompletedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_completed"),
+    ...ExtractCompletedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractCompletedV1 = Static<typeof ServerDataExtractCompletedV1>;
+
+export const ServerDataExtractAbortedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_aborted"),
+    ...ExtractAbortedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractAbortedV1 = Static<typeof ServerDataExtractAbortedV1>;
+
+export const ServerDataExtractFailedV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("extract_failed"),
+    ...ExtractFailedV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataExtractFailedV1 = Static<typeof ServerDataExtractFailedV1>;
+
+export const ServerDataTsyCollapseStartedIpcV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("tsy_collapse_started_ipc"),
+    ...TsyCollapseStartedIpcV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTsyCollapseStartedIpcV1 = Static<
+  typeof ServerDataTsyCollapseStartedIpcV1
+>;
+
+// ─── 炼器（武器）（plan-forge-v1 §4） ───────────────────────
+export const ServerDataForgeStationV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_station"),
+    ...WeaponForgeStationDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeStationV1 = Static<typeof ServerDataForgeStationV1>;
+
+export const ServerDataForgeSessionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_session"),
+    ...ForgeSessionDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeSessionV1 = Static<typeof ServerDataForgeSessionV1>;
+
+export const ServerDataForgeOutcomeV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_outcome"),
+    ...ForgeOutcomeDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeOutcomeV1 = Static<typeof ServerDataForgeOutcomeV1>;
+
+export const ServerDataForgeBlueprintBookV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_blueprint_book"),
+    ...ForgeBlueprintBookDataV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataForgeBlueprintBookV1 = Static<
+  typeof ServerDataForgeBlueprintBookV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -489,10 +729,26 @@ export const ServerDataV1 = Type.Union([
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemyContaminationV1,
+  ServerDataDeathScreenV1,
+  ServerDataTerminateScreenV1,
   ServerDataSkillXpGainV1,
   ServerDataSkillLvUpV1,
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  ServerDataSkillBarConfigV1,
+  ServerDataTechniquesSnapshotV1,
+  ServerDataRiftPortalStateV1,
+  ServerDataRiftPortalRemovedV1,
+  ServerDataExtractStartedV1,
+  ServerDataExtractProgressV1,
+  ServerDataExtractCompletedV1,
+  ServerDataExtractAbortedV1,
+  ServerDataExtractFailedV1,
+  ServerDataTsyCollapseStartedIpcV1,
+  ServerDataForgeStationV1,
+  ServerDataForgeSessionV1,
+  ServerDataForgeOutcomeV1,
+  ServerDataForgeBlueprintBookV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

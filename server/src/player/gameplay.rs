@@ -17,6 +17,8 @@ use crate::combat::{
     debug::enqueue_debug_attack_intent,
     events::{AttackIntent, FIST_REACH},
 };
+use crate::cultivation::breakthrough::BreakthroughRequest;
+use crate::cultivation::components::Cultivation;
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
@@ -24,35 +26,8 @@ use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const GATHER_SPIRIT_QI_REWARD: f64 = 14.0;
-const GATHER_EXPERIENCE_REWARD: u64 = 90;
 const GATHER_INVENTORY_REWARD: f64 = 0.12;
 const GATHER_KARMA_REWARD: f64 = 0.06;
-const BREAKTHROUGH_RULES: [BreakthroughRule; 3] = [
-    BreakthroughRule {
-        current_realm: "mortal",
-        next_realm: "qi_refining_1",
-        required_experience: 120,
-        minimum_karma: -0.2,
-        required_spirit_qi: 60.0,
-        next_spirit_qi_max: 120.0,
-    },
-    BreakthroughRule {
-        current_realm: "qi_refining_1",
-        next_realm: "qi_refining_2",
-        required_experience: 300,
-        minimum_karma: -0.1,
-        required_spirit_qi: 90.0,
-        next_spirit_qi_max: 140.0,
-    },
-    BreakthroughRule {
-        current_realm: "qi_refining_2",
-        next_realm: "qi_refining_3",
-        required_experience: 600,
-        minimum_karma: 0.0,
-        required_spirit_qi: 110.0,
-        next_spirit_qi_max: 160.0,
-    },
-];
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -121,12 +96,13 @@ impl PendingGameplayNarrations {
         std::mem::take(&mut self.pending)
     }
 
-    fn push_player(&mut self, player: &str, text: impl Into<String>, style: NarrationStyle) {
+    pub fn push_player(&mut self, player: &str, text: impl Into<String>, style: NarrationStyle) {
         self.pending.push(Narration {
             scope: NarrationScope::Player,
             target: Some(player.to_string()),
             text: text.into(),
             style,
+            kind: None,
         });
     }
 }
@@ -144,19 +120,9 @@ impl GameplayTick {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct BreakthroughRule {
-    current_realm: &'static str,
-    next_realm: &'static str,
-    required_experience: u64,
-    minimum_karma: f64,
-    required_spirit_qi: f64,
-    next_spirit_qi_max: f64,
-}
-
-type GameplayPlayerSetReadItem<'a> = (Entity, &'a Username, &'a Position, &'a PlayerState);
+type GameplayPlayerSetReadItem<'a> = (Entity, &'a Username, &'a Position);
 type GameplayPlayerSetReadFilter = With<Client>;
-type GameplayPlayerSetWriteItem<'a> = &'a mut PlayerState;
+type GameplayPlayerSetWriteItem<'a> = (&'a mut PlayerState, &'a mut Cultivation);
 type GameplayPlayerSetWriteFilter = With<Client>;
 type GameplayPlayerSetParams<'w, 's> = (
     Query<'w, 's, GameplayPlayerSetReadItem<'w>, GameplayPlayerSetReadFilter>,
@@ -182,6 +148,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
     mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
     mut attack_intents: EventWriter<AttackIntent>,
+    mut breakthrough_requests: EventWriter<BreakthroughRequest>,
     mut player_sets: ParamSet<GameplayPlayerSetParams<'_, '_>>,
 ) {
     gameplay_tick.tick = gameplay_tick.tick.saturating_add(1);
@@ -193,31 +160,21 @@ pub(crate) fn apply_queued_gameplay_actions(
             let read_players = player_sets.p0();
             read_players
                 .iter()
-                .find_map(|(entity, username, position, player_state)| {
+                .find_map(|(entity, username, position)| {
                     player_matches_request(request.player.as_str(), username.0.as_str()).then(
                         || {
-                            let validation = match &request.action {
-                                GameplayAction::Combat(_) => Ok(None),
-                                GameplayAction::Gather(_) => Ok(None),
-                                GameplayAction::AttemptBreakthrough => {
-                                    validate_breakthrough(player_state).map(Some)
-                                }
-                            };
-
                             (
                                 entity,
                                 canonical_player_id(username.0.as_str()),
                                 position.get(),
                                 zone_name_for_position(&zone_registry, position.get()),
-                                validation,
                             )
                         },
                     )
                 })
         };
 
-        let Some((player_entity, canonical_player, player_position, zone_name, validation)) =
-            player_context
+        let Some((player_entity, canonical_player, player_position, zone_name)) = player_context
         else {
             tracing::warn!(
                 "[bong][gameplay] dropped queued action for unknown player `{}`: {:?}",
@@ -227,58 +184,39 @@ pub(crate) fn apply_queued_gameplay_actions(
             continue;
         };
 
-        match validation {
-            Err(rejection) => pending_narrations.push_player(
-                canonical_player.as_str(),
-                rejection,
-                NarrationStyle::SystemWarning,
-            ),
-            Ok(rule) => {
-                let event_tick = gameplay_tick.tick;
+        let event_tick = gameplay_tick.tick;
 
-                match request.action {
-                    GameplayAction::Combat(action) => bridge_debug_combat_action(
-                        player_entity,
-                        event_tick,
-                        action,
-                        &mut attack_intents,
-                    ),
-                    GameplayAction::Gather(action) => {
-                        let mut mutable_players = player_sets.p1();
-                        let mut player_state = mutable_players.get_mut(player_entity).expect(
-                            "validated gameplay target should still have mutable PlayerState",
-                        );
+        match request.action {
+            GameplayAction::Combat(action) => {
+                bridge_debug_combat_action(player_entity, event_tick, action, &mut attack_intents)
+            }
+            GameplayAction::Gather(action) => {
+                let mut mutable_players = player_sets.p1();
+                let (mut player_state, mut cultivation) = mutable_players
+                    .get_mut(player_entity)
+                    .expect("gameplay target should still have mutable PlayerState + Cultivation");
 
-                        apply_gather_action(
-                            canonical_player.as_str(),
-                            player_entity,
-                            player_position,
-                            zone_name.as_str(),
-                            event_tick,
-                            &action,
-                            &mut player_state,
-                            harvest_sessions.as_deref_mut(),
-                            active_events.as_deref_mut(),
-                            &mut pending_narrations,
-                        )
-                    }
-                    GameplayAction::AttemptBreakthrough => {
-                        let mut mutable_players = player_sets.p1();
-                        let mut player_state = mutable_players.get_mut(player_entity).expect(
-                            "validated gameplay target should still have mutable PlayerState",
-                        );
-
-                        apply_breakthrough_action(
-                            canonical_player.as_str(),
-                            zone_name.as_str(),
-                            event_tick,
-                            rule.expect("breakthrough action should carry a rule after validation"),
-                            &mut player_state,
-                            active_events.as_deref_mut(),
-                            &mut pending_narrations,
-                        )
-                    }
-                }
+                apply_gather_action(
+                    canonical_player.as_str(),
+                    player_entity,
+                    player_position,
+                    zone_name.as_str(),
+                    event_tick,
+                    &action,
+                    &mut player_state,
+                    &mut cultivation,
+                    harvest_sessions.as_deref_mut(),
+                    active_events.as_deref_mut(),
+                    &mut pending_narrations,
+                )
+            }
+            GameplayAction::AttemptBreakthrough => {
+                // Single source of truth: cultivation system consumes the breakthrough request.
+                // Validation and outcomes are handled in `cultivation::breakthrough_system`.
+                breakthrough_requests.send(BreakthroughRequest {
+                    entity: player_entity,
+                    material_bonus: 0.0,
+                });
             }
         }
     }
@@ -313,6 +251,7 @@ fn apply_gather_action(
     event_tick: u64,
     action: &GatherAction,
     player_state: &mut PlayerState,
+    cultivation: &mut Cultivation,
     harvest_sessions: Option<&mut HarvestSessionStore>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
@@ -334,11 +273,8 @@ fn apply_gather_action(
         }
     }
 
-    player_state.spirit_qi =
-        (player_state.spirit_qi + GATHER_SPIRIT_QI_REWARD).clamp(0.0, player_state.spirit_qi_max);
-    player_state.experience = player_state
-        .experience
-        .saturating_add(GATHER_EXPERIENCE_REWARD);
+    cultivation.qi_current =
+        (cultivation.qi_current + GATHER_SPIRIT_QI_REWARD).clamp(0.0, cultivation.qi_max.max(1.0));
     player_state.inventory_score =
         (player_state.inventory_score + GATHER_INVENTORY_REWARD).clamp(0.0, 1.0);
     player_state.karma = (player_state.karma + GATHER_KARMA_REWARD).clamp(-1.0, 1.0);
@@ -353,10 +289,6 @@ fn apply_gather_action(
             details: Some(HashMap::from([
                 ("action".to_string(), json!("gather")),
                 ("resource".to_string(), json!(resource_name)),
-                (
-                    "experience_gain".to_string(),
-                    json!(GATHER_EXPERIENCE_REWARD),
-                ),
                 ("inventory_gain".to_string(), json!(GATHER_INVENTORY_REWARD)),
             ])),
         });
@@ -367,85 +299,6 @@ fn apply_gather_action(
         format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
         NarrationStyle::Narration,
     );
-}
-
-fn apply_breakthrough_action(
-    canonical_player: &str,
-    zone_name: &str,
-    event_tick: u64,
-    rule: &BreakthroughRule,
-    player_state: &mut PlayerState,
-    active_events: Option<&mut ActiveEventsResource>,
-    pending_narrations: &mut PendingGameplayNarrations,
-) {
-    let from_realm = player_state.realm.clone();
-    player_state.realm = rule.next_realm.to_string();
-    player_state.spirit_qi_max = rule.next_spirit_qi_max;
-    player_state.spirit_qi = rule.next_spirit_qi_max;
-    player_state.karma = (player_state.karma + 0.08).clamp(-1.0, 1.0);
-
-    if let Some(active_events) = active_events {
-        active_events.record_recent_event(GameEvent {
-            event_type: GameEventType::EventTriggered,
-            tick: event_tick,
-            player: Some(canonical_player.to_string()),
-            target: Some(rule.next_realm.to_string()),
-            zone: Some(zone_name.to_string()),
-            details: Some(HashMap::from([
-                ("action".to_string(), json!("realm_breakthrough")),
-                ("from_realm".to_string(), json!(from_realm)),
-                ("to_realm".to_string(), json!(rule.next_realm)),
-                (
-                    "required_experience".to_string(),
-                    json!(rule.required_experience),
-                ),
-            ])),
-        });
-    }
-
-    pending_narrations.push_player(
-        canonical_player,
-        format!(
-            "你已突破至 {}，灵海扩张至 {:.0}/{:.0}。",
-            realm_display_name(rule.next_realm),
-            player_state.spirit_qi,
-            player_state.spirit_qi_max
-        ),
-        NarrationStyle::SystemWarning,
-    );
-}
-
-fn validate_breakthrough(player_state: &PlayerState) -> Result<&'static BreakthroughRule, String> {
-    let Some(rule) = breakthrough_rule(player_state.realm.as_str()) else {
-        return Err(format!(
-            "{} 暂无进一步的最小验证突破路径。",
-            realm_display_name(player_state.realm.as_str())
-        ));
-    };
-
-    if player_state.experience < rule.required_experience {
-        return Err(format!(
-            "突破未成：{} 需要至少 {} 点经验。",
-            realm_display_name(rule.next_realm),
-            rule.required_experience
-        ));
-    }
-
-    if player_state.karma < rule.minimum_karma {
-        return Err(format!(
-            "突破未成：心境未稳，因果需不低于 {:.2}。",
-            rule.minimum_karma
-        ));
-    }
-
-    if player_state.spirit_qi < rule.required_spirit_qi {
-        return Err(format!(
-            "突破未成：灵气尚浅，需至少 {:.0}/{:.0}。",
-            rule.required_spirit_qi, player_state.spirit_qi_max
-        ));
-    }
-
-    Ok(rule)
 }
 
 fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry {
@@ -460,7 +313,7 @@ fn zone_name_for_position(
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -468,23 +321,6 @@ fn zone_name_for_position(
 fn player_matches_request(requested_player: &str, username: &str) -> bool {
     requested_player.eq_ignore_ascii_case(username)
         || requested_player.eq_ignore_ascii_case(canonical_player_id(username).as_str())
-}
-
-fn breakthrough_rule(current_realm: &str) -> Option<&'static BreakthroughRule> {
-    let current_realm = current_realm.trim();
-    BREAKTHROUGH_RULES
-        .iter()
-        .find(|rule| rule.current_realm.eq_ignore_ascii_case(current_realm))
-}
-
-fn realm_display_name(realm: &str) -> &'static str {
-    match realm.trim().to_ascii_lowercase().as_str() {
-        "mortal" => "凡体",
-        "qi_refining_1" => "炼气一层",
-        "qi_refining_2" => "炼气二层",
-        "qi_refining_3" => "炼气三层",
-        _ => "未知境界",
-    }
 }
 
 fn empty_target_fallback(value: &str) -> &str {
@@ -524,6 +360,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CapturedAttackIntents::default());
         app.add_event::<AttackIntent>();
+        app.add_event::<BreakthroughRequest>();
         app.add_systems(
             Update,
             (
@@ -533,18 +370,22 @@ mod tests {
         );
 
         let initial_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 70.0,
-            spirit_qi_max: 100.0,
             karma: 0.05,
-            experience: 200,
             inventory_score: 0.10,
         };
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
         let entity = app
             .world_mut()
-            .spawn((client_bundle, initial_state.clone()))
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    qi_current: 70.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                initial_state.clone(),
+            ))
             .id();
 
         app.world_mut()

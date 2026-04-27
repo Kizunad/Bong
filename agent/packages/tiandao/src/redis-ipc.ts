@@ -1,20 +1,28 @@
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
-import { CHANNELS } from "@bong/schema";
+import {
+  CHANNELS,
+  validateTsyNpcSpawnedV1Contract,
+  validateTsySentinelPhaseChangedV1Contract,
+} from "@bong/schema";
 import type {
   AgentWorldModelEnvelopeV1,
   AgentWorldModelSnapshotV1,
   AgentCommandV1,
   NarrationV1,
   ChatMessageV1,
+  TsyNpcSpawnedV1,
+  TsySentinelPhaseChangedV1,
   WorldStateV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
 
-const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT } = CHANNELS;
+const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, TSY_EVENT } =
+  CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
+const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
@@ -34,6 +42,8 @@ export interface PublishAgentWorldModelRequest {
     correlationId: string;
   };
 }
+
+export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
 
 const DRAIN_SCRIPT = `
 local items = redis.call('lrange', ARGV[1], 0, -1)
@@ -83,13 +93,23 @@ export class RedisIpc {
   private sub: RedisIpcClient;
   private pub: RedisIpcClient;
   private latestState: WorldStateV1 | null = null;
+  private latestTsyHostileEvents: TsyHostileEventV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
+  private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
-    if (channel !== WORLD_STATE) {
+    if (channel === WORLD_STATE) {
+      this.handleWorldStateMessage(message);
       return;
     }
 
+
+    if (channel === TSY_EVENT) {
+      this.handleTsyEventMessage(message);
+    }
+  };
+
+  private handleWorldStateMessage(message: string): void {
     try {
       const state = JSON.parse(message) as WorldStateV1;
       this.latestState = state;
@@ -99,7 +119,50 @@ export class RedisIpc {
     } catch (e) {
       console.warn("[redis-ipc] failed to parse world_state:", e);
     }
-  };
+  }
+
+  private handleTsyEventMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      if (!isObjectRecord(data) || typeof data.kind !== "string") {
+        return;
+      }
+
+      if (data.kind === "tsy_npc_spawned") {
+        const result = validateTsyNpcSpawnedV1Contract(data);
+        if (!result.ok) {
+          console.warn("[redis-ipc] invalid tsy_npc_spawned event:", result.errors.join("; "));
+          return;
+        }
+        this.recordTsyHostileEvent(data as TsyNpcSpawnedV1);
+        return;
+      }
+
+      if (data.kind === "tsy_sentinel_phase_changed") {
+        const result = validateTsySentinelPhaseChangedV1Contract(data);
+        if (!result.ok) {
+          console.warn(
+            "[redis-ipc] invalid tsy_sentinel_phase_changed event:",
+            result.errors.join("; "),
+          );
+          return;
+        }
+        this.recordTsyHostileEvent(data as TsySentinelPhaseChangedV1);
+      }
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse tsy_event:", e);
+    }
+  }
+
+  private recordTsyHostileEvent(event: TsyHostileEventV1): void {
+    this.latestTsyHostileEvents.push(event);
+    if (this.latestTsyHostileEvents.length > TSY_HOSTILE_EVENT_BUFFER_LIMIT) {
+      this.latestTsyHostileEvents = this.latestTsyHostileEvents.slice(-TSY_HOSTILE_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.tsyHostileCallbacks) {
+      cb(event);
+    }
+  }
 
   constructor(config: RedisIpcConfig, deps?: RedisIpcDeps) {
     const createClient =
@@ -116,10 +179,11 @@ export class RedisIpc {
     }
 
     await this.sub.subscribe(WORLD_STATE);
+    await this.sub.subscribe(TSY_EVENT);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
-    console.log(`[redis-ipc] subscribed to ${WORLD_STATE}`);
+    console.log(`[redis-ipc] subscribed to ${WORLD_STATE}, ${TSY_EVENT}`);
   }
 
   getLatestState(): WorldStateV1 | null {
@@ -128,6 +192,14 @@ export class RedisIpc {
 
   onWorldState(cb: (state: WorldStateV1) => void): void {
     this.stateCallbacks.push(cb);
+  }
+
+  getLatestTsyHostileEvents(): TsyHostileEventV1[] {
+    return [...this.latestTsyHostileEvents];
+  }
+
+  onTsyHostileEvent(cb: (event: TsyHostileEventV1) => void): void {
+    this.tsyHostileCallbacks.push(cb);
   }
 
   async publishCommands(request: CommandPublishRequest): Promise<void> {

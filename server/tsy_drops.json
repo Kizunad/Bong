@@ -1,0 +1,45 @@
+{
+  "daoxiang": {
+    "guaranteed": [],
+    "rolls": [
+      { "template_id": "iron_sword", "chance": 0.50, "count": [1, 1] },
+      { "template_id": "fengling_bone_coin", "chance": 0.70, "count": [1, 3] },
+      { "template_id": "broken_artifact_scroll", "chance": 0.10, "count": [1, 1] },
+      { "template_id": "broken_artifact", "chance": 0.05, "count": [1, 1] },
+      { "template_id": "key_stone_casket", "chance": 0.05, "count": [1, 1] }
+    ],
+    "max_rolls": 4
+  },
+  "zhinian": {
+    "guaranteed": [
+      { "template_id": "spirit_sword", "count": [1, 1] }
+    ],
+    "rolls": [
+      { "template_id": "broken_artifact", "chance": 0.15, "count": [1, 1] },
+      { "template_id": "broken_artifact_scroll", "chance": 0.30, "count": [1, 2] },
+      { "template_id": "key_jade_coffin", "chance": 0.08, "count": [1, 1] }
+    ],
+    "max_rolls": 3
+  },
+  "tsy_sentinel": {
+    "guaranteed": [
+      { "template_id": "__ancient_relic_random__", "count": [1, 2] },
+      { "template_id": "__origin_keyed_key__", "count": [1, 1] }
+    ],
+    "rolls": [
+      { "template_id": "broken_artifact", "chance": 0.50, "count": [1, 1] },
+      { "template_id": "gu_yuan_gen", "chance": 0.30, "count": [1, 2] }
+    ],
+    "max_rolls": 2
+  },
+  "fuya": {
+    "guaranteed": [
+      { "template_id": "mutant_beast_core", "count": [1, 1] }
+    ],
+    "rolls": [
+      { "template_id": "bone_spike", "chance": 0.40, "count": [1, 1] },
+      { "template_id": "fake_spirit_hide", "chance": 0.25, "count": [1, 1] }
+    ],
+    "max_rolls": 2
+  }
+}

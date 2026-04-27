@@ -40,6 +40,8 @@ pub enum ItemRarityV1 {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.4 — TSY 上古遗物 wire 形态。
+    Ancient,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,12 +77,22 @@ pub struct InventoryItemViewV1 {
     /// `None` = freshness 字段缺失 / profile 未在 registry / 无法衍生。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freshness_current: Option<FreshnessDerivedV1>,
+    /// plan-mineral-v1 §2.2 — 矿物来源 item NBT 携带正典 mineral_id 字符串
+    /// （如 "fan_tie" / "ling_shi_zhong"），非矿物来源 item 留 None。
+    /// alchemy / forge 配方校验 `material` 时按此字段比对（不依赖 vanilla item id）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_skill_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_xp_grant: Option<u32>,
+    /// plan-tsy-loot-v1 §1.3 — Ancient rarity 物品的"剩余使用次数"。
+    /// `durability` 字段保持 0..=1 normalized 不被破坏；charges 是上古遗物
+    /// tier 1/3/5 的整数计数，每次使用 -= 1，归零销毁。非 ancient 恒为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -183,6 +195,8 @@ pub struct InventorySnapshotV1 {
     pub body_level: f64,
 }
 
+// TODO: Dropped variant 较大（含 InventoryItemViewV1）；boxing 可降 enum 大小但影响 wire schema 兼容性，暂 allow。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InventoryEventV1 {
@@ -312,6 +326,8 @@ impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
     }
 }
 
+// TODO: RawDropped 变体较大；与 InventoryEventV1 同策略暂 allow 以保持反序列化结构简单。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawInventoryEventV1 {
@@ -659,7 +675,7 @@ mod tests {
         assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
         assert_eq!(snapshot.hotbar.len(), HOTBAR_SLOT_COUNT);
         assert_eq!(snapshot.bone_coins, 57);
-        assert_eq!(snapshot.realm, "qi_refining_1");
+        assert_eq!(snapshot.realm, "Awaken");
     }
 
     #[test]
@@ -777,9 +793,11 @@ mod tests {
                 durability: 1.0,
                 freshness: None,
                 freshness_current: None,
+                mineral_id: None,
                 scroll_kind: None,
                 scroll_skill_id: None,
                 scroll_xp_grant: None,
+                charges: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -931,9 +949,11 @@ mod tests {
                 frozen_since_tick: Some(1000),
             }),
             freshness_current: None,
+            mineral_id: Some("ling_shi_fan".to_string()),
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -958,9 +978,11 @@ mod tests {
             durability: 1.0,
             freshness: None,
             freshness_current: None,
+            mineral_id: None,
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -999,6 +1021,85 @@ mod tests {
         let f = view.freshness.expect("freshness should be Some");
         assert_eq!(f.frozen_accumulated, 0);
         assert!(f.frozen_since_tick.is_none());
+    }
+
+    // =========== plan-mineral-v1 §2.2 — InventoryItemViewV1.mineral_id ===========
+
+    #[test]
+    fn item_view_mineral_id_legacy_json_without_field_defaults_to_none() {
+        let legacy = json!({
+            "instance_id": 7,
+            "item_id": "starter_talisman",
+            "display_name": "启程护符",
+            "grid_width": 1,
+            "grid_height": 1,
+            "weight": 0.2,
+            "rarity": "common",
+            "description": "",
+            "stack_count": 1,
+            "spirit_quality": 0.0,
+            "durability": 1.0,
+        });
+        let view: InventoryItemViewV1 =
+            serde_json::from_value(legacy).expect("legacy snapshot must deserialize");
+        assert!(view.mineral_id.is_none());
+    }
+
+    #[test]
+    fn item_view_mineral_id_some_roundtrip_preserves_value() {
+        let view = InventoryItemViewV1 {
+            instance_id: 100,
+            item_id: "ore_drop_fan_tie".to_string(),
+            display_name: "凡铁".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            weight: 0.4,
+            rarity: ItemRarityV1::Common,
+            description: String::new(),
+            stack_count: 3,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            freshness_current: None,
+            mineral_id: Some("fan_tie".to_string()),
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
+            charges: None,
+        };
+        let json = serde_json::to_string(&view).expect("serialize");
+        assert!(json.contains("\"mineral_id\":\"fan_tie\""));
+        let back: InventoryItemViewV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, view);
+    }
+
+    #[test]
+    fn item_view_mineral_id_none_omitted_from_serialization() {
+        let view = InventoryItemViewV1 {
+            instance_id: 1,
+            item_id: "iron_axe".to_string(),
+            display_name: "凡铁斧".to_string(),
+            grid_width: 1,
+            grid_height: 2,
+            weight: 1.5,
+            rarity: ItemRarityV1::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            freshness_current: None,
+            mineral_id: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
+            charges: None,
+        };
+        let json = serde_json::to_string(&view).expect("serialize");
+        assert!(
+            !json.contains("mineral_id"),
+            "mineral_id=None should be skipped, got: {json}"
+        );
     }
 
     #[test]

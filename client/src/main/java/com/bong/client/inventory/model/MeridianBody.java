@@ -22,6 +22,12 @@ public final class MeridianBody {
     private final List<StatusEffect> activeEffects;
     private final String realm;
     private final double contaminationTotal;
+    private final double yearsLived;
+    private final int lifespanCapByRealm;
+    private final double remainingYears;
+    private final int deathPenaltyYears;
+    private final double lifespanTickRateMultiplier;
+    private final boolean windCandle;
 
     private MeridianBody(Builder b) {
         this.channels = Collections.unmodifiableMap(new EnumMap<>(b.channels));
@@ -34,6 +40,12 @@ public final class MeridianBody {
         this.activeEffects = List.copyOf(b.activeEffects);
         this.realm = b.realm;
         this.contaminationTotal = Math.max(0.0, b.contaminationTotal);
+        this.yearsLived = Math.max(0.0, b.yearsLived);
+        this.lifespanCapByRealm = Math.max(0, b.lifespanCapByRealm);
+        this.remainingYears = Math.max(0.0, b.remainingYears);
+        this.deathPenaltyYears = Math.max(0, b.deathPenaltyYears);
+        this.lifespanTickRateMultiplier = Math.max(0.0, b.lifespanTickRateMultiplier);
+        this.windCandle = b.windCandle;
     }
 
     public ChannelState channel(MeridianChannel ch) { return channels.get(ch); }
@@ -43,6 +55,13 @@ public final class MeridianBody {
     public List<StatusEffect> activeEffects() { return activeEffects; }
     public String realm() { return realm; }
     public double contaminationTotal() { return contaminationTotal; }
+    public double yearsLived() { return yearsLived; }
+    public int lifespanCapByRealm() { return lifespanCapByRealm; }
+    public double remainingYears() { return remainingYears; }
+    public int deathPenaltyYears() { return deathPenaltyYears; }
+    public double lifespanTickRateMultiplier() { return lifespanTickRateMultiplier; }
+    public boolean hasLifespanPreview() { return lifespanCapByRealm > 0; }
+    public boolean isWindCandle() { return windCandle; }
     /** 某条经脉当前裂痕条目数；未记录则返回 0。 */
     public int cracksFor(MeridianChannel ch) {
         Integer n = cracksCount.get(ch);
@@ -82,6 +101,12 @@ public final class MeridianBody {
         private List<StatusEffect> activeEffects = List.of();
         private String realm = "";
         private double contaminationTotal = 0.0;
+        private double yearsLived = 0.0;
+        private int lifespanCapByRealm = 0;
+        private double remainingYears = 0.0;
+        private int deathPenaltyYears = 0;
+        private double lifespanTickRateMultiplier = 0.0;
+        private boolean windCandle = false;
 
         private Builder() {}
 
@@ -127,6 +152,18 @@ public final class MeridianBody {
 
         public Builder contaminationTotal(double total) {
             this.contaminationTotal = total;
+            return this;
+        }
+
+        public Builder lifespanPreview(double yearsLived, int capByRealm, double remainingYears,
+                                       int deathPenaltyYears, double tickRateMultiplier,
+                                       boolean windCandle) {
+            this.yearsLived = yearsLived;
+            this.lifespanCapByRealm = capByRealm;
+            this.remainingYears = remainingYears;
+            this.deathPenaltyYears = deathPenaltyYears;
+            this.lifespanTickRateMultiplier = tickRateMultiplier;
+            this.windCandle = windCandle;
             return this;
         }
 

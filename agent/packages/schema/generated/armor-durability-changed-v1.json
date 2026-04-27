@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "entity_id",
+    "slot",
+    "instance_id",
+    "template_id",
+    "cur",
+    "max",
+    "durability_ratio",
+    "broken"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "slot": {
+      "anyOf": [
+        {
+          "const": "head",
+          "type": "string"
+        },
+        {
+          "const": "chest",
+          "type": "string"
+        },
+        {
+          "const": "legs",
+          "type": "string"
+        },
+        {
+          "const": "feet",
+          "type": "string"
+        },
+        {
+          "const": "main_hand",
+          "type": "string"
+        },
+        {
+          "const": "off_hand",
+          "type": "string"
+        },
+        {
+          "const": "two_hand",
+          "type": "string"
+        },
+        {
+          "const": "treasure_belt_0",
+          "type": "string"
+        },
+        {
+          "const": "treasure_belt_1",
+          "type": "string"
+        },
+        {
+          "const": "treasure_belt_2",
+          "type": "string"
+        },
+        {
+          "const": "treasure_belt_3",
+          "type": "string"
+        }
+      ]
+    },
+    "instance_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "template_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "cur": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "max": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "durability_ratio": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "broken": {
+      "type": "boolean"
+    }
+  }
+}

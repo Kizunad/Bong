@@ -7,8 +7,7 @@
 //! 后续如有专门的"道伥" archetype（异色 / 高伤），换 archetype 即可。
 
 use valence::prelude::{
-    App, ChunkLayer, Commands, DVec3, Entity, EntityLayer, EventReader, IntoSystemConfigs, Query,
-    Update, With,
+    App, Commands, DVec3, Entity, EventReader, IntoSystemConfigs, Query, Update, With,
 };
 
 use crate::lingtian::pressure::PressureLevel;
@@ -20,7 +19,7 @@ use super::spawn::spawn_zombie_npc_at;
 pub fn spawn_daoshen_on_pressure_high(
     mut events: EventReader<ZonePressureCrossed>,
     plots: Query<&LingtianPlot>,
-    layers: Query<Entity, (With<ChunkLayer>, With<EntityLayer>)>,
+    layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
     mut commands: Commands,
 ) {
     for e in events.read() {

@@ -12,12 +12,15 @@ import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
+import com.bong.client.forge.ForgeScreenBootstrap;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
+import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
 import com.bong.client.weapon.WeaponRenderBootstrap;
 import com.bong.client.weapon.WeaponScreenshotHarness;
 import net.fabricmc.api.ClientModInitializer;
@@ -39,6 +42,7 @@ public class BongClient implements ClientModInitializer {
         DroppedItemPickupBootstrap.register();
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
+        ForgeScreenBootstrap.register();
         LingtianActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
@@ -47,6 +51,7 @@ public class BongClient implements ClientModInitializer {
         // 注册完 VfxRegistry 即可；放在这里不依赖 channel register 的时序。
         BongParticles.register();
         BongParticles.registerClient();
+        WorldVfxDemoBootstrap.register();
         VfxBootstrap.registerDefaults();
         BongAnimations.bootstrap();
         BongAnimationPlayer.init();
@@ -55,6 +60,7 @@ public class BongClient implements ClientModInitializer {
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         BotanyHudBootstrap.register();
+        ExtractInteractionBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
 

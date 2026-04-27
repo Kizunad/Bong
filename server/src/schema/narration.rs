@@ -1,6 +1,6 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
-use super::common::{NarrationScope, NarrationStyle, MAX_NARRATION_LENGTH};
+use super::common::{NarrationKind, NarrationScope, NarrationStyle, MAX_NARRATION_LENGTH};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Narration {
@@ -9,6 +9,8 @@ pub struct Narration {
     pub target: Option<String>,
     pub text: String,
     pub style: NarrationStyle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<NarrationKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,8 @@ impl<'de> Deserialize<'de> for Narration {
             target: Option<String>,
             text: String,
             style: NarrationStyle,
+            #[serde(default)]
+            kind: Option<NarrationKind>,
         }
 
         let wire = NarrationWire::deserialize(deserializer)?;
@@ -53,6 +57,7 @@ impl<'de> Deserialize<'de> for Narration {
             target: wire.target,
             text: wire.text,
             style: wire.style,
+            kind: wire.kind,
         })
     }
 }
