@@ -877,10 +877,12 @@ pub fn handle_client_request_payloads(
                 ..
             } => {
                 handle_forge_tempering_hit(
+                    ev.client,
                     session_id,
                     &beat,
                     ticks_remaining,
                     &mut dispatch.tempering_hit_tx,
+                    skill_scroll_params.forge_sessions.as_deref(),
                 );
             }
             ClientRequestV1::ForgeConsecrationInject {
@@ -889,13 +891,20 @@ pub fn handle_client_request_payloads(
                 ..
             } => {
                 handle_forge_consecration_inject(
+                    ev.client,
                     session_id,
                     qi_amount,
                     &mut dispatch.consecration_inject_tx,
+                    skill_scroll_params.forge_sessions.as_deref(),
                 );
             }
             ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
-                handle_forge_step_advance(session_id, &mut dispatch.step_advance_tx);
+                handle_forge_step_advance(
+                    ev.client,
+                    session_id,
+                    &mut dispatch.step_advance_tx,
+                    skill_scroll_params.forge_sessions.as_deref(),
+                );
             }
             ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
                 handle_forge_learn_blueprint(
@@ -1142,6 +1151,45 @@ fn handle_forge_learn_blueprint(
     }
 }
 
+fn require_owned_active_step(
+    forge_sessions: Option<&ForgeSessions>,
+    session: ForgeSessionId,
+    entity: Entity,
+    expected: ForgeStep,
+    request_label: &str,
+) -> bool {
+    let Some(forge_sessions) = forge_sessions else {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: ForgeSessions unavailable"
+        );
+        return false;
+    };
+    let Some(session_state) = forge_sessions.get(session) else {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: missing session_id={}",
+            session.0
+        );
+        return false;
+    };
+    if session_state.current_step != expected {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, expected={expected:?}",
+            session.0,
+            session_state.current_step
+        );
+        return false;
+    }
+    if session_state.caster != entity {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
+            session.0,
+            session_state.caster
+        );
+        return false;
+    }
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_forge_inscription_scroll(
     entity: Entity,
@@ -1159,31 +1207,14 @@ fn handle_forge_inscription_scroll(
     if inscription_id.is_empty() {
         return;
     }
-    let Some(forge_sessions) = forge_sessions else {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: ForgeSessions unavailable"
-        );
-        return;
-    };
     let session = ForgeSessionId(session_id);
-    let Some(session_state) = forge_sessions.get(session) else {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: missing session_id={session_id}"
-        );
-        return;
-    };
-    if session_state.current_step != ForgeStep::Inscription {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: session_id={session_id} step={:?}",
-            session_state.current_step
-        );
-        return;
-    }
-    if session_state.caster != entity {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
-            session_state.caster
-        );
+    if !require_owned_active_step(
+        forge_sessions,
+        session,
+        entity,
+        ForgeStep::Inscription,
+        "inscription_scroll",
+    ) {
         return;
     }
     let Some(inscription_scroll_tx) = inscription_scroll_tx.as_deref_mut() else {
@@ -1237,15 +1268,27 @@ fn handle_forge_inscription_scroll(
 }
 
 fn handle_forge_tempering_hit(
+    entity: Entity,
     session_id: u64,
     beat: &str,
     ticks_remaining: u32,
     tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
+    forge_sessions: Option<&ForgeSessions>,
 ) {
     let Some(beat) = parse_temper_beat(beat) else {
         tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
         return;
     };
+    let session = ForgeSessionId(session_id);
+    if !require_owned_active_step(
+        forge_sessions,
+        session,
+        entity,
+        ForgeStep::Tempering,
+        "tempering_hit",
+    ) {
+        return;
+    }
     let Some(tempering_hit_tx) = tempering_hit_tx.as_deref_mut() else {
         tracing::warn!(
             "[bong][network][forge] tempering_hit rejected: ForgePlugin events unavailable"
@@ -1253,21 +1296,33 @@ fn handle_forge_tempering_hit(
         return;
     };
     tempering_hit_tx.send(TemperingHit {
-        session: ForgeSessionId(session_id),
+        session,
         beat,
         ticks_remaining,
     });
 }
 
 fn handle_forge_consecration_inject(
+    entity: Entity,
     session_id: u64,
     qi_amount: f64,
     consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
+    forge_sessions: Option<&ForgeSessions>,
 ) {
     if !qi_amount.is_finite() || qi_amount < 0.0 {
         tracing::warn!(
             "[bong][network][forge] consecration_inject rejected: invalid qi_amount={qi_amount}"
         );
+        return;
+    }
+    let session = ForgeSessionId(session_id);
+    if !require_owned_active_step(
+        forge_sessions,
+        session,
+        entity,
+        ForgeStep::Consecration,
+        "consecration_inject",
+    ) {
         return;
     }
     let Some(consecration_inject_tx) = consecration_inject_tx.as_deref_mut() else {
@@ -1276,25 +1331,46 @@ fn handle_forge_consecration_inject(
         );
         return;
     };
-    consecration_inject_tx.send(ConsecrationInject {
-        session: ForgeSessionId(session_id),
-        qi_amount,
-    });
+    consecration_inject_tx.send(ConsecrationInject { session, qi_amount });
 }
 
 fn handle_forge_step_advance(
+    entity: Entity,
     session_id: u64,
     step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
+    forge_sessions: Option<&ForgeSessions>,
 ) {
+    let session = ForgeSessionId(session_id);
+    let Some(forge_sessions) = forge_sessions else {
+        tracing::warn!("[bong][network][forge] step_advance rejected: ForgeSessions unavailable");
+        return;
+    };
+    let Some(session_state) = forge_sessions.get(session) else {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: missing session_id={session_id}"
+        );
+        return;
+    };
+    if session_state.caster != entity {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
+            session_state.caster
+        );
+        return;
+    }
+    if matches!(session_state.current_step, ForgeStep::Done) {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: session_id={session_id} already done"
+        );
+        return;
+    }
     let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
         );
         return;
     };
-    step_advance_tx.send(StepAdvance {
-        session: ForgeSessionId(session_id),
-    });
+    step_advance_tx.send(StepAdvance { session });
 }
 
 fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
@@ -2312,6 +2388,7 @@ mod tests {
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
+        insert_test_forge_session(&mut app, 9, entity, ForgeStep::Tempering);
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -2419,6 +2496,7 @@ mod tests {
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
+        insert_test_forge_session(&mut app, 11, entity, ForgeStep::Consecration);
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -2526,6 +2604,7 @@ mod tests {
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
+        insert_test_forge_session(&mut app, 12, entity, ForgeStep::Tempering);
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -2541,6 +2620,100 @@ mod tests {
         let captured = app.world().resource::<CapturedStepAdvances>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(12));
+    }
+
+    #[test]
+    fn forge_session_inputs_reject_wrong_caster() {
+        let mut app = App::new();
+        app.insert_resource(CapturedTemperingHits::default());
+        app.insert_resource(CapturedConsecrationInjects::default());
+        app.insert_resource(CapturedStepAdvances::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<TemperingHit>();
+        app.add_event::<ConsecrationInject>();
+        app.add_event::<StepAdvance>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_tempering_hits,
+                capture_consecration_injects,
+                capture_step_advances,
+            )
+                .chain(),
+        );
+
+        let (owner_bundle, _owner_helper) = create_mock_client("Owner");
+        let owner = app.world_mut().spawn(owner_bundle).id();
+        let (attacker_bundle, _attacker_helper) = create_mock_client("Attacker");
+        let attacker = app.world_mut().spawn(attacker_bundle).id();
+
+        insert_test_forge_session(&mut app, 21, owner, ForgeStep::Tempering);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: attacker,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":21,"beat":"H","ticks_remaining":4}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(app.world().resource::<CapturedTemperingHits>().0.is_empty());
+
+        insert_test_forge_session(&mut app, 22, owner, ForgeStep::Consecration);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: attacker,
+                channel: ident!("bong:client_request").into(),
+                data:
+                    br#"{"type":"forge_consecration_inject","v":1,"session_id":22,"qi_amount":2.5}"#
+                        .to_vec()
+                        .into_boxed_slice(),
+            });
+        app.update();
+        assert!(app
+            .world()
+            .resource::<CapturedConsecrationInjects>()
+            .0
+            .is_empty());
+
+        insert_test_forge_session(&mut app, 23, owner, ForgeStep::Tempering);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: attacker,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_step_advance","v":1,"session_id":23}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(app.world().resource::<CapturedStepAdvances>().0.is_empty());
     }
 
     #[test]

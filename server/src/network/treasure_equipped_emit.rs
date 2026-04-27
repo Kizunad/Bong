@@ -117,6 +117,9 @@ mod tests {
             cast_duration_ms: 0,
             cooldown_ms: 0,
             weapon_spec: None::<WeaponSpec>,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 
@@ -136,6 +139,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 

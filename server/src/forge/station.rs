@@ -98,7 +98,7 @@ pub fn handle_place_station_request(
     registry: Res<ItemRegistry>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     existing: Query<&WeaponForgeStation>,
-    mut clients: Query<(&Username, &mut Client, &PlayerState)>,
+    mut clients: Query<(&Username, &mut Client, &PlayerState, &Cultivation)>,
 ) {
     let mut placed_this_tick: HashSet<(i32, i32, i32)> = HashSet::new();
 
@@ -164,14 +164,14 @@ pub fn handle_place_station_request(
         if let Ok(mut layer) = layers.get_single_mut() {
             layer.set_block(req.pos, BlockState::ANVIL);
         }
-        if let Ok((username, mut client, player_state)) = clients.get_mut(req.player) {
+        if let Ok((username, mut client, player_state, cultivation)) = clients.get_mut(req.player) {
             send_inventory_snapshot_to_client(
                 req.player,
                 &mut client,
                 username.0.as_str(),
                 &inv,
                 player_state,
-                &Cultivation::default(),
+                cultivation,
                 "forge_station_place_consumed",
             );
         }
@@ -192,8 +192,11 @@ mod tests {
         ContainerState, ForgeStationSpec, InventoryRevision, ItemCategory, ItemInstance,
         ItemRarity, ItemTemplate, PlacedItemState,
     };
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use std::collections::HashMap;
     use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     #[test]
     fn default_tier_1_can_craft_tier_1() {
@@ -293,6 +296,39 @@ mod tests {
         app
     }
 
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_inventory_snapshot_body_levels(helper: &mut MockClientHelper) -> Vec<f64> {
+        let mut body_levels = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data payload should decode as JSON");
+            if payload.get("type").and_then(|ty| ty.as_str()) == Some("inventory_snapshot") {
+                body_levels.push(
+                    payload
+                        .get("body_level")
+                        .and_then(|value| value.as_f64())
+                        .expect("inventory_snapshot should carry body_level"),
+                );
+            }
+        }
+        body_levels
+    }
+
     #[test]
     fn place_station_consumes_item() {
         let mut templates = HashMap::new();
@@ -326,6 +362,44 @@ mod tests {
         assert_eq!(stations[0].block_pos(), Some(pos));
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn place_station_snapshot_uses_current_cultivation() {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "fan_iron_anvil".to_string(),
+            anvil_template("fan_iron_anvil", 1),
+        );
+        let mut app = place_app(templates);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let cultivation = Cultivation {
+            qi_current: 6.0,
+            qi_max: 10.0,
+            ..Default::default()
+        };
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with(item_instance(42, "fan_iron_anvil", 1)),
+                PlayerState::default(),
+                cultivation,
+            ))
+            .id();
+
+        app.world_mut().send_event(PlaceForgeStationRequest {
+            player,
+            pos: BlockPos::new(-12, 64, 38),
+            item_instance_id: 42,
+            station_tier: 1,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let body_levels = collect_inventory_snapshot_body_levels(&mut helper);
+        assert_eq!(body_levels.len(), 1);
+        assert!((body_levels[0] - 0.6).abs() < f64::EPSILON);
     }
 
     #[test]
