@@ -51,7 +51,7 @@ public class EquipSlotComponent extends BaseComponent {
             GridSlotComponent.drawItemTexture(context, item, x + 2, y + 2, SLOT_SIZE - 4, SLOT_SIZE - 4);
         } else {
             var textRenderer = MinecraftClient.getInstance().textRenderer;
-            String label = slotType.displayName().substring(0, 1); // Single char: 头/甲/腿/鞋/右/左/双
+            String label = slotType.displayName().substring(0, 1); // Single char: 头/胸/腿/足/右/左/双
             int textWidth = textRenderer.getWidth(label);
             int tx = x + (SLOT_SIZE - textWidth) / 2;
             int ty = y + (SLOT_SIZE - textRenderer.fontHeight) / 2;

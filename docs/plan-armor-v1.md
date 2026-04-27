@@ -299,23 +299,36 @@ Wounds.entries.push（resolve.rs:342,429,443）
 - [x] `PlayerInventory.equipped` 作为装备载体确认
 - [x] Q1/Q4/Q6/Q7/Q8/Q9/Q10 敲定 MVP 默认值
 - [x] `ARMOR_COST_FACTOR` / `broken_multiplier` / cap 等常量有初值
-- [ ] `armor_profiles` 的 data file 位置约定：blueprint JSON vs Rust 硬编码表？active 起稿第一步决策
+- [x] `armor_profiles` 数据源已定：`server/assets/combat/armor_profiles/*.json`，启动期 `ArmorProfileRegistry::load_dir` 扫描加载（PR #46）
 
 ### active 阶段建议开工顺序
 
-1. 先加 `ArmorProfile` struct + `ArmorProfileRegistry` resource（空壳），跑通编译
-2. `DerivedAttrs.defense_profile` 字段扩展 + Default 初始化
-3. `sync_armor_to_derived_attrs` system 注册到 `Update`
-4. `apply_armor_mitigation` 插入 `resolve_attack_intents`，先不消耗耐久
-5. 写 1-2 件测试装备 blueprint（布甲 / 板甲），mock `ArmorProfileRegistry` 填充
-6. playtest：穿上板甲挨打 → HUD 显示 severity 降级；穿布甲挨雷法攻击 → 仍满伤
-7. 补耐久消耗 + `ArmorDurabilityChanged` event
-8. 补 broken 状态 + `broken_multiplier` 降级
-9. Client tooltip + 破损图标渲染
-10. IPC schema + Rust / Java / JSON fixture 测试
-11. `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test` + `./gradlew test build` 全绿
-12. 实机 playtest：4 档护甲 × 5 kind 攻击的减伤曲线合理性
+P0（PR #46 merged 2026-04-25 commit c27ef63a，护甲减免结算闭环）：
+
+1. [x] 先加 `ArmorProfile` struct + `ArmorProfileRegistry` resource（空壳），跑通编译 ✅ `combat/armor.rs`
+2. [x] `DerivedAttrs.defense_profile` 字段扩展 + Default 初始化 ✅ `combat/components.rs:233`
+3. [x] `sync_armor_to_derived_attrs` system 注册（`CombatSystemSet::Intent`，非 `Update` 直挂） ✅ `combat/armor_sync.rs` + `combat/mod.rs:158`
+4. [x] `apply_armor_mitigation` 插入 `resolve_attack_intents`，先不消耗耐久 ✅ `combat/resolve.rs:41-54, 422-428`
+5. [x] 写测试装备 blueprint（首件 `fake_spirit_hide_chest.json`），`ArmorProfileRegistry::load_dir` 加载 ✅
+
+P1（待启动）：
+
+6. [ ] playtest：穿上板甲挨打 → HUD 显示 severity 降级；穿布甲挨雷法攻击 → 仍满伤
+7. [ ] 补耐久消耗 + `ArmorDurabilityChanged` event（`durability_cur` 当前从不衰减；`is_broken` / `effective_multiplier` 已就位但无人触发）
+8. [ ] 补 broken 状态 + `broken_multiplier` 降级（数据路径就绪，缺耐久衰减驱动）
+9. [ ] Client tooltip + 破损图标渲染
+10. [ ] IPC schema + Rust / Java / JSON fixture 测试
+11. [ ] `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test` + `./gradlew test build` 全绿（合并时已绿；P1 推进后需复验）
+12. [ ] 实机 playtest：4 档护甲 × 5 kind 攻击的减伤曲线合理性（当前仅 1 件 fixture，需补皮甲/板甲/灵纹甲）
+13. [ ] §4.2 体修 `defense_power × 1.3` buff 路径（结算侧 `defense_power` 通用乘数尚未在 `apply_armor_mitigation` 链路里读取）
 
 ---
 
-**下一步**：`/consume-plan armor` 启动 active 阶段。第一步先决定 `armor_profiles` 数据源（推荐 blueprint JSON 随 worldgen 一起走）。
+**下一步**：P1 推进入口 — 先做 §7（耐久消耗 + `ArmorDurabilityChanged` event）打通装备消耗闭环，再补足 §2 矩阵 fixture 进 playtest。
+
+---
+
+## §9 进度日志
+
+- 2026-04-24：plan 起稿 + audit + Q1/Q4/Q6/Q7/Q8/Q9/Q10 敲定。
+- 2026-04-25：P0 护甲减免结算闭环已落地（PR #46 merged 2026-04-25 commit c27ef63a）—— `ArmorProfile`/registry/JSON 加载、`DerivedAttrs.defense_profile`、`sync_armor_to_derived_attrs` 注册到 `CombatSystemSet::Intent`、`apply_armor_mitigation` 插在截脉之后 wound push 之前；P1（耐久衰减 + `ArmorDurabilityChanged` event + broken 降级 + client UI + 体修 buff + 矩阵 fixture 扩档）尚未启动。

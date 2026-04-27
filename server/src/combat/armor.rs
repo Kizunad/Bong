@@ -91,10 +91,11 @@ impl ArmorProfile {
     }
 
     pub fn effective_multiplier_for_durability_ratio(&self, durability_ratio: f64) -> f32 {
-        if !durability_ratio.is_finite() {
+        let ratio = durability_ratio;
+        if !ratio.is_finite() {
             return self.broken_multiplier;
         }
-        if durability_ratio <= 0.0 {
+        if ratio <= 0.0 {
             self.broken_multiplier
         } else {
             1.0
@@ -292,7 +293,7 @@ mod tests {
             vec![BodyPart::Chest, BodyPart::Abdomen]
         );
         assert_eq!(profile.kind_mitigation.get(&WoundKind::Cut), Some(&0.25));
-        assert_eq!(profile.durability_max, 100);
+        assert_eq!(profile.durability_max, 10);
         assert_eq!(profile.broken_multiplier, 0.3);
     }
 }

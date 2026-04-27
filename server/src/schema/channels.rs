@@ -30,6 +30,10 @@ pub const CH_SKILL_LV_UP: &str = "bong:skill/lv_up";
 pub const CH_SKILL_CAP_CHANGED: &str = "bong:skill/cap_changed";
 pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
 
+// 活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
+// 玩家踏进 / 走出 TSY 秘境时由 server publish；entry / exit 共享同一频道，consumer 按 `kind` 字段 dispatch。
+pub const CH_TSY_EVENT: &str = "bong:tsy_event";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +54,6 @@ mod tests {
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
         assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
+        assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
     }
 }

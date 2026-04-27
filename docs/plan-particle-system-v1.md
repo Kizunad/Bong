@@ -247,7 +247,7 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 
 ## §5 实施节点
 
-### 5.1 Phase 0 — 服务端 VFX 事件 schema 与范围过滤（新增于 2026-04-13 审计）
+### 5.1 Phase 0 — 服务端 VFX 事件 schema 与范围过滤（新增于 2026-04-13 审计）✅
 
 **已有基础（亲眼核实）**：
 - `bong:server_data` CustomPayload 发送通道已在用：`server/src/network/agent_bridge.rs:7` 定义 `SERVER_DATA_CHANNEL = "bong:server_data"`，`server/src/network/cultivation_detail_emit.rs:91` 调用 `client.send_custom_payload(ident!("bong:server_data"), &bytes)`
@@ -263,15 +263,16 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 - [x] **范围过滤新抽象**（关键）：基于 `Position` + 视距过滤收件人。现有 `emit_player_state_payloads` 是"每在线 client 一份"，VFX 需要"按发源点筛订阅者"——属本 phase 新增系统
 - [x] 客户端 `BongNetworkHandler` 注册 VFX 事件分发器，复用现有 dispatch 模式
 
-### 5.2 Phase 1 — 三个渲染基类 + 最小端到端链路
+### 5.2 Phase 1 — 三个渲染基类 + 最小端到端链路 ✅
 
 - [x] §1 三个基类（Line/Ribbon/GroundDecal）原型 + 单元测试渲染
 - [x] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
 
-### 5.3 Phase 2 — 首批资产与扩展
+### 5.3 Phase 2 — 首批资产与扩展（部分 ✅）
 
-- [x] §4.1 首批粒子贴图资源制作（9 种）
-- [ ] 飞剑实体 + Ribbon 拖尾 demo
+- [x] §4.1 首批粒子贴图资源制作（9 种，含 24 张符文字符变体）
+- [x] §4.4 首批 6 个 event player 注册（sword_qi_slash / breakthrough_pillar / enlightenment_aura / tribulation_lightning / formation_activate / death_soul_dissipate，见 `VfxBootstrap`）
+- [ ] 飞剑实体 + Ribbon 拖尾 demo（武器模型已就位，entity demo 未做）
 - [ ] 符阵 BlockEntity + GroundDecal 粒子 demo
 
 ### 5.4 Phase 3 — 规模化与收敛
@@ -320,3 +321,9 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 
 **姊妹文档**：
 - `plan-vfx-v1.md`（光影栈总纲与 Iris 集成策略）
+
+---
+
+## §9 进度日志
+
+- 2026-04-25：核对实装——P0 ✅、P1 ✅（三基类 Line/Ribbon/GroundDecal + Sprite 全 extends `SpriteBillboardParticle`，无 shader 冲突）、P2 部分 ✅（9 类粒子贴图齐 + 6 个 event player 已注册 `VfxBootstrap`，飞剑/符阵 demo 待办）；emissive RenderLayer、entity/BlockEntity 集成、§7 开放问题仍未动。

@@ -11,7 +11,7 @@ use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_ARMOR_DURABILITY_CHANGED,
     CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
     CH_CULTIVATION_DEATH, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_PLAYER_CHAT,
-    CH_WORLD_STATE,
+    CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -20,6 +20,7 @@ use crate::schema::cultivation::{
     BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::narration::NarrationV1;
+use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::world_state::WorldStateV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -50,6 +51,8 @@ pub enum RedisOutbound {
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     BotanyEcology(BotanyEcologySnapshotV1),
+    TsyEnter(TsyEnterEventV1),
+    TsyExit(TsyExitEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -346,6 +349,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BOTANY_ECOLOGY,
+                payload,
+            })
+        }
+        RedisOutbound::TsyEnter(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TsyEnterEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TsyExit(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TsyExitEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
                 payload,
             })
         }

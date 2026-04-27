@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
+import com.bong.client.combat.ArmorProfileStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.BodyPartState;
@@ -195,7 +196,7 @@ public final class MiniBodyHudPlanner {
 
     private static boolean isBrokenArmor(InventoryItem item) {
         if (item == null || item.isEmpty()) return false;
-        return item.durability() <= 0.0;
+        return ArmorProfileStore.isArmor(item.itemId()) && item.durability() <= 0.0;
     }
 
     private static void appendCrackGlyph(List<HudRenderCommand> out, int cx, int cy) {

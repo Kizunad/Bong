@@ -665,3 +665,10 @@ export const TsyCollapseStartedIpcV1 = Type.Object({
 ---
 
 **下一步**：P0/P1/P2（P3/P4 可选）就位后，`/consume-plan tsy-extract` 启动 P5。
+
+---
+
+## 进度日志
+
+- 2026-04-25：纯设计骨架，server/src 内无 `RiftPortal` / `RiftKind` / `ExtractProgress` / `StartExtractRequest` / `TsyPresence` 任何代码痕迹（前置 P0 也未实装），`tsy_portals.json` 未创建，agent schema 无 `extract-v1`，client 无 `ExtractProgressHud`；现有 server 中 `Portal` 字样仅指 `SpawnPortal`（terrain 出生地结构物，无关）。整 plan 待 P0/P1/P2 就位后开工。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，§3 `DimensionTransferRequest` event + `apply_dimension_transfers` system 已就位，本 plan §1（撤离传送）现有上游接口可直接消费。仍 blocking on **P0/P1/P2 串行前置**（P3/P4 可选）。

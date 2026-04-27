@@ -346,6 +346,7 @@ static String humanizeRealm(String realmKey) {
 - **Q1** ✅ `cultivation/breakthrough.rs` 的突破条件：`try_breakthrough` 函数用 `success = base_rate × meridian_integrity × composure × completeness × (1 + material_bonus)`，`base_rate` 按六境查表（Awaken=1.0 / Induce=0.9 / ... / Void=0.3），`material_bonus` 封顶 +0.30。qi 消耗按境界查表（Void=800 qi）。化虚渡劫走 `tribulation.rs::initiate_tribulation`，本 handler 不处理
 - **Q2** ✅ PlayerState 6 字段：realm/spirit_qi/spirit_qi_max 与 Cultivation 并行（删），experience 不并行但只喂 REALM_LADDER（随 ladder 删），karma/inventory_score 独立保留
 - **Q3** ✅ client 端 `PlayerStateViewModel.humanizeRealm` 已存在但映射传统仙侠，替换为六境映射（见 §2.4）
+- **Q9** ✅ Cultivation 持久化已独立（`server/src/persistence/mod.rs:1634/1931/3896/5698` 已 Query `&Cultivation`），§2.7 只需删 PlayerState 列，无需新建 Cultivation 存表（scope 不扩）
 
 ### 保留
 
@@ -354,7 +355,6 @@ static String humanizeRealm(String realmKey) {
 - **Q6** 突破失败 narration：由 cultivation::breakthrough 自己 emit，格式参照现有 `CultivationSnapshotV1`，不走 gameplay 路径。narration 措辞细节归 plan-narrative-v1
 - **Q7** 境界跌落（`RealmRegressed` event from qi_zero_decay.rs）的 UI 反馈：现状 client 已消费 `CultivationSnapshotV1`，realm 字段变化自动刷新 UI，无需额外 event
 - **Q8** `CultivationSnapshotV1.qi_max_frozen` 是 cultivation 内部状态（qi 归零后 qi_max 冻结 tick 阈值），client 可显示也可不显示 —— 留给后续 UI plan
-- **Q9 (新增)** Cultivation 持久化是否已独立存表？如是，§2.7 的 SQL migration 只删 PlayerState 列；如否，本 plan 需要同步建 Cultivation 持久化，scope 再扩 ~100 行。起稿时第一步 audit
 
 ---
 
@@ -389,7 +389,7 @@ static String humanizeRealm(String realmKey) {
 - [x] progression.rs 死代码状态确认（无生产调用者，仅 test）
 - [x] IPC schema realm 源头双轨问题 audit 完成
 - [x] karma 保留决策确认（不并行，不纳入本 plan）
-- [ ] Q9 Cultivation 持久化独立性 audit（起稿第一步做）
+- [x] Q9 Cultivation 持久化独立性 audit（2026-04-25：`persistence/mod.rs:1634/1931/3896/5698` 已 Query `&Cultivation`，独立存表，§2.7 不需新建 Cultivation 持久化）
 
 ### active 阶段建议开工顺序（`/consume-plan cultivation-mvp-cleanup`）
 
@@ -409,4 +409,10 @@ static String humanizeRealm(String realmKey) {
 
 ---
 
-**下一步**：`/consume-plan cultivation-mvp-cleanup` 启动 active 阶段。第一步先 audit Q9（Cultivation 持久化独立性）。
+**下一步**：`/consume-plan cultivation-mvp-cleanup` 启动 active 阶段。Q9 已答（Cultivation 持久化独立），可直接从 §7 开工顺序第 2 步（加 `AttemptBreakthroughEvent`）开始。
+
+---
+
+## §8 进度日志
+
+- 2026-04-25：Q9 audit 完成（`persistence/mod.rs` 已 Query `&Cultivation`，独立存表）；§7 检查表全绿，可直接进 active 实施（§1/§2 删除-新增清单尚未动）。

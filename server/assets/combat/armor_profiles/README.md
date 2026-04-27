@@ -17,7 +17,7 @@ Each file uses this shape:
       "burn": 0.10,
       "concussion": 0.15
     },
-    "durability_max": 100,
+    "durability_max": 10,
     "broken_multiplier": 0.3
   }
 }

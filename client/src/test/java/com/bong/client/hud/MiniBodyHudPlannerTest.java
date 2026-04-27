@@ -103,4 +103,20 @@ class MiniBodyHudPlannerTest {
         // Chest crack glyph draws 9 tiny rects per covered part (CHEST + ABDOMEN).
         assertEquals(base + 18, withCrack);
     }
+
+    @Test
+    void brokenNonArmorInArmorSlotDoesNotAddCrackGlyphs() {
+        CombatHudState hud = CombatHudState.create(1.0f, 0.8f, 0.6f, DerivedAttrFlags.none());
+
+        var equipped = new EnumMap<EquipSlotType, InventoryItem>(EquipSlotType.class);
+        equipped.put(
+            EquipSlotType.CHEST,
+            InventoryItem.createFull(1L, "training_blade", "练习刀", 1, 3, 2.0, "common", "", 1, 1.0, 0.0)
+        );
+
+        int base = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).size();
+        int withNonArmor = MiniBodyHudPlanner.buildCommands(hud, null, equipped, 0L, 1920, 1080).size();
+
+        assertEquals(base, withNonArmor);
+    }
 }

@@ -807,3 +807,17 @@ pub struct DeathEvent {
 - **P3 plan-tsy-polish-v1** — 封灵匣 / UI tooltip / 入口感知 HUD
 - **plan-HUD-v1 扩展** — 耐久可视化（tooltip 显示 durability）
 - **plan-shelflife-v1** — 凡物的"灵气流失税"在 TSY 内外的行为（MVP 不变，后续看）
+
+---
+
+## §13 进度日志
+
+- 2026-04-25：本 plan 仍为纯设计骨架，server 端 0 行落地。核查实际代码：
+  - `ItemRarity` 仅 5 档（Common/Uncommon/Rare/Epic/Legendary），未扩 `Ancient`（§1.1 未做）
+  - `server/src/inventory/` 下无 `ancient_relics.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs`（§1–§4 未做）
+  - `DroppedLootRegistry` 无 `ownerless` 字段（§2.3 未做）
+  - `DeathEvent` 仍是 `{ target, cause, at_tick }`，未扩 `attacker / attacker_player_id`（§6 未做）
+  - `TsyPresence` 在 server 端 grep 无命中，§-1 现状表中标注的"P0 新增"实际尚未落地，本 plan 的前置依赖（plan-tsy-zone-v1）未 merge
+  - client mixin 列表无 `MixinPlayerEntityDrop`，仅有 Camera/GameRenderer/HeldItemRenderer/InGameHud/MinecraftClient/Mouse/PlayerEntityHeldItem（§5 未做）
+  - 全部 `[ ]` 维持未勾选状态。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面 API / `Zone.dimension` / `CurrentDimension` 全部就位。本 plan 仍 blocking on **P0 `tsy-zone`**（`TsyPresence` component 由 P0 引入），需 P0 demoable 后才能开 `/consume-plan tsy-loot`。横切依赖 `plan-death-lifecycle-v1 §6 DeathEvent.attacker` 仍未启动。

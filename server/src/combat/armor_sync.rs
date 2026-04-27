@@ -10,6 +10,44 @@ use crate::inventory::{
     PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 
+pub(crate) fn build_defense_profile_from_inventory(
+    inv: &PlayerInventory,
+    armor_profiles: &ArmorProfileRegistry,
+) -> HashMap<(BodyPart, WoundKind), f32> {
+    let mut profile: HashMap<(BodyPart, WoundKind), f32> = HashMap::new();
+
+    // MVP 只读四个护甲槽。
+    for slot in [
+        EQUIP_SLOT_HEAD,
+        EQUIP_SLOT_CHEST,
+        EQUIP_SLOT_LEGS,
+        EQUIP_SLOT_FEET,
+    ] {
+        let Some(item) = inv.equipped.get(slot) else {
+            continue;
+        };
+        let Some(ap) = armor_profiles.get(item.template_id.as_str()) else {
+            continue;
+        };
+
+        let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
+        for body in &ap.body_coverage {
+            for (kind, mitigation) in &ap.kind_mitigation {
+                let m = (mitigation * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
+                if m <= 0.0 {
+                    continue;
+                }
+                profile
+                    .entry((*body, *kind))
+                    .and_modify(|existing| *existing = existing.max(m))
+                    .or_insert(m);
+            }
+        }
+    }
+
+    profile
+}
+
 /// plan-armor-v1 §1.3：每当装备变化，重新聚合护甲二维矩阵。
 ///
 /// 聚合规则：同 `(BodyPart, WoundKind)` 多件覆盖时取最大，不叠加。
@@ -18,38 +56,8 @@ pub fn sync_armor_to_derived_attrs(
     armor_profiles: Res<ArmorProfileRegistry>,
 ) {
     for (inv, mut derived) in &mut query {
-        let mut profile: HashMap<(BodyPart, WoundKind), f32> = HashMap::new();
-
-        // MVP 只读四个护甲槽。
-        for slot in [
-            EQUIP_SLOT_HEAD,
-            EQUIP_SLOT_CHEST,
-            EQUIP_SLOT_LEGS,
-            EQUIP_SLOT_FEET,
-        ] {
-            let Some(item) = inv.equipped.get(slot) else {
-                continue;
-            };
-            let Some(ap) = armor_profiles.get(item.template_id.as_str()) else {
-                continue;
-            };
-
-            let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
-            for body in &ap.body_coverage {
-                for (kind, mitigation) in &ap.kind_mitigation {
-                    let m = (mitigation * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
-                    if m <= 0.0 {
-                        continue;
-                    }
-                    profile
-                        .entry((*body, *kind))
-                        .and_modify(|existing| *existing = existing.max(m))
-                        .or_insert(m);
-                }
-            }
-        }
-
-        derived.defense_profile = profile;
+        derived.defense_profile =
+            build_defense_profile_from_inventory(inv, armor_profiles.as_ref());
     }
 }
 
@@ -170,7 +178,6 @@ mod tests {
             ))
             .id();
 
-        // Changed<PlayerInventory> 需要一次 mutation 才触发。
         {
             let world = app.world_mut();
             let mut entity_mut = world.entity_mut(entity);

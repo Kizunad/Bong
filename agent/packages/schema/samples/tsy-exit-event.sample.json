@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "kind": "tsy_exit",
+  "tick": 99999,
+  "player_id": "kiz",
+  "family_id": "tsy_lingxu_01",
+  "duration_ticks": 12000,
+  "qi_drained_total": 350.5
+}

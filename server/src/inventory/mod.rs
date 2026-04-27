@@ -1046,9 +1046,10 @@ pub struct InventoryDurabilityUpdate {
     pub durability: f64,
 }
 
-/// bevy Event：库存中某个物品耐久变更（面向单个玩家 client）。
+/// Inventory item durability changed for a specific client entity.
 ///
-/// 用于低频增量 UI 更新（例如护甲命中扣耐久），避免必须依赖完整 snapshot 刷新。
+/// This event exists to allow low-frequency incremental updates (e.g. armor hit
+/// durability ticks) without requiring a full `inventory_snapshot` UI refresh.
 #[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
 pub struct InventoryDurabilityChangedEvent {
     pub entity: Entity,
@@ -1096,7 +1097,12 @@ pub struct DroppedLootEntry {
 
 #[derive(Default, Resource, Debug)]
 pub struct DroppedLootRegistry {
-    pub by_owner: HashMap<Entity, Vec<DroppedLootEntry>>,
+    /// World-visible drops keyed by `instance_id`.
+    ///
+    /// The pickup request only carries `instance_id`, so the registry must be
+    /// addressable without an implicit owner. `instance_id` values are globally
+    /// unique within a running server.
+    pub entries: HashMap<u64, DroppedLootEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1397,20 +1403,17 @@ pub fn apply_death_drop_on_revive(
             .get(ev.entity)
             .map(|pos| pos.0)
             .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
-        let drops = outcome
-            .dropped
-            .iter()
-            .enumerate()
-            .map(|(idx, dropped)| DroppedLootEntry {
+        for (idx, dropped) in outcome.dropped.iter().enumerate() {
+            let entry = DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
                 source_container_id: dropped.container_id.clone(),
                 source_row: dropped.row,
                 source_col: dropped.col,
                 world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
                 item: dropped.instance.clone(),
-            })
-            .collect::<Vec<_>>();
-        dropped_registry.by_owner.insert(ev.entity, drops);
+            };
+            dropped_registry.entries.insert(entry.instance_id, entry);
+        }
 
         dropped_events.send(DroppedItemEvent {
             entity: ev.entity,
@@ -1557,30 +1560,24 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
     container_weight + equipped_weight + hotbar_weight
 }
 
-pub fn dropped_loot_snapshot(
-    registry: &DroppedLootRegistry,
-    owner: Entity,
-) -> Vec<DroppedLootEntry> {
-    registry.by_owner.get(&owner).cloned().unwrap_or_default()
+pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
+    let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
+    // Deterministic ordering avoids client-side insertionOrder churn.
+    drops.sort_by_key(|entry| entry.instance_id);
+    drops
 }
 
 pub fn pickup_dropped_loot_instance(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
-    owner: Entity,
     player_pos: [f64; 3],
     instance_id: u64,
 ) -> Result<InventoryRevision, String> {
-    let entries = registry
-        .by_owner
-        .get_mut(&owner)
-        .ok_or_else(|| format!("no dropped loot registered for {owner:?}"))?;
-    let idx = entries
-        .iter()
-        .position(|entry| entry.instance_id == instance_id)
+    let entry = registry
+        .entries
+        .get(&instance_id)
+        .cloned()
         .ok_or_else(|| format!("dropped instance {instance_id} not found"))?;
-
-    let entry = entries[idx].clone();
     let dx = entry.world_pos[0] - player_pos[0];
     let dy = entry.world_pos[1] - player_pos[1];
     let dz = entry.world_pos[2] - player_pos[2];
@@ -1595,10 +1592,7 @@ pub fn pickup_dropped_loot_instance(
     attach_at_location(inventory, entry.item, &location)?;
     bump_revision(inventory);
 
-    entries.remove(idx);
-    if entries.is_empty() {
-        registry.by_owner.remove(&owner);
-    }
+    registry.entries.remove(&instance_id);
 
     Ok(inventory.revision)
 }
@@ -1606,7 +1600,6 @@ pub fn pickup_dropped_loot_instance(
 pub fn discard_inventory_item_to_dropped_loot(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
-    owner: Entity,
     player_pos: [f64; 3],
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
@@ -1641,11 +1634,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         }
     };
 
-    let next_idx = registry
-        .by_owner
-        .get(&owner)
-        .map(|entries| entries.len())
-        .unwrap_or(0);
+    let next_idx = registry.entries.len();
     let dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
@@ -1658,11 +1647,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         ],
         item,
     };
-    registry
-        .by_owner
-        .entry(owner)
-        .or_default()
-        .push(dropped.clone());
+    registry.entries.insert(instance_id, dropped.clone());
 
     Ok(InventoryDiscardOutcome {
         revision: inventory.revision,
@@ -3448,9 +3433,9 @@ cols = 4
 
         let owner = Entity::PLACEHOLDER;
         let mut registry = DroppedLootRegistry::default();
-        registry.by_owner.insert(
-            owner,
-            vec![DroppedLootEntry {
+        registry.entries.insert(
+            42,
+            DroppedLootEntry {
                 instance_id: 42,
                 source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
                 source_row: 0,
@@ -3471,21 +3456,17 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                 },
-            }],
+            },
         );
 
-        let revision = pickup_dropped_loot_instance(
-            &mut inventory,
-            &mut registry,
-            owner,
-            [0.0, 64.0, 0.0],
-            42,
-        )
-        .expect("pickup should succeed");
+        let revision =
+            pickup_dropped_loot_instance(&mut inventory, &mut registry, [0.0, 64.0, 0.0], 42)
+                .expect("pickup should succeed");
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);
-        assert!(!registry.by_owner.contains_key(&owner));
+        assert!(!registry.entries.contains_key(&42));
+        let _ = owner;
     }
 
     #[test]
@@ -3497,7 +3478,6 @@ cols = 4
         let outcome = discard_inventory_item_to_dropped_loot(
             &mut inventory,
             &mut registry,
-            owner,
             [0.0, 64.0, 0.0],
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
@@ -3510,13 +3490,13 @@ cols = 4
 
         assert_eq!(outcome.revision, InventoryRevision(8));
         assert!(inventory.containers[0].items.is_empty());
-        let drops = registry
-            .by_owner
-            .get(&owner)
+        let entry = registry
+            .entries
+            .get(&42)
             .expect("registry should contain dropped item");
-        assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].instance_id, 42);
-        assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+        assert_eq!(entry.instance_id, 42);
+        assert_eq!(entry.source_container_id, MAIN_PACK_CONTAINER_ID);
+        let _ = owner;
     }
 
     #[test]

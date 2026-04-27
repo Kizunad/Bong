@@ -38,3 +38,6 @@ export * from "./alchemy.js";
 
 // 子技能 (plan-skill-v1 §8)
 export * from "./skill.js";
+
+// 活坍缩渊 (plan-tsy-zone-v1 §1.4)
+export * from "./tsy.js";

@@ -844,3 +844,11 @@ MVP 建议不拆，整吃一次。
 - `plan-daoxiang-ecology-v1.md` — 道伥在主世界的生态（长期 balance、击杀奖励、与其他 NPC 的互动）
 
 所有后续 plan 复用 `plan-tsy-v1.md` meta 里的术语表和设计轴心，避免设定漂移。
+
+---
+
+## 进度日志
+
+- **2026-04-25**：核对 `server/src/` 后确认本 plan（P2 TSY 生命周期与道伥）当前为纯设计骨架，无任何实装；§-1 标注的 P0/P1 现状（`tsy_lifecycle.rs` / `tsy_drain.rs` / `tsy_portal.rs` / `tsy_filter.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs` / `NpcArchetype` 等）在仓库中均未发现对应代码，全部 `[ ]` 维持未勾选。后续推进需先落地 P0（TsyPresence + zone 识别 + 负压 drain + portal + 过滤）和 P1（遗物 spawn + 死亡分流 + 干尸），再开 P2。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面基础设施就位；本 plan 仍 blocking on **P0 `tsy-zone` + P1 `tsy-loot`** 串行前置。`NpcArchetype::Daoxiang` variant 由本 plan §4 引入（npc-ai PR #45 已加 `Zombie/Commoner/Rogue/Beast/Disciple/GuardianRelic` 6 variant，未含 Daoxiang）。
+

@@ -42,21 +42,27 @@ use crate::world::events::ActiveEventsResource;
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
 const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
 
-fn apply_armor_mitigation(wound: &mut Wound, derived: &DerivedAttrs, contam: &mut f64) -> bool {
-    let Some(&m) = derived.defense_profile.get(&(wound.location, wound.kind)) else {
-        return false;
-    };
+fn apply_armor_mitigation(
+    wound: &mut Wound,
+    derived: &DerivedAttrs,
+    contam: &mut f64,
+) -> Option<f32> {
+    let &m = derived.defense_profile.get(&(wound.location, wound.kind))?;
     if m <= 0.0 {
-        return false;
+        return None;
     }
 
     let m = m.clamp(0.0, ARMOR_MITIGATION_CAP);
+    if m <= 0.0 {
+        return None;
+    }
     wound.severity *= 1.0 - m;
     wound.bleeding_per_sec *= 1.0 - m;
+    // Q10: armor absorbs severity -> contamination should scale down too.
+    // New spec: additionally scale contamination to 0.1x on an armor hit.
     *contam *= 1.0 - f64::from(m);
-    // New spec: armor hit should heavily damp contamination throughput.
     *contam *= ARMOR_HIT_CONTAMINATION_MULTIPLIER;
-    true
+    Some(m)
 }
 
 const DEBUG_ATTACK_STAMINA_COST: f32 = 12.0;
@@ -313,7 +319,6 @@ pub fn resolve_attack_intents(
                                 let dropped = discard_inventory_item_to_dropped_loot(
                                     &mut inventory,
                                     dropped_loot_registry,
-                                    intent.attacker,
                                     [
                                         attacker_position.x,
                                         attacker_position.y,
@@ -429,18 +434,17 @@ pub fn resolve_attack_intents(
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
         if let Some(attrs) = defender_attrs {
-            let armor_hit = apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            let armor_mitigation =
+                apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
             // 同步污染 source 的最后一条（本次命中刚 push）。
             if let Some(last_contam) = contamination.entries.last_mut() {
                 last_contam.amount = emitted_contam_delta;
             }
 
             // 护甲命中：扣减装备耐久（少量）。
-            if armor_hit {
-                if let (Some(armor_profiles), Ok(mut inventory)) = (
-                    armor_profiles.as_deref(),
-                    inventories.get_mut(target_entity),
-                ) {
+            if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
+            {
+                if let Ok(mut inventory) = inventories.get_mut(target_entity) {
                     let best: Option<(u64, u32, f64, f32)> = [
                         EQUIP_SLOT_HEAD,
                         EQUIP_SLOT_CHEST,
@@ -480,23 +484,28 @@ pub fn resolve_attack_intents(
                             let next_abs = (cur_abs - ARMOR_HIT_DURABILITY_COST_POINTS).max(0.0);
                             let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
                             if next_ratio < cur_ratio {
-                                if let Err(error) = set_item_instance_durability(
+                                match set_item_instance_durability(
                                     &mut inventory,
                                     instance_id,
                                     next_ratio,
                                 ) {
-                                    tracing::warn!(
-                                        "[bong][combat][armor] failed to persist durability for instance {}: {}",
-                                        instance_id,
-                                        error
-                                    );
-                                } else {
-                                    durability_changed_tx.send(InventoryDurabilityChangedEvent {
-                                        entity: target_entity,
-                                        revision: inventory.revision,
-                                        instance_id,
-                                        durability: next_ratio,
-                                    });
+                                    Ok(update) => {
+                                        durability_changed_tx.send(
+                                            InventoryDurabilityChangedEvent {
+                                                entity: target_entity,
+                                                revision: update.revision,
+                                                instance_id: update.instance_id,
+                                                durability: update.durability,
+                                            },
+                                        );
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][armor] failed to persist durability for instance {}: {}",
+                                            instance_id,
+                                            error
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -968,7 +977,9 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+
+        app.insert_resource(crate::inventory::ItemRegistry::default());
         app.insert_resource(ArmorProfileRegistry::from_map(
             std::collections::HashMap::from([(
                 "fake_spirit_hide".to_string(),
@@ -981,10 +992,12 @@ mod tests {
                 },
             )]),
         ));
+
         app.add_systems(
             Update,
             (
                 crate::combat::status::attribute_aggregate_tick,
+                crate::combat::weapon::sync_weapon_component_from_equipped,
                 crate::combat::armor_sync::sync_armor_to_derived_attrs,
                 resolve_attack_intents,
             ),
@@ -1004,6 +1017,8 @@ mod tests {
             Wounds::default(),
             Stamina::default(),
         );
+
+        // 给 target 装一件胸甲，初始耐久比例 1.0。
         app.world_mut().entity_mut(target).insert(PlayerInventory {
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -1036,14 +1051,6 @@ mod tests {
             max_weight: 50.0,
         });
 
-        // Changed<PlayerInventory> 需要一次 mutation 才触发。
-        {
-            let world = app.world_mut();
-            let mut entity_mut = world.entity_mut(target);
-            let mut inv = entity_mut.get_mut::<PlayerInventory>().unwrap();
-            inv.revision = InventoryRevision(inv.revision.0.saturating_add(1));
-        }
-
         app.update();
 
         app.world_mut().send_event(AttackIntent {
@@ -1062,12 +1069,9 @@ mod tests {
             .iter_current_update_events()
             .next()
             .expect("combat event should emit");
-
-        // emit 逻辑：
-        // - base_contam 用的是「护甲减免前」的 damage
-        // - CombatEvent.damage 用的是「护甲减免后」的 damage
-        // 所以期望值可直接用 event.damage × DEBUG_ATTACK_CONTAMINATION_FACTOR × kind_profile.contam_mul
-        // 再乘本 plan 的 0.1x 缩放。
+        // event.damage 是 mitigation 之后的 wound_severity（已乘 1-m）。
+        // emitted_contam_delta = init_damage * 0.25 * 1 * 0.8 * (1-m) * MULTIPLIER
+        //                       = event.damage * 0.25 * 1 * 0.8 * MULTIPLIER。
         let expected_contam =
             f64::from(event.damage) * 0.25 * 1.0 * 0.8 * ARMOR_HIT_CONTAMINATION_MULTIPLIER;
         assert_eq!(event.contam_delta, expected_contam);
@@ -1120,7 +1124,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -1251,7 +1255,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1342,7 +1346,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let npc_attacker = spawn_npc(
@@ -1422,7 +1426,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let player = spawn_player(
@@ -1518,7 +1522,7 @@ mod tests {
             (setup_test_layer, spawn_runtime_npc.after(setup_test_layer)),
         );
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         app.update();
@@ -1590,7 +1594,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1651,7 +1655,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1727,7 +1731,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1776,7 +1780,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1836,7 +1840,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -1927,7 +1931,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2005,7 +2009,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2082,7 +2086,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2153,7 +2157,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let attacker = spawn_player(
@@ -2243,7 +2247,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2300,7 +2304,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2399,7 +2403,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2504,7 +2508,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2641,7 +2645,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2767,7 +2771,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
@@ -2889,12 +2893,11 @@ mod tests {
 
         let dropped_registry = app.world().resource::<DroppedLootRegistry>();
         let dropped = dropped_registry
-            .by_owner
-            .get(&attacker)
+            .entries
+            .get(&42)
             .expect("broken weapon should be registered as dropped loot");
-        assert_eq!(dropped.len(), 1);
-        assert_eq!(dropped[0].instance_id, 42);
-        assert_eq!(dropped[0].item.durability, 0.0);
+        assert_eq!(dropped.instance_id, 42);
+        assert_eq!(dropped.item.durability, 0.0);
     }
 
     #[test]
@@ -2906,7 +2909,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let cut_attacker = spawn_player(
@@ -3005,7 +3008,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
-        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
         let pierce_attacker = spawn_player(
@@ -3078,5 +3081,121 @@ mod tests {
             .amount;
 
         assert!(pierce_contam > blunt_contam);
+    }
+
+    /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
+    /// 的真实形态（**无 LifeRecord**）双方交叉 `AttackIntent`，断言 Wounds
+    /// 写入 + 致命伤触发 DeathEvent。既有测试用 test-only helper 挂了
+    /// LifeRecord，未代表生产形态；本测试补齐。
+    #[test]
+    fn npc_to_npc_duel_via_runtime_bundle_resolves_damage_and_death() {
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        // 两个 NPC 用真实生产 bundle，无 LifeRecord。
+        let npc_a = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_a = npc_runtime_bundle(npc_a, NpcArchetype::Rogue);
+        // 让 A 血量濒死以便单击致命；qi 注满以过 resolver 的 qi_invest 检查。
+        bundle_a.wounds = Wounds {
+            health_current: 3.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        };
+        bundle_a.cultivation.qi_current = 80.0;
+        bundle_a.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_a).insert(bundle_a);
+
+        let npc_b = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
+            .id();
+        let mut bundle_b = npc_runtime_bundle(npc_b, NpcArchetype::Zombie);
+        bundle_b.cultivation.qi_current = 80.0;
+        bundle_b.cultivation.qi_max = 100.0;
+        app.world_mut().entity_mut(npc_b).insert(bundle_b);
+
+        // 双向 AttackIntent：A 打 B 一下（非致命），B 打 A 一下（致命）。
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_a,
+            target: Some(npc_b),
+            issued_at_tick: 199,
+            reach: FIST_REACH,
+            qi_invest: 8.0,
+            wound_kind: WoundKind::Blunt,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_b,
+            target: Some(npc_a),
+            issued_at_tick: 199,
+            reach: NpcMeleeProfile::spear().reach,
+            qi_invest: 12.0,
+            wound_kind: WoundKind::Pierce,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let a_wounds = app.world().entity(npc_a).get::<Wounds>().unwrap();
+        let b_wounds = app.world().entity(npc_b).get::<Wounds>().unwrap();
+
+        assert_eq!(
+            a_wounds.entries.len(),
+            1,
+            "A should take exactly one wound from B's pierce"
+        );
+        assert_eq!(a_wounds.entries[0].kind, WoundKind::Pierce);
+        assert!(
+            a_wounds.health_current <= 0.0,
+            "A was 3hp + pierce should be lethal, got {}",
+            a_wounds.health_current
+        );
+
+        assert_eq!(
+            b_wounds.entries.len(),
+            1,
+            "B should take exactly one wound from A's blunt"
+        );
+        assert_eq!(b_wounds.entries[0].kind, WoundKind::Blunt);
+        assert!(
+            b_wounds.health_current > 0.0,
+            "B full-hp should survive one blunt, got {}",
+            b_wounds.health_current
+        );
+
+        // Contamination 同样被写（双向都有 attacker_id = canonical_npc_id）。
+        let a_contam = app.world().entity(npc_a).get::<Contamination>().unwrap();
+        let b_contam = app.world().entity(npc_b).get::<Contamination>().unwrap();
+        assert_eq!(
+            a_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_b).as_str())
+        );
+        assert_eq!(
+            b_contam.entries[0].attacker_id.as_deref(),
+            Some(canonical_npc_id(npc_a).as_str())
+        );
+
+        // DeathEvent 应该恰为 A 触发（B 未致命）。
+        let deaths: Vec<_> = app
+            .world()
+            .resource::<Events<DeathEvent>>()
+            .get_reader()
+            .read(app.world().resource::<Events<DeathEvent>>())
+            .cloned()
+            .collect();
+        assert_eq!(deaths.len(), 1);
+        assert_eq!(deaths[0].target, npc_a);
     }
 }

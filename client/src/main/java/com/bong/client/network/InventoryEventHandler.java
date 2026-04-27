@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.combat.ArmorProfileStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
@@ -141,12 +142,12 @@ public final class InventoryEventHandler implements ServerDataHandler {
                         "Ignoring inventory_event 'durability_changed' payload: invalid durability");
                 }
 
-                // If an equipped armor piece breaks (durability hits 0), show a short toast.
+                // If an equipped armor profile breaks (durability hits 0), surface a short toast.
                 InventoryItem existing = findItem(current, instanceId);
                 if (existing != null
                     && existing.durability() > 0.0
                     && durability <= 0.0
-                    && isArmorSlotItem(current, instanceId)) {
+                    && isEquippedArmor(current, existing, instanceId)) {
                     EquipSlotType slot = armorSlotForInstance(current, instanceId);
                     String label = slot == null ? "护甲" : slot.displayName();
                     alertToast = new ServerDataDispatch.ToastSpec(
@@ -294,7 +295,10 @@ public final class InventoryEventHandler implements ServerDataHandler {
         return null;
     }
 
-    private static boolean isArmorSlotItem(InventoryModel model, long instanceId) {
+    private static boolean isEquippedArmor(InventoryModel model, InventoryItem item, long instanceId) {
+        if (item == null || !ArmorProfileStore.isArmor(item.itemId())) {
+            return false;
+        }
         EquipSlotType slot = armorSlotForInstance(model, instanceId);
         return slot == EquipSlotType.HEAD
             || slot == EquipSlotType.CHEST

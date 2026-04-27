@@ -20,9 +20,6 @@ public record PlayerStateViewModel(
 ) {
     static final int BAR_SEGMENTS = 10;
     static final int KARMA_AXIS_SEGMENTS = 9;
-    private static final double REALM_SCORE_QI_REFINING_DIVISOR = 12.0d;
-    private static final double REALM_SCORE_FOUNDATION_BASE = 0.7d;
-    private static final double REALM_SCORE_FOUNDATION_STEP = 0.08d;
 
     public PlayerStateViewModel {
         Objects.requireNonNull(statusText, "statusText");
@@ -98,36 +95,24 @@ public record PlayerStateViewModel(
     static String humanizeRealm(String realmKey) {
         Objects.requireNonNull(realmKey, "realmKey");
 
-        String normalized = realmKey.trim().toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty() || "mortal".equals(normalized)) {
+        String trimmed = realmKey.trim();
+        if (trimmed.isEmpty()) {
             return "凡体";
         }
 
-        if (normalized.startsWith("qi_refining_")) {
-            Integer stage = parseStage(normalized, "qi_refining_");
-            if (stage != null) {
-                return "练气" + chineseStage(stage) + "层";
-            }
-        }
-
-        if (normalized.startsWith("foundation_establishment_")) {
-            Integer stage = parseStage(normalized, "foundation_establishment_");
-            if (stage != null) {
-                return "筑基" + chineseStage(stage) + "层";
-            }
-        }
-
-        if (normalized.startsWith("foundation_")) {
-            Integer stage = parseStage(normalized, "foundation_");
-            if (stage != null) {
-                return "筑基" + chineseStage(stage) + "层";
-            }
+        String normalized = trimmed.toLowerCase(Locale.ROOT);
+        if ("mortal".equals(normalized)) {
+            return "凡体";
         }
 
         return switch (normalized) {
-            case "golden_core" -> "金丹";
-            case "nascent_soul" -> "元婴";
-            default -> ZoneState.humanizeZoneName(realmKey);
+            case "awaken" -> "醒灵";
+            case "induce" -> "引气";
+            case "condense" -> "凝脉";
+            case "solidify" -> "固元";
+            case "spirit" -> "通灵";
+            case "void" -> "化虚";
+            default -> trimmed;
         };
     }
 
@@ -181,60 +166,19 @@ public record PlayerStateViewModel(
     }
 
     private static double realmProgressScore(String realmKey) {
-        String normalized = PlayerStateState.normalizeRealmKey(realmKey).toLowerCase(Locale.ROOT);
-        if ("mortal".equals(normalized)) {
+        String normalized = PlayerStateState.normalizeRealmKey(realmKey).trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty() || "mortal".equals(normalized)) {
             return 0.05d;
         }
 
-        if (normalized.startsWith("qi_refining_")) {
-            Integer stage = parseStage(normalized, "qi_refining_");
-            if (stage != null) {
-                return PlayerStateState.clampUnit(stage / REALM_SCORE_QI_REFINING_DIVISOR);
-            }
-        }
-
-        if (normalized.startsWith("foundation_establishment_")) {
-            Integer stage = parseStage(normalized, "foundation_establishment_");
-            if (stage != null) {
-                return PlayerStateState.clampUnit(REALM_SCORE_FOUNDATION_BASE + (stage * REALM_SCORE_FOUNDATION_STEP));
-            }
-        }
-
-        if (normalized.startsWith("foundation_")) {
-            Integer stage = parseStage(normalized, "foundation_");
-            if (stage != null) {
-                return PlayerStateState.clampUnit(REALM_SCORE_FOUNDATION_BASE + (stage * REALM_SCORE_FOUNDATION_STEP));
-            }
-        }
-
         return switch (normalized) {
-            case "golden_core" -> 0.92d;
-            case "nascent_soul" -> 1.0d;
+            case "awaken" -> 0.15d;
+            case "induce" -> 0.25d;
+            case "condense" -> 0.45d;
+            case "solidify" -> 0.65d;
+            case "spirit" -> 0.85d;
+            case "void" -> 1.0d;
             default -> 0.0d;
-        };
-    }
-
-    private static Integer parseStage(String realmKey, String prefix) {
-        try {
-            return Integer.parseInt(realmKey.substring(prefix.length()));
-        } catch (NumberFormatException exception) {
-            return null;
-        }
-    }
-
-    private static String chineseStage(int stage) {
-        return switch (stage) {
-            case 1 -> "一";
-            case 2 -> "二";
-            case 3 -> "三";
-            case 4 -> "四";
-            case 5 -> "五";
-            case 6 -> "六";
-            case 7 -> "七";
-            case 8 -> "八";
-            case 9 -> "九";
-            case 10 -> "十";
-            default -> Integer.toString(stage);
         };
     }
 

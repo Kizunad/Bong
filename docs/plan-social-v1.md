@@ -390,3 +390,9 @@ _（无未决项，所有设计问题均已收口）_
   - **声名自览**（K 键 inspect 面板一栏 · top 5 tags + fame/notoriety 数值）
   - **灵龛所有者视角**（被揭露时的一次性 narration 提示）
 - 实装时机：Phase 4 与 Phase 5 UI 同步，不单独成一个 phase
+
+---
+
+## §12 进度日志
+
+- 2026-04-25：核对实际代码，本 plan 主体（§0–§8 Phase 0–8）整体仍为纯设计，无玩家社交侧实装；server 仅已有 §-1 列出的聊天采集（`network/chat_collector.rs` + `schema/chat_message.rs` + Redis `bong:player_chat`），`persistence/mod.rs` 已建 `relationships` 表骨架（plan-persistence 落库，未接 social 写入路径）；server 内 `npc/faction.rs`（`Reputation`/`FactionMembership`/`FactionId`）与 `npc/social.rs`（`SocializeAction`/`FactionDuelScorer`）属 plan-npc-ai §4 NPC 内部派系，不是本 plan 的玩家匿名/关系/声名/灵龛系统，未勾任何 `[x]`。

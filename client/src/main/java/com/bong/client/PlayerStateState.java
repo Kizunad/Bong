@@ -41,11 +41,11 @@ public final class PlayerStateState {
 
     static String normalizeRealmKey(String realm) {
         if (realm == null) {
-            return "mortal";
+            return "";
         }
 
         String normalized = realm.trim();
-        return normalized.isEmpty() ? "mortal" : normalized;
+        return normalized.isEmpty() ? "" : normalized;
     }
 
     static String normalizeZoneKey(String zone) {

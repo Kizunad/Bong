@@ -59,6 +59,11 @@ export const CHANNELS = {
 
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
+
+  /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
+   *
+   * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
+  TSY_EVENT: "bong:tsy_event",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -81,6 +86,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SKILL_LV_UP,
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
+  CHANNELS.TSY_EVENT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

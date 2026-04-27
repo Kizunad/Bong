@@ -45,7 +45,7 @@ use valence::prelude::{
 
 use crate::npc::movement::MovementController;
 use crate::npc::spawn::NpcMarker;
-use crate::world::terrain::TerrainProvider;
+use crate::world::terrain::{TerrainProvider, TerrainProviders};
 
 // ---------------------------------------------------------------------------
 // Constants — tuned to feel like vanilla MC zombie movement
@@ -258,10 +258,11 @@ pub fn navigator_tick_system(
         ),
         With<NpcMarker>,
     >,
-    terrain: Option<Res<TerrainProvider>>,
-    layers: Query<&ChunkLayer>,
+    providers: Option<Res<TerrainProviders>>,
+    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     let layer = layers.get_single().ok();
+    let terrain = providers.as_deref().map(|p| &p.overworld);
 
     for (mut position, mut transform, mut look, mut head_yaw, mut nav, movement_ctrl) in &mut npcs {
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
@@ -284,13 +285,7 @@ pub fn navigator_tick_system(
             .unwrap_or(true);
 
         if nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len() {
-            let new_path = compute_path(
-                current_pos,
-                goal.destination,
-                &nav,
-                terrain.as_deref(),
-                layer,
-            );
+            let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
             nav.path = new_path;
             nav.path_index = 0;
             nav.repath_countdown = REPATH_INTERVAL_TICKS;

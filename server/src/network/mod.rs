@@ -18,6 +18,7 @@ pub mod redis_bridge;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
 pub mod treasure_equipped_emit;
+pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
@@ -257,6 +258,9 @@ pub fn register(app: &mut App) {
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+            // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
+            tsy_event_bridge::publish_tsy_enter_events,
+            tsy_event_bridge::publish_tsy_exit_events,
         ),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
@@ -274,13 +278,15 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
-            inventory_snapshot_emit::emit_changed_inventory_snapshots,
+            inventory_snapshot_emit::emit_changed_inventory_snapshots
+                .after(inventory_event_emit::emit_durability_changed_inventory_events),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
             inventory_event_emit::publish_armor_durability_changed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
-            inventory_event_emit::emit_durability_changed_inventory_events,
+            inventory_event_emit::emit_durability_changed_inventory_events
+                .after(crate::combat::resolve::resolve_attack_intents),
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
             unlocks_sync_emit::emit_unlocks_sync_payloads,
@@ -822,7 +828,7 @@ fn zone_name_for_position(
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -2143,6 +2149,7 @@ mod tests {
         fn zone_scope_filters_by_zone() {
             let spawn_zone = Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                 spirit_qi: 0.9,
                 danger_level: 0,
@@ -2152,6 +2159,7 @@ mod tests {
             };
             let blood_valley = Zone {
                 name: "blood_valley".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     DVec3::new(1000.0, 64.0, 1000.0),
                     DVec3::new(1200.0, 128.0, 1200.0),
@@ -2500,6 +2508,7 @@ mod tests {
                 zones: vec![
                     Zone {
                         name: "spawn".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                         spirit_qi: 0.9,
                         danger_level: 0,
@@ -2509,6 +2518,7 @@ mod tests {
                     },
                     Zone {
                         name: "blood_valley".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (
                             DVec3::new(1000.0, 64.0, 1000.0),
                             DVec3::new(1200.0, 128.0, 1200.0),
