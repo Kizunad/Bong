@@ -1,0 +1,119 @@
+---
+import Base from "../../layouts/Base.astro";
+---
+
+<Base title="亡者博物馆" description="终结角色的生平卷，于此长存。">
+  <section class="museum-shell">
+    <header class="text-center mb-16 ink-reveal">
+      <div class="museum-kicker font-kai">终结归档</div>
+      <h1 class="lib-title text-5xl mb-5 ink-brush">亡者博物馆</h1>
+      <p class="lib-subtitle font-kai text-base leading-relaxed max-w-2xl mx-auto">
+        生者只带记忆前行，死者把生平留在纸上。此间所录，不授一分修为，只把前路照亮半寸。
+      </p>
+      <div class="museum-topbar mt-8">
+        <a href="/" class="back-link font-kai">← 返回总目</a>
+        <div class="museum-stats font-kai">
+          <span>藏卷 <strong id="deceased-count">-</strong> 部</span>
+          <span style="opacity:0.18">·</span>
+          <span id="deceased-last-update">静候新卷</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="museum-status ink-reveal" id="deceased-status">正在翻检卷目……</div>
+    <div class="deceased-grid ink-reveal" id="deceased-grid"></div>
+  </section>
+
+  <script is:inline>
+    function initDeceasedIndexPage() {
+      var grid = document.getElementById("deceased-grid");
+      var status = document.getElementById("deceased-status");
+      var count = document.getElementById("deceased-count");
+      var lastUpdate = document.getElementById("deceased-last-update");
+      if (!grid || !status || !count || !lastUpdate) return;
+
+      grid.innerHTML = "";
+      status.textContent = "正在翻检卷目……";
+      count.textContent = "-";
+      lastUpdate.textContent = "静候新卷";
+
+      fetch("/deceased/_index.json", { cache: "no-store" })
+        .then(function(res) {
+          if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+          }
+          return res.json();
+        })
+        .then(function(entries) {
+          var rows = Array.isArray(entries) ? entries.slice() : [];
+          rows.sort(function(a, b) {
+            return Number(b.died_at_tick || 0) - Number(a.died_at_tick || 0);
+          });
+
+          count.textContent = String(rows.length);
+          if (rows.length > 0) {
+            lastUpdate.textContent = "最近终结 t" + Number(rows[0].died_at_tick || 0);
+          }
+
+          if (rows.length === 0) {
+            status.innerHTML = '<p class="museum-empty-title">馆中尚无亡者卷。</p><p class="museum-empty-note">当角色终结时，server 会把生平快照直写到 <code>/public/deceased/</code>。</p>';
+            return;
+          }
+
+          status.textContent = "共得 " + rows.length + " 部亡者生平卷。";
+          var fragment = document.createDocumentFragment();
+          rows.forEach(function(entry) {
+            var card = document.createElement("a");
+            card.className = "deceased-card";
+            card.href = "/deceased/view?path=" + encodeURIComponent(String(entry.path || ""));
+
+            var display = formatCharId(String(entry.char_id || "无名之人"));
+            var diedAt = Number(entry.died_at_tick || 0);
+            var escapedName = escapeHtml(display.name);
+            var prefixHtml = display.prefix
+              ? '<span class="deceased-prefix">' + escapeHtml(display.prefix) + '</span>'
+              : "";
+
+            card.innerHTML =
+              '<div class="deceased-card-head">' +
+                '<div>' +
+                  '<div class="deceased-name">' + prefixHtml + escapedName + '</div>' +
+                  '<div class="deceased-subtitle">终结于 t' + diedAt + '</div>' +
+                '</div>' +
+                '<div class="deceased-chevron">›</div>' +
+              '</div>' +
+              '<div class="deceased-card-meta">' +
+                '<span class="status-chip">公开卷宗</span>' +
+                '<span class="deceased-mono">' + escapeHtml(String(entry.char_id || "")) + '</span>' +
+              '</div>';
+            fragment.appendChild(card);
+          });
+          grid.appendChild(fragment);
+        })
+        .catch(function(error) {
+          status.innerHTML = '<p class="museum-empty-title">卷目暂不可读。</p><p class="museum-empty-note">未能读取 <code>/deceased/_index.json</code>：' + escapeHtml(String(error && error.message ? error.message : error)) + '</p>';
+        });
+    }
+
+    function formatCharId(charId) {
+      var cut = charId.indexOf(":");
+      if (cut === -1) return { prefix: "", name: charId };
+      return {
+        prefix: charId.slice(0, cut + 1),
+        name: charId.slice(cut + 1) || charId,
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    initDeceasedIndexPage();
+    document.addEventListener("astro:page-load", initDeceasedIndexPage);
+  </script>
+</Base>

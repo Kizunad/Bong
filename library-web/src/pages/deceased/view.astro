@@ -1,0 +1,354 @@
+---
+import Base from "../../layouts/Base.astro";
+---
+
+<Base title="亡者生平卷" description="检视终结角色留下的生平卷与技艺里程碑。">
+  <article class="museum-article max-w-4xl mx-auto">
+    <div class="museum-breadcrumb ink-reveal">
+      <a href="/" class="back-link font-kai">图书馆总目</a>
+      <span>/</span>
+      <a href="/deceased/" class="back-link font-kai">亡者博物馆</a>
+    </div>
+
+    <div class="museum-status ink-reveal" id="deceased-detail-status">正在翻检残卷……</div>
+
+    <div id="deceased-detail" style="display:none;">
+      <header class="mb-14 ink-reveal">
+        <div class="museum-kicker font-kai" id="deceased-kicker">终结卷宗</div>
+        <h1 class="article-title mb-6 ink-brush" id="deceased-title">《无名卷》</h1>
+        <p class="article-quote font-kai" id="deceased-quote">卷中无言，唯余尘埃。</p>
+      </header>
+
+      <section class="deceased-panels ink-reveal">
+        <div class="deceased-panel">
+          <div class="badge-title">卷宗概览</div>
+          <div class="deceased-meta-grid" id="deceased-meta-grid"></div>
+        </div>
+        <div class="deceased-panel">
+          <div class="badge-title">技艺摘要</div>
+          <div class="deceased-summary" id="deceased-skill-summary"></div>
+        </div>
+      </section>
+
+      <section class="deceased-section ink-reveal">
+        <h2 class="deceased-section-title">技艺里程碑</h2>
+        <div class="deceased-empty-note" id="deceased-skill-empty" style="display:none;">此人未留下技艺突破记录。</div>
+        <ol class="skill-milestone-list" id="deceased-skill-list"></ol>
+      </section>
+
+      <section class="deceased-section ink-reveal">
+        <h2 class="deceased-section-title">生平纪事</h2>
+        <div class="deceased-empty-note" id="deceased-bio-empty" style="display:none;">卷中未载可读生平。</div>
+        <ol class="biography-timeline" id="deceased-bio-list"></ol>
+      </section>
+    </div>
+  </article>
+
+  <script is:inline>
+    function initDeceasedDetailPage() {
+      var status = document.getElementById("deceased-detail-status");
+      var detail = document.getElementById("deceased-detail");
+      var title = document.getElementById("deceased-title");
+      var quote = document.getElementById("deceased-quote");
+      var kicker = document.getElementById("deceased-kicker");
+      var metaGrid = document.getElementById("deceased-meta-grid");
+      var skillSummary = document.getElementById("deceased-skill-summary");
+      var skillList = document.getElementById("deceased-skill-list");
+      var skillEmpty = document.getElementById("deceased-skill-empty");
+      var bioList = document.getElementById("deceased-bio-list");
+      var bioEmpty = document.getElementById("deceased-bio-empty");
+      if (!status || !detail || !title || !quote || !kicker || !metaGrid || !skillSummary || !skillList || !skillEmpty || !bioList || !bioEmpty) {
+        return;
+      }
+
+      detail.style.display = "none";
+      status.textContent = "正在翻检残卷……";
+      metaGrid.innerHTML = "";
+      skillSummary.textContent = "";
+      skillList.innerHTML = "";
+      bioList.innerHTML = "";
+      skillEmpty.style.display = "none";
+      bioEmpty.style.display = "none";
+
+      var search = new URLSearchParams(window.location.search);
+      var rawPath = search.get("path") || "";
+      var snapshotPath = safeSnapshotPath(rawPath);
+      if (!snapshotPath) {
+        status.innerHTML = '<p class="museum-empty-title">未指定卷宗。</p><p class="museum-empty-note">请自 <a class="back-link" href="/deceased/">亡者博物馆</a> 选择一卷后再阅。</p>';
+        return;
+      }
+
+      fetch("/" + snapshotPath, { cache: "no-store" })
+        .then(function(res) {
+          if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+          }
+          return res.json();
+        })
+        .then(function(snapshot) {
+          var charId = String(snapshot && snapshot.char_id || "无名之人");
+          var display = formatCharId(charId);
+          var life = snapshot && snapshot.life_record || {};
+          var lifecycle = snapshot && snapshot.lifecycle || {};
+          var biography = Array.isArray(life.biography) ? life.biography : [];
+          var milestones = Array.isArray(life.skill_milestones) ? life.skill_milestones : [];
+
+          title.textContent = "《" + display.name + "生平卷》";
+          kicker.textContent = display.prefix ? display.prefix + " 终结卷宗" : "终结卷宗";
+          quote.textContent = buildQuote(snapshot, milestones, biography);
+          document.title = display.name + "生平卷 — 末法残土图书馆";
+
+          metaGrid.innerHTML = [
+            renderMetaField("char_id", charId),
+            renderMetaField("终结 tick", formatTick(snapshot && snapshot.died_at_tick)),
+            renderMetaField("生平起于", formatTick(life.created_at)),
+            renderMetaField("状态", formatLifecycleState(lifecycle.state)),
+            renderMetaField("死数", String(lifecycle.death_count || 0)),
+            renderMetaField("余运", String(lifecycle.fortune_remaining || 0)),
+            renderMetaField("生平条目", String(biography.length)),
+            renderMetaField("技艺突破", String(milestones.length)),
+          ].join("");
+
+          skillSummary.innerHTML = milestones.length > 0
+            ? '末次突破：<strong>' + escapeHtml(skillLabel(milestones[milestones.length - 1].skill)) + ' Lv.' + Number(milestones[milestones.length - 1].new_lv || 0) + '</strong>'
+            : '此卷未记技艺突破。';
+
+          if (milestones.length === 0) {
+            skillEmpty.style.display = "block";
+          } else {
+            skillList.innerHTML = milestones.map(function(item) {
+              return (
+                '<li class="skill-milestone-item">' +
+                  '<div class="skill-milestone-head">' +
+                    '<span class="skill-badge">' + escapeHtml(skillLabel(item.skill)) + ' Lv.' + Number(item.new_lv || 0) + '</span>' +
+                    '<span class="timeline-tick">t' + Number(item.achieved_at || 0) + '</span>' +
+                  '</div>' +
+                  '<p class="skill-milestone-narration">' + escapeHtml(String(item.narration || '')) + '</p>' +
+                  '<div class="skill-milestone-foot">终身 XP：' + Number(item.total_xp_at || 0) + '</div>' +
+                '</li>'
+              );
+            }).join("");
+          }
+
+          if (biography.length === 0) {
+            bioEmpty.style.display = "block";
+          } else {
+            bioList.innerHTML = biography.map(function(entry) {
+              return formatBiographyEntry(entry);
+            }).join("");
+          }
+
+          status.style.display = "none";
+          detail.style.display = "block";
+        })
+        .catch(function(error) {
+          status.innerHTML = '<p class="museum-empty-title">残卷暂不可读。</p><p class="museum-empty-note">未能读取 <code>/' + escapeHtml(snapshotPath) + '</code>：' + escapeHtml(String(error && error.message ? error.message : error)) + '</p>';
+        });
+    }
+
+    function safeSnapshotPath(rawPath) {
+      if (!rawPath) return "";
+      var path = rawPath.replace(/^\/+/, "");
+      if (!path.startsWith("deceased/") || !path.endsWith(".json") || path.indexOf("..") !== -1) {
+        return "";
+      }
+      return path;
+    }
+
+    function buildQuote(snapshot, milestones, biography) {
+      if (milestones.length > 0) {
+        var last = milestones[milestones.length - 1];
+        return '“' + String(last.narration || '').trim() + '”';
+      }
+      if (biography.length > 0) {
+        var lastEntry = biography[biography.length - 1];
+        return '“' + biographySummary(lastEntry) + '”';
+      }
+      return '“' + formatLifecycleState(snapshot && snapshot.lifecycle && snapshot.lifecycle.state) + '，卷中却未多言。”';
+    }
+
+    function renderMetaField(label, value) {
+      return '<div class="deceased-meta-field"><div class="field-label">' + escapeHtml(label) + '</div><div class="field-value">' + escapeHtml(value) + '</div></div>';
+    }
+
+    function formatTick(value) {
+      var tick = Number(value || 0);
+      return tick > 0 ? 't' + tick : '未记';
+    }
+
+    function formatLifecycleState(state) {
+      switch (String(state || "")) {
+        case "Alive":
+          return "存世";
+        case "NearDeath":
+          return "濒死";
+        case "AwaitingRevival":
+          return "待返魂";
+        case "Terminated":
+          return "终结";
+        default:
+          return state ? String(state) : "未记";
+      }
+    }
+
+    function skillLabel(skill) {
+      switch (String(skill || "")) {
+        case "herbalism":
+          return "采药";
+        case "alchemy":
+          return "炼丹";
+        case "forging":
+          return "锻造";
+        default:
+          return String(skill || "未知技艺");
+      }
+    }
+
+    function formatCharId(charId) {
+      var cut = charId.indexOf(":");
+      if (cut === -1) return { prefix: "", name: charId };
+      return {
+        prefix: charId.slice(0, cut + 1),
+        name: charId.slice(cut + 1) || charId,
+      };
+    }
+
+    function biographySummary(entry) {
+      var parsed = unwrapEntry(entry);
+      var kind = parsed.kind;
+      var payload = parsed.payload;
+      switch (kind) {
+        case "Terminated":
+          return '终结于 t' + Number(payload.tick || 0) + '，因由 ' + humanizeToken(payload.cause || '未记') + '。';
+        case "NearDeath":
+          return '于 t' + Number(payload.tick || 0) + ' 濒死，因由 ' + humanizeToken(payload.cause || '未记') + '。';
+        case "CombatHit":
+          return '于 t' + Number(payload.tick || 0) + ' 受创，伤处 ' + humanizeToken(payload.body_part || '未记') + '。';
+        case "AlchemyAttempt":
+          return '于 t' + Number(payload.tick || 0) + ' 曾试炼丹，方名 ' + humanizeToken(payload.recipe_id || '未记') + '。';
+        default:
+          return humanizeToken(kind || '未记') + '，t' + Number(payload.tick || 0) + '。';
+      }
+    }
+
+    function formatBiographyEntry(entry) {
+      var parsed = unwrapEntry(entry);
+      var kind = parsed.kind;
+      var payload = parsed.payload;
+      var tick = Number(payload.tick || 0);
+      return (
+        '<li class="biography-item">' +
+          '<div class="timeline-tick">t' + tick + '</div>' +
+          '<div class="timeline-body">' +
+            '<div class="timeline-title">' + escapeHtml(biographyTitle(kind)) + '</div>' +
+            '<p class="timeline-text">' + escapeHtml(biographyText(kind, payload)) + '</p>' +
+          '</div>' +
+        '</li>'
+      );
+    }
+
+    function unwrapEntry(entry) {
+      if (!entry || typeof entry !== 'object') {
+        return { kind: 'Unknown', payload: {} };
+      }
+      var pairs = Object.entries(entry);
+      if (pairs.length === 0) {
+        return { kind: 'Unknown', payload: {} };
+      }
+      return {
+        kind: String(pairs[0][0]),
+        payload: pairs[0][1] || {},
+      };
+    }
+
+    function biographyTitle(kind) {
+      switch (kind) {
+        case 'BreakthroughStarted':
+          return '尝试破境';
+        case 'BreakthroughSucceeded':
+          return '破境成功';
+        case 'BreakthroughFailed':
+          return '破境失败';
+        case 'MeridianOpened':
+          return '经脉洞开';
+        case 'MeridianClosed':
+          return '经脉闭塞';
+        case 'Rebirth':
+          return '返魂再生';
+        case 'CombatHit':
+          return '战中受创';
+        case 'NearDeath':
+          return '濒死';
+        case 'Terminated':
+          return '终结';
+        case 'AlchemyAttempt':
+          return '炼丹一试';
+        case 'PlotHarvestedByOther':
+          return '灵田失收';
+        case 'PlotHarvestedFromOther':
+          return '收他人田';
+        case 'PlotQiDrainedByOther':
+          return '灵田被汲';
+        case 'PlotQiDrainedFromOther':
+          return '汲他人田';
+        case 'PlotDestroyedByOther':
+          return '灵田被毁';
+        default:
+          return humanizeToken(kind || '未记');
+      }
+    }
+
+    function biographyText(kind, payload) {
+      switch (kind) {
+        case 'BreakthroughStarted':
+          return '尝试破入 ' + humanizeToken(payload.realm_target || '未记境界') + '。';
+        case 'BreakthroughSucceeded':
+          return '终于抵达 ' + humanizeToken(payload.realm || '未记境界') + '。';
+        case 'BreakthroughFailed':
+          return '冲关未成，目标 ' + humanizeToken(payload.realm_target || '未记境界') + '，损伤 ' + Number(payload.severity || 0).toFixed(2) + '。';
+        case 'MeridianOpened':
+          return '打通经脉 ' + humanizeToken(payload.id || '未记') + '。';
+        case 'MeridianClosed':
+          return '经脉 ' + humanizeToken(payload.id || '未记') + ' 闭塞，因由 ' + humanizeToken(payload.reason || '未记') + '。';
+        case 'Rebirth':
+          return '自 ' + humanizeToken(payload.prior_realm || '未记') + ' 返转为 ' + humanizeToken(payload.new_realm || '未记') + '。';
+        case 'CombatHit':
+          return '为 ' + humanizeToken(payload.attacker_id || '不知何人') + ' 所伤，伤处 ' + humanizeToken(payload.body_part || '未记') + '，伤型 ' + humanizeToken(payload.wound_kind || '未记') + '，损伤 ' + Number(payload.damage || 0).toFixed(1) + '。';
+        case 'NearDeath':
+          return '濒死一次，因由 ' + humanizeToken(payload.cause || '未记') + '。';
+        case 'Terminated':
+          return '最终身灭，因由 ' + humanizeToken(payload.cause || '未记') + '。';
+        case 'AlchemyAttempt':
+          return '试炼 ' + humanizeToken(payload.recipe_id || '未记丹方') + '，' + (payload.flawed_path ? '行残缺之路。' : '循常法而行。');
+        case 'PlotHarvestedByOther':
+          return '自家灵田为他人所收，药材 ' + humanizeToken(payload.plant_id || '未记') + '。';
+        case 'PlotHarvestedFromOther':
+          return '收取他人灵田所得，药材 ' + humanizeToken(payload.plant_id || '未记') + '。';
+        case 'PlotQiDrainedByOther':
+          return '自家灵田灵气为他人所汲，流失 ' + Number(payload.amount_drained || 0).toFixed(2) + '。';
+        case 'PlotQiDrainedFromOther':
+          return '汲取他人灵田灵气 ' + Number(payload.amount_drained || 0).toFixed(2) + '。';
+        case 'PlotDestroyedByOther':
+          return '自家灵田毁于他人之手。';
+        default:
+          return JSON.stringify(payload);
+      }
+    }
+
+    function humanizeToken(value) {
+      return String(value || "未记").replace(/_/g, " ");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    initDeceasedDetailPage();
+    document.addEventListener("astro:page-load", initDeceasedDetailPage);
+  </script>
+</Base>
