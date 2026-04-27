@@ -3,6 +3,7 @@ pub mod dimension_transfer;
 pub mod events;
 pub mod terrain;
 pub mod tsy;
+pub mod loot_pool;
 pub mod tsy_container;
 pub mod tsy_dev_command;
 pub mod tsy_drain;

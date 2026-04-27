@@ -1,0 +1,37 @@
+# plan-tsy-container-v1 §3.1 — TSY 容器钥匙物品。
+# 钥匙是凡物（spirit_quality_initial = 0），category = misc，
+# 一次消耗（搜刮完成时 stack_count -= 1）。template_id 必须以 `key_` 开头，
+# 由 `world::tsy_container::item_as_container_key` 识别。
+
+[[item]]
+id = "key_stone_casket"
+name = "石匣匙"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "插入石匣匙孔即开。用过即化灰。"
+
+[[item]]
+id = "key_jade_coffin"
+name = "玉棺纹"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.0
+description = "按手即亮，玉棺封印瞬解。次即暗。"
+
+[[item]]
+id = "key_array_core"
+name = "阵核钤"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "epic"
+spirit_quality_initial = 0.0
+description = "阵核钤印，能在阵眼上敲出一个缺口——仅此一次。"
