@@ -263,6 +263,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.mineral-probe.sample.json", () => {
+    const data = loadSample("client-request.mineral-probe.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.inventory-discard-item.sample.json", () => {
     const data = loadSample("client-request.inventory-discard-item.sample.json");
     const result = validate(ClientRequestV1, data);

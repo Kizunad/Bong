@@ -16,6 +16,7 @@ pub mod components;
 pub mod events;
 pub mod inventory_grant;
 pub mod persistence;
+pub mod probe;
 pub mod registry;
 pub mod types;
 
@@ -24,7 +25,10 @@ pub mod types;
 #[allow(unused_imports)]
 pub use components::{MineralOreIndex, MineralOreNode};
 #[allow(unused_imports)]
-pub use events::{KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralProbeIntent};
+pub use events::{
+    KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralProbeDenialReason,
+    MineralProbeIntent, MineralProbeResponse, MineralProbeResult,
+};
 #[allow(unused_imports)]
 pub use persistence::{
     load_exhausted_log, ExhaustedEntry, ExhaustedLogFile, ExhaustedMineralsLog, MineralTickClock,
@@ -40,6 +44,7 @@ use break_handler::handle_block_break_for_mineral;
 use bridge::forward_karma_flag_to_agent;
 use inventory_grant::consume_mineral_drops_into_inventory;
 use persistence::{record_exhausted_minerals, tick_mineral_clock};
+use probe::resolve_mineral_probe_intents;
 
 pub fn register(app: &mut App) {
     let registry = build_default_registry();
@@ -63,6 +68,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(MineralTickClock::default());
 
     app.add_event::<MineralProbeIntent>();
+    app.add_event::<MineralProbeResponse>();
     app.add_event::<MineralDropEvent>();
     app.add_event::<MineralExhaustedEvent>();
     app.add_event::<KarmaFlagIntent>();
@@ -71,6 +77,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             tick_mineral_clock,
+            resolve_mineral_probe_intents,
             handle_block_break_for_mineral,
             // plan-mineral-v1 §2.2 — drop 事件由 inventory_grant 在同一 Update 内消费；
             // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。

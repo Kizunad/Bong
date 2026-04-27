@@ -138,6 +138,18 @@ export const PickupDroppedItemRequestV1 = Type.Object(
 );
 export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
 
+export const MineralProbeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("mineral_probe"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type MineralProbeRequestV1 = Static<typeof MineralProbeRequestV1>;
+
 export const InventoryDiscardItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -303,6 +315,7 @@ export const ClientRequestV1 = Type.Union([
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
   PickupDroppedItemRequestV1,
+  MineralProbeRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,

@@ -37,6 +37,7 @@ import {
   ClientRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
+  MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
@@ -106,6 +107,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
@@ -182,6 +184,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "server-data-botany-harvest-progress-v1.json":

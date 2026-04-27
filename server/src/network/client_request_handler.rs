@@ -45,6 +45,7 @@ use crate::lingtian::events::{
 use crate::lingtian::session::{ReplenishSource, SessionMode};
 use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
 use crate::lingtian::PlotEnvironment;
+use crate::mineral::MineralProbeIntent;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -119,6 +120,7 @@ pub struct AlchemyRequestParams<'w, 's> {
 pub struct SkillScrollRequestParams<'w, 's> {
     pub skill_xp_tx: EventWriter<'w, SkillXpGain>,
     pub skill_scroll_used_tx: EventWriter<'w, SkillScrollUsed>,
+    pub mineral_probe_tx: EventWriter<'w, MineralProbeIntent>,
     pub skill_sets: Query<'w, 's, &'static mut SkillSet>,
     pub cultivations: Query<'w, 's, &'static Cultivation>,
 }
@@ -201,6 +203,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
@@ -468,6 +471,19 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                 );
+            }
+            ClientRequestV1::MineralProbe { x, y, z, .. } => {
+                let position = valence::prelude::BlockPos::new(x, y, z);
+                tracing::info!(
+                    "[bong][network] client_request mineral_probe entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                skill_scroll_params
+                    .mineral_probe_tx
+                    .send(MineralProbeIntent {
+                        player: ev.client,
+                        position,
+                    });
             }
             ClientRequestV1::ApplyPill {
                 instance_id,
@@ -803,6 +819,11 @@ mod tests {
 
     impl valence::prelude::Resource for CapturedInsightChoices {}
 
+    #[derive(Default)]
+    struct CapturedMineralProbes(Vec<MineralProbeIntent>);
+
+    impl valence::prelude::Resource for CapturedMineralProbes {}
+
     fn capture_breakthrough_requests(
         mut events: EventReader<BreakthroughRequest>,
         mut captured: ResMut<CapturedBreakthroughRequests>,
@@ -820,6 +841,13 @@ mod tests {
     fn capture_insight_choices(
         mut events: EventReader<InsightChosen>,
         mut captured: ResMut<CapturedInsightChoices>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_mineral_probes(
+        mut events: EventReader<MineralProbeIntent>,
+        mut captured: ResMut<CapturedMineralProbes>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -917,6 +945,7 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(
@@ -969,6 +998,60 @@ mod tests {
     }
 
     #[test]
+    fn mineral_probe_request_emits_probe_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedMineralProbes::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_mineral_probes).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedMineralProbes>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(
+            captured.0[0].position,
+            valence::prelude::BlockPos::new(8, 32, 8)
+        );
+    }
+
+    #[test]
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
@@ -990,6 +1073,7 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(Update, handle_client_request_payloads);
@@ -1069,6 +1153,7 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_systems(Update, handle_client_request_payloads);
