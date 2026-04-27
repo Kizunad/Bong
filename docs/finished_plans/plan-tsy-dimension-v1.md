@@ -490,3 +490,62 @@ DimensionKind / DimensionLayers / DimensionAnchor / CurrentDimension
   - **Codex P1 修**：`cultivation/tick.rs::qi_regen_and_zone_drain_tick` 改读 `CurrentDimension` 真实位面，杜绝 TSY 玩家被错查 overworld zone 倒扣 spirit_qi（commit 链尾）
   - **未覆盖**：§5/§6/§7（worldgen routing 留给 `plan-tsy-worldgen-v1`），§11.B 16 处 helper 仍传 overworld provider 单参（helper 自身不感知 dim，调用方决定）
   - **下游解冻**：P0 `plan-tsy-zone-v1` / P1 `plan-tsy-loot-v1` / `plan-tsy-worldgen-v1` 现可基于本基础设施开工
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1.1 DimensionType 注册**：
+  - `server/src/world/dimension.rs` — `TSY_DIMENSION_IDENT="bong:tsy"` / `register_tsy_dimension(&mut DimensionTypeRegistry)` / `register_tsy_dimension_system` (PreStartup) / `DimensionKind` enum (Overworld/Tsy)
+- **§1.2 LayerBundle 初始化**：
+  - `server/src/world/dimension.rs` — `DimensionLayers { overworld, tsy }` resource + `OverworldLayer` / `TsyLayer` 标记组件
+  - `server/src/world/mod.rs:34,174,447,479` — 双 spawn `(layer, OverworldLayer)` / `(layer, TsyLayer)`
+- **§1.3 CurrentDimension component**：
+  - `server/src/world/dimension.rs:82` — `pub struct CurrentDimension(pub DimensionKind)` + `Default`
+  - `server/src/player/mod.rs:145,194` — `init_clients` 挂 `CurrentDimension::default()`，`attach_player_state_to_joined_clients` 按 `last_dimension` 重写
+  - `server/src/player/state.rs:51,65,409,420,452,562,630,638,647,768,782` — DB v13 `player_slow.last_dimension` 持久化与读回
+- **§2 per-dimension TerrainProvider**：
+  - `server/src/world/terrain/raster.rs:139-142` — `pub struct TerrainProviders { pub overworld: TerrainProvider, pub tsy: Option<TerrainProvider> }`
+  - `server/src/world/terrain/mod.rs:25,114,162,204` — re-export + setup insert + chunk gen consumer
+  - `server/src/network/chat_collector.rs:21,43` — narration 路由
+  - `server/src/npc/navigator.rs:48,261` — NPC 寻路 consumer
+- **§3 跨位面传送 API**：
+  - `server/src/world/dimension_transfer.rs:23,34,89` — `DimensionTransferRequest` event + `apply_dimension_transfers` system + `DimensionTransferSet` SystemSet
+  - `server/src/world/mod.rs:105` — set ordering（Update 内排在传送 set 前/后）
+  - `server/src/world/tsy_lifecycle.rs:52,398,472,502` — entry/exit portal 直发 `DimensionTransferRequest`，不再 insert Position
+- **§Q2 候选 A — Zone.dimension + find_zone(dim, pos)**：
+  - `server/src/world/zone.rs:28` — `Zone { ..., pub dimension: DimensionKind }`
+  - `server/src/world/zone.rs:257` — `pub fn find_zone(&self, dim: DimensionKind, pos: DVec3) -> Option<&Zone>`
+  - `server/src/world/zone.rs:769` — `find_zone_filters_by_dimension` 单测
+  - `server/src/network/command_executor.rs:1173,1199,1233,1262,1295,1314,1468,1525` 等 35+ caller 升级
+- **§4 Client 侧 dimension 切换**：零改动（Valence `respawn` 系统监听 `Changed<VisibleChunkLayer>` 自动发 `PlayerRespawnS2c`，client/Fabric vanilla 原生支持）
+
+### 关键 commit
+
+- `cef33e81` (2026-04-25) — feat(world): 新增 dimension 模块（DimensionKind/DimensionLayers/CurrentDimension/register_tsy_dimension）
+- `bffcf7ff` (2026-04-25) — feat(world): 双 LayerBundle（overworld + bong:tsy）+ DimensionLayers resource + OverworldLayer 标记
+- `4ffa23be` (2026-04-25) — feat(world): 跨位面传送 — DimensionTransferRequest event + apply_dimension_transfers system
+- `9204ff2a` (2026-04-25) — feat(zone): Zone.dimension 字段 + find_zone(dim, pos) 签名 + 全测试 fixture 升级
+- `579fc67e` (2026-04-26) — plan-tsy-dimension-v1: TSY 位面基础设施（DimensionType + 跨位面传送 + Zone.dimension）(#47, merge)
+
+### 测试结果
+
+- `server/src/world/dimension.rs` — 6 `#[test]`（`TSY_DIMENSION_IDENT` 常量 / `register_tsy_dimension_inserts_bong_tsy` / `register_tsy_dimension_uses_nether_visuals` 等）
+- `server/src/world/dimension_transfer.rs` — 5 `#[test]`（同 tick 双请求幂等 / 缺组件 warn 跳过 / 缺 resource 安静 drain / VisibleChunkLayer 与 Position 同步切换 等）
+- `server/src/world/zone.rs` — 16 `#[test]`（含 `find_zone_filters_by_dimension` / 旧 snapshot 默认 overworld / 显式 tsy / dim 隔离）
+- `server/src/player/state.rs` — 12 `#[test]`（含 `last_dimension` v13 migration 与持久化往返）
+- `server/src/world/tsy_lifecycle_integration_test.rs` + `server/src/world/tsy_integration_test.rs` — 端到端跨位面 entry/exit 与 DimensionTransferRequest 验证
+- `cd server && cargo test` — 全仓库 1252 单测通过（PR #47 merge 前验收，进度日志 2026-04-26 记录）
+
+### 跨仓库核验
+
+- **server**：`DimensionKind` / `DimensionLayers` / `CurrentDimension` / `OverworldLayer` / `TsyLayer` / `register_tsy_dimension` / `TSY_DIMENSION_IDENT` / `DimensionTransferRequest` / `apply_dimension_transfers` / `DimensionTransferSet` / `TerrainProviders` / `Zone.dimension` / `find_zone(dim, pos)` 全部命中（`server/src/world/dimension.rs` / `dimension_transfer.rs` / `terrain/raster.rs` / `zone.rs` / `player/mod.rs` / `player/state.rs` / `tsy_lifecycle.rs` / `network/chat_collector.rs` / `npc/navigator.rs`）
+- **agent**：（不涉及；§10 显式排除 `agent/**`，跨位面与天道 Agent 无直接交互）
+- **client**：（零改动；§4.2 + §11-A 已论证 Valence 自动发 `PlayerRespawnS2c` + MC 1.20.1 协议 763 + Fabric vanilla 原生支持；`grep DimensionKind|TerrainProviders|DimensionTransferRequest|CurrentDimension client/` 零命中）
+- **worldgen**：（不涉及；TSY manifest 由 `plan-tsy-worldgen-v1` 产，本 plan `TerrainProviders.tsy` 留 `Option<TerrainProvider>` 占位）
+
+### 遗留 / 后续
+
+- `TerrainProviders.tsy` 为 `Option<TerrainProvider>`，待 `plan-tsy-worldgen-v1` 产 TSY manifest 后填实；§5.3 smoke `scripts/smoke-tsy-dimension.sh` 与 §11.B 16 处 helper 的 dim 路由完善留给后续 plan（helper 自身不感知 dim，调用方决定，已被 §12 进度日志 2026-04-26 标注为"未覆盖")。Q9 mmap 内存基线（`ps -o rss`）待 TSY manifest 实装后测量。

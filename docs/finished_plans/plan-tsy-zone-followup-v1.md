@@ -138,3 +138,49 @@ TsyEnterEmit (Bevy Event)
 ## §5 进度日志
 
 - 2026-04-26 创建（zone-v1 P0 PR #49 已 merge `bd349286`）；本 plan 待 `/consume-plan tsy-zone-followup-v1` 实施
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 集成测试**：`server/src/world/tsy_integration_test.rs`（路径偏离 plan §1.1：crate 为 bin-only 无 `lib.rs`，改落 `src/world/` 下 `#[cfg(test)] mod`，由 `server/src/world/mod.rs:15-16` 引入）。4 个 `#[test]` 全数命中 plan §1.2 命名：
+  - `a_entry_full_path_attaches_presence_and_strips_qi_item`
+  - `b_drain_after_entry_decreases_spirit_qi_per_tick`
+  - `c_drain_to_zero_emits_death_event`
+  - `d_exit_round_trip_removes_presence_and_routes_back`
+- **§2 Server→Redis 桥**：`server/src/network/tsy_event_bridge.rs`（含 `publish_tsy_enter_events` / `publish_tsy_exit_events` 系统 + 6 个 `#[test]`），由 `server/src/network/mod.rs` register。配套：
+  - `server/src/world/dimension.rs:33` `DimensionKind::ident_str` helper（双端字面量统一）
+  - `server/src/schema/tsy.rs` wire 结构 `TsyEnterEventV1` / `TsyExitEventV1` / `TsyDimensionAnchorV1` / `TsyFilteredItemV1`
+  - `server/src/schema/channels.rs:41` `CH_TSY_EVENT = "bong:tsy_event"`
+  - `server/src/network/redis_bridge.rs` `RedisOutbound::TsyEnter` / `TsyExit` 变体
+  - `agent/packages/schema/src/channels.ts:84` `CHANNELS.TSY_EVENT = "bong:tsy_event"`（agent 侧 channel 是放进 `CHANNELS` 对象，并入 `REDIS_V1_CHANNELS`）
+
+### 关键 commit
+
+- `acfc8793` (2026-04-26) — docs(plan): plan-tsy-zone-followup-v1 — 集成测 + Server→Redis 桥
+- `6ce87be7` (2026-04-27) — feat(network): TsyEnter/Exit Bevy event → bong:tsy_event Redis publish
+- `a124c4cf` (2026-04-26) — test(world/tsy): 端到端集成测（plan-tsy-zone-followup §1）
+- `29f8033c` (2026-04-27) — plan-tsy-zone-followup-v1: 集成测 + Server→Redis 桥（zone-v1 §5.2 / §1.4 收尾）（PR #50 merge commit）
+
+### 测试结果
+
+- `cd server && cargo test --lib tsy_integration_test` — 4 个 `#[test]`（路径决策见落地清单 §1）
+- `cd server && cargo test --lib tsy_event_bridge` — 6 个 `#[test]`（fields-correct / username 解析 / exit 路径 / NPC spawned / sentinel phase / RedisOutbound JSON round-trip）
+- `cd server && cargo test --lib schema::tsy` — wire 结构 sample/round-trip 双向校验
+
+### 跨仓库核验
+
+- **server**：
+  - `tsy_integration_test::tests::{a_entry_full_path_attaches_presence_and_strips_qi_item, b_drain_after_entry_decreases_spirit_qi_per_tick, c_drain_to_zero_emits_death_event, d_exit_round_trip_removes_presence_and_routes_back}` @ `server/src/world/tsy_integration_test.rs`
+  - `publish_tsy_enter_events` / `publish_tsy_exit_events` @ `server/src/network/tsy_event_bridge.rs`
+  - `DimensionKind::ident_str` @ `server/src/world/dimension.rs:33`
+  - `CH_TSY_EVENT` @ `server/src/schema/channels.rs:41`
+  - `TsyEnterEventV1` / `TsyExitEventV1` @ `server/src/schema/tsy.rs:27,38`
+  - `RedisOutbound::TsyEnter` / `TsyExit` @ `server/src/network/redis_bridge.rs`
+- **agent**：`CHANNELS.TSY_EVENT = "bong:tsy_event"` @ `agent/packages/schema/src/channels.ts:84`；`TsyEnterEventV1` / `TsyExitEventV1` TypeBox @ `agent/packages/schema/src/tsy.ts:40,65`
+- **client**：（不涉及；本 plan 仅 server↔agent 桥与端到端集成测）
+- **worldgen**：（不涉及）
+
+### 遗留 / 后续
+
+- `tick` 字段当前在 bridge 处填 0、`qi_drained_total` 填 0（plan §2.3 P0 占位），真实 server tick 与累计真元流失归 `plan-tsy-loot-v1`；agent 侧消费 `bong:tsy_event` 写 narration 归 `plan-tiandao-*` / agent plan；manual QA A–E（zone-v1 §6）仍需人工 WSLg 跑 client 验证

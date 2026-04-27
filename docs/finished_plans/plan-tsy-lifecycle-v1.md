@@ -853,3 +853,46 @@ MVP 建议不拆，整吃一次。
 - **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面基础设施就位；本 plan 仍 blocking on **P0 `tsy-zone` + P1 `tsy-loot`** 串行前置。`NpcArchetype::Daoxiang` variant 由本 plan §4 引入（npc-ai PR #45 已加 `Zombie/Commoner/Rogue/Beast/Disciple/GuardianRelic` 6 variant，未含 Daoxiang）。
 - **2026-04-27**：**主体 merged** — PR #54（merge 99c29ebd）已合并。代码核对：`server/src/world/tsy_lifecycle.rs` 落地，`TsyLifecycle` 枚举（New/Active/Declining/Collapsing/Dead）+ `TsyZoneStateRegistry` + `lifecycle_tick` 系统 + 塌缩 cleanup + 道伥 spawn 系统全部确认；`NpcArchetype::Daoxiang` variant 已加入 `npc/lifecycle.rs`；`tsy_lifecycle_integration_test.rs` 含 26 单测；`tsy_loot_spawn` 已接通家族注册；`tsy_portal` 拒入 Collapsing/Dead 状态。**P3/P4/P5 全部解冻。** 剩余 ~10%：道伥 spawn 平衡参数调优与 e2e smoke 未跑。dashboard percent 90%。
 
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 状态机**：`server/src/world/tsy_lifecycle.rs` — `TsyLifecycle` 枚举（New/Active/Declining/Collapsing/Dead）@ L73、`TsyZoneState` @ L105、`TsyZoneStateRegistry` @ L145（含 `ensure_active` / `mark_initial_skeleton` / `is_collapsing` / `is_dead` 查询助手）、`tsy_lifecycle_tick` system @ L282、`COLLAPSE_DURATION_TICKS = 30 * 20` @ L57；`server/src/world/mod.rs` L114 `tsy_lifecycle::register(app)` 接入。
+- **§2 骨架松动**：`compute_layer_spirit_qi(TsyDepth, skeleton_ratio, is_collapsing)` @ L251、`tsy_lifecycle_apply_spirit_qi` system @ L353（按 family 三层 shallow/mid/deep 写回 `Zone.spirit_qi`，Collapsing 时 ×2）。
+- **§3 塌缩事件**：`TsyCollapseStarted` event @ L235、`TsyCollapseCompleted` event @ L242、`tsy_collapse_completed_cleanup` @ L387（用 `DimensionTransferRequest` 跨位面弹回玩家、按 AABB 蒸发 ownerless 凡物、调用 `spawn_daoxiang_from_corpse` 加速激活、从 `ZoneRegistry` 移除三个 subzone、标记 family 为 Dead）；`server/src/world/tsy_portal.rs` L20+L56 `Collapsing/Dead` 拒入。
+- **§4/§5 干尸→道伥**：`NpcArchetype::Daoxiang` variant @ `server/src/npc/lifecycle.rs` L60（max_age=1_000_000.0 守护级）；`DaoxiangOrigin` component @ `server/src/world/tsy_lifecycle.rs` L568；`spawn_daoxiang_from_corpse` @ L583；`tsy_corpse_to_daoxiang_tick` @ L534（自然累积 `DAOXIANG_NATURAL_TICKS = 6_000`，塌缩加速由 cleanup 直接处理）；`server/src/npc/loot.rs` L93 `default_loot_for_archetype` 给 Daoxiang 配 rusty_blade / tattered_scroll / 骨币 MVP loot。
+- **§6 道伥喷出**：`tsy_collapse_completed_cleanup` 内对 zone AABB 内的 Daoxiang 50% 概率发 `DimensionTransferRequest { target: Overworld, target_pos: anchor + 偏移 }`，余者 despawn（`server/src/world/tsy_lifecycle.rs` L472、L502 双处 `dim_transfer.send`）。
+
+### 关键 commit
+
+- `81efb646` (2026-04-27) — feat(world): TSY lifecycle 状态机 + 塌缩清理 + 道伥 spawn API
+- `7d416d6b` (2026-04-27) — feat(npc): NpcArchetype::Daoxiang variant + 默认 loot 表
+- `2ec74b59` (2026-04-27) — feat(schema): TsyZoneActivated / TsyCollapseStarted / TsyCollapseCompleted / DaoxiangSpawned V1
+- `7df3640f` (2026-04-27) — feat(tsy-portal): Collapsing/Dead family 拒绝入场 + cargo fmt 收敛
+- `f267110d` (2026-04-27) — test(world): TSY lifecycle 端到端集成测试 + smoke 脚本
+- `ae5b91af` (2026-04-27) — fix(tsy-lifecycle): cleanup / remaining-skeleton 用 source_container_id 做 family 双向 gate
+- `99c29ebd` (2026-04-27) — plan-tsy-lifecycle-v1: 状态机 + 塌缩 + 道伥转化（TSY 核心闭环）（PR #54 merge）
+
+### 测试结果
+
+- `cd server && cargo test tsy_lifecycle` — 27 passed; 0 failed（8 unit `world::tsy_lifecycle::tests::*` + 19 integration `world::tsy_lifecycle_integration_test::tests::*`）
+- 集成覆盖：`happy_path_active_to_dead_cycles_state_machine` / `corpse_natural_activation_after_threshold_spawns_daoxiang` / `collapse_accelerates_corpse_into_daoxiang_immediately` / `collapse_completed_kills_player_in_tsy` / `collapse_cleanup_evaporates_loot_inside_aabbs_only` / `collapse_cleanup_preserves_overworld_drops_at_same_xyz` / `lifecycle_tick_excludes_discarded_relics_from_remaining_count` / `corpse_below_threshold_does_not_spawn` 等
+- Smoke 脚本：`scripts/smoke-tsy-lifecycle.sh` 落地
+
+### 跨仓库核验
+
+- **server**：
+  - `TsyLifecycle` / `TsyZoneState` / `TsyZoneStateRegistry` / `TsyZoneActivated` / `TsyCollapseStarted` / `TsyCollapseCompleted` / `DaoxiangOrigin` / `tsy_lifecycle_tick` / `tsy_lifecycle_apply_spirit_qi` / `tsy_collapse_completed_cleanup` / `tsy_corpse_to_daoxiang_tick` / `spawn_daoxiang_from_corpse` / `compute_layer_spirit_qi` / `COLLAPSE_DURATION_TICKS` / `DAOXIANG_NATURAL_TICKS` @ `server/src/world/tsy_lifecycle.rs`
+  - `NpcArchetype::Daoxiang` @ `server/src/npc/lifecycle.rs` L60；loot 表 @ `server/src/npc/loot.rs` L93/L193；hostile 接入 @ `server/src/npc/tsy_hostile.rs` L616/L631/L1379/L1464
+  - portal 守门 @ `server/src/world/tsy_portal.rs` L20/L56；extract_system 消费 `TsyCollapseCompleted` @ `server/src/world/extract_system.rs` L17/L154/L195
+  - schema bridge：`TsyCollapseStartedIpcV1` @ `server/src/schema/server_data.rs` L101/L236/L460/L650/L936/L1212/L1373/L1469；agent_bridge 路由 @ `server/src/network/agent_bridge.rs` L85
+- **agent**：`agent/packages/schema/src/tsy.ts` — `TsyZoneActivatedV1` @ L120 + `validateTsyZoneActivatedV1Contract`、`DaoxiangSpawnedV1` @ L190 + `validateDaoxiangSpawnedV1Contract`；`agent/packages/schema/src/schema-registry.ts` L132/L138/L247/L250 注册
+- **client**：本 plan 不涉及 client（HUD 倒计时由 P3 polish plan 接力）
+- **worldgen**：不涉及
+
+### 遗留 / 后续
+
+- 道伥 spawn 平衡参数（aggro 阈值、disguise 距离、伤害、speed）调优与完整 brain tree 推 `plan-tsy-polish-v1` / `plan-daoxiang-ecology-v1`；`plan-tsy-agent-narrative-v1` 接 narration；`plan-tsy-persistence-v1` 接 family Dead 状态持久化与亡者博物馆；道伥死亡 loot 从 MVP 简化版（rusty_blade/tattered_scroll/骨币）升级到原干尸 instance 反查推 P3。
+

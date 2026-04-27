@@ -1197,3 +1197,56 @@ P0 `plan-tsy-zone-v1` 已在 2026-04-23 修订：
 - **2026-04-26**：**dimension plan Rust 侧解冻** — PR #47（merge 579fc67e）落地 `DimensionKind` / `DimensionLayers` / `TerrainProviders { overworld, tsy: Option }` / `DimensionTransferRequest` / `Zone.dimension` 全套基础设施。本 plan §10 升级条件之一（dimension Rust 侧落地）已满足，仍欠 **P0 `tsy-zone` merged**（升级条件之二）；可与 P0 active 阶段并行起步骨架→active 升级。POI 通道（`blueprint.py:156-184`）已就位等 consumer 接入。
 - **2026-04-26（夜）**：**Q8 漏标修正 + daneng_01 完整 JSON 补齐**（两件不堵任何前置的事）：(a) §8 Q8 已由 dimension plan §7 Q4（line 341/389）决"共享 TSY dim"，本 plan 漏标，已改为关闭；(b) §10 升级条件 #4 从"Q1/Q8 收敛"收窄为"Q1 收敛"；(c) §2.2.b 从占位差异说明扩成 daneng_01 三层完整 JSON（shallow 8 POI / mid 10 POI / deep 8 POI 共 26，符合 §8 Q9 区间），含 ellipse 形状、火山岩 surface_palette、deep 层 amethyst+end_stone 晶柱腔体主题。本次只动这两处，不触发 §10 其他堵点（P0 zone-v1 / P4 archetype 命名 / Q1 仍 ⏳）。
 - **2026-04-26（晚）**：**实地考察后骨架填充至实施级别**。差异核对：(a) `LAYER_REGISTRY` 实际是 27 层 / fields.py:45-115（骨架原写"25+ / 45-104"），(b) 现有 profile 实际 9 个 / `_GENERATORS` 在 `__init__.py:14-27`（骨架基本对），(c) profile dispatch 在 `stitcher.py:378-407` 是 if/elif 硬 dispatch（非动态注册，加新 profile 必须改 stitcher），(d) `BlueprintZone` 现无 `dimension` 字段（`blueprint.py:54-63`），但 Rust `ZoneConfig` 已支持 `"dimension": "overworld" | "tsy"` 反序列化（`zone.rs:347, 474`），双端需对齐补 Python 侧；(e) `register_runtime_zone()` 全 server/src 内不存在（grep 0 命中），P0 责任未动。填充内容：§-1 全表加 ✅/🟡/❌ 状态；§1.2 补 4 个 consumer system 完整 fn 签名（spawn_rift_portals / spawn_tsy_containers / spawn_tsy_npc_anchors / spawn_tsy_relic_slots）+ 14 个 helper 列表；§2.2.a 补 `tsy_zongmen_01_shallow/mid/deep` 完整 JSON 模板（含 worldgen / AABB / pois 共 12 POI）+ §2.2.b daneng_01 占位差异 + §2.2.c 主世界 entry POI 模板 × 2 + §2.2.d 字段总览表；§3.1 / §3.2 给 `tsy_zongmen_ruin.py` 完整骨架（generator class + fill_*_tile 含 Y 分层算法 + decorations / extra_layers / ecology）+ §3.2.a 4 处注册接入点 + §3.4 其余 3 个 profile 差异表；§4.1 给 fields.py:115 精确插入位置 + Rust raster.rs hook 位（101/154/475/514）；§4.3 给 7 条 raster_check invariant 完整 Python 伪代码；§6.2 给 smoke-tsy-worldgen.sh 完整 bash 骨架；§8 收敛 Q2 (→ A) / Q4 (→ 混合) / Q6 (→ 新建 profile) / Q9 (→ 19-29 POI/family) / Q11 (→ 1:1)；§9 规模预估更新 ~1280 → ~1980；§10 升级条件加状态标记。**当前满足度 1/5**，仍保留在 plans-skeleton/，欠 P0 merged + P4 archetype 命名 + Q1 / Q8 收敛即可启动 active phase。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **§1 POI Consumer**：`server/src/world/tsy_poi_consumer.rs`（Startup 期消费 `TerrainProviders.{overworld, tsy}` 的 `pois()`，spawn `RiftPortal` / `LootContainer` / `NpcAnchor` / `RelicCoreSlot`），通过 `server/src/world/mod.rs:21, 111` 的 `pub mod tsy_poi_consumer;` + `tsy_poi_consumer::register(app);` 接入；环境变量 `BONG_TSY_RASTER_PATH` 控制 TSY provider 加载。
+- **§2-§4 Python worldgen 扩展**：
+  - `worldgen/scripts/terrain_gen/fields.py:115-124`（LAYER_REGISTRY 追加 `tsy_presence` / `tsy_origin_id` / `tsy_depth_tier` 三层）
+  - `worldgen/scripts/terrain_gen/blueprint.py:64-65`（`BlueprintZone` 加 `dimension` 字段）
+  - `worldgen/scripts/terrain_gen/__main__.py:30, 33, 71, 77, 132, 140-150`（`--tsy-blueprint` / `--tsy-output-dir` 双跑 + `TSY_ONLY_LAYERS` whitelist）
+  - `worldgen/scripts/terrain_gen/bakers/raster_export.py:65-66`（layer_whitelist 主世界过滤 tsy_*）
+  - `worldgen/scripts/terrain_gen/profiles/`：`tsy_daneng_crater.py` / `tsy_zongmen_ruin.py` / `tsy_zhanchang.py` / `tsy_gaoshou_hermitage.py` 4 个 TSY profile，由 `profiles/__init__.py:12-15` 注册 + `stitcher.py:28-31, 407-414` dispatch
+  - `worldgen/scripts/terrain_gen/harness/raster_check.py:176-279`（§4.3 7 条 TSY/overworld 分支 invariant）
+  - `scripts/dev-reload.sh:20-60`（双 manifest 改造：`TSY_BLUEPRINT=server/zones.tsy.json` + `WORLDGEN_TSY_OUTPUT_DIR=generated/terrain-gen-tsy` + 双跑 raster + 双侧 raster_check）
+  - `server/zones.tsy.json`（TSY 位面 blueprint 入口）
+
+### 关键 commit
+
+- `77d042fb` (2026-04-27) — plan-tsy-worldgen-v1: TSY 双 manifest worldgen 流水线 + POI consumer (#51)
+- `2ad11802` — fix(server): review feedback — startup ordering / entry portal target / lock unknown / cleanup
+- `1611ac43` — feat(server): tsy_poi_consumer + BONG_TSY_RASTER_PATH 接入
+- `853a8ee2` — feat(worldgen): raster_check 加 7 条 TSY/overworld 分支 invariant
+- `2ce5bae9` — feat(worldgen): profiles/__init__.py + stitcher.py 注册 4 个 TSY profile
+- `c1dd5382` — feat(worldgen): 4 个 TSY profile (zongmen / daneng / zhanchang / gaoshou)
+- `6a549dfb` — feat(worldgen): __main__ 加 --tsy-blueprint 双跑 + raster_export 加 layer_whitelist
+- `a9d0836d` — feat(worldgen): BlueprintZone 加 dimension 字段（默认 overworld）
+- `d664921d` — feat(worldgen): fields.py 加 3 个 TSY layer (tsy_presence/origin_id/depth_tier)
+- `7e14ac97` — feat(worldgen): dev-reload.sh 双 manifest 改造
+
+### 测试结果
+
+- `server/src/world/tsy_poi_consumer.rs` — 8 个 `#[test]`（POI consumer 单测）
+- `bash scripts/dev-reload.sh` 双 manifest 流程：overworld + tsy 两轮 `python -m scripts.terrain_gen` + `harness/raster_check.py` 双侧 invariant 校验
+
+### 跨仓库核验
+
+- **server**：`tsy_poi_consumer::register` @ `server/src/world/tsy_poi_consumer.rs`（mod.rs:21, 111 接入）；`BONG_TSY_RASTER_PATH` 环境变量；`TerrainProviders.{overworld, tsy}` 消费路径
+- **worldgen**：
+  - `LAYER_REGISTRY` 3 层 TSY 扩展 @ `fields.py:115-124`
+  - `BlueprintZone.dimension` @ `blueprint.py:64-65`
+  - `--tsy-blueprint` / `TSY_ONLY_LAYERS` @ `__main__.py:30-150`
+  - `layer_whitelist` @ `bakers/raster_export.py:65-66`
+  - 4 TSY profile @ `profiles/tsy_*.py` + `profiles/__init__.py:12-15` + `stitcher.py:28-31, 407-414`
+  - 7 TSY invariant @ `harness/raster_check.py:176-279`
+  - 双 manifest 流程 @ `scripts/dev-reload.sh:20-60`
+- **agent**：（不涉及）
+- **client**：（不涉及）
+
+### 遗留 / 后续
+
+- §1.1 `npc_anchor.archetype={P4_TBD}` 高阶守株待兔者命名待 `plan-tsy-hostile-v1` 锁定后回填；浅层 PVP 收割场所需 archetype 接入由后续 plan 负责。
