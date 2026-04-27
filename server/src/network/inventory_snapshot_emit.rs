@@ -284,6 +284,10 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         scroll_xp_grant,
         // plan-tsy-loot-v1 §1.3 — Ancient 物品 charges 透传；非 ancient 恒为 None。
         charges: item.charges,
+        forge_quality: item.forge_quality,
+        forge_color: item.forge_color,
+        forge_side_effects: item.forge_side_effects.clone(),
+        forge_achieved_tier: item.forge_achieved_tier,
     }
 }
 
@@ -554,6 +558,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -1129,6 +1137,10 @@ mod tests {
             )),
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -1150,6 +1162,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

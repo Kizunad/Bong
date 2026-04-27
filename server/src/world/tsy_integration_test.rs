@@ -90,6 +90,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         PlayerInventory {
             revision: InventoryRevision(1),

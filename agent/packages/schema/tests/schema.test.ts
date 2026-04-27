@@ -153,6 +153,16 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("inventory-snapshot.sample.json carries forge item metadata", () => {
+    const data = loadSample("inventory-snapshot.sample.json");
+    const result = validate(InventorySnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.equipped.main_hand.forge_quality).toBe(0.74);
+    expect(data.equipped.main_hand.forge_color).toBe("Sharp");
+    expect(data.equipped.main_hand.forge_side_effects).toEqual(["brittle_edge"]);
+    expect(data.equipped.main_hand.forge_achieved_tier).toBe(1);
+  });
+
   it("server-data.inventory-event.sample.json", () => {
     const data = loadSample("server-data.inventory-event.sample.json");
     const result = validate(ServerDataV1, data);

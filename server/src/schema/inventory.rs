@@ -1,5 +1,7 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
+use crate::cultivation::components::ColorKind;
+
 const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const HOTBAR_SLOT_COUNT: usize = 9;
 const INVENTORY_CONTAINER_COUNT: usize = 3;
@@ -93,6 +95,23 @@ pub struct InventoryItemViewV1 {
     /// tier 1/3/5 的整数计数，每次使用 -= 1，归零销毁。非 ancient 恒为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charges: Option<u32>,
+    /// plan-forge-leftovers-v1 §2.2 — 炼器产物运行时品质。缺省/None 表示非 forge 产物。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_unit_interval_f32"
+    )]
+    pub forge_quality: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_color: Option<ColorKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forge_side_effects: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_forge_tier"
+    )]
+    pub forge_achieved_tier: Option<u8>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -595,6 +614,38 @@ where
     }
 }
 
+fn deserialize_optional_unit_interval_f32<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<f32>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if (0.0..=1.0).contains(&value) {
+        Ok(Some(value))
+    } else {
+        Err(D::Error::custom(format!(
+            "number must be in 0..=1, got {value}"
+        )))
+    }
+}
+
+fn deserialize_optional_forge_tier<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<u8>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if (1..=4).contains(&value) {
+        Ok(Some(value))
+    } else {
+        Err(D::Error::custom(format!(
+            "forge achieved tier must be in 1..=4, got {value}"
+        )))
+    }
+}
+
 fn deserialize_string_up_to_4096<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -798,6 +849,10 @@ mod tests {
                 scroll_skill_id: None,
                 scroll_xp_grant: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -922,6 +977,78 @@ mod tests {
         let view: InventoryItemViewV1 =
             serde_json::from_value(legacy).expect("legacy snapshot must deserialize");
         assert!(view.freshness.is_none());
+        assert!(view.forge_quality.is_none());
+        assert!(view.forge_color.is_none());
+        assert!(view.forge_side_effects.is_empty());
+        assert!(view.forge_achieved_tier.is_none());
+    }
+
+    #[test]
+    fn item_view_forge_fields_roundtrip_preserves_contract() {
+        let view = InventoryItemViewV1 {
+            instance_id: 42,
+            item_id: "qing_feng_sword".to_string(),
+            display_name: "青锋剑".to_string(),
+            grid_width: 1,
+            grid_height: 2,
+            weight: 2.5,
+            rarity: ItemRarityV1::Rare,
+            description: "炼成之剑".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            freshness_current: None,
+            mineral_id: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
+            charges: None,
+            forge_quality: Some(0.98),
+            forge_color: Some(ColorKind::Sharp),
+            forge_side_effects: vec!["brittle_edge".to_string()],
+            forge_achieved_tier: Some(2),
+        };
+
+        let json = serde_json::to_string(&view).expect("serialize forge item view");
+        let back: InventoryItemViewV1 = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(back, view);
+    }
+
+    #[test]
+    fn item_view_rejects_invalid_forge_fields() {
+        let invalid_quality = json!({
+            "instance_id": 42,
+            "item_id": "qing_feng_sword",
+            "display_name": "青锋剑",
+            "grid_width": 1,
+            "grid_height": 2,
+            "weight": 2.5,
+            "rarity": "rare",
+            "description": "炼成之剑",
+            "stack_count": 1,
+            "spirit_quality": 1.0,
+            "durability": 1.0,
+            "forge_quality": 1.2,
+        });
+        assert!(serde_json::from_value::<InventoryItemViewV1>(invalid_quality).is_err());
+
+        let invalid_tier = json!({
+            "instance_id": 42,
+            "item_id": "qing_feng_sword",
+            "display_name": "青锋剑",
+            "grid_width": 1,
+            "grid_height": 2,
+            "weight": 2.5,
+            "rarity": "rare",
+            "description": "炼成之剑",
+            "stack_count": 1,
+            "spirit_quality": 1.0,
+            "durability": 1.0,
+            "forge_achieved_tier": 5,
+        });
+        assert!(serde_json::from_value::<InventoryItemViewV1>(invalid_tier).is_err());
     }
 
     #[test]
@@ -954,6 +1081,10 @@ mod tests {
             scroll_skill_id: None,
             scroll_xp_grant: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -983,6 +1114,10 @@ mod tests {
             scroll_skill_id: None,
             scroll_xp_grant: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1066,6 +1201,10 @@ mod tests {
             scroll_skill_id: None,
             scroll_xp_grant: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(json.contains("\"mineral_id\":\"fan_tie\""));
@@ -1094,6 +1233,10 @@ mod tests {
             scroll_skill_id: None,
             scroll_xp_grant: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(

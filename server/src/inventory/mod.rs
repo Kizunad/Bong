@@ -211,6 +211,15 @@ pub struct ItemInstance {
     /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charges: Option<u32>,
+    /// plan-forge-leftovers-v1 §2.2 — 炼器产物运行时品质；None = 非 forge 产物。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_quality: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_color: Option<crate::cultivation::components::ColorKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forge_side_effects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_achieved_tier: Option<u8>,
 }
 
 #[derive(Debug)]
@@ -689,6 +698,10 @@ fn instantiate_item_instance(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     })
 }
 
@@ -828,6 +841,10 @@ pub fn add_item_to_player_inventory(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     };
 
     let Some(main_pack) = inventory
@@ -2778,6 +2795,10 @@ fn build_item_instance_from_template(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     })
 }
 
@@ -3367,6 +3388,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -3478,6 +3503,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3532,6 +3561,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         });
 
@@ -3706,6 +3739,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3747,6 +3784,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3778,6 +3819,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3848,6 +3893,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3865,6 +3914,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3883,6 +3936,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3944,6 +4001,10 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             });
         }
@@ -4239,6 +4300,10 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             },
         );
@@ -4329,6 +4394,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4389,6 +4458,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4418,6 +4491,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -4436,6 +4513,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4492,6 +4573,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 

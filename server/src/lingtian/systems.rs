@@ -896,6 +896,10 @@ fn award_item_to_inventory(
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 };
                 main_pack.items.push(crate::inventory::PlacedItemState {
                     row: r,
@@ -1284,6 +1288,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -1458,6 +1466,10 @@ mod tests {
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
         let inv = PlayerInventory {
@@ -1776,6 +1788,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -2225,6 +2241,10 @@ mod tests {
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             });
         let player = app.world_mut().spawn(inv).id();
@@ -2349,6 +2369,10 @@ mod tests {
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             });
         inv

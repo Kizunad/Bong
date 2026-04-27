@@ -64,6 +64,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: Some(3),
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
