@@ -289,11 +289,20 @@ pub fn tsy_lifecycle_tick(
                 // 玩家入场前；ensure_active 会推过 New，此处保留兜底。
             }
             TsyLifecycle::Active | TsyLifecycle::Declining => {
-                // 同步 remaining：扫 initial，留下仍在 entries 里的 id。
+                // 同步 remaining：扫 initial，留下仍在 entries 里 *且* `source_container_id`
+                // 仍是 `tsy_spawn:{family}` 的 id。
+                //
+                // 这一约束是必要的（Codex review P1）：玩家捡走 ancient relic 后再 discard
+                // 回主世界，instance_id 仍存在于 `DroppedLootRegistry.entries`，但
+                // `source_container_id` 已变成玩家 container（"main_pack" / "hotbar"），
+                // 不再匹配 `tsy_spawn:` 前缀 —— 不算 remaining，状态机能正确推进 Collapsing。
+                let prefix = format!("tsy_spawn:{}", state.family_id);
                 let mut remaining = HashSet::with_capacity(state.initial_skeleton.len());
                 for id in &state.initial_skeleton {
-                    if loot.entries.contains_key(id) {
-                        remaining.insert(*id);
+                    if let Some(entry) = loot.entries.get(id) {
+                        if entry.source_container_id == prefix {
+                            remaining.insert(*id);
+                        }
                     }
                 }
                 state.remaining_skeleton = remaining;
@@ -410,8 +419,21 @@ pub fn tsy_collapse_completed_cleanup(
             commands.entity(entity).remove::<TsyPresence>();
         }
 
-        // Step 2: 凡物 / 残留 ancient relic 随 zone 蒸发（位于 family 三层 AABB 内的 entries）
+        // Step 2: 凡物 / 残留 ancient relic 随 zone 蒸发。
+        //
+        // **过滤规则（Codex review P1）**：仅删除 `source_container_id` 带本 family 标记的 entries。
+        // - `tsy_spawn:{family}` —— 本 plan §1.5 spawn 的 ancient relic
+        // - `tsy_corpse:{family}/...` —— P1 TSY 内死亡 drop 走 plan §3.3 加上的 family 前缀
+        // 这样既排除了主世界同 XYZ 的无关 drop 被误删，也让本 family 关联的所有 entries
+        // 能在塌缩时确定性蒸发。AABB 命中作为额外 sanity（同 family 多次实例化时区分）。
+        let spawn_prefix = format!("tsy_spawn:{family}");
+        let corpse_prefix = format!("tsy_corpse:{family}/");
         loot_registry.entries.retain(|_, entry| {
+            let belongs_to_family = entry.source_container_id == spawn_prefix
+                || entry.source_container_id.starts_with(&corpse_prefix);
+            if !belongs_to_family {
+                return true;
+            }
             let pos = DVec3::new(entry.world_pos[0], entry.world_pos[1], entry.world_pos[2]);
             !point_in_any_aabb(pos, &aabbs)
         });

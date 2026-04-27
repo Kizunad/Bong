@@ -368,6 +368,103 @@ mod tests {
         assert!(loot.entries.contains_key(&999), "zone 外 loot 不应受影响");
     }
 
+    /// Regression test for Codex review P1 #1：cleanup 不应删除主世界同 XYZ 的 entries。
+    /// 主世界的 drop（player container source_container_id）即使坐标命中 TSY zone AABB
+    /// 也必须保留 —— 仅 `tsy_spawn:` / `tsy_corpse:{family}/...` 前缀的 entries 才参与蒸发。
+    #[test]
+    fn collapse_cleanup_preserves_overworld_drops_at_same_xyz() {
+        let mut app = make_app(0);
+        register_lingxu(&mut app);
+
+        // entry 100：主世界玩家死亡掉的"main_pack"物品，坐标 (50,50,50) 落在 TSY mid AABB 内
+        {
+            let mut loot = app.world_mut().resource_mut::<DroppedLootRegistry>();
+            let mut overworld_drop = drop_entry(100, "tsy_lingxu_01", DVec3::new(50.0, 50.0, 50.0));
+            overworld_drop.source_container_id = "main_pack".into();
+            loot.entries.insert(100, overworld_drop);
+
+            // entry 200：合法的 TSY family 残留 ancient relic（应被蒸发）
+            let mut tsy_drop = drop_entry(200, "tsy_lingxu_01", DVec3::new(50.0, 50.0, 50.0));
+            tsy_drop.source_container_id = "tsy_spawn:tsy_lingxu_01".into();
+            loot.entries.insert(200, tsy_drop);
+        }
+        {
+            let mut reg = app.world_mut().resource_mut::<TsyZoneStateRegistry>();
+            reg.ensure_active(
+                "tsy_lingxu_01",
+                AncientRelicSource::DaoLord,
+                DimensionAnchor {
+                    dimension: DimensionKind::Overworld,
+                    pos: DVec3::ZERO,
+                },
+                0,
+            );
+            reg.by_family.get_mut("tsy_lingxu_01").unwrap().lifecycle = TsyLifecycle::Collapsing;
+        }
+        app.world_mut()
+            .resource_mut::<Events<TsyCollapseCompleted>>()
+            .send(TsyCollapseCompleted {
+                family_id: "tsy_lingxu_01".into(),
+                at_tick: 1,
+            });
+        app.update();
+
+        let loot = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            loot.entries.contains_key(&100),
+            "主世界 main_pack drop 在同 XYZ 不应被误删（Codex P1 #1 regression）"
+        );
+        assert!(
+            !loot.entries.contains_key(&200),
+            "tsy_spawn 前缀 entry 在 zone aabb 内应被蒸发"
+        );
+    }
+
+    /// Regression test for Codex review P1 #2：玩家捡走 ancient relic 后再 discard
+    /// 回主世界，instance_id 仍在 registry 但 source 不再是 tsy_spawn，状态机应正确
+    /// 视其为"已取走"而非"还在 zone 里"，能推进 Collapsing。
+    #[test]
+    fn lifecycle_tick_excludes_discarded_relics_from_remaining_count() {
+        let mut app = make_app(0);
+        register_lingxu(&mut app);
+
+        // family + 2 件 ancient relic
+        {
+            let mut reg = app.world_mut().resource_mut::<TsyZoneStateRegistry>();
+            reg.ensure_active(
+                "tsy_lingxu_01",
+                AncientRelicSource::DaoLord,
+                DimensionAnchor {
+                    dimension: DimensionKind::Overworld,
+                    pos: DVec3::ZERO,
+                },
+                0,
+            );
+            reg.mark_initial_skeleton("tsy_lingxu_01", vec![10, 20]);
+        }
+
+        // entry 10：玩家捡了又 discard 回主世界，source 改成 "main_pack"
+        // entry 20：捡了，instance 离开 registry（彻底取走）
+        // 期望：remaining = 0 → 推进到 Collapsing
+        {
+            let mut loot = app.world_mut().resource_mut::<DroppedLootRegistry>();
+            let mut discarded = drop_entry(10, "tsy_lingxu_01", DVec3::new(0.0, 64.0, 0.0));
+            discarded.source_container_id = "main_pack".into();
+            loot.entries.insert(10, discarded);
+            // entry 20 不在 registry —— 已被永远捡走
+        }
+
+        app.update();
+
+        let reg = app.world().resource::<TsyZoneStateRegistry>();
+        let s = reg.by_family.get("tsy_lingxu_01").unwrap();
+        assert_eq!(
+            s.lifecycle,
+            TsyLifecycle::Collapsing,
+            "discarded relic 应不算 remaining，状态机应推进到 Collapsing（Codex P1 #2 regression）"
+        );
+    }
+
     #[test]
     fn corpse_natural_activation_after_threshold_spawns_daoxiang() {
         let mut app = make_app(DAOXIANG_NATURAL_TICKS + 1);

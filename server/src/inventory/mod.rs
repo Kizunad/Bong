@@ -1453,9 +1453,15 @@ pub fn apply_death_drop_on_revive(
                 .chain(tsy_outcome.tsy_acquired_dropped.iter())
                 .enumerate()
             {
+                // plan-tsy-lifecycle-v1 §3.3 — 把 family 写进 source_container_id 前缀，
+                // 让 lifecycle cleanup 能精确识别"属于本 family 的塌缩残留"，避免
+                // 主世界同 XYZ 的 entries 被误删（Codex review P1）。
                 let entry = DroppedLootEntry {
                     instance_id: record.instance.instance_id,
-                    source_container_id: record.container_id.clone(),
+                    source_container_id: format!(
+                        "tsy_corpse:{}/{}",
+                        presence.family_id, record.container_id
+                    ),
                     source_row: record.row,
                     source_col: record.col,
                     world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
