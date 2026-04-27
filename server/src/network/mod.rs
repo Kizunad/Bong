@@ -1,6 +1,5 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
-pub mod forge_snapshot_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -13,6 +12,7 @@ pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
 pub mod extract_emit;
+pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
