@@ -129,12 +129,10 @@ fn emit_alchemy_skill_xp_from_outcomes(
     mut skill_xp_events: EventWriter<SkillXpGain>,
 ) {
     for event in events.read() {
-        let Some((player_entity, _)) = players
-            .iter()
-            .find(|(_, username)| {
-                event.caster_id == username.0 || canonical_player_id(username.0.as_str()) == event.caster_id
-            })
-        else {
+        let Some((player_entity, _)) = players.iter().find(|(_, username)| {
+            event.caster_id == username.0
+                || canonical_player_id(username.0.as_str()) == event.caster_id
+        }) else {
             continue;
         };
 

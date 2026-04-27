@@ -261,50 +261,65 @@ fn handle_step_advance(
         };
 
         let prev_step = session.current_step;
-        let caster_info = caster_q
-            .get(session.caster)
-            .ok()
-            .map(|(cultivation, qi_color, skill_set)| {
-                let forging_lv = forging_effective_lv(cultivation, skill_set);
-                (cultivation.realm, qi_color.main, forging_lv)
-            });
+        let caster_info =
+            caster_q
+                .get(session.caster)
+                .ok()
+                .map(|(cultivation, qi_color, skill_set)| {
+                    let forging_lv = forging_effective_lv(cultivation, skill_set);
+                    (cultivation.realm, qi_color.main, forging_lv)
+                });
         // 对当前步骤做结算。
-        let (step_flawed, step_waste) = match (&session.step_state, bp.steps.get(session.step_index)) {
-            (StepState::Tempering(state), Some(blueprint::StepSpec::Tempering { profile })) => {
-                let miss_bonus = caster_info
-                    .map(|(_, _, lv)| skill_hook::allowed_miss_bonus(lv))
-                    .unwrap_or(0);
-                let result = resolve_tempering(profile, state, miss_bonus);
-                session.tempering_result = Some(result);
+        let (step_flawed, step_waste) =
+            match (&session.step_state, bp.steps.get(session.step_index)) {
+                (StepState::Tempering(state), Some(blueprint::StepSpec::Tempering { profile })) => {
+                    let miss_bonus = caster_info
+                        .map(|(_, _, lv)| skill_hook::allowed_miss_bonus(lv))
+                        .unwrap_or(0);
+                    let result = resolve_tempering(profile, state, miss_bonus);
+                    session.tempering_result = Some(result);
+                    (
+                        matches!(result, TemperingResult::Flawed | TemperingResult::Good),
+                        matches!(result, TemperingResult::Waste),
+                    )
+                }
                 (
-                    matches!(result, TemperingResult::Flawed | TemperingResult::Good),
-                    matches!(result, TemperingResult::Waste),
-                )
-            }
-            (StepState::Inscription(state), Some(blueprint::StepSpec::Inscription { profile })) => {
-                let failure_reduction = caster_info
-                    .map(|(_, _, lv)| skill_hook::inscription_failure_rate_reduction(lv))
-                    .unwrap_or(0.0);
-                let roll = deterministic_step_roll(session.id.0, session.step_index, 0x1bad5eed);
-                let result = resolve_inscription(profile, state, roll, failure_reduction);
-                session.inscription_result = Some(result);
+                    StepState::Inscription(state),
+                    Some(blueprint::StepSpec::Inscription { profile }),
+                ) => {
+                    let failure_reduction = caster_info
+                        .map(|(_, _, lv)| skill_hook::inscription_failure_rate_reduction(lv))
+                        .unwrap_or(0.0);
+                    let roll =
+                        deterministic_step_roll(session.id.0, session.step_index, 0x1bad5eed);
+                    let result = resolve_inscription(profile, state, roll, failure_reduction);
+                    session.inscription_result = Some(result);
+                    (
+                        matches!(
+                            result,
+                            InscriptionResult::Partial | InscriptionResult::Failed
+                        ),
+                        false,
+                    )
+                }
                 (
-                    matches!(result, InscriptionResult::Partial | InscriptionResult::Failed),
-                    false,
-                )
-            }
-            (StepState::Consecration(state), Some(blueprint::StepSpec::Consecration { profile })) => {
-                let result = caster_info
-                    .map(|(realm, color, _)| resolve_consecration(profile, state, color, realm))
-                    .unwrap_or(ConsecrationResult::Failed);
-                session.consecration_result = Some(result);
-                (
-                    matches!(result, ConsecrationResult::Insufficient | ConsecrationResult::Failed),
-                    false,
-                )
-            }
-            _ => (false, false),
-        };
+                    StepState::Consecration(state),
+                    Some(blueprint::StepSpec::Consecration { profile }),
+                ) => {
+                    let result = caster_info
+                        .map(|(realm, color, _)| resolve_consecration(profile, state, color, realm))
+                        .unwrap_or(ConsecrationResult::Failed);
+                    session.consecration_result = Some(result);
+                    (
+                        matches!(
+                            result,
+                            ConsecrationResult::Insufficient | ConsecrationResult::Failed
+                        ),
+                        false,
+                    )
+                }
+                _ => (false, false),
+            };
         if step_waste {
             finalize_outcome(
                 session,
@@ -469,8 +484,12 @@ fn finalize_outcome(
             bucket,
             ForgeBucket::Perfect | ForgeBucket::Good | ForgeBucket::Flawed
         ),
-        session.tempering_result.map(|r| !matches!(r, TemperingResult::Flawed | TemperingResult::Waste)),
-        session.inscription_result.map(|r| matches!(r, InscriptionResult::Filled)),
+        session
+            .tempering_result
+            .map(|r| !matches!(r, TemperingResult::Flawed | TemperingResult::Waste)),
+        session
+            .inscription_result
+            .map(|r| matches!(r, InscriptionResult::Filled)),
         session
             .consecration_result
             .map(|r| matches!(r, ConsecrationResult::Succeeded { .. })),

@@ -674,9 +674,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 char_id,
                 skills,
                 consumed_scrolls,
-            } => Ok(Self::SkillSnapshot(
-                Box::new(SkillSnapshotPayloadV1::new(char_id, skills, consumed_scrolls)),
-            )),
+            } => Ok(Self::SkillSnapshot(Box::new(SkillSnapshotPayloadV1::new(
+                char_id,
+                skills,
+                consumed_scrolls,
+            )))),
         }
     }
 }
@@ -1110,7 +1112,10 @@ mod tests {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
-                assert_eq!(recent_skill_milestones_summary, "t82000:skill:herbalism:lv3");
+                assert_eq!(
+                    recent_skill_milestones_summary,
+                    "t82000:skill:herbalism:lv3"
+                );
                 assert_eq!(skill_milestones.len(), 1);
                 assert_eq!(skill_milestones[0].skill, "herbalism");
             }

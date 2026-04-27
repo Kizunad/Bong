@@ -1438,7 +1438,11 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
     let mut skill = None;
     let mut new_lv = None;
 
-    for part in target.split('|').map(str::trim).filter(|part| !part.is_empty()) {
+    for part in target
+        .split('|')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         if let Some(bits) = part.strip_prefix("char:") {
             char_bits = bits.parse::<u64>().ok();
             continue;
@@ -2307,9 +2311,18 @@ mod tests {
             let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
 
             assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
-            assert!(bob_payloads.is_empty(), "char-id targeted narration must not leak to Bob");
-            assert_eq!(azure_chat_packets, 0, "player-scoped narration should not mirror chat packets");
-            assert_eq!(bob_chat_packets, 0, "non-targeted player must not receive chat packets");
+            assert!(
+                bob_payloads.is_empty(),
+                "char-id targeted narration must not leak to Bob"
+            );
+            assert_eq!(
+                azure_chat_packets, 0,
+                "player-scoped narration should not mirror chat packets"
+            );
+            assert_eq!(
+                bob_chat_packets, 0,
+                "non-targeted player must not receive chat packets"
+            );
         }
 
         #[test]
@@ -2337,10 +2350,7 @@ mod tests {
                 &tx_inbound,
                 Narration {
                     scope: NarrationScope::Player,
-                    target: Some(format!(
-                        "char:{}|skill:herbalism|lv:4",
-                        azure.to_bits()
-                    )),
+                    target: Some(format!("char:{}|skill:herbalism|lv:4", azure.to_bits())),
                     text: "你摘辨草木渐熟，今又进一层，已至Lv.4。".to_string(),
                     style: NarrationStyle::Narration,
                 },
@@ -2348,7 +2358,10 @@ mod tests {
 
             app.update();
 
-            let life_record = app.world().get::<LifeRecord>(azure).expect("life record should stay attached");
+            let life_record = app
+                .world()
+                .get::<LifeRecord>(azure)
+                .expect("life record should stay attached");
             assert_eq!(life_record.skill_milestones.len(), 1);
             assert_eq!(
                 life_record.skill_milestones[0].narration,

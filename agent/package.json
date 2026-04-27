@@ -1,6 +1,9 @@
 {
   "name": "@bong/agent-workspace",
   "private": true,
+  "scripts": {
+    "build": "npm run build -w @bong/schema && npm run build -w @bong/tiandao"
+  },
   "workspaces": [
     "packages/*"
   ],

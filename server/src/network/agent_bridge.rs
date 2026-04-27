@@ -542,16 +542,10 @@ mod server_data_tests {
         assert_eq!(alex_plain, vec![1]);
         assert_eq!(alex_alias, vec![1]);
 
-        let steve_char = route_recipient_indices(
-            &RecipientSelector::player("char:101"),
-            &recipients,
-            None,
-        );
-        let hidden_char = route_recipient_indices(
-            &RecipientSelector::player("char:303"),
-            &recipients,
-            None,
-        );
+        let steve_char =
+            route_recipient_indices(&RecipientSelector::player("char:101"), &recipients, None);
+        let hidden_char =
+            route_recipient_indices(&RecipientSelector::player("char:303"), &recipients, None);
         assert_eq!(steve_char, vec![0]);
         assert_eq!(hidden_char, vec![2]);
 
