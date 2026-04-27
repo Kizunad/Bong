@@ -121,6 +121,36 @@ public class BongParticleGeometryTest {
         assertEquals(2.5f, maxZ, EPS);
     }
 
+    @Test
+    void groundDecalFitChoosesHighestNearbySurface() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            64.2,
+            new double[] { Double.NaN, 64.0, 63.5 }
+        );
+
+        assertEquals(64.0, fitted, EPS, "decal should snap down to the nearest visible block top");
+    }
+
+    @Test
+    void groundDecalFitAllowsSmallUpwardSnapForThinShapes() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            63.45,
+            new double[] { 63.5 }
+        );
+
+        assertEquals(63.5, fitted, EPS, "thin block shapes may sit slightly above the event origin");
+    }
+
+    @Test
+    void groundDecalFitIgnoresDistantOrInvalidSurfaces() {
+        double fitted = BongParticleGeometry.fitGroundDecalY(
+            64.0,
+            new double[] { Double.NaN, 67.0, 60.0 }
+        );
+
+        assertEquals(64.0, fitted, EPS, "far ceilings/pits should not pull the decal away from origin");
+    }
+
     // ---------- buildRibbonSegment ----------
 
     @Test
@@ -165,6 +195,40 @@ public class BongParticleGeometryTest {
     }
 
     @Test
+    void geometryStress1005001000ProducesFiniteVertices() {
+        for (int total : new int[] { 100, 500, 1000 }) {
+            int vertexScalars = 0;
+            for (int i = 0; i < total; i++) {
+                double t = i * 0.017;
+                float[] line = BongParticleGeometry.buildLineQuad(
+                    new double[] { Math.sin(t), 64.0 + Math.cos(t) * 0.1, Math.cos(t) },
+                    new double[] { 0.25 + Math.sin(t), 0.05, 0.25 + Math.cos(t) },
+                    1.8,
+                    0.4,
+                    0.08
+                );
+                float[] ribbon = BongParticleGeometry.buildRibbonSegment(
+                    new double[] { t, 64.0, 0.0 },
+                    new double[] { t + 0.25, 64.05, 0.1 },
+                    new double[] { 0.2, 0.4, 1.0 },
+                    0.06
+                );
+                float[] decal = BongParticleGeometry.buildGroundDecalQuad(
+                    new double[] { Math.sin(t), 64.0, Math.cos(t) },
+                    1.2,
+                    t,
+                    0.02
+                );
+                assertAllFinite(line, "line stress total=" + total + " i=" + i);
+                assertAllFinite(ribbon, "ribbon stress total=" + total + " i=" + i);
+                assertAllFinite(decal, "decal stress total=" + total + " i=" + i);
+                vertexScalars += line.length + ribbon.length + decal.length;
+            }
+            assertEquals(total * 36, vertexScalars, "each stress particle should build three quads");
+        }
+    }
+
+    @Test
     void lineQuadVerticesAreDistinctForNonZeroInputs() {
         // 冒烟：确保 4 顶点两两不完全重合（防止未来 regression 把 quad 压扁）
         float[] quad = BongParticleGeometry.buildLineQuad(
@@ -189,4 +253,10 @@ public class BongParticleGeometryTest {
     }
 
     private static final float EPS_FLOAT = 1e-5f;
+
+    private static void assertAllFinite(float[] values, String label) {
+        for (float value : values) {
+            assertTrue(Float.isFinite(value), label + " produced non-finite vertex: " + value);
+        }
+    }
 }

@@ -113,6 +113,10 @@ public class VfxRegistryTest {
         VfxBootstrap.registerDefaults();
         assertTrue(VfxRegistry.instance().contains(SwordQiSlashPlayer.EVENT_ID),
             "bootstrap should register sword_qi_slash");
+        assertTrue(VfxRegistry.instance().contains(FlyingSwordDemoPlayer.EVENT_ID),
+            "bootstrap should register flying_sword_demo");
+        assertTrue(VfxRegistry.instance().contains(FormationCoreDemoPlayer.EVENT_ID),
+            "bootstrap should register formation_core_demo");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

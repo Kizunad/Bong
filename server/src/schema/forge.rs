@@ -264,10 +264,7 @@ mod tests {
             serde_json::to_string(&TemperBeatV1::Heavy).unwrap(),
             "\"H\""
         );
-        assert_eq!(
-            serde_json::to_string(&TemperBeatV1::Fold).unwrap(),
-            "\"F\""
-        );
+        assert_eq!(serde_json::to_string(&TemperBeatV1::Fold).unwrap(), "\"F\"");
         let back: TemperBeatV1 = serde_json::from_str("\"L\"").unwrap();
         assert_eq!(back, TemperBeatV1::Light);
     }
