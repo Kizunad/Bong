@@ -1,0 +1,16 @@
+{
+  "template_id": "iron_plate_chest",
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.50,
+      "blunt": 0.40,
+      "pierce": 0.55,
+      "burn": 0.15,
+      "concussion": 0.20
+    },
+    "durability_max": 30,
+    "broken_multiplier": 0.3
+  }
+}
