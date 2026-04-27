@@ -1,0 +1,67 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "session_id",
+    "blueprint_id",
+    "station_id",
+    "caster_id",
+    "materials",
+    "ts"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "session_id": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "blueprint_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "station_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "caster_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "material",
+          "count"
+        ],
+        "properties": {
+          "material": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "count": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "ts": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  }
+}

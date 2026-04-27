@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "forge_start_session",
+  "station_id": "forge_station_42",
+  "blueprint_id": "qing_feng_v0",
+  "materials": [
+    ["fan_tie", 3],
+    ["ling_wood", 1]
+  ]
+}

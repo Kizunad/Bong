@@ -83,6 +83,10 @@ import {
 } from "./extract-v1.js";
 import { ForgeEventV1 } from "./forge-event.js";
 import {
+  ForgeOutcomePayloadV1,
+  ForgeStartPayloadV1,
+} from "./forge-bridge.js";
+import {
   ForgeBlueprintBookDataV1,
   ForgeBlueprintEntryV1,
   ForgeOutcomeBucket,
@@ -288,6 +292,8 @@ export const SCHEMA_REGISTRY = {
   forgeSessionDataV1: ForgeSessionDataV1,
   forgeOutcomeDataV1: ForgeOutcomeDataV1,
   forgeBlueprintBookDataV1: ForgeBlueprintBookDataV1,
+  forgeStartPayloadV1: ForgeStartPayloadV1,
+  forgeOutcomePayloadV1: ForgeOutcomePayloadV1,
   serverDataForgeStationV1: ServerDataForgeStationV1,
   serverDataForgeSessionV1: ServerDataForgeSessionV1,
   serverDataForgeOutcomeV1: ServerDataForgeOutcomeV1,
@@ -475,6 +481,8 @@ export const GENERATED_SCHEMA_FILES = {
   "forge-session-data-v1.json": SCHEMA_REGISTRY.forgeSessionDataV1,
   "forge-outcome-data-v1.json": SCHEMA_REGISTRY.forgeOutcomeDataV1,
   "forge-blueprint-book-data-v1.json": SCHEMA_REGISTRY.forgeBlueprintBookDataV1,
+  "forge-start-payload-v1.json": SCHEMA_REGISTRY.forgeStartPayloadV1,
+  "forge-outcome-payload-v1.json": SCHEMA_REGISTRY.forgeOutcomePayloadV1,
   "server-data-forge-station-v1.json": SCHEMA_REGISTRY.serverDataForgeStationV1,
   "server-data-forge-session-v1.json": SCHEMA_REGISTRY.serverDataForgeSessionV1,
   "server-data-forge-outcome-v1.json": SCHEMA_REGISTRY.serverDataForgeOutcomeV1,
