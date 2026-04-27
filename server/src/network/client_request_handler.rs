@@ -33,7 +33,10 @@ use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
-use crate::forge::events::InscriptionScrollSubmit;
+use crate::forge::blueprint::TemperBeat;
+use crate::forge::events::{
+    ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
+};
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::ForgeSessionId;
 use crate::forge::station::PlaceForgeStationRequest;
@@ -146,6 +149,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
     pub place_forge_station_tx: Option<ResMut<'w, Events<PlaceForgeStationRequest>>>,
+    pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
+    pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
+    pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
 }
 
 #[derive(SystemParam)]
@@ -830,6 +836,33 @@ pub fn handle_client_request_payloads(
                     &mut skill_scroll_params.inscription_scroll_tx,
                 );
             }
+            ClientRequestV1::ForgeTemperingHit {
+                session_id,
+                beat,
+                ticks_remaining,
+                ..
+            } => {
+                handle_forge_tempering_hit(
+                    session_id,
+                    &beat,
+                    ticks_remaining,
+                    &mut dispatch.tempering_hit_tx,
+                );
+            }
+            ClientRequestV1::ForgeConsecrationInject {
+                session_id,
+                qi_amount,
+                ..
+            } => {
+                handle_forge_consecration_inject(
+                    session_id,
+                    qi_amount,
+                    &mut dispatch.consecration_inject_tx,
+                );
+            }
+            ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
+                handle_forge_step_advance(session_id, &mut dispatch.step_advance_tx);
+            }
             ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
                 handle_forge_learn_blueprint(
                     ev.client,
@@ -845,9 +878,6 @@ pub fn handle_client_request_payloads(
             }
             // ─── 炼器（武器）（plan-forge-v1 §1.3-§1.4）── wait for wiring ───
             ClientRequestV1::ForgeStartSession { .. }
-            | ClientRequestV1::ForgeTemperingHit { .. }
-            | ClientRequestV1::ForgeConsecrationInject { .. }
-            | ClientRequestV1::ForgeStepAdvance { .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { .. } => {
                 tracing::debug!(
                     "[bong][forge][network] plan-forge-v1 client_request not yet wired"
@@ -1144,6 +1174,76 @@ fn handle_forge_inscription_scroll(
     });
 }
 
+fn handle_forge_tempering_hit(
+    session_id: u64,
+    beat: &str,
+    ticks_remaining: u32,
+    tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
+) {
+    let Some(beat) = parse_temper_beat(beat) else {
+        tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
+        return;
+    };
+    let Some(tempering_hit_tx) = tempering_hit_tx.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network][forge] tempering_hit rejected: ForgePlugin events unavailable"
+        );
+        return;
+    };
+    tempering_hit_tx.send(TemperingHit {
+        session: ForgeSessionId(session_id),
+        beat,
+        ticks_remaining,
+    });
+}
+
+fn handle_forge_consecration_inject(
+    session_id: u64,
+    qi_amount: f64,
+    consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
+) {
+    if !qi_amount.is_finite() || qi_amount < 0.0 {
+        tracing::warn!(
+            "[bong][network][forge] consecration_inject rejected: invalid qi_amount={qi_amount}"
+        );
+        return;
+    }
+    let Some(consecration_inject_tx) = consecration_inject_tx.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network][forge] consecration_inject rejected: ForgePlugin events unavailable"
+        );
+        return;
+    };
+    consecration_inject_tx.send(ConsecrationInject {
+        session: ForgeSessionId(session_id),
+        qi_amount,
+    });
+}
+
+fn handle_forge_step_advance(
+    session_id: u64,
+    step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
+) {
+    let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
+        );
+        return;
+    };
+    step_advance_tx.send(StepAdvance {
+        session: ForgeSessionId(session_id),
+    });
+}
+
+fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
+    match raw {
+        "L" => Some(TemperBeat::Light),
+        "H" => Some(TemperBeat::Heavy),
+        "F" => Some(TemperBeat::Fold),
+        _ => None,
+    }
+}
+
 fn find_blueprint_scroll_instance_id(
     inventory: &PlayerInventory,
     registry: &ItemRegistry,
@@ -1243,6 +1343,21 @@ mod tests {
 
     impl valence::prelude::Resource for CapturedInscriptionScrolls {}
 
+    #[derive(Default)]
+    struct CapturedTemperingHits(Vec<TemperingHit>);
+
+    impl valence::prelude::Resource for CapturedTemperingHits {}
+
+    #[derive(Default)]
+    struct CapturedConsecrationInjects(Vec<ConsecrationInject>);
+
+    impl valence::prelude::Resource for CapturedConsecrationInjects {}
+
+    #[derive(Default)]
+    struct CapturedStepAdvances(Vec<StepAdvance>);
+
+    impl valence::prelude::Resource for CapturedStepAdvances {}
+
     fn capture_breakthrough_requests(
         mut events: EventReader<BreakthroughRequest>,
         mut captured: ResMut<CapturedBreakthroughRequests>,
@@ -1274,6 +1389,27 @@ mod tests {
     fn capture_inscription_scrolls(
         mut events: EventReader<InscriptionScrollSubmit>,
         mut captured: ResMut<CapturedInscriptionScrolls>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_tempering_hits(
+        mut events: EventReader<TemperingHit>,
+        mut captured: ResMut<CapturedTemperingHits>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_consecration_injects(
+        mut events: EventReader<ConsecrationInject>,
+        mut captured: ResMut<CapturedConsecrationInjects>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_step_advances(
+        mut events: EventReader<StepAdvance>,
+        mut captured: ResMut<CapturedStepAdvances>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1942,6 +2078,273 @@ mod tests {
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
+    }
+
+    #[test]
+    fn forge_tempering_hit_emits_event() {
+        let mut app = App::new();
+        app.insert_resource(CapturedTemperingHits::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<TemperingHit>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_tempering_hits).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":9,"beat":"H","ticks_remaining":4}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedTemperingHits>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].session, ForgeSessionId(9));
+        assert_eq!(captured.0[0].beat, TemperBeat::Heavy);
+        assert_eq!(captured.0[0].ticks_remaining, 4);
+    }
+
+    #[test]
+    fn forge_tempering_hit_rejects_unknown_beat() {
+        let mut app = App::new();
+        app.insert_resource(CapturedTemperingHits::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<TemperingHit>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_tempering_hits).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":9,"beat":"X","ticks_remaining":4}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedTemperingHits>();
+        assert!(captured.0.is_empty());
+    }
+
+    #[test]
+    fn forge_consecration_inject_emits_event() {
+        let mut app = App::new();
+        app.insert_resource(CapturedConsecrationInjects::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<ConsecrationInject>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_consecration_injects).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data:
+                    br#"{"type":"forge_consecration_inject","v":1,"session_id":11,"qi_amount":2.5}"#
+                        .to_vec()
+                        .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedConsecrationInjects>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].session, ForgeSessionId(11));
+        assert_eq!(captured.0[0].qi_amount, 2.5);
+    }
+
+    #[test]
+    fn forge_consecration_inject_rejects_negative_qi() {
+        let mut app = App::new();
+        app.insert_resource(CapturedConsecrationInjects::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<ConsecrationInject>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_consecration_injects).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_consecration_inject","v":1,"session_id":11,"qi_amount":-0.5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedConsecrationInjects>();
+        assert!(captured.0.is_empty());
+    }
+
+    #[test]
+    fn forge_step_advance_emits_event() {
+        let mut app = App::new();
+        app.insert_resource(CapturedStepAdvances::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<StepAdvance>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_step_advances).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_step_advance","v":1,"session_id":12}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedStepAdvances>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].session, ForgeSessionId(12));
     }
 }
 
