@@ -1,0 +1,19 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "instance_id",
+    "template_id"
+  ],
+  "properties": {
+    "instance_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "template_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    }
+  }
+}

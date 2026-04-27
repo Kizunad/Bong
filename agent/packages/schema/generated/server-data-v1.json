@@ -5909,6 +5909,163 @@
       "required": [
         "v",
         "type",
+        "slot"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "weapon_equipped",
+          "type": "string"
+        },
+        "slot": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "weapon": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "instance_id",
+                "template_id",
+                "weapon_kind",
+                "durability_current",
+                "durability_max",
+                "quality_tier"
+              ],
+              "properties": {
+                "instance_id": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "template_id": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "weapon_kind": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "durability_current": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "durability_max": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "quality_tier": {
+                  "minimum": 0,
+                  "maximum": 255,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "instance_id",
+        "template_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "weapon_broken",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "template_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slot"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "treasure_equipped",
+          "type": "string"
+        },
+        "slot": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "treasure": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "instance_id",
+                "template_id",
+                "display_name"
+              ],
+              "properties": {
+                "instance_id": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "template_id": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "display_name": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "entity_id",
         "kind",
         "direction",

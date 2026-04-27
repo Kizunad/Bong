@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "treasure_equipped",
+  "slot": "treasure_belt_0",
+  "treasure": {
+    "instance_id": 88,
+    "template_id": "starter_talisman",
+    "display_name": "启程护符"
+  }
+}
