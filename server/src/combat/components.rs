@@ -309,10 +309,11 @@ pub struct StatusEffects {
     pub active: Vec<ActiveStatusEffect>,
 }
 
-/// plan-HUD-v1 §4 玩家正在 cast F1-F9 快捷槽时挂在 Player 实体上。
+/// plan-HUD-v1 §4 玩家正在 cast 快捷槽时挂在 Player 实体上。
 /// 完成 / 中断后移除。
 #[derive(Debug, Clone, Component)]
 pub struct Casting {
+    pub source: CastSource,
     pub slot: u8,
     pub started_at_tick: u64,
     pub duration_ticks: u64,
@@ -326,6 +327,12 @@ pub struct Casting {
     pub start_position: valence::prelude::DVec3,
     /// 完成成功后写到 QuickSlotBindings 的冷却 tick 数（中断走另一个固定值）。
     pub complete_cooldown_ticks: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastSource {
+    QuickSlot,
+    SkillBar,
 }
 
 /// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派。控制流派指示器的
@@ -374,6 +381,59 @@ impl QuickSlotBindings {
             return false;
         }
         self.slots[slot as usize] = instance_id;
+        true
+    }
+
+    pub fn is_on_cooldown(&self, slot: u8, now_tick: u64) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.cooldown_until_tick[slot as usize] > now_tick
+    }
+
+    pub fn set_cooldown(&mut self, slot: u8, until_tick: u64) {
+        if (slot as usize) < Self::SLOT_COUNT {
+            self.cooldown_until_tick[slot as usize] = until_tick;
+        }
+    }
+}
+
+/// plan-hotbar-modify-v1 §3.1 玩家 1-9 技能栏槽位。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SkillSlot {
+    #[default]
+    Empty,
+    Item {
+        instance_id: u64,
+    },
+    Skill {
+        skill_id: String,
+    },
+}
+
+/// plan-hotbar-modify-v1 §3.1 玩家 1-9 技能栏绑定 + 冷却。
+#[derive(Debug, Clone, Component, Default)]
+pub struct SkillBarBindings {
+    pub slots: [SkillSlot; 9],
+    pub cooldown_until_tick: [u64; 9],
+}
+
+impl SkillBarBindings {
+    pub const SLOT_COUNT: usize = 9;
+
+    pub fn get(&self, slot: u8) -> Option<&SkillSlot> {
+        if slot as usize >= Self::SLOT_COUNT {
+            return None;
+        }
+        Some(&self.slots[slot as usize])
+    }
+
+    pub fn set(&mut self, slot: u8, value: SkillSlot) -> bool {
+        if slot as usize >= Self::SLOT_COUNT {
+            return false;
+        }
+        self.slots[slot as usize] = value;
+        self.cooldown_until_tick[slot as usize] = 0;
         true
     }
 

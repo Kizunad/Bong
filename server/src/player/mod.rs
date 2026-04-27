@@ -6,11 +6,12 @@ use self::state::{
     save_player_lifespan_slice, save_player_skill_slice, save_player_slices,
     save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
-use crate::combat::components::TICKS_PER_SECOND;
+use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
@@ -187,11 +188,21 @@ pub(crate) fn attach_player_state_to_joined_clients(
             }
         }
 
+        let quick_slot_bindings = persisted
+            .ui_prefs
+            .quick_slot_bindings(persisted.inventory.as_ref());
+        let skill_bar_bindings = persisted
+            .ui_prefs
+            .skill_bar_bindings(persisted.inventory.as_ref());
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             persisted.state,
             Position::new(persisted.position),
             CurrentDimension(last_dimension),
+            quick_slot_bindings,
+            skill_bar_bindings,
+            UnlockedStyles::default(),
+            KnownTechniques::default(),
         ));
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
@@ -833,10 +844,10 @@ mod tests {
                 .expect("inventory_json should decode"),
             serde_json::Value::Null
         );
-        assert!(serde_json::from_str::<serde_json::Value>(&prefs_json)
-            .expect("prefs_json should decode")
-            .get("quick_slots")
-            .is_some());
+        let prefs_value = serde_json::from_str::<serde_json::Value>(&prefs_json)
+            .expect("prefs_json should decode");
+        assert!(prefs_value.get("quick_slots").is_some());
+        assert!(prefs_value.get("skill_bar").is_some());
 
         app.world_mut()
             .resource_mut::<PlayerStateAutosaveTimer>()

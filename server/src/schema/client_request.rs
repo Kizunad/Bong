@@ -155,18 +155,21 @@ pub enum ClientRequestV1 {
     /// `tick_casts` 系统在 duration 到期时移除 Component 并推 `cast_sync(Complete)`。
     UseQuickSlot {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
     },
     /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
     /// `item_id` 为 None 表示清空槽位。
     QuickSlotBind {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         item_id: Option<String>,
     },
     /// plan-hotbar-modify-v1 §3.2：触发 1-9 技能栏槽位。
     SkillBarCast {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         #[serde(skip_serializing_if = "Option::is_none")]
         target: Option<String>,
@@ -174,6 +177,7 @@ pub enum ClientRequestV1 {
     /// plan-hotbar-modify-v1 §3.2：配置 1-9 技能栏；None 表示清空槽位。
     SkillBarBind {
         v: u8,
+        #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         binding: Option<SkillBarBindingV1>,
     },
@@ -302,6 +306,18 @@ pub enum ClientRequestV1 {
 pub enum SkillBarBindingV1 {
     Item { template_id: String },
     Skill { skill_id: String },
+}
+
+fn deserialize_slot_index<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let slot = u8::deserialize(deserializer)?;
+    if slot < 9 {
+        Ok(slot)
+    } else {
+        Err(serde::de::Error::custom("slot must be between 0 and 8"))
+    }
 }
 
 #[cfg(test)]
@@ -536,6 +552,20 @@ mod tests {
 
         let extra_field = r#"{"type":"skill_bar_cast","v":1,"slot":0,"extra":1}"#;
         assert!(serde_json::from_str::<ClientRequestV1>(extra_field).is_err());
+    }
+
+    #[test]
+    fn hotbar_slot_indices_reject_out_of_range_values() {
+        for json in [
+            r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null}"#,
+            r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
+            r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
+        ] {
+            let error = serde_json::from_str::<ClientRequestV1>(json)
+                .expect_err("slot 9 should be rejected by schema");
+            assert!(error.to_string().contains("slot must be between 0 and 8"));
+        }
     }
 
     #[test]
