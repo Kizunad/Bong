@@ -48,6 +48,9 @@ export const CHANNELS = {
   /** Server → Agent: 寿元事件公开流水（plan-death-lifecycle-v1 §7） */
   LIFESPAN_EVENT: "bong:lifespan_event",
 
+  /** Server → Agent: 夺舍公开流水（plan-death-lifecycle-v1 §7） */
+  DUO_SHE_EVENT: "bong:duo_she_event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -89,6 +92,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.DEATH_INSIGHT,
   CHANNELS.AGING,
   CHANNELS.LIFESPAN_EVENT,
+  CHANNELS.DUO_SHE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.BOTANY_HARVEST_PROGRESS,

@@ -68,6 +68,17 @@ const LifespanPreviewV1 = Type.Object(
   { additionalProperties: false },
 );
 
+const DeathScreenStageV1 = Type.Union([
+  Type.Literal("fortune"),
+  Type.Literal("tribulation"),
+]);
+
+const DeathScreenZoneKindV1 = Type.Union([
+  Type.Literal("ordinary"),
+  Type.Literal("death"),
+  Type.Literal("negative"),
+]);
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -432,6 +443,10 @@ export const ServerDataDeathScreenV1 = Type.Object(
     countdown_until_ms: Type.Integer({ minimum: 0 }),
     can_reincarnate: Type.Boolean(),
     can_terminate: Type.Boolean(),
+    stage: Type.Optional(DeathScreenStageV1),
+    death_number: Type.Optional(Type.Integer({ minimum: 1 })),
+    zone_kind: Type.Optional(DeathScreenZoneKindV1),
+    lifespan: Type.Optional(LifespanPreviewV1),
   },
   { additionalProperties: false },
 );

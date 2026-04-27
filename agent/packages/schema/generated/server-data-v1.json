@@ -4955,6 +4955,75 @@
         },
         "can_terminate": {
           "type": "boolean"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "const": "fortune",
+              "type": "string"
+            },
+            {
+              "const": "tribulation",
+              "type": "string"
+            }
+          ]
+        },
+        "death_number": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zone_kind": {
+          "anyOf": [
+            {
+              "const": "ordinary",
+              "type": "string"
+            },
+            {
+              "const": "death",
+              "type": "string"
+            },
+            {
+              "const": "negative",
+              "type": "string"
+            }
+          ]
+        },
+        "lifespan": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "years_lived",
+            "cap_by_realm",
+            "remaining_years",
+            "death_penalty_years",
+            "tick_rate_multiplier",
+            "is_wind_candle"
+          ],
+          "properties": {
+            "years_lived": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "cap_by_realm": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "remaining_years": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "death_penalty_years": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tick_rate_multiplier": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "is_wind_candle": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

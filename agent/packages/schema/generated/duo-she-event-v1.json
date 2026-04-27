@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "host_id",
+    "target_id",
+    "at_tick",
+    "karma_delta",
+    "host_prev_age",
+    "target_age"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "host_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "karma_delta": {
+      "type": "number"
+    },
+    "host_prev_age": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "target_age": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

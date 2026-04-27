@@ -147,6 +147,24 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesDuoSheRequest() {
+        String json = ClientRequestProtocol.encodeDuoSheRequest("npc_12v0");
+        assertEquals(
+            "{\"type\":\"duo_she_request\",\"v\":1,\"target_id\":\"npc_12v0\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodesUseLifeCore() {
+        String json = ClientRequestProtocol.encodeUseLifeCore(4242L);
+        assertEquals(
+            "{\"type\":\"use_life_core\",\"v\":1,\"instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
     void meridianIdEnumCoversAll20Channels() {
         // 12 正经 + 8 奇经
         assertEquals(20, ClientRequestProtocol.MeridianId.values().length);

@@ -116,6 +116,24 @@ public final class ClientRequestProtocol {
         return envelope("combat_create_new_character").toString();
     }
 
+    public static String encodeDuoSheRequest(String targetId) {
+        if (targetId == null || targetId.isBlank()) {
+            throw new IllegalArgumentException("targetId must not be blank");
+        }
+        JsonObject obj = envelope("duo_she_request");
+        obj.addProperty("target_id", targetId);
+        return obj.toString();
+    }
+
+    public static String encodeUseLifeCore(long instanceId) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
+        JsonObject obj = envelope("use_life_core");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static String encodeAlchemyOpenFurnace(String furnaceId) {

@@ -89,15 +89,36 @@ public final class DeathScreen extends Screen {
             width / 2, luckBarY - 12, TEXT_COLOR
         );
 
+        String phase = phaseLabel(state.stage());
+        String zone = zoneLabel(state.zoneKind());
+        String deathNo = state.deathNumber() > 0 ? " \u00b7 \u7b2c" + state.deathNumber() + "\u6b7b" : "";
+        context.drawCenteredTextWithShadow(
+            this.textRenderer,
+            phase + deathNo + (zone.isEmpty() ? "" : " \u00b7 " + zone),
+            width / 2, luckBarY + 9, TEXT_COLOR
+        );
+
         // Countdown
         long rem = state.remainingMs(now);
         String countdown = "\u5012\u8ba1\u65f6: " + (rem / 1000) + "s";
         context.drawCenteredTextWithShadow(
-            this.textRenderer, countdown, width / 2, luckBarY + 22, TITLE_COLOR
+            this.textRenderer, countdown, width / 2, luckBarY + 32, TITLE_COLOR
         );
 
+        if (state.hasLifespanPreview()) {
+            String lifespan = String.format(
+                "\u5bff\u5143 %.1f/%d \u00b7 \u4f59%.1f \u00b7 \u672c\u6b7b\u6263%d \u00b7 \u6d41\u901f\u00d7%.1f%s",
+                state.yearsLived(), state.lifespanCapByRealm(), state.remainingYears(),
+                state.deathPenaltyYears(), state.lifespanTickRateMultiplier(),
+                state.windCandle() ? " \u00b7 \u98ce\u70db" : ""
+            );
+            context.drawCenteredTextWithShadow(
+                this.textRenderer, lifespan, width / 2, luckBarY + 46, TEXT_COLOR
+            );
+        }
+
         // Final words
-        int wy = luckBarY + 50;
+        int wy = luckBarY + (state.hasLifespanPreview() ? 74 : 60);
         context.drawCenteredTextWithShadow(
             this.textRenderer, "\u9057\u5ff5", width / 2, wy, TITLE_COLOR
         );
@@ -120,6 +141,22 @@ public final class DeathScreen extends Screen {
             case "dao_heart_shatter" -> "\u9053\u5fc3\u5d29\u584c";
             case "starvation" -> "\u9965\u6b7b";
             default -> cause == null || cause.isBlank() ? "\u672a\u77e5" : cause;
+        };
+    }
+
+    private static String phaseLabel(String stage) {
+        return switch (stage == null ? "" : stage) {
+            case "fortune" -> "\u8fd0\u6570\u671f";
+            case "tribulation" -> "\u52ab\u6570\u671f";
+            default -> "\u91cd\u751f\u5224\u5b9a";
+        };
+    }
+
+    private static String zoneLabel(String zoneKind) {
+        return switch (zoneKind == null ? "" : zoneKind) {
+            case "death" -> "\u6b7b\u57df\uff1a\u8df3\u8fc7\u8fd0\u6570";
+            case "negative" -> "\u8d1f\u7075\u57df\uff1a\u8df3\u8fc7\u8fd0\u6570";
+            default -> "";
         };
     }
 

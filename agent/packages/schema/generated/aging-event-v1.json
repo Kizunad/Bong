@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "character_id",
+    "at_tick",
+    "kind",
+    "years_lived",
+    "cap_by_realm",
+    "remaining_years",
+    "tick_rate_multiplier",
+    "source"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "character_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "wind_candle",
+          "type": "string"
+        },
+        {
+          "const": "natural_death",
+          "type": "string"
+        },
+        {
+          "const": "tick_rate",
+          "type": "string"
+        }
+      ]
+    },
+    "years_lived": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "cap_by_realm": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "remaining_years": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "tick_rate_multiplier": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "source": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    }
+  }
+}

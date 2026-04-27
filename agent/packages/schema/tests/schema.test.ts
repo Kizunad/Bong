@@ -10,6 +10,13 @@ import {
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
+import {
+  AgingEventV1,
+  DeceasedIndexEntryV1,
+  DeceasedSnapshotV1,
+  DuoSheEventV1,
+  LifespanEventV1,
+} from "../src/death-lifecycle.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "../src/inventory.js";
 import {
   INTENSITY_MAX,
@@ -161,6 +168,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.death-screen.sample.json", () => {
+    const data = loadSample("server-data.death-screen.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.alchemy-furnace.sample.json", () => {
     const data = loadSample("server-data.alchemy-furnace.sample.json");
     const result = validate(ServerDataV1, data);
@@ -227,6 +240,18 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.duo-she-request.sample.json", () => {
+    const data = loadSample("client-request.duo-she-request.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("client-request.use-life-core.sample.json", () => {
+    const data = loadSample("client-request.use-life-core.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.pickup-dropped-item.sample.json", () => {
     const data = loadSample("client-request.pickup-dropped-item.sample.json");
     const result = validate(ClientRequestV1, data);
@@ -254,6 +279,36 @@ describe("sample files pass schema validation", () => {
   it("death-insight-request.sample.json", () => {
     const data = loadSample("death-insight-request.sample.json");
     const result = validate(DeathInsightRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("deceased-index-entry.sample.json", () => {
+    const data = loadSample("deceased-index-entry.sample.json");
+    const result = validate(DeceasedIndexEntryV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("deceased-snapshot.sample.json", () => {
+    const data = loadSample("deceased-snapshot.sample.json");
+    const result = validate(DeceasedSnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("lifespan-event.sample.json", () => {
+    const data = loadSample("lifespan-event.sample.json");
+    const result = validate(LifespanEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("aging-event.sample.json", () => {
+    const data = loadSample("aging-event.sample.json");
+    const result = validate(AgingEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("duo-she-event.sample.json", () => {
+    const data = loadSample("duo-she-event.sample.json");
+    const result = validate(DuoSheEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

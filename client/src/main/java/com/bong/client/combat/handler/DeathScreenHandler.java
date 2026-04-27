@@ -26,7 +26,10 @@ import java.util.List;
  *   "final_words": ["不甘心…", "我要回来"],
  *   "countdown_until_ms": 1712999999999,
  *   "can_reincarnate": true,
- *   "can_terminate": true
+ *   "can_terminate": true,
+ *   "stage": "tribulation",
+ *   "death_number": 4,
+ *   "zone_kind": "negative"
  * }
  * }</pre>
  */
@@ -44,6 +47,25 @@ public final class DeathScreenHandler implements ServerDataHandler {
         long deadline = (long) readDouble(payload, "countdown_until_ms", 0d);
         boolean canRein = readBoolean(payload, "can_reincarnate", true);
         boolean canTerm = readBoolean(payload, "can_terminate", false);
+        String stage = readString(payload, "stage");
+        int deathNumber = (int) readDouble(payload, "death_number", 0d);
+        String zoneKind = readString(payload, "zone_kind");
+
+        double yearsLived = 0.0;
+        int lifespanCapByRealm = 0;
+        double remainingYears = 0.0;
+        int deathPenaltyYears = 0;
+        double tickRateMultiplier = 0.0;
+        boolean windCandle = false;
+        JsonObject lifespan = readObject(payload, "lifespan");
+        if (lifespan != null) {
+            yearsLived = readDouble(lifespan, "years_lived", 0d);
+            lifespanCapByRealm = (int) readDouble(lifespan, "cap_by_realm", 0d);
+            remainingYears = readDouble(lifespan, "remaining_years", 0d);
+            deathPenaltyYears = (int) readDouble(lifespan, "death_penalty_years", 0d);
+            tickRateMultiplier = readDouble(lifespan, "tick_rate_multiplier", 0d);
+            windCandle = readBoolean(lifespan, "is_wind_candle", false);
+        }
 
         List<String> finals = new ArrayList<>();
         JsonElement wordsEl = payload.get("final_words");
@@ -57,7 +79,9 @@ public final class DeathScreenHandler implements ServerDataHandler {
         }
 
         DeathStateStore.replace(new DeathStateStore.State(
-            true, cause, luck, finals, deadline, canRein, canTerm
+            true, cause, luck, finals, deadline, canRein, canTerm,
+            stage, deathNumber, zoneKind, yearsLived, lifespanCapByRealm,
+            remainingYears, deathPenaltyYears, tickRateMultiplier, windCandle
         ));
         return ServerDataDispatch.handled(
             envelope.type(),
@@ -88,5 +112,10 @@ public final class DeathScreenHandler implements ServerDataHandler {
         if (!p.isNumber()) return fallback;
         double v = p.getAsDouble();
         return Double.isFinite(v) ? v : fallback;
+    }
+
+    private static JsonObject readObject(JsonObject obj, String field) {
+        JsonElement el = obj.get(field);
+        return el != null && el.isJsonObject() ? el.getAsJsonObject() : null;
     }
 }

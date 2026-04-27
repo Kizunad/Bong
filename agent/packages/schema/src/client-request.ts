@@ -128,6 +128,26 @@ export const ApplyPillRequestV1 = Type.Object(
 );
 export type ApplyPillRequestV1 = Static<typeof ApplyPillRequestV1>;
 
+export const DuoSheRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("duo_she_request"),
+    target_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type DuoSheRequestV1 = Static<typeof DuoSheRequestV1>;
+
+export const UseLifeCoreRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("use_life_core"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type UseLifeCoreRequestV1 = Static<typeof UseLifeCoreRequestV1>;
+
 export const PickupDroppedItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -319,6 +339,8 @@ export const ClientRequestV1 = Type.Union([
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
+  DuoSheRequestV1,
+  UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,

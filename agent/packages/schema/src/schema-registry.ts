@@ -37,15 +37,22 @@ import {
   CombatTerminateRequestV1,
   BreakthroughRequestV1,
   ClientRequestV1,
+  DuoSheRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
   SetMeridianTargetRequestV1,
+  UseLifeCoreRequestV1,
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
   DeathRegistryV1,
+  AgingEventV1,
+  DeceasedIndexEntryV1,
+  DeceasedSnapshotV1,
+  DuoSheEventV1,
+  LifespanEventV1,
   LifespanCapByRealmV1,
   LifespanComponentV1,
   LifespanPreviewV1,
@@ -99,6 +106,11 @@ export const SCHEMA_REGISTRY = {
   cultivationDeathV1: CultivationDeathV1,
   deathInsightRequestV1: DeathInsightRequestV1,
   deathRegistryV1: DeathRegistryV1,
+  deceasedIndexEntryV1: DeceasedIndexEntryV1,
+  deceasedSnapshotV1: DeceasedSnapshotV1,
+  lifespanEventV1: LifespanEventV1,
+  agingEventV1: AgingEventV1,
+  duoSheEventV1: DuoSheEventV1,
   lifespanCapByRealmV1: LifespanCapByRealmV1,
   lifespanComponentV1: LifespanComponentV1,
   lifespanPreviewV1: LifespanPreviewV1,
@@ -111,6 +123,8 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
+  clientRequestDuoSheV1: DuoSheRequestV1,
+  clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
   clientRequestCombatTerminateV1: CombatTerminateRequestV1,
@@ -169,6 +183,11 @@ export const GENERATED_SCHEMA_FILES = {
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
   "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
+  "deceased-index-entry-v1.json": SCHEMA_REGISTRY.deceasedIndexEntryV1,
+  "deceased-snapshot-v1.json": SCHEMA_REGISTRY.deceasedSnapshotV1,
+  "lifespan-event-v1.json": SCHEMA_REGISTRY.lifespanEventV1,
+  "aging-event-v1.json": SCHEMA_REGISTRY.agingEventV1,
+  "duo-she-event-v1.json": SCHEMA_REGISTRY.duoSheEventV1,
   "lifespan-cap-by-realm-v1.json": SCHEMA_REGISTRY.lifespanCapByRealmV1,
   "lifespan-component-v1.json": SCHEMA_REGISTRY.lifespanComponentV1,
   "lifespan-preview-v1.json": SCHEMA_REGISTRY.lifespanPreviewV1,
@@ -183,6 +202,9 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
+  "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
+  "client-request-use-life-core-v1.json":
+    SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "client-request-combat-reincarnate-v1.json":

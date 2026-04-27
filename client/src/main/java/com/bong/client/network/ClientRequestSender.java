@@ -162,6 +162,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeApplyPillSelf(instanceId));
     }
 
+    public static void sendDuoSheRequest(String targetId) {
+        dispatch(ClientRequestProtocol.encodeDuoSheRequest(targetId));
+    }
+
+    public static void sendUseLifeCore(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeUseLifeCore(instanceId));
+    }
+
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
 
     public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
