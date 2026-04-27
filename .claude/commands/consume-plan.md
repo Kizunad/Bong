@@ -15,7 +15,7 @@ argument-hint: <plan-name>
 2. Agent 的 bash 调用之间 cwd **不保证持久**。每个 bash block 开头都必须 `cd "$WT_ABS"`，或用 `git -C "$WT_ABS" ...` 显式指定。
 3. 只有 step 9 收尾清理才允许 `cd "$REPO_ROOT"` 回主工作区。中途**严禁** `cd ..` / `cd -` / `cd /home/kiz/Code/Bong` 离开 worktree。
 4. 严禁 `--no-verify` / `--no-gpg-sign` / `git reset --hard` / `git push --force` 等绕过或破坏操作。**唯一例外**：step 4.2 rebase 解决冲突后允许 `git push --force-with-lease origin "$BRANCH"`（远端 head 校验，不会覆盖他人 commit）。
-5. 严禁修改 `docs/` / `CLAUDE.md` / `worldview.md`（plan 归档由人工决定）。
+5. **`docs/` 写权限严格限于本次消费的 plan**：仅允许在 `docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，并最终 `git mv` 入 `docs/finished_plans/`（详见 step 3 末尾"全 P 完成后"）。其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 6. 严禁用注释掉测试 / `#[ignore]` / skip case / 改断言数值等方式"让测试过"。
 
 ---
@@ -87,6 +87,32 @@ echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 3. **停**：保留 `$WT_ABS` 内所有 commit 和未提交改动，输出失败命令 + 错误原文 + `$WT_ABS`，**不继续后续 TODO、不试图跳过、不 `cd` 离开**，交人工
 
 **修复范围严格限于"当前 TODO patch 引入的明显错误"**——禁止顺手修其他模块、重构、改 plan 范围外代码。
+
+### 全 P 完成后：写 Finish Evidence + 归档（提 PR 前最后一步）
+
+所有 P0/P1/§N 实施 + 测试都通过后，**提 PR 之前**做以下动作（plan 格式见 `CLAUDE.md` "Plan 工作流"）：
+
+1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
+   - **落地清单**：每个 P 对应的真实模块/文件路径
+   - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息
+   - **测试结果**：跑过的命令 + 数量（如 `cargo test cultivation:: → 94 passed`）
+   - **跨仓库核验**：server / agent / client 各命中的 symbol（plan 跨仓库时）
+   - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办（若有）
+
+2. `git mv` 入归档目录并 atomic commit：
+
+   ```bash
+   cd "$WT_ABS"
+   git mv "docs/plan-$PLAN.md" "docs/finished_plans/plan-$PLAN.md"
+   git add "docs/finished_plans/plan-$PLAN.md"
+   git commit -m "docs(plan-$PLAN): finish evidence 并归档至 finished_plans/"
+   ```
+
+3. 再跑一次对应子项目测试，确认 mv 没破坏路径引用（README / scripts / 其他文档不应硬编码旧 `docs/plan-$PLAN.md` 路径）
+
+PR 内已包含归档动作——merge 后 plan 自动就在 `finished_plans/`，**不另开 PR**。
+
+**review 阶段若 step 7 修改了实施**：相应更新 evidence（已 mv 后路径下的文件 `docs/finished_plans/plan-$PLAN.md`），保持文档与代码一致。
 
 ## 4. 提 PR（不 auto-merge）
 

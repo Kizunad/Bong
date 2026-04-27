@@ -84,6 +84,52 @@ bash scripts/smoke-test.sh
 - Python 文件保存后自动 ruff 格式化（PostToolUse hook，见 `.claude/settings.local.json`）
 - 跑会开 worktree 的外部 orchestrator（Codex / Sisyphus 等）之前，先 `git commit -m "WIP"` 把 worktree 改动落盘；跑完 `git stash list` 检查孤儿 `WIP before inspecting ...` / `WIP: stash before inspecting ...`，有就 `git stash pop` 回来（那类 agent 会 auto-stash + `reset --hard` 但不 auto-pop）
 
+## Plan 工作流
+
+修仙系统功能落地由 plan 文档驱动。**三态流转**：
+
+- **骨架** `docs/plans-skeleton/plan-<name>-vN.md` — 草案，目标 + P0/P1/... 大致划分
+- **Active** `docs/plan-<name>-vN.md` — 实施中，被 `/consume-plan` 消费的对象
+- **归档** `docs/finished_plans/plan-<name>-vN.md` — 全部阶段 ✅ 且填好 `## Finish Evidence` 后迁入
+
+### Plan 文件结构（写 plan 时必须遵守）
+
+每份 plan 必须包含：
+
+1. **头部**：一句话主题 + 阶段总览（P0/P1/.../P5 各自 ✅⏳⬜ + 验收日期 `YYYY-MM-DD`）
+2. **各阶段块**（P0/P1/...）：每段写出**可核验**的交付物——下游核验工具（`/plans-status` / `/audit-plans-progress` / `/consume-plan`）会按这些抓手 grep 代码
+   - 模块名 / 文件路径（如 `server/src/cultivation/`）
+   - 类型 / 函数名（如 `struct Tribulation` / `fn breakthrough`）
+   - 测试声明（如 "cultivation::* 94 单测"）
+   - schema 名 / Redis key / 配置字段（如 `bong:insight_request`）
+   - 跨仓库契约 symbol（server↔agent↔client，例 `CultivationDeathTrigger`）
+3. **`## Finish Evidence`**（迁入 `finished_plans/` 前必填，章节标题严格如此）：
+   - **落地清单**：每阶段对应真实模块/文件路径
+   - **关键 commit**：hash + 日期 + 一句话
+   - **测试结果**：跑过的命令 + 数量
+   - **跨仓库核验**：server / agent / client 各自命中的 symbol
+   - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办
+
+### 状态标记
+
+- `✅ YYYY-MM-DD` — 已完成 + 验收日期
+- `⏳` — 进行中
+- `⬜` — 未开始
+- `🔄` — 代码超前于文档（`/plans-status` 等核验工具标出，提示需补文档）
+- `⚠️` — 文档自报已完成但代码未找到（红旗）
+
+### 流转规则
+
+- **骨架 → Active**：人工 `git mv docs/plans-skeleton/plan-x-vN.md docs/plan-x-vN.md`，或基于骨架写新版本号 vN+1。skeleton 不会被 `/consume-plan` 消费
+- **Active → Finished**：全部 P ✅ + Finish Evidence 写完后，由 `/consume-plan` 在 PR 末尾 commit 内 `git mv` 入 `finished_plans/`，或人工 mv + commit
+- **一个 PR 只动一个 plan**：`/consume-plan` 不允许顺手归档/修改其他 plan
+
+### `/consume-plan` 对 docs/ 的写权限
+
+**仅允许**：在 `docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence`、最终 `git mv` 入 `docs/finished_plans/`。
+
+其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
+
 ## Testing — 饱和化测试
 
 **核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
