@@ -3,6 +3,7 @@
 use valence::prelude::{bevy_ecs, BlockPos, Entity, Event};
 
 use super::types::MineralId;
+use crate::world::dimension::DimensionKind;
 
 /// 玩家神识感知触发（plan §3）— 修为 ≥ 凝脉 时右键矿块。
 ///
@@ -11,6 +12,7 @@ use super::types::MineralId;
 #[derive(Debug, Clone, Copy, Event)]
 pub struct MineralProbeIntent {
     pub player: Entity,
+    pub dimension: DimensionKind,
     pub position: BlockPos,
 }
 
@@ -37,6 +39,7 @@ pub enum MineralProbeResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MineralProbeDenialReason {
     RealmTooLow,
+    OutOfRange,
     NotMineralOre,
     StaleOreIndex,
     MineralNotRegistered,

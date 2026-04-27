@@ -18,6 +18,7 @@ use valence::prelude::{
 use super::components::{MineralOreIndex, MineralOreNode};
 use super::events::{KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent};
 use super::types::MineralRarity;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// plan-mineral-v1 §3 — 极品矿脉劫气概率（worldview §七）。
 ///
@@ -37,10 +38,12 @@ pub fn karma_probability(rarity: MineralRarity) -> f32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system signature; queries/events stay explicit.
 pub fn handle_block_break_for_mineral(
     mut commands: Commands,
     mut digs: EventReader<DiggingEvent>,
     mut nodes: Query<&mut MineralOreNode>,
+    dimensions: Query<&CurrentDimension>,
     mut index: ResMut<MineralOreIndex>,
     mut drop_events: EventWriter<MineralDropEvent>,
     mut exhausted_events: EventWriter<MineralExhaustedEvent>,
@@ -53,7 +56,11 @@ pub fn handle_block_break_for_mineral(
             continue;
         }
 
-        let Some(entity) = index.lookup(event.position) else {
+        let dimension = dimensions
+            .get(event.client)
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let Some(entity) = index.lookup(dimension, event.position) else {
             // 该方块不是矿脉 — 走 vanilla loot table（其他模块或默认行为决定）
             continue;
         };
@@ -65,7 +72,7 @@ pub fn handle_block_break_for_mineral(
                 "MineralOreIndex stale entry at {:?} — removing",
                 event.position
             );
-            index.remove(event.position);
+            index.remove(dimension, event.position);
             continue;
         };
 
@@ -93,7 +100,7 @@ pub fn handle_block_break_for_mineral(
                 mineral_id,
                 position: event.position,
             });
-            index.remove(event.position);
+            index.remove(dimension, event.position);
             commands.entity(entity).despawn();
         }
     }

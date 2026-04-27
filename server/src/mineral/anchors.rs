@@ -11,6 +11,7 @@ use super::components::{MineralOreIndex, MineralOreNode};
 use super::persistence::ExhaustedMineralsLog;
 use super::registry::MineralRegistry;
 use super::types::MineralId;
+use crate::world::dimension::DimensionKind;
 use crate::world::terrain::TerrainProviders;
 
 const DEFAULT_ANCHORS_PATH: &str = "../worldgen/blueprint/mineral_anchors.json";
@@ -102,14 +103,14 @@ pub fn spawn_mineral_anchor_nodes(
     for anchor in &anchors {
         for pos in positions_for_anchor(anchor) {
             if exhausted_positions.contains(&(anchor.mineral_id, pos))
-                || index.lookup(pos).is_some()
+                || index.lookup(DimensionKind::Overworld, pos).is_some()
             {
                 continue;
             }
             let entity = commands
                 .spawn(MineralOreNode::new(anchor.mineral_id, pos))
                 .id();
-            index.insert(pos, entity);
+            index.insert(DimensionKind::Overworld, pos, entity);
             spawned += 1;
         }
     }
@@ -316,7 +317,7 @@ mod tests {
 
         let index = app.world().resource::<MineralOreIndex>();
         assert_eq!(index.len(), 6);
-        assert_eq!(index.lookup(exhausted_pos), None);
+        assert_eq!(index.lookup(DimensionKind::Overworld, exhausted_pos), None);
         let _ = fs::remove_file(path);
     }
 }

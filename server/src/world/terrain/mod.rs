@@ -20,7 +20,7 @@ use valence::prelude::{
 };
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
-use crate::world::dimension::{DimensionLayers, OverworldLayer};
+use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
 
 pub use raster::{raster_dir_from_manifest_path, TerrainProvider, TerrainProviders};
 
@@ -278,7 +278,10 @@ fn overlay_mineral_ores(
         return;
     };
 
-    for (block_pos, entity) in mineral_index.iter() {
+    for (dimension, block_pos, entity) in mineral_index.iter() {
+        if dimension != DimensionKind::Overworld {
+            continue;
+        }
         if block_pos.x.div_euclid(16) != pos.x || block_pos.z.div_euclid(16) != pos.z {
             continue;
         }
