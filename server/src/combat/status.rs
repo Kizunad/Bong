@@ -1,6 +1,8 @@
 use valence::prelude::{EventReader, Query, Res};
 
-use crate::combat::components::{DerivedAttrs, StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS};
+use crate::combat::components::{
+    BodyRefiningMarker, DerivedAttrs, StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS,
+};
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 
@@ -79,8 +81,16 @@ pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut Stat
     }
 }
 
-pub fn attribute_aggregate_tick(mut q: Query<(&StatusEffects, &mut DerivedAttrs)>) {
-    for (status_effects, mut attrs) in &mut q {
+const BODY_REFINING_DEFENSE_MULTIPLIER: f32 = 1.0 / 1.3;
+
+pub fn attribute_aggregate_tick(
+    mut q: Query<(
+        &StatusEffects,
+        &mut DerivedAttrs,
+        Option<&BodyRefiningMarker>,
+    )>,
+) {
+    for (status_effects, mut attrs, body_refining) in &mut q {
         attrs.attack_power = 1.0;
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
@@ -110,6 +120,13 @@ pub fn attribute_aggregate_tick(mut q: Query<(&StatusEffects, &mut DerivedAttrs)
         attrs.move_speed_multiplier = slow_multiplier.clamp(0.05, 1.0);
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
+
+        // plan-armor-v1 §4.2：体修 defense_power 基础加成。
+        // 1.0 / 1.3 ≈ 0.77，约 23% 基础伤害减免，与护甲 kind_mitigation 独立相乘。
+        if body_refining.is_some() {
+            attrs.defense_power =
+                (attrs.defense_power * BODY_REFINING_DEFENSE_MULTIPLIER).clamp(0.05, 1.0);
+        }
     }
 }
 
@@ -118,7 +135,7 @@ mod tests {
     use super::*;
 
     use crate::combat::components::{
-        DerivedAttrs, StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS,
+        BodyRefiningMarker, DerivedAttrs, StatusEffects, STATUS_EFFECT_TICK_INTERVAL_TICKS,
     };
     use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
     use crate::combat::CombatClock;
@@ -259,6 +276,26 @@ mod tests {
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
         assert_eq!(attrs.defense_power, 0.75);
+    }
+
+    #[test]
+    fn body_refining_reduces_damage_via_defense_power() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                DerivedAttrs::default(),
+                BodyRefiningMarker,
+            ))
+            .id();
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // 1.0 / 1.3 ≈ 0.769
+        assert!((attrs.defense_power - 0.769).abs() < 0.01);
     }
 
     #[test]

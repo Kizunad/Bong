@@ -244,6 +244,13 @@ impl Default for DerivedAttrs {
     }
 }
 
+/// plan-armor-v1 §4.2 — 体修流派标记 component（MVP：仅标记，buff 由 status.rs 应用）。
+///
+/// 体修"不依赖外物"：通过 defense_power 基础加成（1.0/1.3 ≈ 0.77）替代护甲。
+/// 此 component 可穿护甲，但 buff 与护甲 kind_mitigation 独立相乘。
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct BodyRefiningMarker;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveStatusEffect {
     pub kind: StatusEffectKind,

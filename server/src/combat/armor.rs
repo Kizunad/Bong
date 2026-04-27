@@ -267,7 +267,7 @@ mod tests {
             .get("fake_spirit_hide")
             .expect("fake_spirit_hide armor profile should be loaded from blueprint JSON");
 
-        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.len(), 4);
         assert_eq!(profile.slot, EquipSlotV1::Chest);
         assert_eq!(
             profile.body_coverage,
