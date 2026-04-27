@@ -14,6 +14,7 @@ pub mod blueprint;
 pub mod events;
 pub mod fallback;
 pub mod history;
+pub mod inventory_bridge;
 pub mod learned;
 pub mod session;
 pub mod skill_hook;
@@ -85,6 +86,7 @@ pub fn register(app: &mut App) {
             handle_scroll_submits.after(handle_tempering_hits),
             handle_consecration_injects.after(handle_scroll_submits),
             handle_step_advance.after(handle_consecration_injects),
+            inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
         ),
     );
