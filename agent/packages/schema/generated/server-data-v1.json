@@ -452,6 +452,59 @@
               "type": "boolean"
             }
           }
+        },
+        "recent_skill_milestones_summary": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "skill_milestones": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "skill",
+              "new_lv",
+              "achieved_at",
+              "narration",
+              "total_xp_at"
+            ],
+            "properties": {
+              "skill": {
+                "anyOf": [
+                  {
+                    "const": "herbalism",
+                    "type": "string"
+                  },
+                  {
+                    "const": "alchemy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "forging",
+                    "type": "string"
+                  }
+                ]
+              },
+              "new_lv": {
+                "minimum": 0,
+                "maximum": 10,
+                "type": "integer"
+              },
+              "achieved_at": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "narration": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "total_xp_at": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
         }
       }
     },
@@ -637,6 +690,10 @@
                       {
                         "const": "legendary",
                         "type": "string"
+                      },
+                      {
+                        "const": "ancient",
+                        "type": "string"
                       }
                     ]
                   },
@@ -762,6 +819,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }
@@ -854,6 +921,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -979,6 +1050,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1056,6 +1137,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1181,6 +1266,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1258,6 +1353,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1383,6 +1482,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1460,6 +1569,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1585,6 +1698,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1662,6 +1785,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1787,6 +1914,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1864,6 +2001,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -1989,6 +2130,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2066,6 +2217,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2191,6 +2346,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2268,6 +2433,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2393,6 +2562,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2470,6 +2649,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2595,6 +2778,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2672,6 +2865,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2797,6 +2994,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2874,6 +3081,10 @@
                         {
                           "const": "legendary",
                           "type": "string"
+                        },
+                        {
+                          "const": "ancient",
+                          "type": "string"
                         }
                       ]
                     },
@@ -2999,6 +3210,16 @@
                           ]
                         }
                       }
+                    },
+                    "mineral_id": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -3081,6 +3302,10 @@
                       },
                       {
                         "const": "legendary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "ancient",
                         "type": "string"
                       }
                     ]
@@ -3207,6 +3432,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               },
@@ -3790,6 +4025,10 @@
                     {
                       "const": "legendary",
                       "type": "string"
+                    },
+                    {
+                      "const": "ancient",
+                      "type": "string"
                     }
                   ]
                 },
@@ -3915,6 +4154,16 @@
                       ]
                     }
                   }
+                },
+                "mineral_id": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             }
@@ -4131,6 +4380,10 @@
                       {
                         "const": "legendary",
                         "type": "string"
+                      },
+                      {
+                        "const": "ancient",
+                        "type": "string"
                       }
                     ]
                   },
@@ -4256,6 +4509,16 @@
                         ]
                       }
                     }
+                  },
+                  "mineral_id": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }
@@ -5058,6 +5321,360 @@
         },
         "archetype_suggestion": {
           "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "char_id",
+        "skill",
+        "amount",
+        "source"
+      ],
+      "properties": {
+        "type": {
+          "const": "skill_xp_gain",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "char_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skill": {
+          "anyOf": [
+            {
+              "const": "herbalism",
+              "type": "string"
+            },
+            {
+              "const": "alchemy",
+              "type": "string"
+            },
+            {
+              "const": "forging",
+              "type": "string"
+            }
+          ]
+        },
+        "amount": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "description": "plan §8 XP 来源 tagged union",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "type",
+                "plan_id",
+                "action"
+              ],
+              "properties": {
+                "type": {
+                  "const": "action",
+                  "type": "string"
+                },
+                "plan_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "action": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "type",
+                "scroll_id",
+                "xp_grant"
+              ],
+              "properties": {
+                "type": {
+                  "const": "scroll",
+                  "type": "string"
+                },
+                "scroll_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "xp_grant": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "realm_breakthrough",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "type",
+                "mentor_char"
+              ],
+              "properties": {
+                "type": {
+                  "const": "mentor",
+                  "type": "string"
+                },
+                "mentor_char": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "char_id",
+        "skill",
+        "new_lv"
+      ],
+      "properties": {
+        "type": {
+          "const": "skill_lv_up",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "char_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skill": {
+          "anyOf": [
+            {
+              "const": "herbalism",
+              "type": "string"
+            },
+            {
+              "const": "alchemy",
+              "type": "string"
+            },
+            {
+              "const": "forging",
+              "type": "string"
+            }
+          ]
+        },
+        "new_lv": {
+          "minimum": 0,
+          "maximum": 10,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "char_id",
+        "skill",
+        "new_cap"
+      ],
+      "properties": {
+        "type": {
+          "const": "skill_cap_changed",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "char_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skill": {
+          "anyOf": [
+            {
+              "const": "herbalism",
+              "type": "string"
+            },
+            {
+              "const": "alchemy",
+              "type": "string"
+            },
+            {
+              "const": "forging",
+              "type": "string"
+            }
+          ]
+        },
+        "new_cap": {
+          "minimum": 0,
+          "maximum": 10,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "char_id",
+        "scroll_id",
+        "skill",
+        "xp_granted",
+        "was_duplicate"
+      ],
+      "properties": {
+        "type": {
+          "const": "skill_scroll_used",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "char_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scroll_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skill": {
+          "anyOf": [
+            {
+              "const": "herbalism",
+              "type": "string"
+            },
+            {
+              "const": "alchemy",
+              "type": "string"
+            },
+            {
+              "const": "forging",
+              "type": "string"
+            }
+          ]
+        },
+        "xp_granted": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "was_duplicate": {
+          "type": "boolean"
+        },
+        "hydration": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "v",
+        "char_id",
+        "skills",
+        "consumed_scrolls"
+      ],
+      "properties": {
+        "type": {
+          "const": "skill_snapshot",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "char_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skills": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "lv",
+                "xp",
+                "xp_to_next",
+                "total_xp",
+                "cap",
+                "recent_gain_xp"
+              ],
+              "properties": {
+                "lv": {
+                  "minimum": 0,
+                  "maximum": 10,
+                  "type": "integer"
+                },
+                "xp": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "xp_to_next": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "total_xp": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "cap": {
+                  "minimum": 0,
+                  "maximum": 10,
+                  "type": "integer"
+                },
+                "recent_gain_xp": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "consumed_scrolls": {
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
         }
       }
     }

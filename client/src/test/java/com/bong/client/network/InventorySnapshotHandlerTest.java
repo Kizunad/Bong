@@ -79,7 +79,7 @@ public class InventorySnapshotHandlerTest {
         assertEquals(57L, snapshot.boneCoins());
         assertEquals(3.5, snapshot.currentWeight(), 0.0001);
         assertEquals(50.0, snapshot.maxWeight(), 0.0001);
-        assertEquals("qi_refining_1", snapshot.realm());
+        assertEquals("Awaken", snapshot.realm());
         assertEquals(24.0, snapshot.qiCurrent(), 0.0001);
         assertEquals(100.0, snapshot.qiMax(), 0.0001);
         assertEquals(0.18, snapshot.bodyLevel(), 0.0001);
@@ -99,7 +99,7 @@ public class InventorySnapshotHandlerTest {
                 "hotbar": [],
                 "bone_coins": 1,
                 "weight": {"current": 0, "max": 50},
-                "realm": "qi_refining_1",
+                "realm": "Awaken",
                 "qi_current": 1,
                 "qi_max": 1,
                 "body_level": 0.1
@@ -168,7 +168,7 @@ public class InventorySnapshotHandlerTest {
               "hotbar": [null, null, null, null, null, null, null, null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
-              "realm": "qi_refining_1",
+              "realm": "Awaken",
               "qi_current": 24,
               "qi_max": 100,
               "body_level": 0.18
@@ -187,6 +187,133 @@ public class InventorySnapshotHandlerTest {
         assertFalse(InventoryStateStore.isAuthoritativeLoaded());
         assertEquals(-1L, InventoryStateStore.revision());
         assertTrue(InventoryStateStore.snapshot().isEmpty());
+    }
+
+    @Test
+    void parsesScrollMetadataAcrossSkillRecipeAndBlueprintKinds() {
+        String snapshotJson = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 42,
+              "containers": [
+                {"id":"main_pack","name":"主背包","rows":5,"cols":7},
+                {"id":"small_pouch","name":"小口袋","rows":3,"cols":3},
+                {"id":"front_satchel","name":"前挂包","rows":3,"cols":4}
+              ],
+              "placed_items": [
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 0,
+                  "item": {
+                    "instance_id": 2001,
+                    "item_id": "skill_scroll_herbalism_baicao_can",
+                    "display_name": "百草残卷",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.1,
+                    "rarity": "rare",
+                    "description": "可悟 Herbalism 的 skill 残卷。",
+                    "stack_count": 1,
+                    "spirit_quality": 0.9,
+                    "durability": 1.0,
+                    "scroll_kind": "skill_scroll",
+                    "scroll_skill_id": "herbalism",
+                    "scroll_xp_grant": 500
+                  }
+                },
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 1,
+                  "item": {
+                    "instance_id": 2002,
+                    "item_id": "recipe_scroll_qixue_pill",
+                    "display_name": "丹方残卷·气血丹",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.05,
+                    "rarity": "uncommon",
+                    "description": "炼丹丹方残卷。",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "scroll_kind": "recipe_scroll"
+                  }
+                },
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 2,
+                  "item": {
+                    "instance_id": 2003,
+                    "item_id": "blueprint_scroll_bronze_tripod",
+                    "display_name": "器图残卷·青铜鼎",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 0.08,
+                    "rarity": "rare",
+                    "description": "锻造器图残卷。",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "scroll_kind": "blueprint_scroll"
+                  }
+                }
+              ],
+              "equipped": {
+                "head": null,
+                "chest": null,
+                "legs": null,
+                "feet": null,
+                "main_hand": null,
+                "off_hand": null,
+                "two_hand": null,
+                "treasure_belt_0": null,
+                "treasure_belt_1": null,
+                "treasure_belt_2": null,
+                "treasure_belt_3": null
+              },
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 0,
+              "weight": {"current": 0.23, "max": 50.0},
+              "realm": "Awaken",
+              "qi_current": 24,
+              "qi_max": 100,
+              "body_level": 0.18
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            snapshotJson,
+            snapshotJson.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+
+        InventoryModel snapshot = InventoryStateStore.snapshot();
+        assertEquals(3, snapshot.gridItems().size());
+
+        InventoryItem skillScroll = snapshot.gridItems().get(0).item();
+        assertEquals("skill_scroll", skillScroll.scrollKind());
+        assertEquals("herbalism", skillScroll.scrollSkillId());
+        assertEquals(500, skillScroll.scrollXpGrant());
+        assertTrue(skillScroll.isSkillScroll());
+
+        InventoryItem recipeScroll = snapshot.gridItems().get(1).item();
+        assertEquals("recipe_scroll", recipeScroll.scrollKind());
+        assertEquals("", recipeScroll.scrollSkillId());
+        assertEquals(0, recipeScroll.scrollXpGrant());
+        assertFalse(recipeScroll.isSkillScroll());
+
+        InventoryItem blueprintScroll = snapshot.gridItems().get(2).item();
+        assertEquals("blueprint_scroll", blueprintScroll.scrollKind());
+        assertEquals("", blueprintScroll.scrollSkillId());
+        assertEquals(0, blueprintScroll.scrollXpGrant());
+        assertFalse(blueprintScroll.isSkillScroll());
     }
 
     private static String loadSharedFixture(String fileName) throws IOException {

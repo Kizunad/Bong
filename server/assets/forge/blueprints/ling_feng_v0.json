@@ -7,7 +7,7 @@
     {
       "kind": "billet",
       "profile": {
-        "required": [{ "material": "xuan_iron", "count": 3 }],
+        "required": [{ "material": "sui_tie", "count": 3 }],
         "optional_carriers": [
           { "material": "ling_wood",     "unlocks_tier": 3 },
           { "material": "yi_beast_bone", "unlocks_tier": 4 }

@@ -41,6 +41,18 @@ pub struct RemainsItemRecord {
     pub item: ItemInstance,
 }
 
+// plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
+pub mod ancient_relics;
+// plan-tsy-loot-v1 §4 — 干尸 component。
+pub mod corpse;
+// plan-tsy-loot-v1 §3 — 秘境内死亡分流。
+pub mod tsy_death_drop;
+// plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
+pub mod tsy_loot_spawn;
+// plan-tsy-loot-v1 §8.2 — 端到端集成测试。
+#[cfg(test)]
+mod tsy_loot_integration_test;
+
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
 const DEFAULT_LOADOUT_PATH: &str = "assets/inventory/loadouts/default.toml";
@@ -121,6 +133,9 @@ pub enum ItemRarity {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.1 — 上古遗物，仅由 TSY 自然 spawn 产生，
+    /// 灵质恒为 0（"无灵"），耐久作为"剩余使用次数"语义。
+    Ancient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,6 +194,17 @@ pub struct ItemInstance {
     /// plan-shelflife-v1 §0.4 / §2.1 — 物品保质期 NBT。
     /// `None` = 无时间敏感（凡俗工具 / 瑶器 等），`Some` = 接 shelflife 路径计算。
     pub freshness: Option<crate::shelflife::Freshness>,
+    /// plan-mineral-v1 §2.2 — 矿物来源 item 的正典 mineral_id（如 `"fan_tie"`）。
+    /// `None` = 非矿物物品 / 凡俗 item（打怪掉落 / creative 给的 vanilla 方块）；
+    /// `Some` = `MineralDropEvent` 产出，`MineralRegistry::is_valid_mineral_id(..)` 保证正典性。
+    /// 序列化省略 None 以兼容旧 snapshot（见 freshness）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
+    /// plan-tsy-loot-v1 §1.3 — "剩余使用次数"。Ancient rarity 物品用此存 tier
+    /// 1/3/5 的初始剩余次数，每次使用 -= 1，归零销毁。非 ancient 物品恒为 None；
+    /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -260,7 +286,11 @@ pub fn register(app: &mut App) {
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
+    // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
+    app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
+    app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
     app.add_event::<DroppedItemEvent>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_systems(
         Update,
         (
@@ -268,6 +298,8 @@ pub fn register(app: &mut App) {
             apply_termination_drop_on_terminate,
             handle_remains_interactions,
             sync_overloaded_marker,
+            // plan-tsy-loot-v1 §2.2 — 玩家踏入 family 时 spawn 1% 上古遗物（idempotent）。
+            tsy_loot_spawn::tsy_loot_spawn_on_enter,
         ),
     );
 }
@@ -344,16 +376,11 @@ pub fn apply_termination_drop_on_terminate(
                     ev.entity
                 );
                 // Fall back to world drops if we can't place a remains entity.
-                let start_idx = dropped_registry
-                    .by_owner
-                    .get(&ev.entity)
-                    .map(|entries| entries.len())
-                    .unwrap_or(0);
-                let entries = dropped_registry.by_owner.entry(ev.entity).or_default();
+                let start_idx = dropped_registry.entries.len();
                 for (idx, (source_container_id, source_row, source_col, item)) in
                     drained.into_iter().enumerate()
                 {
-                    entries.push(DroppedLootEntry {
+                    let entry = DroppedLootEntry {
                         instance_id: item.instance_id,
                         source_container_id,
                         source_row,
@@ -364,7 +391,8 @@ pub fn apply_termination_drop_on_terminate(
                             base[2] + 0.35,
                         ],
                         item,
-                    });
+                    };
+                    dropped_registry.entries.insert(entry.instance_id, entry);
                 }
                 commands.entity(ev.entity).remove::<DeathDropAnchor>();
                 bump_revision(&mut inventory);
@@ -390,16 +418,11 @@ pub fn apply_termination_drop_on_terminate(
                 player_list_entry: entry_entity,
             });
         } else if should_drop_to_world && !drained.is_empty() {
-            let start_idx = dropped_registry
-                .by_owner
-                .get(&ev.entity)
-                .map(|entries| entries.len())
-                .unwrap_or(0);
-            let entries = dropped_registry.by_owner.entry(ev.entity).or_default();
+            let start_idx = dropped_registry.entries.len();
             for (idx, (source_container_id, source_row, source_col, item)) in
                 drained.into_iter().enumerate()
             {
-                entries.push(DroppedLootEntry {
+                let entry = DroppedLootEntry {
                     instance_id: item.instance_id,
                     source_container_id,
                     source_row,
@@ -410,7 +433,8 @@ pub fn apply_termination_drop_on_terminate(
                         base[2] + 0.35,
                     ],
                     item,
-                });
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
             }
         }
 
@@ -584,10 +608,6 @@ pub(crate) fn attach_inventory_to_joined_clients(
         commands
             .entity(entity)
             .insert(crate::combat::components::UnlockedStyles::default());
-        // plan-HUD-v1 §3.4 默认 stance=None，伪皮 0，涡流未激活。switch 后才出现指示器。
-        commands
-            .entity(entity)
-            .insert(crate::combat::components::DefenseStance::default());
         // plan-skill-v1 §8 SkillSet 挂玩家 entity；consumed_scrolls 一生累积（死透重生由
         // plan-death-lifecycle §4/§5 新建 default 实例，不迁移）。
         commands
@@ -661,6 +681,8 @@ fn instantiate_item_instance(
         spirit_quality: template_instance.spirit_quality,
         durability: template_instance.durability,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     })
 }
 
@@ -798,6 +820,8 @@ pub fn add_item_to_player_inventory(
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     };
 
     let Some(main_pack) = inventory
@@ -1379,6 +1403,18 @@ pub struct InventoryDurabilityUpdate {
     pub durability: f64,
 }
 
+/// Inventory item durability changed for a specific client entity.
+///
+/// This event exists to allow low-frequency incremental updates (e.g. armor hit
+/// durability ticks) without requiring a full `inventory_snapshot` UI refresh.
+#[derive(Debug, Clone, bevy_ecs::event::Event, PartialEq)]
+pub struct InventoryDurabilityChangedEvent {
+    pub entity: Entity,
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub durability: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryConsumeOutcome {
     pub revision: InventoryRevision,
@@ -1418,7 +1454,12 @@ pub struct DroppedLootEntry {
 
 #[derive(Default, Resource, Debug)]
 pub struct DroppedLootRegistry {
-    pub by_owner: HashMap<Entity, Vec<DroppedLootEntry>>,
+    /// World-visible drops keyed by `instance_id`.
+    ///
+    /// The pickup request only carries `instance_id`, so the registry must be
+    /// addressable without an implicit owner. `instance_id` values are globally
+    /// unique within a running server.
+    pub entries: HashMap<u64, DroppedLootEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1703,6 +1744,7 @@ pub fn apply_death_drop_on_revive(
     registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
     anchors: Query<&DeathDropAnchor>,
+    presences: Query<&crate::world::tsy::TsyPresence>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
 ) {
@@ -1711,7 +1753,72 @@ pub fn apply_death_drop_on_revive(
             continue;
         };
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
+        let base = positions
+            .get(ev.entity)
+            .map(|pos| pos.0)
+            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
 
+        // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
+        // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
+        if let Ok(presence) = presences.get(ev.entity) {
+            let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
+                &mut inventory,
+                &registry,
+                presence,
+                base,
+                seed,
+            );
+            if tsy_outcome.total_dropped() == 0 {
+                continue;
+            }
+            let mut combined: Vec<DroppedItemRecord> = Vec::new();
+            for (idx, record) in tsy_outcome
+                .entry_carry_dropped
+                .iter()
+                .chain(tsy_outcome.tsy_acquired_dropped.iter())
+                .enumerate()
+            {
+                // plan-tsy-lifecycle-v1 §3.3 — 把 family 写进 source_container_id 前缀，
+                // 让 lifecycle cleanup 能精确识别"属于本 family 的塌缩残留"，避免
+                // 主世界同 XYZ 的 entries 被误删（Codex review P1）。
+                let entry = DroppedLootEntry {
+                    instance_id: record.instance.instance_id,
+                    source_container_id: format!(
+                        "tsy_corpse:{}/{}",
+                        presence.family_id, record.container_id
+                    ),
+                    source_row: record.row,
+                    source_col: record.col,
+                    world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                    item: record.instance.clone(),
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
+                combined.push(record.clone());
+            }
+
+            // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
+            // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
+            let drop_ids: Vec<u64> = combined.iter().map(|r| r.instance.instance_id).collect();
+            commands.spawn((
+                Position(tsy_outcome.corpse_pos),
+                corpse::CorpseEmbalmed {
+                    family_id: presence.family_id.clone(),
+                    died_at_tick: presence.entered_at_tick, // MVP：用 entered_tick 占位；P2 lifecycle 用真 death tick
+                    death_cause: "tsy_death".to_string(),
+                    drops: drop_ids,
+                    activated_to_daoxiang: false,
+                },
+            ));
+
+            dropped_events.send(DroppedItemEvent {
+                entity: ev.entity,
+                revision: inventory.revision,
+                dropped: combined,
+            });
+            continue;
+        }
+
+        // ----- 主世界路径（保持原 §十二 50% 行为） -----
         let outcome = apply_death_drop_to_inventory(&mut inventory, &registry, seed);
 
         if outcome.dropped.is_empty() {
@@ -1728,16 +1835,9 @@ pub fn apply_death_drop_on_revive(
                 })
             })
             .unwrap_or([0.0, 64.0, 0.0]);
-        let start_idx = dropped_registry
-            .by_owner
-            .get(&ev.entity)
-            .map(|entries| entries.len())
-            .unwrap_or(0);
-        let drops = outcome
-            .dropped
-            .iter()
-            .enumerate()
-            .map(|(idx, dropped)| DroppedLootEntry {
+        let start_idx = dropped_registry.entries.len();
+        for (idx, dropped) in outcome.dropped.iter().enumerate() {
+            let entry = DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
                 source_container_id: dropped.container_id.clone(),
                 source_row: dropped.row,
@@ -1748,13 +1848,9 @@ pub fn apply_death_drop_on_revive(
                     base[2] + 0.35,
                 ],
                 item: dropped.instance.clone(),
-            })
-            .collect::<Vec<_>>();
-        dropped_registry
-            .by_owner
-            .entry(ev.entity)
-            .or_default()
-            .extend(drops);
+            };
+            dropped_registry.entries.insert(entry.instance_id, entry);
+        }
 
         // Anchor is only needed until the revive-drop is materialized.
         commands.entity(ev.entity).remove::<DeathDropAnchor>();
@@ -1905,14 +2001,10 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
 }
 
 pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
-    // Worldview §十二：死亡掉落对所有人可见/可拾取。
-    // `by_owner` 仅用于追踪掉落来源，不作为可见性/拾取权限。
-    let mut owners = registry.by_owner.iter().collect::<Vec<_>>();
-    owners.sort_by_key(|(owner, _)| owner.to_bits());
-    owners
-        .into_iter()
-        .flat_map(|(_owner, entries)| entries.iter().cloned())
-        .collect()
+    let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
+    // Deterministic ordering avoids client-side insertionOrder churn.
+    drops.sort_by_key(|entry| entry.instance_id);
+    drops
 }
 
 pub fn pickup_dropped_loot_instance(
@@ -1921,15 +2013,10 @@ pub fn pickup_dropped_loot_instance(
     player_pos: [f64; 3],
     instance_id: u64,
 ) -> Result<InventoryRevision, String> {
-    let (owner, idx, entry) = registry
-        .by_owner
-        .iter()
-        .find_map(|(owner, entries)| {
-            entries
-                .iter()
-                .position(|entry| entry.instance_id == instance_id)
-                .map(|idx| (*owner, idx, entries[idx].clone()))
-        })
+    let entry = registry
+        .entries
+        .get(&instance_id)
+        .cloned()
         .ok_or_else(|| format!("dropped instance {instance_id} not found"))?;
     let dx = entry.world_pos[0] - player_pos[0];
     let dy = entry.world_pos[1] - player_pos[1];
@@ -1945,18 +2032,7 @@ pub fn pickup_dropped_loot_instance(
     attach_at_location(inventory, entry.item, &location)?;
     bump_revision(inventory);
 
-    // Remove after inventory mutation succeeds to avoid "ghost pickup".
-    let entries = registry
-        .by_owner
-        .get_mut(&owner)
-        .ok_or_else(|| format!("dropped instance {instance_id} not found"))?;
-    if idx >= entries.len() || entries[idx].instance_id != instance_id {
-        return Err(format!("dropped instance {instance_id} not found"));
-    }
-    entries.remove(idx);
-    if entries.is_empty() {
-        registry.by_owner.remove(&owner);
-    }
+    registry.entries.remove(&instance_id);
 
     Ok(inventory.revision)
 }
@@ -1964,7 +2040,6 @@ pub fn pickup_dropped_loot_instance(
 pub fn discard_inventory_item_to_dropped_loot(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
-    owner: Entity,
     player_pos: [f64; 3],
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
@@ -1999,11 +2074,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         }
     };
 
-    let next_idx = registry
-        .by_owner
-        .get(&owner)
-        .map(|entries| entries.len())
-        .unwrap_or(0);
+    let next_idx = registry.entries.len();
     let dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
@@ -2016,11 +2087,7 @@ pub fn discard_inventory_item_to_dropped_loot(
         ],
         item,
     };
-    registry
-        .by_owner
-        .entry(owner)
-        .or_default()
-        .push(dropped.clone());
+    registry.entries.insert(instance_id, dropped.clone());
 
     Ok(InventoryDiscardOutcome {
         revision: inventory.revision,
@@ -2061,7 +2128,7 @@ fn death_drop_seed(entity: Entity, revision: u64) -> u64 {
         .wrapping_add(revision.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn select_drop_instance_ids(
+pub(crate) fn select_drop_instance_ids(
     mut instance_ids: Vec<u64>,
     drop_count: usize,
     mut seed: u64,
@@ -2085,7 +2152,7 @@ fn xorshift64(mut x: u64) -> u64 {
     x
 }
 
-fn bump_revision(inventory: &mut PlayerInventory) {
+pub(crate) fn bump_revision(inventory: &mut PlayerInventory) {
     inventory.revision = InventoryRevision(inventory.revision.0.saturating_add(1));
 }
 
@@ -2675,6 +2742,8 @@ fn build_item_instance_from_template(
         spirit_quality,
         durability,
         freshness: None,
+        mineral_id: None,
+        charges: None,
     })
 }
 
@@ -3229,6 +3298,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -3338,6 +3409,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3390,6 +3463,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         });
 
@@ -3562,6 +3637,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3601,6 +3678,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3630,6 +3709,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3698,6 +3779,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3713,6 +3796,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3729,6 +3814,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.5,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3788,6 +3875,8 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
             });
         }
@@ -3833,6 +3922,7 @@ cols = 4
                     }],
                     insights_taken: Vec::new(),
                     death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
                     spirit_root_first: None,
                 },
             ))
@@ -3842,11 +3932,7 @@ cols = 4
         app.update();
 
         let registry = app.world().resource::<DroppedLootRegistry>();
-        let dropped_count = registry
-            .by_owner
-            .get(&entity)
-            .map(|entries| entries.len())
-            .unwrap_or(0);
+        let dropped_count = registry.entries.len();
         assert!(
             dropped_count >= 1,
             "terminated player should drop inventory"
@@ -3880,6 +3966,7 @@ cols = 4
                     }],
                     insights_taken: Vec::new(),
                     death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
                     spirit_root_first: None,
                 },
             ))
@@ -3889,7 +3976,7 @@ cols = 4
 
         let registry = app.world().resource::<DroppedLootRegistry>();
         assert!(
-            !registry.by_owner.contains_key(&entity),
+            registry.entries.is_empty(),
             "voluntary_retire should not create drops"
         );
 
@@ -3940,6 +4027,7 @@ cols = 4
                     }],
                     insights_taken: Vec::new(),
                     death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
                     spirit_root_first: None,
                 },
             ))
@@ -3976,7 +4064,7 @@ cols = 4
         // natural_end should not create world dropped loot entries.
         let registry = app.world().resource::<DroppedLootRegistry>();
         assert!(
-            !registry.by_owner.contains_key(&terminated),
+            registry.entries.is_empty(),
             "natural_end should not create DroppedLootRegistry entries"
         );
 
@@ -4061,9 +4149,9 @@ cols = 4
 
         let owner = Entity::PLACEHOLDER;
         let mut registry = DroppedLootRegistry::default();
-        registry.by_owner.insert(
-            owner,
-            vec![DroppedLootEntry {
+        registry.entries.insert(
+            42,
+            DroppedLootEntry {
                 instance_id: 42,
                 source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
                 source_row: 0,
@@ -4082,8 +4170,10 @@ cols = 4
                     spirit_quality: 1.0,
                     durability: 1.0,
                     freshness: None,
+                    mineral_id: None,
+                    charges: None,
                 },
-            }],
+            },
         );
 
         let revision =
@@ -4092,7 +4182,8 @@ cols = 4
 
         assert_eq!(revision, InventoryRevision(8));
         assert_eq!(inventory.containers[0].items.len(), 1);
-        assert!(!registry.by_owner.contains_key(&owner));
+        assert!(!registry.entries.contains_key(&42));
+        let _ = owner;
     }
 
     #[test]
@@ -4104,7 +4195,6 @@ cols = 4
         let outcome = discard_inventory_item_to_dropped_loot(
             &mut inventory,
             &mut registry,
-            owner,
             [0.0, 64.0, 0.0],
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
@@ -4117,13 +4207,13 @@ cols = 4
 
         assert_eq!(outcome.revision, InventoryRevision(8));
         assert!(inventory.containers[0].items.is_empty());
-        let drops = registry
-            .by_owner
-            .get(&owner)
+        let entry = registry
+            .entries
+            .get(&42)
             .expect("registry should contain dropped item");
-        assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].instance_id, 42);
-        assert_eq!(drops[0].source_container_id, MAIN_PACK_CONTAINER_ID);
+        assert_eq!(entry.instance_id, 42);
+        assert_eq!(entry.source_container_id, MAIN_PACK_CONTAINER_ID);
+        let _ = owner;
     }
 
     #[test]
@@ -4169,6 +4259,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.75,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -4226,6 +4318,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 0.25,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -4253,6 +4347,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -4269,6 +4365,8 @@ cols = 4
                 spirit_quality: 1.0,
                 durability: 1.0,
                 freshness: None,
+                mineral_id: None,
+                charges: None,
             },
         );
 
@@ -4323,6 +4421,8 @@ cols = 4
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 

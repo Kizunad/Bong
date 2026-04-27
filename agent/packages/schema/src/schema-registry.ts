@@ -2,6 +2,7 @@ import type { TSchema } from "@sinclair/typebox";
 
 import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
+import { ArmorDurabilityChangedV1 } from "./armor-event.js";
 import {
   AlchemyContaminationLevelV1,
   AlchemyInterventionV1,
@@ -40,6 +41,7 @@ import {
   DuoSheRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
+  MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
   UseLifeCoreRequestV1,
 } from "./client-request.js";
@@ -75,8 +77,31 @@ import {
   ServerDataTerminateScreenV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanySkillV1,
+  ServerDataSkillCapChangedV1,
+  ServerDataSkillLvUpV1,
+  ServerDataSkillSnapshotV1,
+  ServerDataSkillScrollUsedV1,
+  ServerDataSkillXpGainV1,
   ServerDataV1,
 } from "./server-data.js";
+import {
+  DaoxiangSpawnedV1,
+  TsyCollapseCompletedV1,
+  TsyCollapseStartedV1,
+  TsyCorpseSpawnEventV1,
+  TsyEnterEventV1,
+  TsyExitEventV1,
+  TsyZoneActivatedV1,
+} from "./tsy.js";
+import {
+  CancelSearchRequestV1,
+  ContainerStateV1,
+  SearchAbortedV1,
+  SearchCompletedV1,
+  SearchProgressV1,
+  SearchStartedV1,
+  StartSearchRequestV1,
+} from "./container-interaction.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -118,6 +143,7 @@ export const SCHEMA_REGISTRY = {
   rebirthChanceResultV1: RebirthChanceResultV1,
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
+  armorDurabilityChangedV1: ArmorDurabilityChangedV1,
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
@@ -125,6 +151,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
+  clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
   clientRequestCombatTerminateV1: CombatTerminateRequestV1,
@@ -133,6 +160,11 @@ export const SCHEMA_REGISTRY = {
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataDeathScreenV1: ServerDataDeathScreenV1,
   serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
+  serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
+  serverDataSkillLvUpV1: ServerDataSkillLvUpV1,
+  serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
+  serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
+  serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -155,6 +187,24 @@ export const SCHEMA_REGISTRY = {
   clientRequestAlchemyTurnPageV1: AlchemyTurnPageRequestV1,
   clientRequestAlchemyLearnRecipeV1: AlchemyLearnRecipeRequestV1,
   clientRequestAlchemyTakePillV1: AlchemyTakePillRequestV1,
+  // plan-tsy-zone-v1 §1.4
+  tsyEnterEventV1: TsyEnterEventV1,
+  tsyExitEventV1: TsyExitEventV1,
+  // plan-tsy-loot-v1 §4.4
+  tsyCorpseSpawnEventV1: TsyCorpseSpawnEventV1,
+  // plan-tsy-lifecycle-v1 §1.5 / §3.1 / §4
+  tsyZoneActivatedV1: TsyZoneActivatedV1,
+  tsyCollapseStartedV1: TsyCollapseStartedV1,
+  tsyCollapseCompletedV1: TsyCollapseCompletedV1,
+  daoxiangSpawnedV1: DaoxiangSpawnedV1,
+  // plan-tsy-container-v1 §5.1 — TSY 容器搜刮
+  containerStateV1: ContainerStateV1,
+  searchStartedV1: SearchStartedV1,
+  searchProgressV1: SearchProgressV1,
+  searchCompletedV1: SearchCompletedV1,
+  searchAbortedV1: SearchAbortedV1,
+  clientRequestStartSearchV1: StartSearchRequestV1,
+  clientRequestCancelSearchV1: CancelSearchRequestV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -195,6 +245,7 @@ export const GENERATED_SCHEMA_FILES = {
   "rebirth-chance-result-v1.json": SCHEMA_REGISTRY.rebirthChanceResultV1,
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
+  "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,
@@ -205,6 +256,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-duo-she-v1.json": SCHEMA_REGISTRY.clientRequestDuoSheV1,
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
+  "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "client-request-combat-reincarnate-v1.json":
@@ -219,6 +271,16 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
   "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
   "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
+  "server-data-skill-xp-gain-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillXpGainV1,
+  "server-data-skill-lv-up-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillLvUpV1,
+  "server-data-skill-cap-changed-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillCapChangedV1,
+  "server-data-skill-snapshot-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillSnapshotV1,
+  "server-data-skill-scroll-used-v1.json":
+    SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // 炼丹 (plan-alchemy-v1 §4)
@@ -256,6 +318,24 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestAlchemyLearnRecipeV1,
   "client-request-alchemy-take-pill-v1.json":
     SCHEMA_REGISTRY.clientRequestAlchemyTakePillV1,
+  // plan-tsy-zone-v1 §1.4 — JSON Schema 导出供 Rust serde 双端校验
+  "tsy-enter-event-v1.json": SCHEMA_REGISTRY.tsyEnterEventV1,
+  "tsy-exit-event-v1.json": SCHEMA_REGISTRY.tsyExitEventV1,
+  // plan-tsy-loot-v1 §4.4
+  "tsy-corpse-spawn-event-v1.json": SCHEMA_REGISTRY.tsyCorpseSpawnEventV1,
+  // plan-tsy-lifecycle-v1 §1.5 / §3.1 / §4
+  "tsy-zone-activated-v1.json": SCHEMA_REGISTRY.tsyZoneActivatedV1,
+  "tsy-collapse-started-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedV1,
+  "tsy-collapse-completed-v1.json": SCHEMA_REGISTRY.tsyCollapseCompletedV1,
+  "daoxiang-spawned-v1.json": SCHEMA_REGISTRY.daoxiangSpawnedV1,
+  // plan-tsy-container-v1 §5.1
+  "container-state-v1.json": SCHEMA_REGISTRY.containerStateV1,
+  "search-started-v1.json": SCHEMA_REGISTRY.searchStartedV1,
+  "search-progress-v1.json": SCHEMA_REGISTRY.searchProgressV1,
+  "search-completed-v1.json": SCHEMA_REGISTRY.searchCompletedV1,
+  "search-aborted-v1.json": SCHEMA_REGISTRY.searchAbortedV1,
+  "client-request-start-search-v1.json": SCHEMA_REGISTRY.clientRequestStartSearchV1,
+  "client-request-cancel-search-v1.json": SCHEMA_REGISTRY.clientRequestCancelSearchV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

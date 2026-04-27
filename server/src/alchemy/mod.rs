@@ -36,12 +36,15 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
-    EventReader, Query, Username, With, Without,
+    EventReader, EventWriter, Query, Update, Username, With, Without,
 };
 
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
-use crate::player::state::PlayerState;
+use crate::player::state::{canonical_player_id, PlayerState};
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
 type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
@@ -83,6 +86,7 @@ pub struct InterventionRequest {
 pub struct AlchemyOutcomeEvent {
     pub furnace: valence::prelude::Entity,
     pub caster_id: String,
+    pub bucket: outcome::OutcomeBucket,
     pub outcome: ResolvedOutcome,
 }
 
@@ -114,12 +118,48 @@ pub fn register(app: &mut App) {
     app.add_event::<AlchemyOutcomeEvent>();
     app.add_event::<PlaceFurnaceRequest>();
     app.add_systems(
-        valence::prelude::Update,
+        Update,
         (
             attach_alchemy_to_joined_clients,
             handle_alchemy_furnace_place,
+            emit_alchemy_skill_xp_from_outcomes,
         ),
     );
+}
+
+fn emit_alchemy_skill_xp_from_outcomes(
+    mut events: EventReader<AlchemyOutcomeEvent>,
+    players: Query<(Entity, &Username), With<Client>>,
+    mut skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    for event in events.read() {
+        let Some((player_entity, _)) = players.iter().find(|(_, username)| {
+            event.caster_id == username.0
+                || canonical_player_id(username.0.as_str()) == event.caster_id
+        }) else {
+            continue;
+        };
+
+        skill_xp_events.send(SkillXpGain {
+            char_entity: player_entity,
+            skill: SkillId::Alchemy,
+            amount: skill_hook::xp_for_bucket(event.bucket),
+            source: XpGainSource::Action {
+                plan_id: "alchemy",
+                action: alchemy_action_for_bucket(event.bucket),
+            },
+        });
+    }
+}
+
+fn alchemy_action_for_bucket(bucket: outcome::OutcomeBucket) -> &'static str {
+    match bucket {
+        outcome::OutcomeBucket::Perfect => "craft_perfect",
+        outcome::OutcomeBucket::Good => "craft_good",
+        outcome::OutcomeBucket::Flawed => "craft_flawed",
+        outcome::OutcomeBucket::Waste => "craft_waste",
+        outcome::OutcomeBucket::Explode => "craft_explode",
+    }
 }
 
 /// plan §1.2 — 消费 `PlaceFurnaceRequest`：
@@ -136,7 +176,7 @@ pub fn handle_alchemy_furnace_place(
     mut events: EventReader<PlaceFurnaceRequest>,
     mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
-    mut layers: Query<&mut ChunkLayer>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     existing: Query<&AlchemyFurnace>,
     mut clients: Query<(&Username, &mut Client, &PlayerState)>,
 ) {
@@ -202,6 +242,7 @@ pub fn handle_alchemy_furnace_place(
                 username.0.as_str(),
                 &inv,
                 player_state,
+                &Cultivation::default(),
                 "alchemy_furnace_place_consumed",
             );
         }
@@ -219,6 +260,7 @@ pub fn handle_alchemy_furnace_place(
 ///
 /// plan §1.2：炉必须由玩家手持物品右键地面放置（`ClientRequestV1::AlchemyFurnacePlace`）。
 /// 没有世界炉 = 炼不了丹 — 不再给玩家挂自带虚拟炉作保底。
+#[allow(clippy::type_complexity)]
 pub(crate) fn attach_alchemy_to_joined_clients(
     mut commands: Commands,
     joined: Query<JoinedClientsWithoutRecipes<'_>, JoinedClientsWithoutRecipesFilter>,
@@ -245,7 +287,9 @@ mod integration_tests {
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         PlayerInventory,
     };
-    use valence::prelude::{App, Update};
+    use crate::skill::events::SkillXpGain;
+    use valence::prelude::{App, Events, Update};
+    use valence::testing::create_mock_client;
 
     #[test]
     fn full_loop_perfect_hui_yuan_then_contamination_purge() {
@@ -352,6 +396,8 @@ mod integration_tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -382,6 +428,53 @@ mod integration_tests {
         app.add_event::<PlaceFurnaceRequest>()
             .add_systems(Update, handle_alchemy_furnace_place);
         app
+    }
+
+    #[test]
+    fn alchemy_outcome_event_emits_skill_xp_gain() {
+        let mut app = App::new();
+        app.add_event::<AlchemyOutcomeEvent>();
+        app.add_event::<SkillXpGain>();
+        app.add_systems(Update, emit_alchemy_skill_xp_from_outcomes);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        let furnace = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(AlchemyOutcomeEvent {
+            furnace,
+            caster_id: canonical_player_id("Azure"),
+            bucket: outcome::OutcomeBucket::Perfect,
+            outcome: ResolvedOutcome::Pill {
+                recipe_id: "hui_yuan_pill_v0".into(),
+                pill: "hui_yuan_pill".into(),
+                quality: 1.0,
+                toxin_amount: 0.2,
+                toxin_color: ColorKind::Mellow,
+                qi_gain: Some(24.0),
+                side_effect: None,
+                flawed_path: false,
+            },
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<SkillXpGain>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].char_entity, player);
+        assert_eq!(emitted[0].skill, SkillId::Alchemy);
+        assert_eq!(emitted[0].amount, 6);
+        match &emitted[0].source {
+            XpGainSource::Action { plan_id, action } => {
+                assert_eq!(*plan_id, "alchemy");
+                assert_eq!(*action, "craft_perfect");
+            }
+            other => panic!("expected action source, got {other:?}"),
+        }
     }
 
     #[test]

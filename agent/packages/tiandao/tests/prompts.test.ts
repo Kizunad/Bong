@@ -35,9 +35,11 @@ describe("tiandao skill prompts", () => {
 
     expect(calamity).toContain("工具是可选的");
     expect(calamity).toContain("query-player");
+    expect(calamity).toContain("query-player-skill-milestones");
     expect(calamity).toContain("list-active-events");
     expect(mutation).toContain("工具是可选的");
     expect(calamity).toContain("query-player");
+    expect(calamity).toContain("query-player-skill-milestones");
     expect(calamity).toContain("list-active-events");
     expect(mutation).toContain("query-zone-history");
     expect(era).toContain("默认不使用工具");

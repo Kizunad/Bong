@@ -18,7 +18,8 @@ use crate::player::{
     state::canonical_player_id,
 };
 use crate::schema::chat_message::ChatMessageV1;
-use crate::world::terrain::TerrainProvider;
+use crate::world::terrain::{TerrainProvider, TerrainProviders};
+use crate::world::tsy_dev_command::TsySpawnRequested;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 // 用于 !shrine dev 命令：通过 DebugCombatCommand 写入 Lifecycle.spawn_anchor。
 
@@ -39,7 +40,7 @@ impl Resource for ChatCollectorRateLimit {}
 pub fn collect_player_chat(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    terrain: Option<Res<TerrainProvider>>,
+    providers: Option<Res<TerrainProviders>>,
     mut player_sets: ParamSet<(
         Query<(&Username, &Position), With<Client>>,
         Query<(&mut Position, &mut GameMode, &mut Client, &Username), With<Client>>,
@@ -50,6 +51,7 @@ pub fn collect_player_chat(
     mut pending_scenario: Option<valence::prelude::ResMut<PendingScenario>>,
     mut debug_combat_tx: EventWriter<DebugCombatCommand>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
+    mut tsy_spawn_tx: EventWriter<TsySpawnRequested>,
 ) {
     rate_limit.per_player_count.clear();
 
@@ -79,11 +81,12 @@ pub fn collect_player_chat(
             player_info,
             &mut player_sets.p1(),
             &zone_registry,
-            terrain.as_deref(),
+            providers.as_deref().map(|p| &p.overworld),
             &mut rate_limit,
             pending_scenario.as_deref_mut(),
             &mut debug_combat_tx,
             player_persistence.as_deref(),
+            &mut tsy_spawn_tx,
         ) else {
             continue;
         };
@@ -128,6 +131,7 @@ fn classify_player_message(
     pending_scenario: Option<&mut PendingScenario>,
     debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
     player_persistence: Option<&PlayerStatePersistence>,
+    tsy_spawn_tx: &mut EventWriter<TsySpawnRequested>,
 ) -> Option<CollectedPlayerMessage> {
     let too_long = is_oversize_message(message);
     let over_budget = exceeds_rate_budget(player_entity, rate_limit);
@@ -148,6 +152,7 @@ fn classify_player_message(
         pending_scenario,
         debug_combat_tx,
         player_persistence,
+        tsy_spawn_tx,
     ) {
         return None;
     }
@@ -217,6 +222,7 @@ fn try_handle_dev_command(
     pending_scenario: Option<&mut PendingScenario>,
     debug_combat_tx: &mut EventWriter<DebugCombatCommand>,
     player_persistence: Option<&PlayerStatePersistence>,
+    tsy_spawn_tx: &mut EventWriter<TsySpawnRequested>,
 ) -> bool {
     let trimmed = message.trim();
     if !trimmed.starts_with('!') {
@@ -465,6 +471,23 @@ fn try_handle_dev_command(
             client.send_chat_message(format!("Queued !stamina set {value:.1}"));
             true
         }
+        "!tsy-spawn" => {
+            // plan-tsy-zone-v1 §3.1 调试命令 — 用法: !tsy-spawn <family_id>
+            // 在玩家当前位置 spawn TSY 系列裂缝 + 注册三层 subzone。
+            let Some(family_id) = tokens.next() else {
+                client.send_chat_message("Usage: !tsy-spawn <family_id> (e.g. tsy_lingxu_01)");
+                return true;
+            };
+            tsy_spawn_tx.send(TsySpawnRequested {
+                player_entity,
+                player_pos,
+                family_id: family_id.to_string(),
+            });
+            client.send_chat_message(format!(
+                "Queued !tsy-spawn {family_id} (查看 server 日志确认结果)"
+            ));
+            true
+        }
         "!npc_scenario" | "!scenario" => {
             let Some(scenario_name) = tokens.next() else {
                 client.send_chat_message(
@@ -526,7 +549,7 @@ fn is_oversize_message(message: &str) -> bool {
 
 fn zone_name_for_position(zone_registry: &ZoneRegistry, position: DVec3) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -554,6 +577,7 @@ mod chat_collector_tests {
         let mut app = App::new();
         app.add_event::<ChatMessageEvent>();
         app.add_event::<DebugCombatCommand>();
+        app.add_event::<TsySpawnRequested>();
         app.insert_resource(RedisBridgeResource {
             tx_outbound,
             rx_inbound,

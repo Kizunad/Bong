@@ -101,29 +101,6 @@ pub struct QuickSlotEntryV1 {
     pub icon_texture: String,
 }
 
-/// plan-HUD-v1 §3.4 / §11.4 当前防御姿态 + 替尸伪皮层数 + 绝灵涡流冷却。
-/// 仅在玩家解锁了对应流派时才有意义（client 端配合 `unlocks_sync` 做条件渲染）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DefenseStanceV1 {
-    None,
-    Jiemai,
-    Tishi,
-    Jueling,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DefenseSyncV1 {
-    pub stance: DefenseStanceV1,
-    /// 替尸流剩余伪皮层数（§3.4）。0 = 不渲染。
-    pub fake_skin_layers: u32,
-    /// 绝灵流涡流是否激活中（§3.4 蓝色转圈）。
-    pub vortex_active: bool,
-    /// 涡流冷却结束的 unix ms；0 = 无冷却。
-    pub vortex_ready_at_ms: u64,
-}
-
 /// plan-HUD-v1 §1.3 / §11.4 玩家解锁的防御流派（截脉/替尸/绝灵）。
 /// 客户端用于条件渲染门禁——未解锁的指示器完全不显示（§1.4）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,19 +396,6 @@ mod tests {
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: EventStreamPushV1 = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn defense_sync_roundtrip_preserves_content() {
-        let original = DefenseSyncV1 {
-            stance: DefenseStanceV1::Tishi,
-            fake_skin_layers: 3,
-            vortex_active: false,
-            vortex_ready_at_ms: 1_700_000_005_000,
-        };
-        let json = serde_json::to_string(&original).expect("serialize");
-        let parsed: DefenseSyncV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
     }
 

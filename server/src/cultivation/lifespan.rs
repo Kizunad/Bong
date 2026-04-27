@@ -676,17 +676,8 @@ fn apply_extension_cost(
         }
     }
     if let Some(mut player_state) = player_state {
-        if cost.qi_cap_delta < 0.0 {
-            let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
-            player_state.spirit_qi_max = (player_state.spirit_qi_max * factor).max(1.0);
-            player_state.spirit_qi = player_state.spirit_qi.min(player_state.spirit_qi_max);
-        }
         if cost.karma_delta != 0.0 {
             player_state.karma = (player_state.karma + cost.karma_delta).clamp(-1.0, 1.0);
-        }
-        if cost.realm_progress_delta < 0.0 {
-            let penalty = (-cost.realm_progress_delta) as u64;
-            player_state.experience = player_state.experience.saturating_sub(penalty);
         }
     }
 }
@@ -695,18 +686,10 @@ pub fn lifespan_cap_for_actor(
     cultivation: Option<&Cultivation>,
     player_state: Option<&PlayerState>,
 ) -> u32 {
-    match (player_state, cultivation) {
-        (Some(player_state), Some(cultivation)) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            cultivation.realm,
-        ),
-        (Some(player_state), None) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            Realm::Awaken,
-        ),
-        (None, Some(cultivation)) => LifespanCapTable::for_realm(cultivation.realm),
-        (None, None) => LifespanCapTable::MORTAL,
-    }
+    let _ = player_state;
+    cultivation.map_or(LifespanCapTable::MORTAL, |cultivation| {
+        LifespanCapTable::for_realm(cultivation.realm)
+    })
 }
 
 pub fn lifespan_event_payload_from_record(
@@ -775,7 +758,12 @@ pub fn lifespan_tick_rate_multiplier(
     let Some(position) = position else {
         return LIFESPAN_ONLINE_MULTIPLIER;
     };
-    let Some(zone) = zones.and_then(|zones| zones.find_zone(position.get())) else {
+    let Some(zone) = zones.and_then(|zones| {
+        zones.find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            position.get(),
+        )
+    }) else {
         return LIFESPAN_ONLINE_MULTIPLIER;
     };
     if zone.spirit_qi < NEGATIVE_ZONE_SPIRIT_QI_THRESHOLD {

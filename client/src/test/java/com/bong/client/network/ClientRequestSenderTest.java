@@ -75,6 +75,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendLearnSkillScrollUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendLearnSkillScroll(3003L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":3003}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendInventoryMoveUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendInventoryMove(
@@ -98,6 +110,18 @@ public class ClientRequestSenderTest {
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"pickup_dropped_item\",\"v\":1,\"instance_id\":3003}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendMineralProbeUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendMineralProbe(8, 32, 8);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"mineral_probe\",\"v\":1,\"x\":8,\"y\":32,\"z\":8}",
             sent.get(0).body()
         );
     }

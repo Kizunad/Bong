@@ -11,6 +11,7 @@ describe("TiandaoAgent fake clock seam", () => {
   it("restores default role tool wiring and keeps era tool-free", () => {
     expect(resolveAgentTools("calamity.md").map((tool) => tool.name)).toEqual([
       "query-player",
+      "query-player-skill-milestones",
       "list-active-events",
     ]);
     expect(resolveAgentTools("mutation.md").map((tool) => tool.name)).toEqual([

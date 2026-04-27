@@ -1,7 +1,9 @@
 # TSY 生命周期与道伥 · plan-tsy-lifecycle-v1
 
 > 收官 TSY 核心玩法：遗物 = 骨架、取骨架 → 灵压深化、最后一件 → 塌缩 + race-out、干尸 → 道伥、道伥喷出主世界。完整端到端闭环。
-> 交叉引用：`plan-tsy-v1.md`（meta）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `plan-tsy-loot-v1.md §4`（CorpseEmbalmed）· `worldview.md §十六.一`（生命周期 5 步）· `worldview.md §十六.六`（干尸 → 道伥）· `worldview.md §十六.七`（天道静观）· `plan-npc-ai-v1.md`（archetype 基础）
+> 交叉引用：`plan-tsy-v1.md`（meta）· `plan-tsy-dimension-v1`（位面基础设施前置）· `plan-tsy-zone-v1.md §1.3`（TsyPresence）· `plan-tsy-loot-v1.md §4`（CorpseEmbalmed）· `worldview.md §十六.一`（生命周期 5 步）· `worldview.md §十六.六`（干尸 → 道伥）· `worldview.md §十六.七`（天道静观）· `plan-npc-ai-v1.md`（archetype 基础）
+
+> **2026-04-24 架构反转备忘**：TSY 实现为独立位面（`worldview.md §十六 世界层实现注`）。本 plan 的"清场 force 传送"原写作 `insert(Position(presence.entry_portal_pos))`，已改为发 `DimensionTransferRequest { target: Overworld, target_pos: presence.return_to.pos }`；"道伥 50% 喷出主世界"也走跨位面传送 API。§-1 TsyPresence 字段名 `entry_portal_pos` 已变为 `return_to: DimensionAnchor`（见 P0 `§1.3`）。
 
 ---
 
@@ -9,7 +11,7 @@
 
 | 层 | 能力 | 位置 |
 |----|------|------|
-| TsyPresence | 玩家 TSY session 状态 + 入场 snapshot + 入口坐标 | `server/src/world/tsy.rs`（P0） |
+| TsyPresence | 玩家 TSY session 状态 + 入场 snapshot + 出关锚点 `return_to: DimensionAnchor` | `server/src/world/tsy.rs`（P0） |
 | TSY zone 识别 | `Zone::is_tsy/tsy_layer/tsy_family_id` + `tsy_` 前缀约定 | `server/src/world/zone.rs` ext（P0） |
 | 负压 drain | `tsy_drain_tick` 基于 `Zone.spirit_qi` × 池^n 抽真元 | `server/src/world/tsy_drain.rs`（P0） |
 | 入场/出关传送 | `RiftPortal` component + entry/exit portal system | `server/src/world/tsy_portal.rs`（P0） |
@@ -41,7 +43,7 @@
 4. **道伥是 NPC archetype，不是特殊玩法规则** — 复用 `NpcArchetype::Daoxiang` variant + brain tree；worldview lore 由 agent narration 赋予
 5. **干尸转化有冷却** — 玩家死亡后不是立刻变道伥，而是 tick 累积到阈值（MVP = 6000 tick = 5 分钟）；塌缩发生时未到阈值的干尸也会被激活（塌缩加速）（§十六.六）
 6. **塌缩时道伥 "喷出"**：塌缩瞬间，zone 内所有已激活的道伥 **50% 概率** 被传送到主世界裂缝附近；其余随 zone 一起消失（§十六.六）
-7. **死坍缩渊不可重进** — zone dead 后从 registry 移除；即便有玩家残留其内，也被 kick 到 entry_portal_pos。之后该 family_id 永久标记为 dead，不可重生同一 family
+7. **死坍缩渊不可重进** — zone dead 后从 TSY dim 的 registry 移除 + 主世界对应裂缝锚点失效；即便有玩家残留 TSY dim 内，也被跨位面强制传回 `presence.return_to`（主世界锚点）。之后该 family_id 永久标记为 dead，不可重生同一 family
 8. **新 TSY 生成留给后续 plan** — 本 plan 不做自动生成，只处理一个已存在 TSY 的完整生命周期
 
 ---
@@ -350,13 +352,18 @@ pub fn tsy_collapse_completed_cleanup(
     positions_q: Query<&Position>,
     mut loot_registry: ResMut<DroppedLootRegistry>,
     mut daoxiang_spawn: EventWriter<DaoxiangEjectSpawn>,
+    mut dim_transfer: EventWriter<DimensionTransferRequest>,  // 2026-04-24 架构反转新增
 ) {
     for ev in emit.read() {
-        // Step 1: 处理所有还在 zone 内的玩家
+        // Step 1: 处理所有还在 zone 内的玩家 —— 跨位面强制弹回
         for (entity, presence, _) in &presence_q {
             if presence.family_id == ev.family_id {
-                // Force 传送回 entry_portal_pos，真元可能已 ≤ 0 → 死亡流水线
-                commands.entity(entity).insert(Position(presence.entry_portal_pos));
+                // Force 跨位面传回 return_to，真元可能已 ≤ 0 → 死亡流水线
+                dim_transfer.send(DimensionTransferRequest {
+                    entity,
+                    target: presence.return_to.dimension,  // = Overworld
+                    target_pos: presence.return_to.pos,
+                });
                 commands.entity(entity).remove::<TsyPresence>();
                 // 如果真元还 > 0，虽然出来了但半死状态
                 // 如果真元 ≤ 0，下一 tick DeathEvent 正常发出（cause="tsy_drain"）
@@ -581,25 +588,29 @@ pub fn daoxiang_death_drops(
 **位置**：`server/src/world/tsy_lifecycle.rs` `tsy_collapse_completed_cleanup` 的 Step 3
 
 ```rust
-// Step 3 (expanded): 处理道伥喷出
-let family_zones_aabbs: Vec<(DVec3, DVec3)> = /* as before */;
+// Step 3 (expanded): 处理道伥喷出 —— 跨位面传回主世界
+let family_zones_aabbs: Vec<(DVec3, DVec3)> = /* as before，TSY dim 内的三层 AABB */;
 let family_id = &ev.family_id;
 
-// 获取入口 portal 坐标
-let entry_pos = state_reg.by_family.get(family_id)
-    .and_then(|_| /* 查 RiftPortal 的 position */)
+// 获取主世界对应 rift_portal entry POI 的坐标
+let main_world_entry_pos: DVec3 = state_reg.by_family.get(family_id)
+    .and_then(|st| st.main_world_rift_pos)   // StateRegistry 记录主世界锚点（P2 补）
     .unwrap_or(DVec3::ZERO);
 
-// 扫所有 Daoxiang + DaoxiangOrigin 位于 family_zones 内的
+// 扫所有 Daoxiang 位于 TSY dim family_zones 内的
 let mut rng = /* deterministic rng from tick */;
 for (daoxiang_entity, daoxiang_pos) in daoxiang_q.iter() {
     if is_in_any_aabb(daoxiang_pos.0, &family_zones_aabbs) {
         if rng.gen_bool(0.5) {
-            // 50% 喷出：传送到主世界裂缝附近
+            // 50% 喷出：跨位面传送到主世界裂缝附近（±10 格随机偏移）
             let offset = DVec3::new(
                 rng.gen_range(-10.0..10.0), 0.0, rng.gen_range(-10.0..10.0)
             );
-            commands.entity(daoxiang_entity).insert(Position(entry_pos + offset));
+            dim_transfer.send(DimensionTransferRequest {
+                entity: daoxiang_entity,
+                target: DimensionKind::Overworld,
+                target_pos: main_world_entry_pos + offset,
+            });
         } else {
             // 50% 随 zone 消失
             commands.entity(daoxiang_entity).despawn();
@@ -833,3 +844,11 @@ MVP 建议不拆，整吃一次。
 - `plan-daoxiang-ecology-v1.md` — 道伥在主世界的生态（长期 balance、击杀奖励、与其他 NPC 的互动）
 
 所有后续 plan 复用 `plan-tsy-v1.md` meta 里的术语表和设计轴心，避免设定漂移。
+
+---
+
+## 进度日志
+
+- **2026-04-25**：核对 `server/src/` 后确认本 plan（P2 TSY 生命周期与道伥）当前为纯设计骨架，无任何实装；§-1 标注的 P0/P1 现状（`tsy_lifecycle.rs` / `tsy_drain.rs` / `tsy_portal.rs` / `tsy_filter.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs` / `NpcArchetype` 等）在仓库中均未发现对应代码，全部 `[ ]` 维持未勾选。后续推进需先落地 P0（TsyPresence + zone 识别 + 负压 drain + portal + 过滤）和 P1（遗物 spawn + 死亡分流 + 干尸），再开 P2。
+- **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面基础设施就位；本 plan 仍 blocking on **P0 `tsy-zone` + P1 `tsy-loot`** 串行前置。`NpcArchetype::Daoxiang` variant 由本 plan §4 引入（npc-ai PR #45 已加 `Zombie/Commoner/Rogue/Beast/Disciple/GuardianRelic` 6 variant，未含 Daoxiang）。
+

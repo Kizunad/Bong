@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "skill_scroll_used",
+  "char_id": 1001,
+  "scroll_id": "scroll:bai_cao_tu_kao_can",
+  "skill": "herbalism",
+  "xp_granted": 500,
+  "was_duplicate": false
+}

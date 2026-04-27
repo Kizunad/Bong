@@ -16,9 +16,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| C1 | `server/src/combat/` 模块骨架：`Wounds` / `AttackIntent` / `Lifecycle` components | 本次做 |
-| C2 | 攻击事务（距离衰减、污染写入、`MeridianCrack` 施加）、`DeathEvent` 收口 | 本次做 |
-| C3 | IPC schema 扩展：新 Redis 通道 `bong:combat_realtime` / `bong:combat_summary`，TypeBox TS + Rust serde 双端对齐 | 本次做 |
+| C1 | `server/src/combat/` 模块骨架：`Wounds` / `AttackIntent` / `Lifecycle` components | ✅ 已完成（2026-04-21 验收） |
+| C2 | 攻击事务（距离衰减、污染写入、`MeridianCrack` 施加）、`DeathEvent` 收口 | ✅ 已完成（2026-04-21 验收） |
+| C3 | IPC schema 扩展：新 Redis 通道 `bong:combat_realtime` / `bong:combat_summary`，TypeBox TS + Rust serde 双端对齐 | ✅ 已完成（2026-04-21 验收） |
 | C4+ | 终结归档、亡者博物馆、重生语义、CharacterRegistry | **禁止** |
 
 ### 2. 前置契约修复清单（全部已完成 — 2026-04-21 核查）
@@ -320,7 +320,7 @@ struct DeathCauseRegistry { ... }
 #### 移动速度（参考真人）
 
 ```
-人类基线 (untrained mortal):
+人类基线 (untrained human):
   walk_speed   = 1.4 m/s   (5 km/h，散步)
   jog_speed    = 3.0 m/s   (11 km/h，慢跑，长时持续)
   sprint_speed = 5.5 m/s   (20 km/h，全力冲刺，~10s 内耗尽)
@@ -2688,7 +2688,7 @@ WorldStateV1.players[].derived_attrs: { // §1.5.3 精简快照（agent 可读 b
 
 按可独立验证的最小切片划分。**前置依赖修炼 plan 的 P1-P2**（Cultivation/MeridianSystem 已上线）。
 
-### C1：基础设施 + 受伤与气血
+### C1：基础设施 + 受伤与气血 ✅（2026-04-21 验收）
 **验证标准**：玩家手动添加 wound → 持续掉血 → 死亡触发 DeathEvent（暂不走完整流程）
 
 ```
@@ -2704,7 +2704,7 @@ WorldStateV1.players[].derived_attrs: { // §1.5.3 精简快照（agent 可读 b
 ✓ DeathEvent emit（仅打日志，无重生）
 ```
 
-### C2：完整攻击事务 + 最小状态效果
+### C2：完整攻击事务 + 最小状态效果 ✅（2026-04-21 验收，server 侧；客户端 HUD 归 plan-combat-ui_impl.md）
 **验证标准**：两玩家 PvP，体修拳能打出血 + 写 contam，对方截脉防御部分中和；命中会施加 Bleeding + Slowed
 
 ```
@@ -2718,7 +2718,7 @@ WorldStateV1.players[].derived_attrs: { // §1.5.3 精简快照（agent 可读 b
 ✓ Client: 攻击/防御 HUD + 命中特效 + 状态效果 HUD 条
 ```
 
-### C3：死亡-重生流程
+### C3：死亡-重生流程 ✅（2026-04-21 验收，server + IPC schema；客户端死亡画面/遗念显示归 plan-combat-ui_impl.md）
 **验证标准**：玩家被击杀 → 运数判定 → 重生 → 修炼 plan 应用境界 -1
 
 ```
@@ -2971,3 +2971,10 @@ M3.4 — 终结归档：C4 完成，亡者博物馆可读
 M3.5 — 流派齐全：C5 完成，四攻三防可选可用
 M3.6 — 天劫成型：C6 完成，化虚渡劫全服广播
 ```
+
+---
+
+## 19. 进度日志
+
+- 2026-04-21：C1+C2+C3 验收通过——`server/src/combat/{components,resolve,lifecycle,raycast,status,events,debug}.rs` 全数落地，IPC 双通道 `bong:combat_realtime` / `bong:combat_summary` 双端对齐（`agent/packages/schema/src/combat-event.ts` + `server/src/network/combat_bridge.rs`），`DeathEvent` → `DeathArbiter` → `PlayerRevived` / `PlayerTerminated` 收口，C4+ 终结归档与全部客户端 UI 仍按 worktree v1 边界禁碰。
+- 2026-04-25：本地核查代码确认 C1/C2/C3 server 侧已实装（`Wounds` / `AttackIntent` / `Lifecycle` / `DefenseWindow` / `StatusEffectKind::{Bleeding,Stunned,Slowed,DamageAmp}` 全在）；阶段表与小节标题同步勾 ✅。

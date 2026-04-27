@@ -3,6 +3,10 @@ package com.bong.client.botany;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,7 +14,7 @@ public class BotanyHudBootstrapTest {
     @AfterEach
     void tearDown() {
         HarvestSessionStore.resetForTests();
-        BotanySkillStore.resetForTests();
+        SkillSetStore.resetForTests();
     }
 
     @Test
@@ -29,11 +33,14 @@ public class BotanyHudBootstrapTest {
             "请求中",
             10L
         ));
-        BotanySkillStore.replace(BotanySkillViewModel.create(4, 220L, 400L, 3));
+        SkillSetStore.updateEntry(
+            SkillId.HERBALISM,
+            new SkillSetSnapshot.Entry(4, 220L, 400L, 220L, 10, 0L, 0L)
+        );
 
         BotanyHudBootstrap.resetOnDisconnect();
 
         assertTrue(HarvestSessionStore.snapshot().isEmpty());
-        assertEquals(BotanySkillViewModel.defaultView(), BotanySkillStore.snapshot());
+        assertEquals(BotanySkillViewModel.defaultView(), com.bong.client.hud.BotanyHudPlanner.herbalismView());
     }
 }

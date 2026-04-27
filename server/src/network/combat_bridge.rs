@@ -346,6 +346,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target,
             cause: "attack_intent:offline:Azure".to_string(),
+            attacker: Some(attacker),
+            attacker_player_id: Some("offline:Azure".to_string()),
             at_tick: 34,
         });
 
@@ -457,6 +459,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target,
             cause: "attack_intent:offline:Attacker".to_string(),
+            attacker: Some(attacker),
+            attacker_player_id: Some("offline:Attacker".to_string()),
             at_tick: 195,
         });
 

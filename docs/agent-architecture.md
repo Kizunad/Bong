@@ -230,7 +230,7 @@ Rust 侧持续追踪，随 world_state 推送：
 {
   "uuid": "offline:Steve",
   "name": "Steve",
-  "realm": "qi_refining_3",
+  "realm": "Induce",
   "composite_power": 0.72,
   "breakdown": {
     "combat":    0.85,

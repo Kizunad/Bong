@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::cultivation::components::{
     ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
+use crate::cultivation::life_record::SkillMilestone;
 
 /// WorldStateV1.players[].cultivation（plan §6.3）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,8 +47,36 @@ impl CultivationSnapshotV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillMilestoneSnapshotV1 {
+    pub skill: String,
+    pub new_lv: u8,
+    pub achieved_at: u64,
+    pub narration: String,
+    pub total_xp_at: u64,
+}
+
+impl SkillMilestoneSnapshotV1 {
+    pub fn from_runtime(milestone: &SkillMilestone) -> Self {
+        Self {
+            skill: match milestone.skill {
+                crate::skill::components::SkillId::Herbalism => "herbalism",
+                crate::skill::components::SkillId::Alchemy => "alchemy",
+                crate::skill::components::SkillId::Forging => "forging",
+            }
+            .to_string(),
+            new_lv: milestone.new_lv,
+            achieved_at: milestone.achieved_at,
+            narration: milestone.narration.clone(),
+            total_xp_at: milestone.total_xp_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifeRecordSnapshotV1 {
     pub recent_biography_summary: String,
+    pub recent_skill_milestones_summary: String,
+    pub skill_milestones: Vec<SkillMilestoneSnapshotV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +200,19 @@ pub fn realm_to_string(r: Realm) -> &'static str {
         Realm::Solidify => "Solidify",
         Realm::Spirit => "Spirit",
         Realm::Void => "Void",
+    }
+}
+
+/// 辅助：snapshot -> domain
+pub fn realm_from_string(name: &str) -> Realm {
+    match name {
+        "Awaken" => Realm::Awaken,
+        "Induce" => Realm::Induce,
+        "Condense" => Realm::Condense,
+        "Solidify" => Realm::Solidify,
+        "Spirit" => Realm::Spirit,
+        "Void" => Realm::Void,
+        _ => Realm::Awaken,
     }
 }
 

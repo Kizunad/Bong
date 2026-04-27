@@ -79,10 +79,13 @@ third_party/
 # oh-my-opencode / Sisyphus 编排运行态
 # Prometheus 规整产物、Atlas boulder.json、plan 快照等均为一次性
 .sisyphus/
-# 全自动 plan 消费脚本（scripts/bong-plan-auto.sh）生成的 worktrees
+# 历史遗留的 plan worktree 目录（旧命名，继续忽略）
 .worktrees/
-# 手动评审用的 worktree
+# 当前 plan worktree 目录（scripts/bong-plan-auto.sh 等使用）
 .worktree/
+# Claude Code 运行态（agent worktree 副本 / 计划锁文件等），但保留 skills/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
 tmp/
 
 # Serena MCP 本仓库 local state

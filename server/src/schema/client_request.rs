@@ -93,6 +93,10 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    LearnSkillScroll {
+        v: u8,
+        instance_id: u64,
+    },
     /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
     /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
     InventoryMoveIntent {
@@ -119,6 +123,13 @@ pub enum ClientRequestV1 {
     PickupDroppedItem {
         v: u8,
         instance_id: u64,
+    },
+    /// plan-mineral-v1 §3 — 凝脉+ 右键矿块，server 反查 MineralOreIndex。
+    MineralProbe {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
     },
     ApplyPill {
         v: u8,
@@ -152,13 +163,6 @@ pub enum ClientRequestV1 {
         v: u8,
         slot: u8,
         item_id: Option<String>,
-    },
-    /// plan-HUD-v1 §7.3 / §11.3 切换防御姿态。`stance` 一个：
-    /// "JIEMAI" / "TISHI" / "JUELING" / "NONE"（与 client `Stance.name()` 对齐）。
-    /// server 校验 UnlockedStyles 后写入 DefenseStance Component。
-    SwitchDefenseStance {
-        v: u8,
-        stance: String,
     },
     CombatReincarnate {
         v: u8,
@@ -412,6 +416,19 @@ mod tests {
                 assert_eq!(instance_id, 3003);
             }
             other => panic!("expected PickupDroppedItem, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mineral_probe_roundtrip() {
+        let json = r#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MineralProbe { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 32, 8));
+            }
+            other => panic!("expected MineralProbe, got {other:?}"),
         }
     }
 

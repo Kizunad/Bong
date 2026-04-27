@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PlayerProfile, WorldStateV1, ZoneSnapshot } from "@bong/schema";
 import { createToolContext, validateToolSchema } from "../src/tools/types.js";
 import { queryPlayerTool } from "../src/tools/query-player.js";
+import { queryPlayerSkillMilestonesTool } from "../src/tools/query-player-skill-milestones.js";
 import { queryZoneHistoryTool } from "../src/tools/query-zone-history.js";
 import { listActiveEventsTool } from "../src/tools/list-active-events.js";
 import { WorldModel } from "../src/world-model.js";
@@ -21,7 +22,7 @@ function createPlayer(name: string, overrides: PlayerOverrides = {}): PlayerProf
   return {
     uuid: overrides.uuid ?? `offline:${name}`,
     name,
-    realm: overrides.realm ?? "qi_refining_1",
+    realm: overrides.realm ?? "Awaken",
     composite_power: overrides.composite_power ?? 0.2,
     breakdown: {
       combat: 0.2,
@@ -37,6 +38,8 @@ function createPlayer(name: string, overrides: PlayerOverrides = {}): PlayerProf
     pos: overrides.pos ?? [0, 64, 0],
     recent_kills: overrides.recent_kills ?? 0,
     recent_deaths: overrides.recent_deaths ?? 0,
+    cultivation: overrides.cultivation,
+    life_record: overrides.life_record,
   };
 }
 
@@ -213,6 +216,78 @@ describe("readonly tools", () => {
       });
     });
 
+    it("returns structured life record skill milestones when present", async () => {
+      const latestState = createState({
+        tick: 5,
+        players: [
+          createPlayer("Veteran", {
+            composite_power: 0.86,
+            zone: "blood_valley",
+            recent_kills: 6,
+            recent_deaths: 1,
+            breakdown: { karma: -0.48, combat: 0.91 },
+            life_record: {
+              recent_biography_summary: "t82000:reach:Spirit",
+              recent_skill_milestones_summary:
+                "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2",
+              skill_milestones: [
+                {
+                  skill: "herbalism",
+                  new_lv: 3,
+                  achieved_at: 82000,
+                  narration: "你摘辨草木渐熟，今已至Lv.3。",
+                  total_xp_at: 550,
+                },
+                {
+                  skill: "alchemy",
+                  new_lv: 2,
+                  achieved_at: 83000,
+                  narration: "炉火识性稍深，丹道已至Lv.2。",
+                  total_xp_at: 240,
+                },
+              ],
+            },
+          }),
+        ],
+        zones: [
+          createZone("blood_valley", 0.54, {
+            danger_level: 4,
+            active_events: ["thunder_tribulation"],
+            player_count: 1,
+          }),
+        ],
+      });
+      const ctx = createToolContext({ latestState, worldModel: WorldModel.fromState(latestState) });
+      const result = await queryPlayerTool.execute({ uuid: "offline:Veteran" }, ctx);
+
+      expect(validateToolSchema(queryPlayerTool.result, result).ok).toBe(true);
+      expect(result).toMatchObject({
+        ok: true,
+        player: {
+          lifeRecord: {
+            recentBiographySummary: "t82000:reach:Spirit",
+            recentSkillMilestonesSummary:
+              "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2",
+            recentSkillMilestones: [
+              {
+                skill: "herbalism",
+                newLv: 3,
+                achievedAt: 82000,
+                totalXpAt: 550,
+              },
+              {
+                skill: "alchemy",
+                newLv: 2,
+                achievedAt: 83000,
+                totalXpAt: 240,
+              },
+            ],
+          },
+        },
+      });
+      expect((result as { summary: string }).summary).toContain("latest skill alchemy Lv.2");
+    });
+
     it("returns structured not-found payload", async () => {
       const ctx = createContextForTools();
       const result = await queryPlayerTool.execute({ name: "Unknown" }, ctx);
@@ -242,6 +317,69 @@ describe("readonly tools", () => {
           code: "INVALID_QUERY",
           message: "'uuid' and 'name' are mutually exclusive",
         },
+      });
+    });
+  });
+
+  describe("query-player-skill-milestones", () => {
+    it("returns recent structured milestones with narration text", async () => {
+      const latestState = createState({
+        tick: 6,
+        players: [
+          createPlayer("Veteran", {
+            composite_power: 0.86,
+            zone: "blood_valley",
+            life_record: {
+              recent_biography_summary: "t82000:reach:Spirit",
+              recent_skill_milestones_summary:
+                "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2",
+              skill_milestones: [
+                {
+                  skill: "herbalism",
+                  new_lv: 3,
+                  achieved_at: 82000,
+                  narration: "你摘辨草木渐熟，今已至Lv.3。",
+                  total_xp_at: 550,
+                },
+                {
+                  skill: "alchemy",
+                  new_lv: 2,
+                  achieved_at: 83000,
+                  narration: "炉火识性稍深，丹道已至Lv.2。",
+                  total_xp_at: 240,
+                },
+              ],
+            },
+          }),
+        ],
+        zones: [createZone("blood_valley", 0.54, { player_count: 1 })],
+      });
+      const ctx = createToolContext({ latestState, worldModel: WorldModel.fromState(latestState) });
+      const result = await queryPlayerSkillMilestonesTool.execute(
+        { uuid: "offline:Veteran", limit: 1 },
+        ctx,
+      );
+
+      expect(validateToolSchema(queryPlayerSkillMilestonesTool.result, result).ok).toBe(true);
+      expect(result).toEqual({
+        ok: true,
+        query: { by: "uuid", value: "offline:Veteran" },
+        limit: 1,
+        player: {
+          uuid: "offline:Veteran",
+          name: "Veteran",
+          zone: "blood_valley",
+        },
+        milestones: [
+          {
+            skill: "alchemy",
+            newLv: 2,
+            achievedAt: 83000,
+            narration: "炉火识性稍深，丹道已至Lv.2。",
+            totalXpAt: 240,
+          },
+        ],
+        summary: "Veteran@blood_valley recent skill milestones 1",
       });
     });
   });

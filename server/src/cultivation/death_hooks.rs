@@ -12,6 +12,8 @@ use super::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
+use crate::skill::components::SkillId;
+use crate::skill::events::SkillCapChanged;
 use valence::prelude::Res;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +78,7 @@ pub fn apply_revive_penalty(
 pub fn on_player_revived(
     clock: Res<CultivationClock>,
     mut events: EventReader<PlayerRevived>,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut players: Query<(
         &mut Cultivation,
         &mut MeridianSystem,
@@ -99,6 +102,14 @@ pub fn on_player_revived(
                 new_realm: c.realm,
                 tick: now,
             });
+            let new_cap = super::breakthrough::skill_cap_for_realm(c.realm);
+            for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                skill_cap_events.send(SkillCapChanged {
+                    char_entity: ev.entity,
+                    skill,
+                    new_cap,
+                });
+            }
             tracing::info!(
                 "[bong][cultivation] applied revive penalty to {:?}: realm {:?} -> {:?}",
                 ev.entity,
@@ -188,6 +199,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
+        app.add_event::<SkillCapChanged>();
         app.add_systems(valence::prelude::Update, on_player_revived);
 
         let entity = app
@@ -225,6 +237,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
+        app.add_event::<SkillCapChanged>();
         app.add_systems(valence::prelude::Update, on_player_revived);
 
         let entity = app
@@ -248,6 +261,7 @@ mod tests {
                     }],
                     insights_taken: Vec::new(),
                     death_insights: Vec::new(),
+                    skill_milestones: Vec::new(),
                     spirit_root_first: None,
                 },
             ))

@@ -15,12 +15,12 @@
 
 ## §0 设计轴心
 
-- [ ] **子技能 ≠ 境界**——境界决定真元上限/经脉/神识；skill 只影响"做这件事有多熟"
-- [ ] **做中学**主路径：每次完成对应动作 +XP（失败给得少）；**残卷顿悟**加速（大额跳级）
-- [ ] **XP → Lv 线性累积**（Lv.0-10），上限由境界**软挂钩**（可超 cap 硬练，效率 ×0.3）
-- [ ] **不衰退**（worldview"一学不忘"基调）
-- [ ] **死透归零**：新角色与旧角色无机制关联（worldview §十二）
-- [ ] **效果线性非指数**：避免 Lv.10 碾压 Lv.1 的 power creep
+- [x] **子技能 ≠ 境界**——境界决定真元上限/经脉/神识；skill 只影响"做这件事有多熟"
+- [x] **做中学**主路径：每次完成对应动作 +XP（失败给得少）；**残卷顿悟**加速（大额跳级）
+- [x] **XP → Lv 线性累积**（Lv.0-10），上限由境界**软挂钩**（可超 cap 硬练，效率 ×0.3）
+- [x] **不衰退**（worldview"一学不忘"基调）
+- [x] **死透归零**：新角色与旧角色无机制关联（worldview §十二）
+- [x] **效果线性非指数**：避免 Lv.10 碾压 Lv.1 的 power creep
 
 ---
 
@@ -83,7 +83,7 @@ fn xp_to_next(lv: u8) -> u32 {
 
 动作完成即自动判 +XP，**无需玩家确认**。具体数值由各 plan 定义（见 §7 汇总表）。
 
-- [ ] **失败也给**：例如炼丹炸炉 +1（比成功 +3 少）· 锻造废品 +0（没努力够）
+- [x] **失败也给**：例如炼丹炸炉 +1（比成功 +3 少）· 锻造废品 +0（没努力够）
 - [ ] **动作多样性奖励**：连续重复同一配方/动作，XP 递减 10% / 次，最多扣到 50%（防宏磨）
 - [ ] **触发去重**：同一 session 内多阶段的 XP 合并成一条事件
 
@@ -101,10 +101,10 @@ pub struct SkillScroll {
 ```
 
 - [ ] **形状**：通用 1×1（某些高阶珍本 1×2，如"《百草图考·残》"，由具体 scroll 定义）· 栈上限 1（独本）
-- [ ] **item 上携带唯一 `scroll_id`**（非仅 skill_id），用于判"已学"
+- [x] **item 上携带唯一 `scroll_id`**（非仅 skill_id），用于判"已学"
 - [ ] 获取：散修掉落 / 遗迹宝箱 / 高阶 NPC 交易 / 图书馆档案
-- [ ] **使用**：从**任意容器**（主背包/小口袋/前挂/腰包）拖到 InspectScreen 技艺 tab 残卷槽 → 残卷消失 + XP 进账 + `consumed_scrolls.insert(scroll_id)`
-- [ ] **已学判定**：`SkillSet.consumed_scrolls: HashSet<ScrollId>` 记录一生读过的每份 scroll_id；相同 scroll_id 再次拖入 → **不消耗，不进 XP**，tooltip 提示"此卷已悟"
+- [x] **使用**：从**任意容器**（主背包/小口袋/前挂/腰包）拖到 InspectScreen 技艺 tab 残卷槽 → 残卷消失 + XP 进账 + `consumed_scrolls.insert(scroll_id)`
+- [x] **已学判定**：`SkillSet.consumed_scrolls: HashSet<ScrollId>` 记录一生读过的每份 scroll_id；相同 scroll_id 再次拖入 → **不消耗，不进 XP**，tooltip 提示"此卷已悟"
 - [ ] **拖拽合法性校验**（client 拦截 + server 二次校验）：
   - `skill_scroll` → 残卷槽 ✓
   - `recipe_scroll`（丹方残卷）/ `blueprint_scroll`（图谱残卷）/ 其他任何 item → 槽 ✗ · 拖拽 hover 时红框 + tooltip "此物非 skill，不可入"
@@ -125,9 +125,9 @@ pub struct SkillScroll {
 固元 → cap 8   · 通灵 → cap 9   · 化虚 → cap 10
 ```
 
-- [ ] **超 cap 硬练**：Lv 仍可涨，但每次 XP 进账 ×0.3（慢）
-- [ ] **cap 压制效果**：Lv > cap 时，`effective_lv = min(real_lv, cap)`——展示给玩家的仍是 `real_lv`（你知道自己熟，但经脉不够用不出来）
-- [ ] **境界跌落**：skill real_lv 不扣，但 cap 下修 → effective_lv 打折 → narration 冷漠提示（"经脉萎缩，往日手艺施展不开"）
+- [x] **超 cap 硬练**：Lv 仍可涨，但每次 XP 进账 ×0.3（慢）
+- [x] **cap 压制效果**：Lv > cap 时，`effective_lv = min(real_lv, cap)`——展示给玩家的仍是 `real_lv`（你知道自己熟，但经脉不够用不出来）
+- [x] **境界跌落**：skill real_lv 不扣，但 cap 下修 → effective_lv 打折 → narration 冷漠提示（"经脉萎缩，往日手艺施展不开"）
 - [ ] **inspect 面板显示**：`Lv.7 / cap 5`（灰掉超出部分），点击展开解释
 
 ---
@@ -210,8 +210,8 @@ bias_pts = +N%  （来自 skill_effect.quality_bias）
 // 归一化到 100%
 ```
 
-- [ ] 例：herbalism Lv.4 品质偏移 +12% → `劣 12.8 / 普 26.4 / 良 48.4 / 极 12.4`
-- [ ] Lv.10 额外 "+5% 极" 是**独立项**，先做四档偏移，再把 5% 从 劣/普 平均扣给 极
+- [x] 例：herbalism Lv.4 品质偏移 +12% → `劣 12.8 / 普 26.4 / 良 48.4 / 极 12.4`
+- [x] Lv.10 额外 "+5% 极" 是**独立项**，先做四档偏移，再把 5% 从 劣/普 平均扣给 极
 - [ ] 基础分布由 PlantKind / Recipe / Blueprint 各自定义，skill 只修饰
 
 ### §6.2 alchemy
@@ -225,7 +225,7 @@ bias_pts = +N%  （来自 skill_effect.quality_bias）
 | 7 | ×1.35 | ×0.60 | +15% |
 | 10 | ×1.50 | ×0.40 | +25% |
 
-- [ ] 丹毒抗性 = Contamination 的 `purge_rate` 额外加成（见 alchemy §2 复用 contamination_tick）
+- [x] 丹毒抗性 = Contamination 的 `purge_rate` 额外加成（见 alchemy §2 复用 contamination_tick）
 
 ### §6.3 forging
 
@@ -325,7 +325,7 @@ pub enum XpGainSource {
 ```
 
 - [x] `SkillSet` 挂玩家 entity，BlockEntity 不需要
-- [ ] `LifeRecord.skill_milestones: Vec<SkillMilestone>`（每升一级记一笔，亡者博物馆可见）
+- [x] `LifeRecord.skill_milestones: Vec<SkillMilestone>`（每升一级记一笔，亡者博物馆可见）
 - [x] Events：
   - `SkillXpGain { char, skill, amount, source: XpGainSource }`
   - `SkillLvUp { char, skill, new_lv, narration }`
@@ -338,7 +338,7 @@ pub enum XpGainSource {
 
 - [x] `SkillSetStore`（完整 SkillSet 快照，InspectScreen 技艺 tab 消费）
 - [x] `BotanySkillStore` **deprecated** → 改为从 `SkillSetStore` 派生 `herbalism` 单项视图（不独立同步）
-- [ ] 复用：`InventoryStateStore`（skill_scroll 拖拽源）· `DragState`
+- [x] 复用：`InventoryStateStore`（skill_scroll 拖拽源）· `DragState`
 
 ---
 
@@ -346,25 +346,25 @@ pub enum XpGainSource {
 
 | Phase | 内容 | 验收 |
 |---|---|---|
-| P0 | `SkillSet` component（含 `consumed_scrolls`）+ `SkillId` enum + 曲线函数 + 插值函数 + 单测 | Lv 0-10 XP 累积/升级公式正确，Lv.4 插值 = 7s |
-| P1 | Events（4 种）+ Channel + IPC schema（含 `XpGainSource` tagged union）| 各 plan 发 XpGain 事件能到达 Client |
-| P2 | SkillSetStore 接入 InspectScreen "技艺" tab（三列 MVP）+ **迁移 `BotanySkillStore` 为派生视图**（不再独立同步） | 看到三 skill 当前 Lv/XP 条；botany/lingtian/harvest-popup 仍显示 Lv 正常 |
-| P3 | 境界软挂钩（cap 计算 + effective_lv 压制 + UX 灰显）| 超 cap 效果打折可观察；InspectScreen 显示 `Lv.7 / cap 5` 灰色 |
-| P4 | 残卷 item 拖入学习 + 合法性校验 + consumed_scrolls 去重 | skill_scroll 首次 +XP 消耗，重复提示"此卷已悟"不消耗；丹方残卷拖入红框拒绝 |
-| P5 | 升级 narration（agent 集成）· `SkillLvUp` channel 消费生成 | Lv up 时 agent 生成冷漠古意文本，记入 LifeRecord.skill_milestones |
-| P6 | LifeRecord.skill_milestones + 亡者博物馆展示 + 品质分布映射接入 alchemy/forge/botany | 死透后残留生平可查技艺进程；botany 采药品质确实按 skill Lv 偏移四档 |
-| P7 | 废弃 `BotanySkillStore` 代码（完全移除）+ 所有 plan 内 skill 引用走 `SkillSetStore` | 搜索代码无 `BotanySkillStore` 剩余引用 |
+| P0 ✅ | `SkillSet` component（含 `consumed_scrolls`）+ `SkillId` enum + 曲线函数 + 插值函数 + 单测 | Lv 0-10 XP 累积/升级公式正确，Lv.4 插值 = 7s |
+| P1 ✅ | Events（4 种）+ Channel + IPC schema（含 `XpGainSource` tagged union）| 各 plan 发 XpGain 事件能到达 Client |
+| P2 ⏳ | SkillSetStore 接入 InspectScreen "技艺" tab（三列 MVP）+ **迁移 `BotanySkillStore` 为派生视图**（不再独立同步） | 看到三 skill 当前 Lv/XP 条；botany/lingtian/harvest-popup 仍显示 Lv 正常（左列 SkillRow / 残卷槽 / 背包列已就位；中列 SkillCurve / Milestone 详情未做） |
+| P3 ✅ | 境界软挂钩（cap 计算 + effective_lv 压制 + UX 灰显）| 超 cap 效果打折可观察；InspectScreen 显示 `Lv.7 / cap 5` 灰色（cap 计算 + ×0.3 over-cap penalty + cultivation 三入口 SkillCapChanged 已发；UX 灰显文案待补） |
+| P4 ⏳ | 残卷 item 拖入学习 + 合法性校验 + consumed_scrolls 去重 | skill_scroll 首次 +XP 消耗，重复提示"此卷已悟"不消耗；丹方残卷拖入红框拒绝（LearnSkillScroll 协议 / SkillScrollUsed 事件 / consumed_scrolls 持久化 + skill_snapshot 已就位；拖拽合法性 UI 校验待补） |
+| P5 ⏳ | 升级 narration（agent 集成）· `SkillLvUp` channel 消费生成 | Lv up 时 agent 生成冷漠古意文本，记入 LifeRecord.skill_milestones（默认兜底 narration 已写入 record_skill_lv_up，agent 端 channel 消费侧待接） |
+| P6 ✅ | LifeRecord.skill_milestones + 亡者博物馆展示 + 品质分布映射接入 alchemy/forge/botany | 死透后残留生平可查技艺进程；botany 采药品质确实按 skill Lv 偏移四档（LifeRecord 字段 + push_skill_milestone + recent_skill_milestones_summary_text + botany/alchemy/forge 钩子已实装；亡者博物馆 web 展示未做） |
+| P7 ⏳ | 废弃 `BotanySkillStore` 代码（完全移除）+ 所有 plan 内 skill 引用走 `SkillSetStore` | 搜索代码无 `BotanySkillStore` 剩余引用（BotanySkillHandler 仍在做镜像同步，注释标记 P7 删除待执行） |
 
 ---
 
 ## §10 跨 plan 钩子
 
 - [x] **plan-botany-v1 / plan-lingtian-v1**：`BotanySkillStore` 被本 plan 替代（`SkillSetStore` 派生）；XP 数值表全部从本 plan §7.1 抓取
-- [ ] **plan-alchemy-v1**：§6.2 效果表代入 `fire_profile.tolerance` 计算；炸炉 +1 XP 写入炉结算逻辑
-- [ ] **plan-forge-v1**：§6.3 代入 Tempering 命中窗口；`LearnedBlueprints` 与本 plan `SkillSet` 互补（图谱是配方，skill 是手艺）
+- [x] **plan-alchemy-v1**：§6.2 效果表代入 `fire_profile.tolerance` 计算；炸炉 +1 XP 写入炉结算逻辑
+- [x] **plan-forge-v1**：§6.3 代入 Tempering 命中窗口；`LearnedBlueprints` 与本 plan `SkillSet` 互补（图谱是配方，skill 是手艺）
 - [ ] **plan-inventory-v1**：`skill_scroll` item 独立 1×1 类型（与丹方残卷/图谱残卷并列）
-- [ ] **plan-cultivation-v1**：境界突破触发 `SkillCapChanged` 事件；境界跌落联动
-- [ ] **plan-death-lifecycle-v1 §4/§5**：重生**不扣 skill**；死透**清零**（与 worldview §十二 一致）
+- [x] **plan-cultivation-v1**：境界突破触发 `SkillCapChanged` 事件；境界跌落联动
+- [x] **plan-death-lifecycle-v1 §4/§5**：重生**不扣 skill**；死透**清零**（与 worldview §十二 一致）
 - [ ] **plan-HUD-v1**：场景浮窗顶栏展示当前相关 skill Lv（已在 harvest-popup 示范）
 - [ ] **plan-narrative-v1**：`SkillLvUp` 加入 narration 触发表
 - [ ] **plan-library-web-content-v1**：亡者博物馆展示 skill_milestones
@@ -394,3 +394,10 @@ pub enum XpGainSource {
 | 跨玩家攀比 | skill Lv 匿名（默认不显示给他人）；仅死透后生平卷公开——"身前不炫耀，身后供人学" |
 | 宏磨（脚本刷 XP）| §3.1 多样性奖励（重复扣 XP）+ session 最低时长（采集 2s 已够）|
 | 境界跌落玩家懵 | UX：InspectScreen 灰出超 cap 部分 + narration 解释 + 跌境事件弹窗告知 skill 受限 |
+
+---
+
+## §13 进度日志
+
+- 2026-04-25：P0 框架落地确认（server skill/ 793 行：XP 曲线 + SkillSet component + 事件定义；尚未接入主循环）
+- 2026-04-25：实装范围核对补记 —— 实际 `main.rs:78` 已 `skill::register(&mut app)`；botany/alchemy/forge 已发 `SkillXpGain`；cultivation breakthrough/tribulation/death_hooks 已发 `SkillCapChanged`；client `SkillSetStore` + `SkillEventHandler` + `SkillSnapshotHandler` + `LearnSkillScroll` 协议接通；alchemy `tolerance_scale` / `side_effect_weight_scale` / `purge_rate_bonus` + botany `quality_bias_points` / `adjusted_quality_distribution` + forge skill 钩子均已接入；`LifeRecord.skill_milestones` + `record_skill_lv_up` + 默认兜底 narration 实装。剩余：动作多样性奖励、SkillCurve/Milestone 详情列、残卷拖拽合法性 UI 校验、agent narration 生成、亡者博物馆 web 展示、`BotanySkillStore` 完全移除（P7）。

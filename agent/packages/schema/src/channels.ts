@@ -57,6 +57,9 @@ export const CHANNELS = {
   /** Server → Agent: 战斗聚合摘要（Task 7，200 tick cadence）(Pub/Sub) */
   COMBAT_SUMMARY: "bong:combat_summary",
 
+  /** Server → Agent: 护甲耐久变化（plan-armor-v1 §3）(Pub/Sub) */
+  ARMOR_DURABILITY_CHANGED: "bong:armor/durability_changed",
+
   /** Server → Agent: botany 采集进度观测（server-agent · 玩家维度） */
   BOTANY_HARVEST_PROGRESS: "bong:botany/harvest_progress",
 
@@ -74,6 +77,11 @@ export const CHANNELS = {
 
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
+
+  /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
+   *
+   * Entry / exit 共享同一频道，consumer 按 payload `kind` 字段（`tsy_enter` / `tsy_exit`）dispatch。 */
+  TSY_EVENT: "bong:tsy_event",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -95,12 +103,14 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.DUO_SHE_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
+  CHANNELS.ARMOR_DURABILITY_CHANGED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
   CHANNELS.SKILL_XP_GAIN,
   CHANNELS.SKILL_LV_UP,
   CHANNELS.SKILL_CAP_CHANGED,
   CHANNELS.SKILL_SCROLL_USED,
+  CHANNELS.TSY_EVENT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

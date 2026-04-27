@@ -49,6 +49,7 @@ impl PlantKindRegistry {
         self.plants.len()
     }
 
+    // TODO: plan-lingtian-v1 注册表接入完成后取消 allow（is_empty/iter 供后续 registry 消费者使用）
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.plants.is_empty()
@@ -224,7 +225,8 @@ pub enum BotanySpawnMode {
 /// plan §7 TODO 植物变异：特殊 zone 环境下的稀有变种。
 /// - `Thunder` 天劫余波 zone（active_events 含 thunder / tribulation）
 /// - `Tainted` 负灵域 / spirit_qi 负值 zone
-///   变种影响 drop 品质、XP、显示名前缀（"雷 · " / "黑 · "），但共用同一 canonical plant_kind。
+///
+/// 变种影响 drop 品质、XP、显示名前缀（"雷 · " / "黑 · "），但共用同一 canonical plant_kind。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlantVariant {

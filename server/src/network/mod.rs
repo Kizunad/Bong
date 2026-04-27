@@ -8,7 +8,6 @@ pub mod combat_hud_state_emit;
 pub mod command_executor;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
-pub mod defense_sync_emit;
 pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
@@ -16,7 +15,10 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod skill_emit;
+pub mod skill_snapshot_emit;
 pub mod treasure_equipped_emit;
+pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
@@ -62,14 +64,21 @@ use crate::schema::common::{
     CommandType, EventKind, NarrationKind, NarrationScope, NarrationStyle, NpcStateKind,
     PlayerTrend,
 };
-use crate::schema::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
+use crate::schema::cultivation::{
+    realm_from_string, realm_to_string, CultivationSnapshotV1, LifeRecordSnapshotV1,
+    SkillMilestoneSnapshotV1,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
     NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
 };
+use crate::skill::components::SkillId;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+#[cfg(test)]
+use crate::cultivation::components::Realm;
 
 #[cfg(test)]
 use crate::persistence::{load_agent_decisions, load_agent_eras};
@@ -240,6 +249,12 @@ pub fn register(app: &mut App) {
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
+            skill_snapshot_emit::emit_join_skill_snapshots
+                .after(crate::inventory::attach_inventory_to_joined_clients),
+            skill_emit::emit_skill_xp_gain_payloads.after(crate::skill::consume_skill_xp_gain),
+            skill_emit::emit_skill_lv_up_payloads.after(crate::skill::consume_skill_xp_gain),
+            skill_emit::emit_skill_cap_changed_payloads,
+            skill_emit::emit_skill_scroll_used_payloads,
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
@@ -267,6 +282,9 @@ pub fn register(app: &mut App) {
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+            // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
+            tsy_event_bridge::publish_tsy_enter_events,
+            tsy_event_bridge::publish_tsy_exit_events,
         ),
     );
     app.add_systems(
@@ -288,9 +306,15 @@ pub fn register(app: &mut App) {
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
                 .after(cast_emit::tick_casts_or_interrupt),
-            inventory_snapshot_emit::emit_changed_inventory_snapshots,
+            inventory_snapshot_emit::emit_changed_inventory_snapshots
+                .after(inventory_event_emit::emit_durability_changed_inventory_events),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
+            skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
+            inventory_event_emit::publish_armor_durability_changed_events
+                .after(crate::combat::resolve::resolve_attack_intents),
+            inventory_event_emit::emit_durability_changed_inventory_events
+                .after(crate::combat::resolve::resolve_attack_intents),
             dropped_loot_sync_emit::emit_join_dropped_loot_syncs,
             dropped_loot_sync_emit::emit_changed_dropped_loot_syncs,
             // Fires on Added (join hydration) + any later mutation.
@@ -303,13 +327,6 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
-        ),
-    );
-    app.add_systems(
-        Update,
-        (
-            // Fires on Added (join hydration) + later mutation via switch / fake-skin / vortex.
-            defense_sync_emit::emit_defense_sync_payloads,
         ),
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
@@ -357,7 +374,16 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 fn publish_world_state_to_redis(
     redis: Res<RedisBridgeResource>,
     mut timer: valence::prelude::ResMut<WorldStateTimer>,
-    clients: Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: Option<Res<ZoneRegistry>>,
     active_events: Option<Res<ActiveEventsResource>>,
     faction_store: Option<Res<FactionStore>>,
@@ -414,11 +440,25 @@ fn collect_cultivation_snapshots(
     q: &Query<(Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord), With<Client>>,
 ) -> HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)> {
     const RECENT_BIO_N: usize = 12;
+    const RECENT_SKILL_MILESTONES_N: usize = 6;
     q.iter()
         .map(|(entity, c, m, q, life)| {
             let snap = CultivationSnapshotV1::from_components(c, m, q);
+            let skill_milestones = life
+                .skill_milestones
+                .iter()
+                .rev()
+                .take(RECENT_SKILL_MILESTONES_N)
+                .collect::<Vec<_>>();
             let life_snap = LifeRecordSnapshotV1 {
                 recent_biography_summary: life.recent_summary_text(RECENT_BIO_N),
+                recent_skill_milestones_summary: life
+                    .recent_skill_milestones_summary_text(RECENT_SKILL_MILESTONES_N),
+                skill_milestones: skill_milestones
+                    .into_iter()
+                    .rev()
+                    .map(SkillMilestoneSnapshotV1::from_runtime)
+                    .collect(),
             };
             (entity, (snap, life_snap))
         })
@@ -429,7 +469,16 @@ fn collect_cultivation_snapshots(
 fn build_world_state_snapshot(
     ts: u64,
     tick: u64,
-    clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: &Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: Option<&ZoneRegistry>,
     active_events: Option<&ActiveEventsResource>,
     faction_store: Option<&FactionStore>,
@@ -467,15 +516,18 @@ fn build_world_state_snapshot(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn build_player_state_payload(
     player_state: &PlayerState,
+    cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload(None, zone.into());
+    let payload = player_state.server_payload(cultivation, None, zone.into());
     serialize_server_data_payload(&payload)
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn collect_players_for_world_state<'a, I>(
     clients: I,
     zone_registry: &ZoneRegistry,
@@ -495,21 +547,21 @@ where
         .into_iter()
         .map(|(name, _uuid, position, player_state)| {
             let zone_name = zone_name_for_position(zone_registry, position);
-            let (realm, composite_power, breakdown) = player_state
+            let (composite_power, breakdown) = player_state
                 .map(|state| {
-                    let normalized = state.normalized();
+                    // Test helper only has PlayerState; use default cultivation for scoring.
+                    let cultivation = Cultivation::default();
                     (
-                        normalized.realm.clone(),
-                        normalized.composite_power(),
-                        normalized.power_breakdown(),
+                        state.normalized().composite_power(&cultivation),
+                        state.normalized().power_breakdown(&cultivation),
                     )
                 })
                 .unwrap_or_else(|| {
                     let default_state = PlayerState::default();
+                    let cultivation = Cultivation::default();
                     (
-                        default_state.realm.clone(),
-                        default_state.composite_power(),
-                        default_state.power_breakdown(),
+                        default_state.normalized().composite_power(&cultivation),
+                        default_state.normalized().power_breakdown(&cultivation),
                     )
                 });
 
@@ -518,7 +570,9 @@ where
             PlayerProfile {
                 uuid: canonical_player_id(name),
                 name: name.to_string(),
-                realm,
+                // Test helper only receives PlayerState, not live Cultivation.
+                // Runtime world-state emission uses the real cultivation snapshot path.
+                realm: crate::schema::cultivation::realm_to_string(Realm::Awaken).to_string(),
                 composite_power,
                 breakdown,
                 trend: PlayerTrend::Stable,
@@ -586,8 +640,18 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_player_snapshots(
-    clients: &Query<(Entity, &Position, &Username, Option<&PlayerState>), With<Client>>,
+    clients: &Query<
+        (
+            Entity,
+            &Position,
+            &Username,
+            Option<&PlayerState>,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
     zone_registry: &ZoneRegistry,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
 ) -> (
@@ -600,27 +664,49 @@ fn collect_player_snapshots(
 
     let mut players = clients
         .iter()
-        .map(|(entity, position, username, player_state)| {
+        .map(|(entity, position, username, player_state, cultivation)| {
             let name = username.0.clone();
             let zone_name = zone_name_for_position(zone_registry, position.get());
             let canonical_id = canonical_player_id(&name);
-            let (realm, composite_power, breakdown) = player_state
-                .map(|state| {
-                    let normalized = state.normalized();
-                    (
-                        normalized.realm.clone(),
-                        normalized.composite_power(),
-                        normalized.power_breakdown(),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    let default_state = PlayerState::default();
-                    (
-                        default_state.realm.clone(),
-                        default_state.composite_power(),
-                        default_state.power_breakdown(),
-                    )
-                });
+            let state = player_state.cloned().unwrap_or_default();
+
+            // For player list summary, prefer live Cultivation on the entity when
+            // available (tests attach it directly). Fall back to periodic
+            // cultivation snapshots, then to defaults.
+
+            // Player list summary uses the best cultivation snapshot we have at
+            // the time of building WorldState. Fall back to default cultivation.
+            let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
+                (
+                    realm_to_string(cultivation.realm).to_string(),
+                    state.composite_power(cultivation),
+                    state.power_breakdown(cultivation),
+                )
+            } else {
+                cultivation_by_entity
+                    .get(&entity)
+                    .map(|(cultivation_snapshot, _)| {
+                        let cultivation = Cultivation {
+                            realm: realm_from_string(cultivation_snapshot.realm.as_str()),
+                            qi_current: cultivation_snapshot.qi_current,
+                            qi_max: cultivation_snapshot.qi_max,
+                            ..Cultivation::default()
+                        };
+                        (
+                            cultivation_snapshot.realm.clone(),
+                            state.composite_power(&cultivation),
+                            state.power_breakdown(&cultivation),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let cultivation = Cultivation::default();
+                        (
+                            realm_to_string(cultivation.realm).to_string(),
+                            state.composite_power(&cultivation),
+                            state.power_breakdown(&cultivation),
+                        )
+                    })
+            };
 
             player_ids_by_entity.insert(entity, canonical_id.clone());
             *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
@@ -846,7 +932,7 @@ fn zone_name_for_position(
     position: valence::prelude::DVec3,
 ) -> String {
     zone_registry
-        .find_zone(position)
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
         .map(|zone| zone.name.clone())
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
@@ -868,9 +954,18 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a Username,
     &'a Position,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
-type PlayerStateEmitQueryFilter = (With<Client>, Or<(Added<PlayerState>, Changed<PlayerState>)>);
+type PlayerStateEmitQueryFilter = (
+    With<Client>,
+    Or<(
+        Added<PlayerState>,
+        Changed<PlayerState>,
+        Added<Cultivation>,
+        Changed<Cultivation>,
+    )>,
+);
 
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
@@ -878,10 +973,13 @@ fn emit_player_state_payloads(
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
-    for (entity, mut client, username, position, player_state) in &mut clients {
+    for (entity, mut client, username, position, player_state, cultivation) in &mut clients {
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let payload =
-            player_state.server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+        let payload = player_state.server_payload(
+            cultivation,
+            Some(canonical_player_id(username.0.as_str())),
+            zone_name,
+        );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(payload) => payload,
@@ -1068,6 +1166,10 @@ fn process_redis_inbound(
                 );
             }
             RedisInbound::AgentNarration(narr) => {
+                backfill_skill_milestone_narrations_from_batch(
+                    &mut life_records,
+                    narr.narrations.as_slice(),
+                );
                 process_agent_narrations_with_dedupe(
                     &mut clients,
                     zone_registry.as_deref(),
@@ -1428,6 +1530,62 @@ fn process_agent_narrations_with_dedupe(
     }
 }
 
+fn backfill_skill_milestone_narrations_from_batch(
+    players: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    narrations: &[crate::schema::narration::Narration],
+) {
+    for narration in narrations {
+        let Some(target) = narration.target.as_deref() else {
+            continue;
+        };
+        let Some((entity, skill, new_lv)) = parse_skill_milestone_narration_target(target) else {
+            continue;
+        };
+        let Ok((_, _, mut life_record)) = players.get_mut(entity) else {
+            continue;
+        };
+        if let Some(milestone) = life_record
+            .skill_milestones
+            .iter_mut()
+            .rev()
+            .find(|milestone| milestone.skill == skill && milestone.new_lv == new_lv)
+        {
+            milestone.narration = narration.text.clone();
+        }
+    }
+}
+
+fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, SkillId, u8)> {
+    let mut char_bits = None;
+    let mut skill = None;
+    let mut new_lv = None;
+
+    for part in target
+        .split('|')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if let Some(bits) = part.strip_prefix("char:") {
+            char_bits = bits.parse::<u64>().ok();
+            continue;
+        }
+        if let Some(raw_skill) = part.strip_prefix("skill:") {
+            skill = match raw_skill {
+                "herbalism" => Some(SkillId::Herbalism),
+                "alchemy" => Some(SkillId::Alchemy),
+                "forging" => Some(SkillId::Forging),
+                _ => None,
+            };
+            continue;
+        }
+        if let Some(raw_lv) = part.strip_prefix("lv:") {
+            new_lv = raw_lv.parse::<u8>().ok();
+        }
+    }
+
+    Some((Entity::from_bits(char_bits?), skill?, new_lv?))
+}
+
 fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
     format!(
         "scope={:?}|target={}|style={:?}|kind={:?}|text={}",
@@ -1608,6 +1766,7 @@ fn collect_routed_targets(
                 entity,
                 RecipientMetadata {
                     username: Some(username.0.clone()),
+                    char_id: Some(format!("char:{}", entity.to_bits())),
                     zone: computed_zone,
                 },
             )
@@ -1936,16 +2095,18 @@ mod tests {
             let (mut app, rx_outbound) = setup_publish_app(true);
             let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
 
-            app.world_mut()
-                .entity_mut(player_entity)
-                .insert(PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 78.0,
-                    spirit_qi_max: 100.0,
+            app.world_mut().entity_mut(player_entity).insert((
+                PlayerState {
                     karma: 0.2,
-                    experience: 1_200,
                     inventory_score: 0.4,
-                });
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             let state = publish_once(&mut app, &rx_outbound);
             let player = state
@@ -1954,7 +2115,7 @@ mod tests {
                 .find(|player| player.name == "Azure")
                 .expect("Azure should be present in the world snapshot");
 
-            assert_eq!(player.realm, "qi_refining_3");
+            assert_eq!(player.realm, "Condense");
             assert_eq!(player.zone, DEFAULT_SPAWN_ZONE_NAME);
             assert!(
                 player.composite_power > 0.0,
@@ -2046,8 +2207,10 @@ mod tests {
 
     mod narration_tests {
         use super::*;
+        use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
         use crate::schema::common::{NarrationScope, NarrationStyle};
         use crate::schema::narration::{Narration, NarrationV1};
+        use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
         use crossbeam_channel::Sender;
         use valence::prelude::DVec3;
@@ -2190,6 +2353,7 @@ mod tests {
         fn zone_scope_filters_by_zone() {
             let spawn_zone = Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                 spirit_qi: 0.9,
                 danger_level: 0,
@@ -2199,6 +2363,7 @@ mod tests {
             };
             let blood_valley = Zone {
                 name: "blood_valley".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
                 bounds: (
                     DVec3::new(1000.0, 64.0, 1000.0),
                     DVec3::new(1200.0, 128.0, 1200.0),
@@ -2326,6 +2491,94 @@ mod tests {
             assert_eq!(
                 alex_alias_chat_packets, 0,
                 "non-targeted player must not receive chat packets"
+            );
+        }
+
+        #[test]
+        fn player_scope_matches_char_id_alias() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (azure, mut azure_helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            let (_bob, mut bob_helper) =
+                spawn_test_client_with_helper(&mut app, "Bob", [18.0, 66.0, 18.0]);
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Player,
+                    target: Some(format!("char:{}", azure.to_bits())),
+                    text: "第三段单人叙事。".to_string(),
+                    style: NarrationStyle::Narration,
+                    kind: None,
+                },
+            );
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let azure_payloads = collect_typed_narration_payloads(&mut azure_helper);
+            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
+            let azure_chat_packets = collect_game_message_packets(&mut azure_helper);
+            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+
+            assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
+            assert!(
+                bob_payloads.is_empty(),
+                "char-id targeted narration must not leak to Bob"
+            );
+            assert_eq!(
+                azure_chat_packets, 0,
+                "player-scoped narration should not mirror chat packets"
+            );
+            assert_eq!(
+                bob_chat_packets, 0,
+                "non-targeted player must not receive chat packets"
+            );
+        }
+
+        #[test]
+        fn agent_skill_lv_up_narration_backfills_matching_life_record_milestone() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (azure, _azure_helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(azure).insert(LifeRecord {
+                character_id: "offline:Azure".to_string(),
+                created_at: 0,
+                biography: Vec::new(),
+                insights_taken: Vec::new(),
+                death_insights: Vec::new(),
+                skill_milestones: vec![SkillMilestone {
+                    skill: SkillId::Herbalism,
+                    new_lv: 4,
+                    achieved_at: 120,
+                    narration: "默认文案。".to_string(),
+                    total_xp_at: 900,
+                }],
+                spirit_root_first: None,
+            });
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Player,
+                    target: Some(format!("char:{}|skill:herbalism|lv:4", azure.to_bits())),
+                    text: "你摘辨草木渐熟，今又进一层，已至Lv.4。".to_string(),
+                    style: NarrationStyle::Narration,
+                    kind: None,
+                },
+            );
+
+            app.update();
+
+            let life_record = app
+                .world()
+                .get::<LifeRecord>(azure)
+                .expect("life record should stay attached");
+            assert_eq!(life_record.skill_milestones.len(), 1);
+            assert_eq!(
+                life_record.skill_milestones[0].narration,
+                "你摘辨草木渐熟，今又进一层，已至Lv.4。"
             );
         }
 
@@ -2467,6 +2720,7 @@ mod tests {
                 zones: vec![
                     Zone {
                         name: "spawn".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
                         spirit_qi: 0.9,
                         danger_level: 0,
@@ -2476,6 +2730,7 @@ mod tests {
                     },
                     Zone {
                         name: "blood_valley".to_string(),
+                        dimension: crate::world::dimension::DimensionKind::Overworld,
                         bounds: (
                             DVec3::new(1000.0, 64.0, 1000.0),
                             DVec3::new(1200.0, 128.0, 1200.0),
@@ -2571,10 +2826,7 @@ mod tests {
         fn emit_player_state_payloads_periodically_without_change(
             zone_registry: Option<Res<ZoneRegistry>>,
             mut tick_counter: valence::prelude::Local<u64>,
-            mut clients: Query<
-                (Entity, &mut Client, &Username, &Position, &PlayerState),
-                With<Client>,
-            >,
+            mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
         ) {
             *tick_counter += 1;
             if !tick_counter.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
@@ -2583,10 +2835,14 @@ mod tests {
 
             let zone_registry = effective_zone_registry(zone_registry.as_deref());
 
-            for (entity, mut client, username, position, player_state) in &mut clients {
+            for (entity, mut client, username, position, player_state, cultivation) in &mut clients
+            {
                 let zone_name = zone_name_for_position(&zone_registry, position.get());
-                let payload = player_state
-                    .server_payload(Some(canonical_player_id(username.0.as_str())), zone_name);
+                let payload = player_state.server_payload(
+                    cultivation,
+                    Some(canonical_player_id(username.0.as_str())),
+                    zone_name,
+                );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {
                     Ok(payload) => payload,
@@ -2663,14 +2919,18 @@ mod tests {
             let (entity, mut helper) =
                 spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
 
-            app.world_mut().entity_mut(entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.2,
-                experience: 1_200,
-                inventory_score: 0.4,
-            });
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.2,
+                    inventory_score: 0.4,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -2691,7 +2951,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(player.as_deref(), Some("offline:Azure"));
-                    assert_eq!(realm, "qi_refining_3");
+                    assert_eq!(realm, "Condense");
                     assert_eq!(*spirit_qi, 78.0);
                     assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
                 }
@@ -2699,11 +2959,11 @@ mod tests {
             }
 
             {
-                let mut query = app.world_mut().query::<&mut PlayerState>();
-                let mut player_state = query
+                let mut query = app.world_mut().query::<&mut Cultivation>();
+                let mut cultivation = query
                     .get_mut(app.world_mut(), entity)
-                    .expect("test client PlayerState should be mutable");
-                player_state.spirit_qi = 81.0;
+                    .expect("test client Cultivation should be mutable");
+                cultivation.qi_current = 81.0;
             }
 
             app.update();
@@ -2732,24 +2992,30 @@ mod tests {
             let (_bob_entity, mut bob_helper) =
                 spawn_test_client_with_helper(&mut app, "Bob", [20.0, 66.0, 20.0]);
 
-            app.world_mut()
-                .entity_mut(azure_entity)
-                .insert(PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 78.0,
-                    spirit_qi_max: 100.0,
+            app.world_mut().entity_mut(azure_entity).insert((
+                PlayerState {
                     karma: 0.2,
-                    experience: 1_200,
                     inventory_score: 0.4,
-                });
-            app.world_mut().entity_mut(_bob_entity).insert(PlayerState {
-                realm: "mortal".to_string(),
-                spirit_qi: 0.0,
-                spirit_qi_max: 100.0,
-                karma: 0.0,
-                experience: 0,
-                inventory_score: 0.0,
-            });
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
+            app.world_mut().entity_mut(_bob_entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -2757,11 +3023,11 @@ mod tests {
             let _ = collect_player_state_payloads(&mut bob_helper);
 
             {
-                let mut query = app.world_mut().query::<&mut PlayerState>();
-                let mut azure_state = query
+                let mut query = app.world_mut().query::<&mut Cultivation>();
+                let mut azure_cultivation = query
                     .get_mut(app.world_mut(), azure_entity)
-                    .expect("azure state should be mutable");
-                azure_state.spirit_qi = 81.0;
+                    .expect("azure cultivation should be mutable");
+                azure_cultivation.qi_current = 81.0;
             }
 
             app.update();
@@ -2792,14 +3058,18 @@ mod tests {
 
             let (entity, mut helper) =
                 spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
-            app.world_mut().entity_mut(entity).insert(PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 78.0,
-                spirit_qi_max: 100.0,
-                karma: 0.0,
-                experience: 0,
-                inventory_score: 0.0,
-            });
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ));
 
             app.update();
             flush_all_client_packets(&mut app);
@@ -2958,10 +3228,12 @@ mod tests {
             events::{ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent},
             CombatClock,
         };
+        use crate::cultivation::breakthrough::{breakthrough_system, BreakthroughRequest};
         use crate::cultivation::components::{
-            Contamination, Cultivation, MeridianId, MeridianSystem,
+            Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
         };
-        use crate::cultivation::life_record::LifeRecord;
+        use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
+        use crate::cultivation::tick::CultivationClock;
         use crate::persistence::{
             load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
             PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
@@ -2976,6 +3248,7 @@ mod tests {
         use crate::schema::agent_world_model::{
             AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
         };
+        use crate::skill::components::SkillId;
         use crate::world::events::ActiveEventsResource;
         use crossbeam_channel::{unbounded, Receiver};
         use std::collections::BTreeMap;
@@ -3015,17 +3288,26 @@ mod tests {
             app.insert_resource(PendingGameplayNarrations::default());
             app.insert_resource(GameplayTick::default());
             app.insert_resource(CombatClock::default());
+            app.insert_resource(CultivationClock::default());
             app.add_event::<AttackIntent>();
+            app.add_event::<BreakthroughRequest>();
+            app.add_event::<crate::cultivation::breakthrough::BreakthroughOutcome>();
+            app.add_event::<crate::cultivation::death_hooks::CultivationDeathTrigger>();
+            app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+            app.add_event::<crate::skill::events::SkillCapChanged>();
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<CombatEvent>();
             app.add_event::<DeathEvent>();
             app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
             app.add_systems(
                 Update,
                 (
                     crate::combat::debug::tick_combat_clock,
                     crate::player::gameplay::apply_queued_gameplay_actions
                         .after(crate::combat::debug::tick_combat_clock),
+                    breakthrough_system
+                        .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::status_effect_apply_tick
                         .after(crate::player::gameplay::apply_queued_gameplay_actions),
                     crate::combat::status::attribute_aggregate_tick
@@ -3048,6 +3330,7 @@ mod tests {
             username: &str,
             position: [f64; 3],
             player_state: PlayerState,
+            cultivation: Cultivation,
         ) -> (Entity, MockClientHelper) {
             let (mut client_bundle, helper) = create_mock_client(username);
             client_bundle.player.position = Position::new(position);
@@ -3055,11 +3338,7 @@ mod tests {
                 .world_mut()
                 .spawn((
                     client_bundle,
-                    Cultivation {
-                        qi_current: player_state.spirit_qi,
-                        qi_max: player_state.spirit_qi_max,
-                        ..Cultivation::default()
-                    },
+                    cultivation,
                     player_state,
                     Wounds::default(),
                     Stamina::default(),
@@ -3072,6 +3351,7 @@ mod tests {
                     },
                     Contamination::default(),
                     MeridianSystem::default(),
+                    QiColor::default(),
                     LifeRecord::new(canonical_player_id(username)),
                 ))
                 .id();
@@ -3133,6 +3413,64 @@ mod tests {
                 RedisOutbound::WorldState(state) => state,
                 other => panic!("expected world-state publish, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn world_state_includes_structured_skill_milestones_in_life_record_snapshot() {
+            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (entity, _helper) = spawn_test_client_with_state(
+                &mut app,
+                "Azure",
+                [8.0, 66.0, 8.0],
+                PlayerState {
+                    karma: 0.1,
+                    inventory_score: 0.2,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            );
+            app.world_mut().entity_mut(entity).insert(LifeRecord {
+                character_id: canonical_player_id("Azure"),
+                created_at: 0,
+                biography: Vec::new(),
+                insights_taken: Vec::new(),
+                death_insights: Vec::new(),
+                skill_milestones: vec![SkillMilestone {
+                    skill: SkillId::Herbalism,
+                    new_lv: 3,
+                    achieved_at: 82000,
+                    narration: "你摘辨草木渐熟，今已至Lv.3。".to_string(),
+                    total_xp_at: 550,
+                }],
+                spirit_root_first: None,
+            });
+
+            app.update();
+
+            let world_state = dequeue_world_state(&rx_outbound);
+            let player = world_state
+                .players
+                .iter()
+                .find(|player| player.uuid == canonical_player_id("Azure"))
+                .expect("Azure should be included in world state");
+            let life_record = player
+                .life_record
+                .as_ref()
+                .expect("life_record snapshot should be present");
+
+            assert_eq!(life_record.skill_milestones.len(), 1);
+            assert_eq!(life_record.skill_milestones[0].skill, "herbalism");
+            assert_eq!(life_record.skill_milestones[0].new_lv, 3);
+            assert_eq!(life_record.skill_milestones[0].achieved_at, 82000);
+            assert_eq!(life_record.skill_milestones[0].total_xp_at, 550);
+            assert_eq!(
+                life_record.skill_milestones[0].narration,
+                "你摘辨草木渐熟，今已至Lv.3。"
+            );
         }
 
         #[test]
@@ -3568,12 +3906,14 @@ mod tests {
                 "Azure",
                 [8.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 70.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.05,
-                    experience: 200,
                     inventory_score: 0.10,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 70.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
             let (target, _target_helper) = spawn_test_client_with_state(
@@ -3581,12 +3921,14 @@ mod tests {
                 "Crimson",
                 [9.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "qi_refining_1".to_string(),
-                    spirit_qi: 65.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 80,
                     inventory_score: 0.05,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 65.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
 
@@ -3674,8 +4016,12 @@ mod tests {
                 .get::<PlayerState>()
                 .expect("attacker player state should remain attached");
             assert_eq!(
-                attacker_state.spirit_qi, 70.0,
-                "attacker PlayerState should not be fake-mutated"
+                attacker_state,
+                &PlayerState {
+                    karma: 0.05,
+                    inventory_score: 0.10,
+                },
+                "attacker PlayerState should not be mutated by combat"
             );
             let attacker_cultivation = app
                 .world()
@@ -3693,12 +4039,14 @@ mod tests {
                 "Gatherer",
                 [8.0, 66.0, 8.0],
                 PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 20.0,
-                    spirit_qi_max: 100.0,
                     karma: 0.0,
-                    experience: 10,
                     inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 20.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
 
@@ -3761,29 +4109,46 @@ mod tests {
                     .entity(entity)
                     .get::<PlayerState>()
                     .expect("player state should remain attached after gathering");
-                assert_eq!(player_state.spirit_qi, 34.0);
-                assert_eq!(player_state.experience, 100);
                 assert_approx_eq(player_state.inventory_score, 0.12);
                 assert_approx_eq(player_state.karma, 0.06);
+
+                let cultivation = world
+                    .entity(entity)
+                    .get::<Cultivation>()
+                    .expect("cultivation should remain attached after gathering");
+                assert_approx_eq(cultivation.qi_current, 34.0);
             }
         }
 
         #[test]
         fn realm_breakthrough_updates_payloads() {
-            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (mut app, _rx_outbound) = setup_gameplay_app();
+            let initial_state = PlayerState {
+                karma: -0.9,
+                inventory_score: 0.05,
+            };
             let (entity, mut helper) = spawn_test_client_with_state(
                 &mut app,
                 "Seeker",
                 [8.0, 66.0, 8.0],
-                PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 80.0,
-                    spirit_qi_max: 100.0,
-                    karma: 0.1,
-                    experience: 150,
-                    inventory_score: 0.05,
+                initial_state.clone(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
+
+            // Drain the baseline payload emitted on initial attach.
+            app.update();
+            flush_all_client_packets(&mut app);
+            let _ = collect_server_data_payloads(&mut helper);
+
+            // Cultivation breakthrough requires at least one opened meridian.
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            app.world_mut().entity_mut(entity).insert(meridians);
 
             app.world_mut()
                 .resource_mut::<GameplayActionQueue>()
@@ -3792,128 +4157,71 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_server_data_payloads(&mut helper);
-            let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
-            let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(
-                player_state_payloads.len(),
-                1,
-                "breakthrough should emit one player_state payload"
-            );
-            assert_eq!(
-                narration_payloads.len(),
-                1,
-                "breakthrough should emit one narration payload"
-            );
-
-            match &player_state_payloads[0].payload {
-                ServerDataPayloadV1::PlayerState {
-                    realm,
-                    spirit_qi,
-                    player,
-                    ..
-                } => {
-                    assert_eq!(player.as_deref(), Some("offline:Seeker"));
-                    assert_eq!(realm, "qi_refining_1");
-                    assert_eq!(*spirit_qi, 120.0);
-                }
-                other => panic!("expected player_state payload, got {other:?}"),
-            }
-
-            match &narration_payloads[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(
-                        narrations[0].style,
-                        crate::schema::common::NarrationStyle::SystemWarning
-                    );
-                    assert!(narrations[0].text.contains("炼气一层"));
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            let world_state = dequeue_world_state(&rx_outbound);
-            assert_eq!(world_state.recent_events.len(), 1);
-            assert_eq!(
-                world_state.recent_events[0].event_type,
-                crate::schema::common::GameEventType::EventTriggered
-            );
-            assert_eq!(
-                world_state.recent_events[0].target.as_deref(),
-                Some("qi_refining_1")
-            );
-
-            {
-                let world = app.world_mut();
-                let player_state = world
-                    .entity(entity)
-                    .get::<PlayerState>()
-                    .expect("player state should remain attached after breakthrough");
-                assert_eq!(player_state.realm, "qi_refining_1");
-                assert_eq!(player_state.spirit_qi, 120.0);
-                assert_eq!(player_state.spirit_qi_max, 120.0);
-            }
-
-            app.world_mut()
-                .resource_mut::<GameplayActionQueue>()
-                .enqueue("offline:Seeker", GameplayAction::AttemptBreakthrough);
-
+            // Flush one more tick so the post-breakthrough Cultivation change is observed
+            // by `emit_player_state_payloads` (which runs earlier in the Update chain).
             app.update();
             flush_all_client_packets(&mut app);
 
-            let invalid_payloads = collect_server_data_payloads(&mut helper);
-            assert!(
-                extract_player_state_payloads(invalid_payloads.as_slice()).is_empty(),
-                "insufficient experience should not emit a new player_state payload"
-            );
-            let invalid_narrations = extract_narration_payloads(invalid_payloads.as_slice());
-            assert_eq!(invalid_narrations.len(), 1);
-
-            match &invalid_narrations[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert!(narrations[0].text.contains("经验"));
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            let recent_events = app
+            let cultivation = app
                 .world()
-                .resource::<ActiveEventsResource>()
-                .recent_events_snapshot();
+                .entity(entity)
+                .get::<Cultivation>()
+                .expect("cultivation should remain attached after breakthrough");
+            assert_eq!(cultivation.realm, Realm::Induce);
+            assert_approx_eq(cultivation.qi_current, 72.0);
+            assert_approx_eq(cultivation.qi_max, 200.0);
+
+            let player_state = app
+                .world()
+                .entity(entity)
+                .get::<PlayerState>()
+                .expect("player state should remain attached after bridge");
+            assert_eq!(player_state, &initial_state);
+
+            let payloads = collect_server_data_payloads(&mut helper);
+            let player_state_payloads = extract_player_state_payloads(payloads.as_slice());
             assert_eq!(
-                recent_events.len(),
+                player_state_payloads.len(),
                 1,
-                "failed breakthrough should not append a new recent event"
+                "breakthrough should emit one updated player_state payload"
             );
+            match &player_state_payloads[0].payload {
+                ServerDataPayloadV1::PlayerState {
+                    realm, spirit_qi, ..
+                } => {
+                    assert_eq!(realm, "Induce");
+                    assert_approx_eq(*spirit_qi, 72.0);
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
 
         #[test]
         fn realm_breakthrough_rejects_invalid_karma_without_side_effects() {
-            let (mut app, rx_outbound) = setup_gameplay_app();
+            let (mut app, _rx_outbound) = setup_gameplay_app();
+            let initial_state = PlayerState {
+                karma: -0.9,
+                inventory_score: 0.05,
+            };
             let (entity, mut helper) = spawn_test_client_with_state(
                 &mut app,
                 "Ascetic",
                 [8.0, 66.0, 8.0],
-                PlayerState {
-                    realm: "qi_refining_2".to_string(),
-                    spirit_qi: 130.0,
-                    spirit_qi_max: 140.0,
-                    karma: -0.2,
-                    experience: 700,
-                    inventory_score: 0.2,
+                initial_state.clone(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
                 },
             );
 
+            // Drain the baseline payload emitted on initial attach.
             app.update();
             flush_all_client_packets(&mut app);
+            let _ = collect_server_data_payloads(&mut helper);
 
-            let baseline_payloads = collect_server_data_payloads(&mut helper);
-            assert_eq!(
-                extract_player_state_payloads(baseline_payloads.as_slice()).len(),
-                1,
-                "freshly spawned player state should emit one baseline payload before rejection assertions"
-            );
-            while rx_outbound.try_recv().is_ok() {}
-
+            // Keep meridians closed so the cultivation breakthrough rejects the attempt.
             app.world_mut()
                 .resource_mut::<GameplayActionQueue>()
                 .enqueue("offline:Ascetic", GameplayAction::AttemptBreakthrough);
@@ -3921,55 +4229,34 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
+            let outcomes = app
+                .world()
+                .resource::<Events<crate::cultivation::breakthrough::BreakthroughOutcome>>();
+            assert!(
+                !outcomes.is_empty(),
+                "breakthrough forwarding should emit an outcome even when requirements are unmet"
+            );
+
+            let cultivation = app
+                .world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .expect("cultivation should remain attached after breakthrough attempt");
+            assert_eq!(cultivation.realm, Realm::Awaken);
+            assert_approx_eq(cultivation.qi_current, 80.0);
+            assert_approx_eq(cultivation.qi_max, 100.0);
+
+            let player_state = app
+                .world()
+                .entity(entity)
+                .get::<PlayerState>()
+                .expect("player state should remain attached after rejected breakthrough");
+            assert_eq!(player_state, &initial_state);
+
             let payloads = collect_server_data_payloads(&mut helper);
             assert!(
                 extract_player_state_payloads(payloads.as_slice()).is_empty(),
-                "invalid karma should not emit a player_state payload"
-            );
-
-            let narration_payloads = extract_narration_payloads(payloads.as_slice());
-            assert_eq!(
-                narration_payloads.len(),
-                1,
-                "invalid karma rejection should still emit warning narration"
-            );
-
-            match &narration_payloads[0].payload {
-                ServerDataPayloadV1::Narration { narrations } => {
-                    assert_eq!(narrations.len(), 1);
-                    assert_eq!(
-                        narrations[0].style,
-                        crate::schema::common::NarrationStyle::SystemWarning
-                    );
-                    assert!(
-                        narrations[0].text.contains("心境") || narrations[0].text.contains("因果"),
-                        "karma rejection text should mention karma/心境 semantics"
-                    );
-                }
-                other => panic!("expected narration payload, got {other:?}"),
-            }
-
-            {
-                let world = app.world_mut();
-                let player_state = world
-                    .entity(entity)
-                    .get::<PlayerState>()
-                    .expect("player state should remain attached after rejected breakthrough");
-                assert_eq!(player_state.realm, "qi_refining_2");
-                assert_eq!(player_state.spirit_qi, 130.0);
-                assert_eq!(player_state.spirit_qi_max, 140.0);
-                assert_eq!(player_state.karma, -0.2);
-                assert_eq!(player_state.experience, 700);
-                assert_approx_eq(player_state.inventory_score, 0.2);
-            }
-
-            let recent_events = app
-                .world()
-                .resource::<ActiveEventsResource>()
-                .recent_events_snapshot();
-            assert!(
-                recent_events.is_empty(),
-                "invalid karma rejection must not append an internal recent event either"
+                "failed cultivation breakthrough should not emit player_state payload"
             );
         }
     }

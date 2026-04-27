@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use crate::schema::agent_command::AgentCommandV1;
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
+use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_BOTANY_ECOLOGY,
-    CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH,
-    CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_PLAYER_CHAT, CH_WORLD_STATE,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
+    CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
+    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
+    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_PLAYER_CHAT, CH_TSY_EVENT,
+    CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -21,6 +23,7 @@ use crate::schema::cultivation::{
 use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::narration::NarrationV1;
+use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::world_state::WorldStateV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -45,6 +48,7 @@ pub enum RedisOutbound {
     PlayerChat(ChatMessageV1),
     CombatRealtime(CombatRealtimeEventV1),
     CombatSummary(CombatSummaryV1),
+    ArmorDurabilityChanged(ArmorDurabilityChangedV1),
     BreakthroughEvent(BreakthroughEventV1),
     ForgeEvent(ForgeEventV1),
     CultivationDeath(CultivationDeathV1),
@@ -54,6 +58,8 @@ pub enum RedisOutbound {
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
     BotanyEcology(BotanyEcologySnapshotV1),
+    TsyEnter(TsyEnterEventV1),
+    TsyExit(TsyExitEventV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -295,6 +301,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::ArmorDurabilityChanged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize ArmorDurabilityChangedV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_ARMOR_DURABILITY_CHANGED,
+                payload,
+            })
+        }
         RedisOutbound::BreakthroughEvent(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize BreakthroughEventV1: {error}"))
@@ -377,6 +394,24 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BOTANY_ECOLOGY,
+                payload,
+            })
+        }
+        RedisOutbound::TsyEnter(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TsyEnterEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TsyExit(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TsyExitEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
                 payload,
             })
         }
@@ -1284,6 +1319,38 @@ mod redis_bridge_tests {
                 assert_eq!(v["death_event_count"], 2);
                 assert_eq!(v["damage_total"], 88.0);
                 assert_eq!(v["contam_delta_total"], 16.0);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_armor_durability_changed_on_correct_channel() {
+        let command = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+            ArmorDurabilityChangedV1 {
+                v: 1,
+                entity_id: "offline:Crimson".to_string(),
+                slot: crate::schema::inventory::EquipSlotV1::Chest,
+                instance_id: 88,
+                template_id: "fake_spirit_hide".to_string(),
+                cur: 0.0,
+                max: 100.0,
+                durability_ratio: 0.0,
+                broken: true,
+            },
+        ))
+        .expect("armor durability payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ARMOR_DURABILITY_CHANGED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["entity_id"], "offline:Crimson");
+                assert_eq!(v["slot"], "chest");
+                assert_eq!(v["instance_id"], 88);
+                assert_eq!(v["template_id"], "fake_spirit_hide");
+                assert_eq!(v["broken"], true);
             }
             other => panic!("expected publish, got {other:?}"),
         }

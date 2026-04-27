@@ -59,7 +59,7 @@ pub struct WeaponForgeStation {
 
 - [ ] MVP 为方块 + BlockEntity（与 alchemy 并列，不共享）
 - [x] tier 限制能使用的图谱（凡铁砧最高锻法器）
-- [x] **多炉并行**：一玩家可绑多个砧
+- [x] **多炉并行**：一玩家可绑多个砧（每炉独立 session_id，sessions 总表分发事件）
 
 ### §1.3 四步进程（核心循环）
 
@@ -96,8 +96,8 @@ pub enum ForgeStep {
 **核心交互：锻打节奏**（替代 alchemy 的温度滑块）。
 
 - [ ] 屏幕出现节奏提示（类似音游滚动条）：Light / Heavy / Fold 三种指令
-- [ ] 玩家按 J（轻）/ K（重）/ L（折）键在节奏窗口内击中
-- [ ] 连击 combo 提升品阶进度；错拍 / 过拍累积偏差
+- [x] 玩家按 J（轻）/ K（重）/ L（折）键在节奏窗口内击中（服务端 `TemperingHit` 事件 + `apply_tempering_hit` 命中判定，客户端按键映射 UI 待做）
+- [x] 连击 combo 提升品阶进度；错拍 / 过拍累积偏差（hits/misses/deviation 计入 TemperingState，resolve_tempering 分桶）
 - [x] 每次按键消耗少量真元（体力向，非真元池主消耗）
 - [ ] 淬炼时长 ~30-60 秒（单把武器），太久会腻
 
@@ -107,7 +107,7 @@ pub enum ForgeStep {
 
 - [x] 成功铭文 → 品阶 +1（最高 `tier_cap`）
 - [x] 铭文槽位：根据武器类型固定 1-3 条（剑 1 / 长柄 2 / 双手重器 3）
-- [ ] 铭文内容来自**铭文残卷 item**（类比 alchemy 丹方残卷，拖入铭文位）
+- [x] 铭文内容来自**铭文残卷 item**（服务端 `InscriptionScrollSubmit` 事件 + `apply_scroll` 已实装；item 由 inventory plan 落地）
 - [x] 失败 → 武器留疤，品阶锁在当前
 
 #### §1.3.4 开光（Consecration，可跳过）
@@ -317,11 +317,11 @@ pub struct LearnedBlueprints {
 ### Server 侧
 
 - [x] `BlueprintRegistry` resource
-- [ ] `WeaponForgeStation` component + BlockEntity
+- [ ] `WeaponForgeStation` component + BlockEntity（component 已实装，BlockEntity 持久化层未接入）
 - [x] `ForgeSession` resource（含 step_state / materials_in）
 - [x] `LearnedBlueprints` component
 - [x] `LifeRecord.forge_attempts: Vec<ForgeAttempt>`（同 alchemy_attempts，亡者博物馆可见）
-- [x] Events：`StartForgeRequest` / `TemperingHit`（锻打节奏击键）/ `StepAdvance` / `ForgeOutcome`
+- [x] Events：`StartForgeRequest` / `TemperingHit`（锻打节奏击键）/ `StepAdvance` / `ForgeOutcome`（额外含 `InscriptionScrollSubmit` / `ConsecrationInject`）
 - [ ] Channel：`bong:forge/start` · `bong:forge/tick` · `bong:forge/hit` · `bong:forge/outcome`
 
 ### Client 侧（新增 Store）
@@ -337,13 +337,13 @@ pub struct LearnedBlueprints {
 
 | Phase | 内容 | 验收 |
 |---|---|---|
-| P0 | BlueprintRegistry + JSON 加载 + IPC Schema | 三份测试图谱加载无错 |
+| P0 | BlueprintRegistry + JSON 加载 + IPC Schema | 三份测试图谱加载无错 ✅ server |
 | P1 | WeaponForgeStation BlockEntity + 打开 Screen | 右键打开，RecipeScroll 可翻页 |
-| P2 | Billet 步骤 + 材料消耗 + tier_cap 计算 | 铁剑 MVP 跑通（凡器） |
-| P3 | Tempering 锻打节奏轨道 + 按键时序 | 青锋剑跑通（法器） |
-| P4 | Inscription 铭文槽 + 残卷消耗 | 达到灵器 |
-| P5 | Consecration 真元注入 + 真元色染色 | 道器跑通（灵锋全流程） |
-| P6 | 残缺匹配 + side_effect_pool + LifeRecord | 缺料能走 fallback，试错史可见 |
+| P2 | Billet 步骤 + 材料消耗 + tier_cap 计算 | 铁剑 MVP 跑通（凡器） ✅ server |
+| P3 | Tempering 锻打节奏轨道 + 按键时序 | 青锋剑跑通（法器） ✅ server（事件/解析；UI 轨道未做） |
+| P4 | Inscription 铭文槽 + 残卷消耗 | 达到灵器 ✅ server（事件/解析；UI 槽位未做） |
+| P5 | Consecration 真元注入 + 真元色染色 | 道器跑通（灵锋全流程） ✅ server（注入事件 + 染色判定；UI 未做） |
+| P6 | 残缺匹配 + side_effect_pool + LifeRecord | 缺料能走 fallback，试错史可见 ✅ server |
 
 ---
 
@@ -385,3 +385,9 @@ pub struct LearnedBlueprints {
 | 开光染色与 combat 真元色系统耦合复杂 | color 只加小幅系数（同色 +10-20% / 异色 0.7x），不叠其他机制 |
 | 残缺匹配变"试造赌博" | `LifeRecord.forge_attempts` 公开到亡者博物馆；waste 成本高（材料全失） |
 | 锻打节奏轨道客户端/服务端同步 | 服务器权威 tick；客户端只负责击键上报，命中判定在服务器 |
+
+---
+
+## §9 进度日志
+
+- 2026-04-25：P0 落地确认（server forge/ 2379 行 + 3 份测试 blueprint）。已实装范围：BlueprintRegistry JSON 加载、ForgeSessions 总表、四步状态机（Billet/Tempering/Inscription/Consecration）、纯函数解析层（resolve_billet / apply_tempering_hit / resolve_tempering / apply_scroll / resolve_inscription / inject_qi / resolve_consecration）、bucket 汇总、flawed_fallback + side_effect_pool 抽取、ForgeHistory（亡者博物馆前身）、skill_hook（Lv 加成 XP 桥）、station tier 校验 + integrity 损耗。**未落地**：BlockEntity 持久化、IPC schema/Channel（`bong:forge/*`）、客户端 UI（节奏轨道、铭文槽、真元注入、塔科夫背包面板复用）、装备 item 数据契约（quality / color / side_effects 字段，依赖 inventory plan）。

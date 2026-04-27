@@ -56,6 +56,7 @@ impl PlantRarity {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlantKind {
     pub id: PlantId,
+    // TODO: plan-lingtian-v1 UI 层接入后取消 allow（display_name 用于客户端面板/tooltip）
     #[allow(dead_code)]
     pub display_name: String,
     /// `true` → 可入 lingtian（生成种子 item）；`false` → 野生 only。
@@ -66,6 +67,7 @@ pub struct PlantKind {
     /// 故 8h = 480 ticks、16h = 960 ticks、480h = 28800 ticks。
     pub growth_duration_ticks: u32,
     pub rarity: PlantRarity,
+    // TODO: plan-lingtian-v1 UI 层接入后取消 allow（description 用于客户端面板/tooltip）
     #[serde(default)]
     #[allow(dead_code)]
     pub description: String,

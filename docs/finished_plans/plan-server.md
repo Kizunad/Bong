@@ -270,7 +270,7 @@ realm_collapse / karma_backlash:
 ```rust
 #[derive(Component, Serialize, Deserialize)]
 pub struct PlayerState {
-    pub realm: String,           // "mortal", "qi_refining_1", ..., "qi_refining_3"
+    pub realm: String,           // legacy fixture (not used by current runtime)
     pub spirit_qi: f64,          // 当前真元储量
     pub spirit_qi_max: f64,      // 上限（随境界提升）
     pub karma: f64,              // [-1.0, 1.0]
@@ -324,12 +324,9 @@ pub struct BreakthroughRule {
 - ✅ `GameplayActionQueue` 缓存玩家操作（来自 chat_collector 解析）
 - ✅ `emit_gameplay_narrations` 提供反馈（成功/失败的 narration）
 
-**突破规则**（M1 已定义，可扩展）：
+**突破规则**（历史记录；当前 runtime 已迁移到六境 Cultivation）：
 ```
-mortal → qi_refining_1:     exp ≥ 120,  karma ≥ -0.2, qi ≥ 60
-qi_refining_1 → qi_refining_2: exp ≥ 300,  karma ≥ -0.1, qi ≥ 90
-qi_refining_2 → qi_refining_3: exp ≥ 600,  karma ≥  0.0, qi ≥ 110
-（更高境界待定）
+（旧 ladder；已废弃）
 ```
 
 **待实现**（下一阶段）：

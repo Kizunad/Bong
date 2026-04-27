@@ -132,6 +132,7 @@ mod tests {
     fn make_zone(name: &str, spirit_qi: f64) -> Zone {
         Zone {
             name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
             bounds: (
                 Position::new([0.0, 0.0, 0.0]).get(),
                 Position::new([1.0, 1.0, 1.0]).get(),

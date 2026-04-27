@@ -158,6 +158,18 @@ export const PickupDroppedItemRequestV1 = Type.Object(
 );
 export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
 
+export const MineralProbeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("mineral_probe"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type MineralProbeRequestV1 = Static<typeof MineralProbeRequestV1>;
+
 export const InventoryDiscardItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -332,6 +344,16 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const LearnSkillScrollRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("learn_skill_scroll"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -342,6 +364,7 @@ export const ClientRequestV1 = Type.Union([
   DuoSheRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
+  MineralProbeRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,
@@ -358,5 +381,6 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  LearnSkillScrollRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

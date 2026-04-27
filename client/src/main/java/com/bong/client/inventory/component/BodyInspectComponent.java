@@ -618,7 +618,7 @@ public class BodyInspectComponent extends BaseComponent {
 
         ctx.fill(ax - 1, ay - 1, ax + ITEM_RENDER_SIZE + 1, ay + ITEM_RENDER_SIZE + 1, 0x88000000);
 
-        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + item.itemId() + ".png");
+        Identifier tex = GridSlotComponent.textureIdForItem(item);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         var m = ctx.getMatrices();

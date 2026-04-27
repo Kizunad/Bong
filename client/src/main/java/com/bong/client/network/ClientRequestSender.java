@@ -86,6 +86,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }
 
+    public static void sendMineralProbe(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
+    }
+
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }
@@ -110,10 +114,6 @@ public final class ClientRequestSender {
 
     public static void sendJiemai() {
         dispatch(ClientRequestProtocol.encodeJiemai());
-    }
-
-    public static void sendSwitchDefenseStance(String stance) {
-        dispatch(ClientRequestProtocol.encodeSwitchDefenseStance(stance));
     }
 
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
@@ -168,6 +168,10 @@ public final class ClientRequestSender {
 
     public static void sendUseLifeCore(long instanceId) {
         dispatch(ClientRequestProtocol.encodeUseLifeCore(instanceId));
+    }
+
+    public static void sendLearnSkillScroll(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeLearnSkillScroll(instanceId));
     }
 
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────

@@ -10,9 +10,9 @@
 
 ## §0 设计轴心
 
-- [ ] 克制：天道惜字如金，不是每个事件都要 narration
+- [x] 克制：天道惜字如金，不是每个事件都要 narration ✅（三 skill prompts 均要求"宁可不降劫/沉默观察"，dedupe 兜底）
 - [ ] 玩家视角：只叙述玩家能感知的（含神识感知范围）
-- [ ] 风格：冷漠 + 古意 + 嘲讽，**禁现代腔/游戏化提示腔**
+- [x] 风格：冷漠 + 古意 + 嘲讽，**禁现代腔/游戏化提示腔** ✅（`narration-eval.ts` MODERN_SLANG_RE + STYLE_KEYWORDS + 长度 100-200，prompts 强制半文言半白话）
 - [ ] 节奏：与玩法节奏合拍，不打断战斗
 
 ## §1 Narration 触发表
@@ -31,7 +31,7 @@
 
 - [ ] 玩家不在场的事件 → 走传闻/NPC 口述/远方异象
 - [ ] 神识可感知范围内（按境界）→ 可直接 narrate
-- [ ] 跨地域同步：仅"渡虚劫"级事件做全服广播
+- [ ] 跨地域同步：仅"渡虚劫"级事件做全服广播（schema 有 `scope: broadcast|zone|player`，但"仅渡虚劫级"为人为约束、暂未代码强制）
 - [ ] 匿名约束：不主动暴露玩家名字（除非已被天道点名/已死）
 
 ## §3 风格指南
@@ -39,12 +39,12 @@
 - [ ] **好**："血谷灵脉又枯了三分。仍有蠢人在那里打坐。"
 - [ ] **好**："此间有修士渡劫。天地为之色变。旁观者……自求多福。"
 - [ ] **坏**："恭喜！你发现了一个灵眼！" / "注意！xx 下降了！" / "小心，前方有危险的怪物！"
-- [ ] 词汇黑名单：恭喜 / 注意 / 警告 / 小心 / xp / 等级提升
-- [ ] 句式偏好：短句 + 古词 + 留白
+- [ ] 词汇黑名单：恭喜 / 注意 / 警告 / 小心 / xp / 等级提升（当前 `MODERN_SLANG_RE` 黑名单含 ok/lol/bro/buff/nerf/gg/wtf/哈哈/666/牛/服了/离谱/刷怪/yyds/233，未覆盖恭喜/注意/警告/小心/xp/等级提升）
+- [x] 句式偏好：短句 + 古词 + 留白 ✅（`scoreNarration` 长度 100-200 + `OMEN_RE`（预兆/暗示/伏笔/将/欲/渐...）+ STYLE_KEYWORDS 评分）
 
 ## §4 重复抑制
 
-- [ ] 相同事件再触发的冷却
+- [x] 相同事件再触发的冷却 ✅（server `NarrationDedupeResource` 按 scope|target|style|text 拼 key，`NARRATION_DEDUPE_WINDOW_SECS` 时间窗 + `NARRATION_DEDUPE_CAPACITY` 容量丢重；`process_agent_narrations_with_dedupe` 已接入 main loop）
 - [ ] 模板轮换（同义古风变体）
 - [ ] LLM 去重 prompt（参考最近 N 条避免雷同）
 
@@ -57,3 +57,9 @@
 ## §6 实施节点
 
 ## §7 开放问题
+
+---
+
+## 进度日志
+
+- 2026-04-25：核对实装 —— schema (`Narration`/`NarrationV1` 含 scope+style)、agent 三 skill prompts (calamity/mutation/era 半文言半白话+预兆要求)、`narration-eval.ts` 风格评分（长度 100-200 + omen + 现代腔黑名单 + 风格关键词）、server `NarrationDedupeResource`（按 scope|target|style|text dedupe）、client `NarrationState` 按 style 分流 ChatHud + Toast 均已上线；§0/§3/§4 部分项勾选；§2 视角剪裁、§4 模板轮换、§4 LLM 去重 prompt 仍为待办；黑名单需补"恭喜/注意/警告/小心/xp/等级提升"中文条目。

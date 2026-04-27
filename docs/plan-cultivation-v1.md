@@ -13,9 +13,9 @@
 
 ---
 
-## 进度快照 (2026-04-13, 更新)
+## 进度快照 (2026-04-25, 更新)
 
-**服务端 P1–P5 全部模块已落地（228 单元测试通过，clippy -D warnings 干净）** — `server/src/cultivation/` + `server/src/schema/`：
+**服务端 P1–P5 全部模块已落地、战斗端联调闭环（228 单元测试通过，clippy -D warnings 干净）** — `server/src/cultivation/` + `server/src/schema/` + `server/src/combat/`：
 
 新增 11 模块：
 - ✅ **contamination.rs** — ContaminationTick：10:15 排异、qi 耗尽对已通经脉上 Backfire 裂痕、全毁+残留污染 → `CultivationDeathCause::ContaminationOverflow`
@@ -40,7 +40,7 @@
 **跨仓库 TODO（未在本仓修炼模块覆盖）**：
 - ✅ TS schema 镜像：`agent/packages/schema/src/{cultivation,insight-request,insight-offer,breakthrough-event,forge-event,biography,cultivation-death}.ts` + generated JSON artifacts + channels + PlayerProfile.cultivation/life_record
 - ✅ Agent LLM runtime：`agent/packages/tiandao/src/insight-runtime.ts` 事件驱动订阅 `bong:insight_request` → 调 LLM (skills/insight.md 系统提示) → `applyInsightArbiter()` 白名单+magnitude cap 过滤 → 发布 `bong:insight_offer`；失败回退 `emptyOffer()` ("心未契机")；7 单元测试覆盖 contract/arbiter/fallback 路径；已接入 `main.ts` 与 tick runtime 并行
-- ⏳ 战斗 plan 联调：消费 `CultivationDeathTrigger` / 发 `PlayerRevived`/`Terminated` / 写 `throughput_current` / 写 `Contamination` 条目 / 发 `TribulationWaveCleared`/`Failed`
+- ✅ 战斗 plan 联调：`server/src/combat/lifecycle.rs` 消费 `CultivationDeathTrigger` 并 emit `PlayerRevived`/`PlayerTerminated`；`server/src/combat/resolve.rs` 战斗结算写 `throughput_current` 与 `ContamSource` 入 `Contamination`；`server/src/npc/tribulation.rs` + `npc/brain.rs` 发 `InitiateXuhuaTribulation` / `TribulationWaveCleared`（`TribulationFailed` 通过 `cultivation::tribulation` 状态机统一上报）
 - ✅ 客户端集成：经脉选择（复用 InspectScreen body-layer click）+ 突破/淬炼·流速/淬炼·容量/设为目标四按钮 + CustomPayload 出站 (`bong:client_request`) + `cultivation_detail` S2C 快照下发 + 服务端 `CustomPayloadEvent` 入站 handler（详见下文客户端/服务端章节）
 - ✅ Redis 桥：outbound 5/5 channel 全部就位 — `breakthrough_event` / `forge_event` / `cultivation_death` / `insight_request`（`server/src/network/cultivation_bridge.rs`，以 Username 作为 character_id），以及 `insight_offer` inbound 订阅 + `RedisInbound::InsightOffer` 分发（当前仅 tracing 日志，待 agent 侧就绪后再落 InsightChosen）
 
@@ -87,7 +87,7 @@
 
 **剩余 TODO**：
 - ✅ 顿悟决定 C2S 回传通道：`ClientRequestV1::InsightDecision { trigger_id, choice_idx: Option<u32> }` 双端对齐；服务端 handler 发 `InsightChosen` Event；客户端 `ClientRequestInsightDispatcher` 从 offer 快照把 choiceId 解析为 idx（stale/未知 id 降级为 null=拒绝）；Rust+TS+Java 测试齐备
-- ⏳ 战斗 plan 联调（见上）
+- ✅ 战斗 plan 联调（见上"跨仓库 TODO"已勾）
 - ✅ 服务端 `BreakthroughRequest.material_bonus` 通过 buff 聚合接入：吃丹（`AlchemyTakePill`）→ `StatusEffects` 挂 `BreakthroughBoost` buff（5 min / 6000 tick）→ `breakthrough_system` 聚合 magnitude 作 bonus（clamp 0.30）→ 成败后一次性清空。UI 吃丹入口在 `.worktree/inventory` 进行
 - 🟡 `CultivationDetail` 扩展：已接入 realm / open_progress / cracks_count / contamination_total（SoA 4 字段），客户端 handler 向前兼容可选字段，`open_progress → healProgress` 已 wired；仍待接入 UI 裂痕可视化
 
@@ -465,7 +465,7 @@ Server 检查：
   - meridian.opened == true？
   - meridian.integrity > 0.6？        // 受损经脉拒绝淬炼
   - qi_current >= forge_qi_cost？
-  - 玩家在炼气炉/灵眼/特定地形（淬炼必须在合适环境）？
+  - 玩家在淬脉炉/灵眼/特定地形（淬炼必须在合适环境）？
 
 若满足：
   enter ForgingState (3-10min, 不可移动)
@@ -854,7 +854,7 @@ WorldStateV1.players[].life_record: {
 
 按可独立验证的最小切片划分。**不包含战斗端实施**——战斗 plan 自带 P 阶段。
 
-### P1：修炼基础循环
+### P1：修炼基础循环 ✅
 **验证标准**：玩家可静坐回气 → 选经脉 → 慢慢打通 → 满足条件后突破到引气
 
 ```
@@ -869,7 +869,7 @@ WorldStateV1.players[].life_record: {
 ✓ 经脉淬炼基础事务（rate/capacity 升级，到 tier 3 验证流程）
 ```
 
-### P2：受伤、污染、疗愈（与战斗 plan 联动；本阶段先用 mock）
+### P2：受伤、污染、疗愈（与战斗 plan 联动；本阶段先用 mock） ✅
 **验证标准**：mock 添加 contam/crack → 系统正确处理排异/疗愈/裂痕修复
 
 ```
@@ -881,7 +881,7 @@ WorldStateV1.players[].life_record: {
 ✓ NegativeZoneSiphonTick（负灵域抽吸）
 ```
 
-### P3：生平记录 + 死亡对外契约
+### P3：生平记录 + 死亡对外契约 ✅
 **验证标准**：mock 走火/爆脉/抽干 → 正确 emit `CultivationDeathTrigger`；mock `PlayerRevived` 事件 → 修炼侧惩罚正确应用
 
 ```
@@ -894,7 +894,7 @@ WorldStateV1.players[].life_record: {
 注：DeathEvent 主流程 / 运数概率 / 遗念 agent / 终结归档 → 战斗 plan 同步推进
 ```
 
-### P4：顿悟系统
+### P4：顿悟系统 ✅
 **验证标准**：完成 P1-P3 任意触发条件 → 顿悟 agent 生成选项 → arbiter 校验通过 → 玩家选择生效 → biography 记录
 
 ```
@@ -911,7 +911,7 @@ WorldStateV1.players[].life_record: {
 ✓ 高 magnitude 类（E/F）选择后全场 narration
 ```
 
-### P5：高境界与天劫
+### P5：高境界与天劫 ✅
 **验证标准**：玩家可至化虚（依赖战斗 plan 提供天劫伤害实施）
 
 ```
@@ -1060,3 +1060,9 @@ M2.5 — 修炼成型：P5 完成，全境界突破 + 化虚渡劫（与战斗 p
 ```
 
 完成 M2.5 + 战斗 plan 对应里程碑后，末法残土修炼系统进入 **Beta** 阶段。
+
+---
+
+## 进度日志
+
+- 2026-04-25：核对 `server/src/cultivation/` 21 模块 + `combat/lifecycle|resolve` + `npc/tribulation` 接入，P1–P5 五阶段全部勾 ✅，跨仓库"战斗 plan 联调" ⏳→✅。

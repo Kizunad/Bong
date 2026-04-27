@@ -39,6 +39,7 @@ pub fn send_dropped_loot_sync_to_client(
     );
 }
 
+#[allow(clippy::type_complexity)]
 pub fn emit_join_dropped_loot_syncs(
     registry: valence::prelude::Res<DroppedLootRegistry>,
     mut clients: Query<JoinedDropSyncClient<'_>, JoinedDropSyncClientFilter>,

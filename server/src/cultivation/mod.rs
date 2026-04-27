@@ -51,7 +51,8 @@ pub mod topology;
 pub mod tribulation;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, IntoSystemConfigs, Query, Res, Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Res,
+    Update, Username, Without,
 };
 
 use self::breakthrough::{breakthrough_system, BreakthroughOutcome, BreakthroughRequest};
@@ -96,9 +97,12 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
-use crate::persistence::{load_active_tribulation, PersistenceSettings};
+use crate::persistence::{
+    load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
+};
 use crate::player::state::canonical_player_id;
 use crate::player::state::PlayerState;
+use crate::skill::events::SkillCapChanged;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -147,6 +151,7 @@ pub fn register(app: &mut App) {
             qi_color_evolution_tick,
             composure_tick,
             qi_zero_decay_tick.after(qi_regen_and_zone_drain_tick),
+            emit_skill_caps_on_realm_regressed.after(qi_zero_decay_tick),
             // plan §2.1 损伤/净化链
             overload_detection_tick.after(meridian_open_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
@@ -201,15 +206,110 @@ fn attach_cultivation_to_joined_clients(
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (entity, username, player_state, restored_lifespan) in &joined_clients {
-        let mut cultivation = Cultivation::default();
-        if let Some(player_state) = player_state {
-            cultivation.qi_current = player_state.spirit_qi;
-            cultivation.qi_max = player_state.spirit_qi_max.max(1.0);
-            if let Some(restored_realm) =
-                cultivation_realm_from_player_state(player_state.realm.as_str())
-            {
-                cultivation.realm = restored_realm;
+        let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+                None
             }
+        };
+
+        let mut cultivation = Cultivation::default();
+        let mut meridians = MeridianSystem::default();
+        let mut qi_color = QiColor::default();
+        let mut karma = Karma::default();
+        let mut practice_log = PracticeLog::default();
+        let mut contamination = Contamination::default();
+        let mut life_record = LifeRecord::new(canonical_player_id(username.0.as_str()));
+        let mut insight_quota = InsightQuota::default();
+        let mut unlocked_perceptions = UnlockedPerceptions::default();
+        let mut insight_modifiers = InsightModifiers::new();
+
+        if let Some(persisted_bundle) = persisted_bundle.as_ref() {
+            // Best-effort hydration; schema is versioned and may evolve.
+            if let Some(value) = persisted_bundle.get("cultivation") {
+                match serde_json::from_value::<Cultivation>(value.clone()) {
+                    Ok(decoded) => cultivation = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "cultivation", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("meridians") {
+                match serde_json::from_value::<MeridianSystem>(value.clone()) {
+                    Ok(decoded) => meridians = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "meridians", error),
+                }
+            }
+            if let Some(value) = persisted_bundle.get("qi_color") {
+                match serde_json::from_value::<QiColor>(value.clone()) {
+                    Ok(decoded) => qi_color = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "qi_color", error),
+                }
+            }
+            if let Some(value) = persisted_bundle.get("karma") {
+                match serde_json::from_value::<Karma>(value.clone()) {
+                    Ok(decoded) => karma = decoded,
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "karma", error),
+                }
+            }
+            if let Some(value) = persisted_bundle.get("practice_log") {
+                match serde_json::from_value::<PracticeLog>(value.clone()) {
+                    Ok(decoded) => practice_log = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "practice_log", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("contamination") {
+                match serde_json::from_value::<Contamination>(value.clone()) {
+                    Ok(decoded) => contamination = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "contamination", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("life_record") {
+                match serde_json::from_value::<LifeRecord>(value.clone()) {
+                    Ok(decoded) => life_record = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "life_record", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("insight_quota") {
+                match serde_json::from_value::<InsightQuota>(value.clone()) {
+                    Ok(decoded) => insight_quota = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_quota", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("unlocked_perceptions") {
+                match serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
+                    Ok(decoded) => unlocked_perceptions = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "unlocked_perceptions", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("insight_modifiers") {
+                match serde_json::from_value::<InsightModifiers>(value.clone()) {
+                    Ok(decoded) => insight_modifiers = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_modifiers", error)
+                    }
+                }
+            }
+        } else if player_state.is_some() {
+            tracing::debug!(
+                "[bong][cultivation] no persisted cultivation bundle for `{}`; using defaults",
+                username.0,
+            );
         }
 
         let canonical_id = canonical_player_id(username.0.as_str());
@@ -234,25 +334,23 @@ fn attach_cultivation_to_joined_clients(
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
         }
-        let default_lifespan = LifespanComponent::new(LifespanCapTable::for_player_state_realm(
-            player_state.map(|state| state.realm.as_str()),
-            cultivation.realm,
-        ));
+        let default_lifespan =
+            LifespanComponent::new(LifespanCapTable::for_realm(cultivation.realm));
 
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
-            MeridianSystem::default(),
-            QiColor::default(),
-            Karma::default(),
-            PracticeLog::default(),
-            Contamination::default(),
-            LifeRecord::new(canonical_id.clone()),
+            meridians,
+            qi_color,
+            karma,
+            practice_log,
+            contamination,
+            life_record,
             DeathRegistry::new(canonical_id.clone()),
             LifespanExtensionLedger::default(),
-            InsightQuota::default(),
-            UnlockedPerceptions::default(),
-            InsightModifiers::new(),
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
         ));
         if restored_lifespan.is_none() {
             entity_commands.insert(default_lifespan);
@@ -264,13 +362,29 @@ fn attach_cultivation_to_joined_clients(
     }
 }
 
-fn cultivation_realm_from_player_state(realm: &str) -> Option<Realm> {
-    match realm {
-        "mortal" => Some(Realm::Awaken),
-        "qi_refining_1" => Some(Realm::Induce),
-        "qi_refining_2" => Some(Realm::Condense),
-        "qi_refining_3" | "foundation_establishment_1" => Some(Realm::Spirit),
-        _ => None,
+fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error) {
+    tracing::warn!(
+        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
+    );
+}
+
+fn emit_skill_caps_on_realm_regressed(
+    mut regressed: EventReader<RealmRegressed>,
+    mut skill_cap_events: EventWriter<SkillCapChanged>,
+) {
+    for event in regressed.read() {
+        let new_cap = breakthrough::skill_cap_for_realm(event.to);
+        for skill in [
+            crate::skill::components::SkillId::Herbalism,
+            crate::skill::components::SkillId::Alchemy,
+            crate::skill::components::SkillId::Forging,
+        ] {
+            skill_cap_events.send(SkillCapChanged {
+                char_entity: event.entity,
+                skill,
+                new_cap,
+            });
+        }
     }
 }
 
@@ -286,6 +400,7 @@ mod tests {
     };
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
+    use crate::skill::events::SkillCapChanged;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
 
@@ -319,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn mortal_player_state_starts_with_mortal_lifespan_cap() {
+    fn joined_client_defaults_to_awaken_lifespan_cap() {
         let mut app = App::new();
         app.insert_resource(PersistenceSettings::default());
         app.add_systems(Update, attach_cultivation_to_joined_clients);
@@ -330,11 +445,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 0.0,
-                    spirit_qi_max: 10.0,
                     karma: 0.0,
-                    experience: 0,
                     inventory_score: 0.0,
                 },
             ))
@@ -347,7 +458,7 @@ mod tests {
             .get::<LifespanComponent>(entity)
             .expect("joined client should receive a LifespanComponent");
 
-        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::MORTAL);
+        assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
     }
 
     #[test]
@@ -368,11 +479,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "mortal".to_string(),
-                    spirit_qi: 0.0,
-                    spirit_qi_max: 10.0,
                     karma: 0.0,
-                    experience: 0,
                     inventory_score: 0.0,
                 },
                 restored_lifespan.clone(),
@@ -428,11 +535,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 88.0,
-                    spirit_qi_max: 120.0,
                     karma: 0.0,
-                    experience: 3000,
                     inventory_score: 0.0,
                 },
             ))
@@ -495,11 +598,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 120.0,
-                    spirit_qi_max: 160.0,
                     karma: 0.0,
-                    experience: 4800,
                     inventory_score: 0.0,
                 },
             ))
@@ -565,11 +664,7 @@ mod tests {
             .spawn((
                 client_bundle,
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 120.0,
-                    spirit_qi_max: 160.0,
                     karma: 0.0,
-                    experience: 4800,
                     inventory_score: 0.0,
                 },
                 Lifecycle {
@@ -623,5 +718,30 @@ mod tests {
         assert_eq!(quota.occupied_slots, 1);
 
         let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn realm_regressed_emits_cap_changed_for_all_skills() {
+        let mut app = App::new();
+        app.add_event::<RealmRegressed>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, emit_skill_caps_on_realm_regressed);
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RealmRegressed {
+            entity,
+            from: Realm::Spirit,
+            to: Realm::Solidify,
+            closed_meridians: 2,
+        });
+        app.update();
+
+        let caps: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
+            .drain()
+            .collect();
+        assert_eq!(caps.len(), 3);
+        assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 }

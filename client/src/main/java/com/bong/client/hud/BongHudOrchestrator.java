@@ -112,6 +112,7 @@ public final class BongHudOrchestrator {
             commands.addAll(MiniBodyHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(),
                 combatSnapshot.physicalBody(),
+                com.bong.client.inventory.state.InventoryStateStore.snapshot().equipped(),
                 nowMillis,
                 screenWidth,
                 screenHeight

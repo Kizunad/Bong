@@ -18,7 +18,7 @@
 |---|---|---|
 | **借 omo 的现成编排，不自造 agent** | Prometheus/Metis/Momus/Atlas 已经是完备的 plan→execute 分离架构 | 再造 4 个 `plan-reader/architect/executor/auditor` agent，重复上游能力 |
 | **docs/ 是 source of truth** | 流水线只**读取** `docs/plan-*.md`，运行态全部落 `.sisyphus/` | Prometheus 回写 `docs/`、Atlas 改 `docs/worldview.md` |
-| **worktree 隔离** | 每个 plan 一个 `.worktrees/plan-<name>/` + `auto/plan-<name>` 分支 | 在主工作区直接改，污染正在手写的代码 |
+| **worktree 隔离** | 每个 plan 一个 `.worktree/plan-<name>/` + `auto/plan-<name>` 分支 | 在主工作区直接改，污染正在手写的代码 |
 | **零交互** | `bash scripts/bong-plan-auto.sh <name>` 一条命令跑到 `<promise>DONE</promise>` 或 `BLOCKED` | 中途弹 "需要确认吗？" 打断用户 |
 | **失败即标注，不阻断** | 单 TODO 连续失败 3 轮 → `[BLOCKED: ...]` 标注 + 跳过 | 第一个失败就整条流水线停 |
 | **opencode-native 配置** | 规则在 `AGENTS.md`（吃 `directory-agents-injector`），不用 `.claude/` | 把 opencode 配置塞进 Claude Code 目录 |
@@ -34,8 +34,8 @@
 └─┬────────────────────────────────────────────────────────────────┘
   │
   │ 1. 校验 docs/plan-<name>.md 存在且非骨架/归档
-  │ 2. git worktree add .worktrees/plan-<name> -b auto/plan-<name>
-  │ 3. cp docs/plan-<name>.md  →  .worktrees/.sisyphus/inputs/<name>.md
+  │ 2. git worktree add .worktree/plan-<name> -b auto/plan-<name>
+  │ 3. cp docs/plan-<name>.md  →  .worktree/.sisyphus/inputs/<name>.md
   │ 4. 渲染 .opencode/prompts/auto-consume.md（替换 {{PLAN_NAME}}）
   │ 5. cd worktree && opencode run --prompt-stdin < 渲染后的 prompt
   │                                                          │
@@ -95,16 +95,16 @@
 ## §2 文件清单
 
 ```
-opencode.json                                 # opencode 根配置：plugin=oh-my-opencode, model=openai/gpt-5.4
-.opencode/oh-my-opencode.json                 # omo 配置：agent 模型覆盖、disabled_hooks、categories
-.opencode/prompts/auto-consume.md             # 四阶段启动 prompt（{{PLAN_NAME}} 由 bong-plan-auto.sh 渲染）
-.opencode/commands/consume-plan.md            # opencode 内快捷入口 /consume-plan <name>
-.opencode/commands/plan-list.md               # /plan-list 列活跃 plan
-AGENTS.md                                     # agent 行为硬约束（directory-agents-injector 自动注入）
-scripts/bong-plan-auto.sh                     # 全自动宿主入口
-scripts/plan-finish.sh                        # Atlas 调用归档 docs/plan-*.md → finished_plans/
-.gitignore                                    # 追加 .sisyphus/ 和 .worktrees/
-docs/plan-opencode-workflow-v1.md             # 本文件
+[x] opencode.json                             # opencode 根配置：plugin=oh-my-opencode, model=openai/gpt-5.4 ✅
+[ ] .opencode/oh-my-opencode.json             # omo 配置：agent 模型覆盖、disabled_hooks、categories（未创建）
+[x] .opencode/prompts/auto-consume.md         # 四阶段启动 prompt（{{PLAN_NAME}} 由 bong-plan-auto.sh 渲染）✅
+[x] .opencode/commands/consume-plan.md        # opencode 内快捷入口 /consume-plan <name> ✅
+[x] .opencode/commands/plan-list.md           # /plan-list 列活跃 plan ✅
+[x] AGENTS.md                                 # agent 行为硬约束（directory-agents-injector 自动注入）✅
+[x] scripts/bong-plan-auto.sh                 # 全自动宿主入口 ✅
+[x] scripts/plan-finish.sh                    # Atlas 调用归档 docs/plan-*.md → finished_plans/ ✅
+[x] .gitignore                                # 追加 .sisyphus/ 和 .worktree/ ✅
+[x] docs/plan-opencode-workflow-v1.md         # 本文件 ✅
 ```
 
 **历史决策**：最初版把规则放在 `.claude/rules/bong-plan-consumer.md`，走 omo 的 `rules-injector` hook（Claude Code 兼容层）。后改为 `AGENTS.md`（走 `directory-agents-injector`），理由：(1) opencode-native，不依赖 Claude Code 兼容层；(2) 传播覆盖面更广（Atlas 委派出去的子 agent session 也会拿到）；(3) 和 `CLAUDE.md`（项目描述）职责对仗 —— AGENTS.md 只约束 agent 行为。
@@ -193,7 +193,7 @@ bash scripts/bong-plan-auto.sh HUD-v1
 成功 merge PR 后：
 
 ```bash
-git worktree remove .worktrees/plan-HUD-v1
+git worktree remove .worktree/plan-HUD-v1
 git branch -d auto/plan-HUD-v1
 ```
 
@@ -231,3 +231,12 @@ git branch -d auto/plan-HUD-v1
 3. **`.sisyphus/` 与 omo 默认路径一致**（其它 omo 项目也用这个目录），不会冲突
 4. **AGENTS.md 的规则只在 omo 启用 `directory-agents-injector` 时生效**。若以后手动 disable 此 hook，流水线会失去约束 —— 在 `.opencode/oh-my-opencode.json` 的 `disabled_hooks` 列表里显式排除它
 5. **commit footer 已关**（`git_master.commit_footer: false`），但 `Co-authored-by: Sisyphus` 尾签保留 —— 如果这不符合 Bong 提交规范，改 `include_co_authored_by: false`
+
+---
+
+## §9 进度日志
+
+- **2026-04-15**：宿主脚本 `scripts/bong-plan-auto.sh` + `scripts/plan-finish.sh` 落地，`opencode.json` / `.opencode/prompts/auto-consume.md` / `AGENTS.md` 就位（`.gitignore` 已追加 `.sisyphus/` 和 `.worktree/`）。
+- **2026-04-21**：`.opencode/commands/plan-list.md` + `consume-plan.md` 入口齐活；`.sisyphus/{plans,evidence}/` 运行态目录建出，但 `boulder.json` 未见（实际未跑通端到端 omo 链路）。
+- **2026-04-24**：`bong-plan-auto.sh` 迭代到 18KB，进入实际试用；同期项目主线改走 Claude Code 的 `/consume-plan` skill（见 `.claude/commands/consume-plan.md`、最近 commit `3cf6c12c docs(skill): 落库 library-lore 三层查书策略`），实质代理 opencode 流水线的"接入"角色。
+- **2026-04-25**：审计现状 —— §2 文件清单除 `.opencode/oh-my-opencode.json`（未创建，omo 配置仍走默认）外全部就位；`.worktree/plan-*` 已实际承载 armor / cultivation-mvp-cleanup / death-lifecycle / skill / weapon 等 plan 工作流，证明 worktree 隔离机制工作。**架构定稿、宿主入口可用，但 omo 模型挂载（§3）和验收标准（§6 #1/#2/#5/#6/#7/#8）尚未跑通端到端验证**；待补 `oh-my-opencode.json` 后做一次 §6 #2 `bunx oh-my-opencode doctor --verbose` 锁定 gpt-5.4 解析，再选小 plan 跑通 §6 #5。

@@ -4,6 +4,7 @@ use valence::prelude::{
     bevy_ecs, Added, Changed, Client, DetectChanges, Entity, Query, Ref, Username, With,
 };
 
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
@@ -17,6 +18,7 @@ use crate::network::agent_bridge::{
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::{canonical_player_id, PlayerState};
+use crate::schema::cultivation::realm_to_string;
 use crate::schema::inventory::{
     ContainerIdV1, ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryItemViewV1,
     InventorySnapshotV1, InventoryWeightV1, ItemRarityV1, PlacedInventoryItemV1,
@@ -35,6 +37,7 @@ type JoinedClientQueryItem<'a> = (
     &'a Username,
     &'a PlayerInventory,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
 type ChangedClientQueryItem<'a> = (
@@ -43,18 +46,21 @@ type ChangedClientQueryItem<'a> = (
     &'a Username,
     Ref<'a, PlayerInventory>,
     &'a PlayerState,
+    &'a Cultivation,
 );
 
 pub fn emit_join_inventory_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
-    for (entity, mut client, username, inventory, player_state) in &mut joined_clients {
+    for (entity, mut client, username, inventory, player_state, cultivation) in &mut joined_clients
+    {
         send_inventory_snapshot_to_client(
             entity,
             &mut client,
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             "join",
         );
     }
@@ -62,10 +68,21 @@ pub fn emit_join_inventory_snapshots(
 
 pub fn emit_revive_inventory_resyncs(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
-    mut clients: Query<(&mut Client, &Username, &PlayerInventory, &PlayerState), With<Client>>,
+    mut clients: Query<
+        (
+            &mut Client,
+            &Username,
+            &PlayerInventory,
+            &PlayerState,
+            &Cultivation,
+        ),
+        With<Client>,
+    >,
 ) {
     for ev in revived.read() {
-        let Ok((mut client, username, inventory, player_state)) = clients.get_mut(ev.entity) else {
+        let Ok((mut client, username, inventory, player_state, cultivation)) =
+            clients.get_mut(ev.entity)
+        else {
             continue;
         };
         send_inventory_snapshot_to_client(
@@ -74,6 +91,7 @@ pub fn emit_revive_inventory_resyncs(
             username.0.as_str(),
             inventory,
             player_state,
+            cultivation,
             "revive_death_drop_resync",
         );
     }
@@ -85,7 +103,8 @@ pub fn emit_changed_inventory_snapshots(
         (With<Client>, Changed<PlayerInventory>),
     >,
 ) {
-    for (entity, mut client, username, inventory, player_state) in &mut changed_clients {
+    for (entity, mut client, username, inventory, player_state, cultivation) in &mut changed_clients
+    {
         if inventory.is_added() {
             continue;
         }
@@ -95,6 +114,7 @@ pub fn emit_changed_inventory_snapshots(
             username.0.as_str(),
             &inventory,
             player_state,
+            cultivation,
             "inventory_changed",
         );
     }
@@ -108,9 +128,10 @@ pub(crate) fn send_inventory_snapshot_to_client(
     username: &str,
     inventory: &PlayerInventory,
     player_state: &PlayerState,
+    cultivation: &Cultivation,
     reason: &str,
 ) {
-    let snapshot = build_inventory_snapshot(inventory, player_state);
+    let snapshot = build_inventory_snapshot(inventory, player_state, cultivation);
     let payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot)));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -136,8 +157,10 @@ pub(crate) fn send_inventory_snapshot_to_client(
 pub(crate) fn build_inventory_snapshot(
     inventory: &PlayerInventory,
     player_state: &PlayerState,
+    cultivation: &Cultivation,
 ) -> InventorySnapshotV1 {
-    let normalized_state = player_state.normalized();
+    // Keep normalization call for future derived fields; currently unused.
+    let _normalized_state = player_state.normalized();
     let containers_by_id: HashMap<&str, &ContainerState> = inventory
         .containers
         .iter()
@@ -200,11 +223,8 @@ pub(crate) fn build_inventory_snapshot(
         .map(|slot| slot.as_ref().map(item_view_from_instance))
         .collect::<Vec<_>>();
 
-    let body_level = if normalized_state.spirit_qi_max <= 0.0 {
-        0.0
-    } else {
-        (normalized_state.spirit_qi / normalized_state.spirit_qi_max).clamp(0.0, 1.0)
-    };
+    let qi_max = cultivation.qi_max.max(1.0);
+    let body_level = (cultivation.qi_current / qi_max).clamp(0.0, 1.0);
 
     InventorySnapshotV1 {
         revision: inventory.revision.0,
@@ -217,9 +237,9 @@ pub(crate) fn build_inventory_snapshot(
             current: calculate_current_weight(inventory),
             max: inventory.max_weight,
         },
-        realm: normalized_state.realm,
-        qi_current: normalized_state.spirit_qi,
-        qi_max: normalized_state.spirit_qi_max,
+        realm: realm_to_string(cultivation.realm).to_string(),
+        qi_current: cultivation.qi_current,
+        qi_max,
         body_level,
     }
 }
@@ -238,6 +258,8 @@ fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
 }
 
 pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
+    let (scroll_kind, scroll_skill_id, scroll_xp_grant) =
+        skill_scroll_metadata(item.template_id.as_str());
     InventoryItemViewV1 {
         instance_id: item.instance_id,
         item_id: item.template_id.clone(),
@@ -254,6 +276,39 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         // M3a — 衍生数据由 caller 调 `enrich_with_derived_freshness` 后填；
         // 默认 None 防止未注入 registry 的 caller 漏算。
         freshness_current: None,
+        // plan-mineral-v1 §2.2 — mineral_id 由 mineral::inventory_grant 系统
+        // 在 MineralDropEvent 落地时写入 ItemInstance.mineral_id；此处透传到 snapshot view。
+        mineral_id: item.mineral_id.clone(),
+        scroll_kind,
+        scroll_skill_id,
+        scroll_xp_grant,
+        // plan-tsy-loot-v1 §1.3 — Ancient 物品 charges 透传；非 ancient 恒为 None。
+        charges: item.charges,
+    }
+}
+
+fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, Option<u32>) {
+    match template_id {
+        "skill_scroll_herbalism_baicao_can" => (
+            Some("skill_scroll".to_string()),
+            Some("herbalism".to_string()),
+            Some(500),
+        ),
+        "skill_scroll_alchemy_danhuo_can" => (
+            Some("skill_scroll".to_string()),
+            Some("alchemy".to_string()),
+            Some(500),
+        ),
+        "skill_scroll_forging_duantie_can" => (
+            Some("skill_scroll".to_string()),
+            Some("forging".to_string()),
+            Some(500),
+        ),
+        id if id.starts_with("recipe_scroll_") => (Some("recipe_scroll".to_string()), None, None),
+        id if id.starts_with("blueprint_scroll_") => {
+            (Some("blueprint_scroll".to_string()), None, None)
+        }
+        _ => (None, None, None),
     }
 }
 
@@ -291,6 +346,7 @@ fn rarity_from_runtime(rarity: ItemRarity) -> ItemRarityV1 {
         ItemRarity::Rare => ItemRarityV1::Rare,
         ItemRarity::Epic => ItemRarityV1::Epic,
         ItemRarity::Legendary => ItemRarityV1::Legendary,
+        ItemRarity::Ancient => ItemRarityV1::Ancient,
     }
 }
 
@@ -303,6 +359,7 @@ mod tests {
     use valence::testing::{create_mock_client, MockClientHelper};
 
     use super::*;
+    use crate::inventory::InventoryDurabilityChangedEvent;
     use crate::inventory::{
         ContainerState, DroppedItemEvent, DroppedItemRecord, InventoryRevision, ItemInstance,
         ItemRarity, PlacedItemState,
@@ -330,12 +387,14 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.add_event::<DroppedItemEvent>();
+        app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
             (
                 emit_join_inventory_snapshots,
                 emit_changed_inventory_snapshots,
                 crate::network::inventory_event_emit::emit_dropped_item_inventory_events,
+                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
             ),
         );
         app
@@ -382,13 +441,16 @@ mod tests {
         app: &mut App,
         username: &str,
         player_state: PlayerState,
+        cultivation: Cultivation,
         inventory: Option<PlayerInventory>,
     ) -> (Entity, MockClientHelper) {
         let (mut client_bundle, helper) = create_mock_client(username);
         client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
         let entity = app.world_mut().spawn(client_bundle).id();
 
-        app.world_mut().entity_mut(entity).insert(player_state);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((player_state, cultivation));
         if let Some(inventory) = inventory {
             app.world_mut().entity_mut(entity).insert(inventory);
         }
@@ -490,6 +552,8 @@ mod tests {
             spirit_quality: 0.5,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -567,19 +631,11 @@ mod tests {
         let mut app = setup_app();
 
         let target_state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 24.0,
-            spirit_qi_max: 100.0,
             karma: 0.1,
-            experience: 10,
             inventory_score: 0.1,
         };
         let other_state = PlayerState {
-            realm: "qi_refining_3".to_string(),
-            spirit_qi: 70.0,
-            spirit_qi_max: 140.0,
             karma: 0.0,
-            experience: 22,
             inventory_score: 0.2,
         };
 
@@ -587,12 +643,24 @@ mod tests {
             &mut app,
             "Azure",
             target_state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 24.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(11, true)),
         );
         let (_other_entity, mut other_helper) = spawn_client_with_state_and_inventory(
             &mut app,
             "Bob",
             other_state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 70.0,
+                qi_max: 140.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(22, false)),
         );
 
@@ -648,7 +716,7 @@ mod tests {
         assert_eq!(target_snapshot.bone_coins, 57);
         approx_eq(target_snapshot.weight.current, 3.6);
         approx_eq(target_snapshot.weight.max, 45.0);
-        assert_eq!(target_snapshot.realm, "qi_refining_1");
+        assert_eq!(target_snapshot.realm, "Awaken");
         approx_eq(target_snapshot.qi_current, 24.0);
         approx_eq(target_snapshot.qi_max, 100.0);
         approx_eq(target_snapshot.body_level, 0.24);
@@ -676,11 +744,7 @@ mod tests {
     fn rejects_oversize_inventory_snapshot() {
         let mut app = setup_app();
         let state = PlayerState {
-            realm: "qi_refining_1".to_string(),
-            spirit_qi: 24.0,
-            spirit_qi_max: 100.0,
             karma: 0.0,
-            experience: 1,
             inventory_score: 0.0,
         };
 
@@ -698,8 +762,18 @@ mod tests {
             item.description = huge.clone();
         }
 
-        let (_entity, mut helper) =
-            spawn_client_with_state_and_inventory(&mut app, "Azure", state, Some(inventory));
+        let (_entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 24.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+            Some(inventory),
+        );
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -719,6 +793,7 @@ mod tests {
             &mut app,
             "Azure",
             state,
+            Cultivation::default(),
             Some(make_inventory(21, true)),
         );
 
@@ -786,24 +861,34 @@ mod tests {
         // Ensure B has at least one free slot.
         inv_b.containers[0].items.clear();
 
-        let (owner_entity, mut owner_helper) =
-            spawn_client_with_state_and_inventory(&mut app, "Owner", state_a, Some(inv_a));
-        let (picker_entity, mut picker_helper) =
-            spawn_client_with_state_and_inventory(&mut app, "Picker", state_b, Some(inv_b));
+        let (_owner_entity, mut owner_helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Owner",
+            state_a,
+            Cultivation::default(),
+            Some(inv_a),
+        );
+        let (picker_entity, mut picker_helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Picker",
+            state_b,
+            Cultivation::default(),
+            Some(inv_b),
+        );
 
         // Seed a single drop owned by Owner, placed near Picker.
         {
             let mut registry = app.world_mut().resource_mut::<DroppedLootRegistry>();
-            registry.by_owner.insert(
-                owner_entity,
-                vec![DroppedLootEntry {
+            registry.entries.insert(
+                1004,
+                DroppedLootEntry {
                     instance_id: 1004,
                     source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
                     source_row: 0,
                     source_col: 0,
                     world_pos: [8.5, 66.0, 8.5],
                     item: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
-                }],
+                },
             );
         }
 
@@ -845,7 +930,7 @@ mod tests {
 
         // Drop should be removed from registry.
         let registry = app.world().resource::<DroppedLootRegistry>();
-        let remaining = registry.by_owner.values().flatten().count();
+        let remaining = registry.entries.len();
         assert_eq!(remaining, 0, "picked up drop should be removed");
 
         // Both clients should receive a sync showing no drops.
@@ -881,14 +966,89 @@ mod tests {
     }
 
     #[test]
+    fn durability_changed_event_emits_inventory_event_payload() {
+        let mut app = setup_app();
+        let state = PlayerState::default();
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "Azure",
+            state,
+            Cultivation::default(),
+            Some(make_inventory(21, true)),
+        );
+
+        app.world_mut().send_event(InventoryDurabilityChangedEvent {
+            entity,
+            revision: InventoryRevision(34),
+            instance_id: 2004,
+            durability: 0.25,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_inventory_event_payloads(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::InventoryEvent(InventoryEventV1::DurabilityChanged {
+                revision,
+                instance_id,
+                durability,
+            }) => {
+                assert_eq!(*revision, 34);
+                assert_eq!(*instance_id, 2004);
+                approx_eq(*durability, 0.25);
+            }
+            other => panic!("expected durability_changed inventory_event payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_view_marks_skill_scroll_metadata() {
+        let item = make_item(
+            3001,
+            "skill_scroll_herbalism_baicao_can",
+            "《百草图考·残》",
+            0.05,
+            1,
+        );
+
+        let view = item_view_from_instance(&item);
+        assert_eq!(view.scroll_kind.as_deref(), Some("skill_scroll"));
+        assert_eq!(view.scroll_skill_id.as_deref(), Some("herbalism"));
+        assert_eq!(view.scroll_xp_grant, Some(500));
+    }
+
+    #[test]
+    fn item_view_marks_recipe_and_blueprint_scroll_metadata() {
+        let recipe = make_item(3002, "recipe_scroll_qixue_pill", "丹方残卷·气血丹", 0.05, 1);
+        let blueprint = make_item(
+            3003,
+            "blueprint_scroll_bronze_tripod",
+            "器图残卷·青铜鼎",
+            0.08,
+            1,
+        );
+
+        let recipe_view = item_view_from_instance(&recipe);
+        assert_eq!(recipe_view.scroll_kind.as_deref(), Some("recipe_scroll"));
+        assert!(recipe_view.scroll_skill_id.is_none());
+        assert!(recipe_view.scroll_xp_grant.is_none());
+
+        let blueprint_view = item_view_from_instance(&blueprint);
+        assert_eq!(
+            blueprint_view.scroll_kind.as_deref(),
+            Some("blueprint_scroll")
+        );
+        assert!(blueprint_view.scroll_skill_id.is_none());
+        assert!(blueprint_view.scroll_xp_grant.is_none());
+    }
+
+    #[test]
     fn changed_inventory_emits_fresh_snapshot() {
         let mut app = setup_app();
         let state = PlayerState {
-            realm: "qi_refining_2".to_string(),
-            spirit_qi: 32.0,
-            spirit_qi_max: 100.0,
             karma: 0.0,
-            experience: 7,
             inventory_score: 0.0,
         };
 
@@ -896,6 +1056,12 @@ mod tests {
             &mut app,
             "Azure",
             state,
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 32.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
             Some(make_inventory(11, true)),
         );
 
@@ -961,6 +1127,8 @@ mod tests {
                 initial_qi,
                 profile,
             )),
+            mineral_id: None,
+            charges: None,
         }
     }
 
@@ -980,6 +1148,8 @@ mod tests {
             spirit_quality: 0.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "v",
+    "char_id",
+    "skills",
+    "consumed_scrolls"
+  ],
+  "properties": {
+    "type": {
+      "const": "skill_snapshot",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skills": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "lv",
+            "xp",
+            "xp_to_next",
+            "total_xp",
+            "cap",
+            "recent_gain_xp"
+          ],
+          "properties": {
+            "lv": {
+              "minimum": 0,
+              "maximum": 10,
+              "type": "integer"
+            },
+            "xp": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "xp_to_next": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "total_xp": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cap": {
+              "minimum": 0,
+              "maximum": 10,
+              "type": "integer"
+            },
+            "recent_gain_xp": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "consumed_scrolls": {
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      }
+    }
+  }
+}

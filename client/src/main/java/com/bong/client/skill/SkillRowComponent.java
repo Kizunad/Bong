@@ -25,6 +25,9 @@ public final class SkillRowComponent {
     private static final int COLOR_NAME = 0xFFCCCCCC;
     private static final int COLOR_LV = 0xFFE0B060;
     private static final int COLOR_CAPPED = 0xFF705030;
+    private static final int COLOR_BG = 0xFF181818;
+    private static final int COLOR_BG_SELECTED = 0xFF1F2B1F;
+    private static final int COLOR_BORDER_SELECTED = 0xFF5C7A54;
     private static final int COLOR_XP_TRACK = 0xFF202020;
     private static final int COLOR_XP_FILL = 0xFF558866;
     private static final int COLOR_GAIN = 0xFF70C88C;
@@ -43,7 +46,7 @@ public final class SkillRowComponent {
     public SkillRowComponent(SkillId id) {
         this.id = id;
         root = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
-        root.surface(Surface.flat(0xFF181818));
+        root.surface(Surface.flat(COLOR_BG));
         root.padding(Insets.of(2, 2, 4, 4));
         root.gap(6);
         root.verticalAlignment(VerticalAlignment.CENTER);
@@ -111,5 +114,11 @@ public final class SkillRowComponent {
         } else {
             gainLabel.text(Text.literal(""));
         }
+    }
+
+    public void setSelected(boolean selected) {
+        root.surface(selected
+            ? Surface.flat(COLOR_BG_SELECTED).and(Surface.outline(COLOR_BORDER_SELECTED))
+            : Surface.flat(COLOR_BG));
     }
 }

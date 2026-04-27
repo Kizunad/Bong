@@ -4,7 +4,6 @@ import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
-import com.bong.client.combat.DefenseStanceStore;
 import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SpellVolumeStore;
@@ -17,6 +16,7 @@ import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.inventory.component.GridSlotComponent;
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
 import com.bong.client.inventory.state.PhysicalBodyStore;
@@ -178,7 +178,6 @@ public class BongHud {
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),
             DefenseWindowStore.snapshot(),
-            DefenseStanceStore.snapshot(),
             UnlockedStylesStore.snapshot()
         );
     }
@@ -233,7 +232,7 @@ public class BongHud {
      */
     private static void drawItemTexture(DrawContext context, String itemId, int dx, int dy, int size) {
         if (itemId == null || itemId.isEmpty() || size <= 0) return;
-        Identifier tex = new Identifier("bong-client", "textures/gui/items/" + itemId + ".png");
+        Identifier tex = GridSlotComponent.textureIdForItemId(itemId);
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();

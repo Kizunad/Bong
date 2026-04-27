@@ -70,6 +70,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesLearnSkillScroll() {
+        String json = ClientRequestProtocol.encodeLearnSkillScroll(3003L);
+        assertEquals(
+            "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":3003}",
+            json
+        );
+    }
+
+    @Test
     void encodesInventoryMoveFromContainerToHotbar() {
         String json = ClientRequestProtocol.encodeInventoryMove(
             1001L,
@@ -100,6 +109,15 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodePickupDroppedItem(3003L);
         assertEquals(
             "{\"type\":\"pickup_dropped_item\",\"v\":1,\"instance_id\":3003}",
+            json
+        );
+    }
+
+    @Test
+    void encodesMineralProbe() {
+        String json = ClientRequestProtocol.encodeMineralProbe(8, 32, 8);
+        assertEquals(
+            "{\"type\":\"mineral_probe\",\"v\":1,\"x\":8,\"y\":32,\"z\":8}",
             json
         );
     }

@@ -385,6 +385,22 @@
           "tags": ["lore", "history"],
           "unlock": "识古文且灵识清明者可读",
           "qi_affinity": 0.0
+        },
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·宗门遗迹",
+          "pos_xyz": [200.0, 100.0, -7200.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:zongmen_01",
+            "target_family_pos_xyz:250,100,250",
+            "orientation:vertical",
+            "facing:north"
+          ],
+          "unlock": "灵识扫过裂隙，听见远处宗门钟鸣残响",
+          "qi_affinity": -0.30,
+          "danger_bias": 2
         }
       ]
     },
@@ -523,6 +539,22 @@
           "unlock": "供奉武器可得亡灵记忆",
           "qi_affinity": 0.1,
           "danger_bias": 1
+        },
+        {
+          "kind": "rift_portal",
+          "name": "塌缩裂缝·大能陨落",
+          "pos_xyz": [3300.0, 90.0, -4500.0],
+          "tags": [
+            "direction:entry",
+            "kind:main",
+            "family_id:daneng_01",
+            "target_family_pos_xyz:550,100,550",
+            "orientation:vertical",
+            "facing:east"
+          ],
+          "unlock": "陨石坑底紫晶共鸣，引动空间裂痕",
+          "qi_affinity": -0.35,
+          "danger_bias": 3
         }
       ]
     },

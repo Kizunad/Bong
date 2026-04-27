@@ -19,6 +19,7 @@ use valence::prelude::{Client, Commands, Entity, Position, Query, Res, Username}
 use crate::combat::components::{Casting, QuickSlotBindings, StatusEffects, Wounds};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::CombatClock;
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::components::{Contamination, MeridianSystem};
 use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
@@ -202,6 +203,7 @@ pub fn tick_casts_or_interrupt(
                     username.0.as_str(),
                     &inventory,
                     player_state,
+                    &Cultivation::default(),
                     "cast_complete_consume",
                 );
             }
@@ -398,6 +400,8 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(5),
@@ -502,6 +506,8 @@ mod tests {
             spirit_quality: 1.0,
             durability: 1.0,
             freshness: None,
+            mineral_id: None,
+            charges: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);

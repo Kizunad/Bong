@@ -63,6 +63,42 @@
       "surface": ["podzol", "coarse_dirt", "blackstone", "bone_block", "gravel"],
       "water": { "level": "none", "coverage": 0.0 },
       "passability": "medium_high_with_anomaly_hazard"
+    },
+    "tsy_zongmen_ruin": {
+      "height": { "shallow": [60, 72], "mid": [4, 28], "deep": [-36, -8] },
+      "boundary": { "mode": "hard", "width": 4 },
+      "surface": ["cracked_stone_bricks", "deepslate", "andesite", "gravel"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "tsy_y_stratified",
+      "depth_tiers": ["shallow", "mid", "deep"],
+      "origin": "zongmen_yiji"
+    },
+    "tsy_daneng_crater": {
+      "height": { "shallow": [60, 78], "mid": [4, 28], "deep": [-36, -4] },
+      "boundary": { "mode": "hard", "width": 4 },
+      "surface": ["blackstone", "basalt", "calcite", "amethyst_block"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "tsy_y_stratified",
+      "depth_tiers": ["shallow", "mid", "deep"],
+      "origin": "daneng_luoluo"
+    },
+    "tsy_zhanchang": {
+      "height": { "shallow": [60, 70], "mid": [4, 24], "deep": [-30, -8] },
+      "boundary": { "mode": "hard", "width": 4 },
+      "surface": ["bone_block", "coarse_dirt", "blackstone", "red_sand"],
+      "water": { "level": "none", "coverage": 0.0 },
+      "passability": "tsy_y_stratified",
+      "depth_tiers": ["shallow", "mid", "deep"],
+      "origin": "zhanchang_chendian"
+    },
+    "tsy_gaoshou_hermitage": {
+      "height": { "shallow": [62, 70], "mid": [16, 32], "deep": [-22, -8] },
+      "boundary": { "mode": "hard", "width": 4 },
+      "surface": ["grass_block", "podzol", "moss_block", "deepslate"],
+      "water": { "level": "low", "coverage": 0.05 },
+      "passability": "tsy_y_stratified",
+      "depth_tiers": ["shallow", "mid", "deep"],
+      "origin": "gaoshou_sichu"
     }
   }
 }

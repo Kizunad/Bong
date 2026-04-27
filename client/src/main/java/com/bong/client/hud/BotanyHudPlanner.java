@@ -2,10 +2,10 @@ package com.bong.client.hud;
 
 import com.bong.client.botany.BotanyDragState;
 import com.bong.client.botany.BotanyHarvestMode;
-import com.bong.client.botany.BotanySkillStore;
 import com.bong.client.botany.BotanySkillViewModel;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
+import com.bong.client.skill.SkillSetStore;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -92,7 +92,7 @@ public final class BotanyHudPlanner {
         int screenWidth,
         int screenHeight
     ) {
-        return buildCommands(HarvestSessionStore.snapshot(), BotanySkillStore.snapshot(), widthMeasurer, screenWidth, screenHeight, null);
+        return buildCommands(HarvestSessionStore.snapshot(), herbalismView(), widthMeasurer, screenWidth, screenHeight, null);
     }
 
     public static List<HudRenderCommand> buildCommands(
@@ -101,7 +101,12 @@ public final class BotanyHudPlanner {
         int screenHeight,
         BotanyProjection.Anchor anchor
     ) {
-        return buildCommands(HarvestSessionStore.snapshot(), BotanySkillStore.snapshot(), widthMeasurer, screenWidth, screenHeight, anchor);
+        return buildCommands(HarvestSessionStore.snapshot(), herbalismView(), widthMeasurer, screenWidth, screenHeight, anchor);
+    }
+
+    public static BotanySkillViewModel herbalismView() {
+        var entry = SkillSetStore.snapshot().get(com.bong.client.skill.SkillId.HERBALISM);
+        return BotanySkillViewModel.create(entry.effectiveLv(), entry.xp(), entry.xpToNext(), 3);
     }
 
     static List<HudRenderCommand> buildCommands(

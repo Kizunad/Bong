@@ -7,6 +7,7 @@ export * from "./channels.js";
 // Message schemas
 export * from "./agent-command.js";
 export * from "./agent-world-model.js";
+export * from "./armor-event.js";
 export * from "./botany.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
@@ -39,3 +40,9 @@ export * from "./alchemy.js";
 
 // 子技能 (plan-skill-v1 §8)
 export * from "./skill.js";
+
+// 活坍缩渊 (plan-tsy-zone-v1 §1.4)
+export * from "./tsy.js";
+
+// 活坍缩渊容器搜刮 (plan-tsy-container-v1 §5.1)
+export * from "./container-interaction.js";

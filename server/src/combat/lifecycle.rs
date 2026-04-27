@@ -30,6 +30,7 @@ use crate::network::agent_bridge::{
 };
 use crate::network::send_server_data_payload;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
     persist_near_death_transition, persist_revival_transition, persist_termination_transition,
     persist_termination_transition_with_death_context, LifespanEventRecord, PersistenceSettings,
@@ -46,14 +47,15 @@ use crate::schema::server_data::{DeathScreenStageV1, DeathScreenZoneKindV1, Life
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
+use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{
-    CombatState, DefenseStance, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings,
-    RevivalDecision, Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds,
-    ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
-    NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION,
-    STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
+    CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings, RevivalDecision,
+    Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds, ATTACK_STAMINA_COST,
+    BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION,
+    REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS,
+    TICKS_PER_SECOND,
 };
 use super::events::{
     CombatEvent, DeathEvent, DeathInsightRequested, RevivalActionIntent, RevivalActionKind,
@@ -96,6 +98,7 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a mut PlayerState>,
     Option<&'a mut Position>,
     Option<&'a Username>,
+    Option<&'a NpcMarker>,
     Option<&'a mut PlayerInventory>,
     Option<&'a mut SkillSet>,
 );
@@ -171,6 +174,8 @@ pub fn wound_bleed_tick(
             deaths.send(DeathEvent {
                 target: entity,
                 cause: "bleed_out".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: clock.tick,
             });
         }
@@ -255,7 +260,7 @@ pub fn death_arbiter_tick(
     mut commands: valence::prelude::Commands,
     mut death_events: EventReader<DeathEvent>,
     mut cultivation_deaths: EventReader<CultivationDeathTrigger>,
-    mut death_insights: EventWriter<DeathInsightRequested>,
+    mut death_insights: Option<ResMut<Events<DeathInsightRequested>>>,
     mut terminated: EventWriter<PlayerTerminated>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
@@ -319,7 +324,6 @@ pub fn death_arbiter_tick(
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
             cultivation,
-            player_state,
             death_registry: death_registry.as_deref(),
             lifespan: lifespan.as_deref(),
             position,
@@ -356,9 +360,11 @@ pub fn death_arbiter_tick(
                     lifespan_event_char_id,
                     lifespan_event.as_ref(),
                 );
-                death_insights.send(DeathInsightRequested {
-                    payload: insight_payload,
-                });
+                if let Some(death_insights) = death_insights.as_deref_mut() {
+                    death_insights.send(DeathInsightRequested {
+                        payload: insight_payload,
+                    });
+                }
             }
             continue;
         }
@@ -396,9 +402,11 @@ pub fn death_arbiter_tick(
             lifespan_event.as_ref(),
         );
         enter_near_death(&mut lifecycle, wounds, now_tick);
-        death_insights.send(DeathInsightRequested {
-            payload: insight_payload,
-        });
+        if let Some(death_insights) = death_insights.as_deref_mut() {
+            death_insights.send(DeathInsightRequested {
+                payload: insight_payload,
+            });
+        }
     }
 
     for event in cultivation_deaths.read() {
@@ -470,7 +478,6 @@ pub fn death_arbiter_tick(
             lifecycle: &lifecycle,
             life_record: life_record.as_deref(),
             cultivation,
-            player_state,
             death_registry: death_registry.as_deref(),
             lifespan: lifespan.as_deref(),
             position,
@@ -510,9 +517,11 @@ pub fn death_arbiter_tick(
                     lifespan_event_char_id,
                     lifespan_event.as_ref(),
                 );
-                death_insights.send(DeathInsightRequested {
-                    payload: insight_payload,
-                });
+                if let Some(death_insights) = death_insights.as_deref_mut() {
+                    death_insights.send(DeathInsightRequested {
+                        payload: insight_payload,
+                    });
+                }
             }
             continue;
         }
@@ -549,9 +558,11 @@ pub fn death_arbiter_tick(
             lifespan_event.as_ref(),
         );
         enter_near_death(&mut lifecycle, wounds, clock.tick);
-        death_insights.send(DeathInsightRequested {
-            payload: insight_payload,
-        });
+        if let Some(death_insights) = death_insights.as_deref_mut() {
+            death_insights.send(DeathInsightRequested {
+                payload: insight_payload,
+            });
+        }
     }
 }
 
@@ -577,6 +588,7 @@ pub fn near_death_tick(
         player_state,
         position,
         _username,
+        npc_marker,
         _inventory,
         _skill_set,
     ) in &mut lifecycle_q
@@ -605,6 +617,23 @@ pub fn near_death_tick(
             continue;
         };
         if clock.tick < deadline_tick {
+            continue;
+        }
+
+        if npc_marker.is_some() {
+            if terminate_lifecycle(
+                entity,
+                &mut lifecycle,
+                life_record,
+                &persistence,
+                clock.tick,
+                &mut terminated,
+                position.as_deref(),
+                &mut vfx_events,
+                "npc_death",
+            ) {
+                hide_death_screen(&mut clients, entity);
+            }
             continue;
         }
 
@@ -693,6 +722,7 @@ pub fn handle_revival_action_intents(
             player_state,
             position,
             username,
+            _npc_marker,
             inventory,
             skill_set,
         )) = lifecycle_q.get_mut(intent.entity)
@@ -879,7 +909,6 @@ struct DeathInsightBuildInput<'a> {
     lifecycle: &'a Lifecycle,
     life_record: Option<&'a LifeRecord>,
     cultivation: Option<&'a Cultivation>,
-    player_state: Option<&'a PlayerState>,
     death_registry: Option<&'a DeathRegistry>,
     lifespan: Option<&'a LifespanComponent>,
     position: Option<&'a Position>,
@@ -929,7 +958,9 @@ fn build_death_insight_request(input: DeathInsightBuildInput<'_>) -> DeathInsigh
         realm: input
             .cultivation
             .map(|cultivation| realm_to_string(cultivation.realm).to_string()),
-        player_realm: input.player_state.map(|state| state.realm.clone()),
+        player_realm: input
+            .cultivation
+            .map(|cultivation| realm_to_string(cultivation.realm).to_string()),
         zone_kind: map_death_insight_zone_kind(input.zone_kind),
         death_count,
         rebirth_chance: input.rebirth_chance,
@@ -996,23 +1027,14 @@ fn map_death_insight_zone_kind(zone_kind: ZoneDeathKind) -> DeathInsightZoneKind
 fn apply_death_lifespan_penalty(
     cultivation: Option<&Cultivation>,
     lifespan: Option<&mut LifespanComponent>,
-    player_state: Option<&PlayerState>,
+    _player_state: Option<&PlayerState>,
 ) -> bool {
     let Some(lifespan) = lifespan else {
         return false;
     };
-    let cap = match (player_state, cultivation) {
-        (Some(player_state), Some(cultivation)) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            cultivation.realm,
-        ),
-        (Some(player_state), None) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            Realm::Awaken,
-        ),
-        (None, Some(cultivation)) => LifespanCapTable::for_realm(cultivation.realm),
-        (None, None) => LifespanCapTable::MORTAL,
-    };
+    let cap = cultivation.map_or(LifespanCapTable::MORTAL, |cultivation| {
+        LifespanCapTable::for_realm(cultivation.realm)
+    });
     lifespan.apply_cap(cap);
     lifespan.years_lived += LifespanCapTable::death_penalty_years_for_cap(cap) as f64;
     lifespan.remaining_years() <= f64::EPSILON
@@ -1021,23 +1043,14 @@ fn apply_death_lifespan_penalty(
 fn apply_natural_aging_lifespan_exhaustion(
     cultivation: Option<&Cultivation>,
     lifespan: Option<&mut LifespanComponent>,
-    player_state: Option<&PlayerState>,
+    _player_state: Option<&PlayerState>,
 ) {
     let Some(lifespan) = lifespan else {
         return;
     };
-    let cap = match (player_state, cultivation) {
-        (Some(player_state), Some(cultivation)) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            cultivation.realm,
-        ),
-        (Some(player_state), None) => LifespanCapTable::for_player_state_realm(
-            Some(player_state.realm.as_str()),
-            Realm::Awaken,
-        ),
-        (None, Some(cultivation)) => LifespanCapTable::for_realm(cultivation.realm),
-        (None, None) => LifespanCapTable::MORTAL,
-    };
+    let cap = cultivation.map_or(LifespanCapTable::MORTAL, |cultivation| {
+        LifespanCapTable::for_realm(cultivation.realm)
+    });
     lifespan.apply_cap(cap);
     lifespan.years_lived = lifespan.years_lived.max(cap as f64);
 }
@@ -1200,9 +1213,7 @@ fn revive_lifecycle(
         combat_state.in_combat_until_tick = None;
         combat_state.last_attack_at_tick = None;
     }
-    if let Some(mut player_state) = player_state {
-        player_state.spirit_qi = 0.0;
-    }
+    let _ = player_state;
     if let Some(mut position) = position {
         // worldview §十二：重生位置优先灵龛（如有）> 世界出生点。
         position.set(
@@ -1448,7 +1459,6 @@ fn reset_for_new_character(
         DerivedAttrs::default(),
         QuickSlotBindings::default(),
         UnlockedStyles::default(),
-        DefenseStance::default(),
         learned_recipes,
     ));
     commands
@@ -1464,8 +1474,10 @@ fn reset_for_new_character(
             username.0.as_str(),
             &default_player_state,
             spawn_position,
+            DimensionKind::default(),
             persisted_inventory.as_ref(),
             Some(&fresh_lifespan),
+            &SkillSet::default(),
         ) {
             tracing::warn!(
                 "[bong][combat] failed to persist fresh character slices for `{}`: {error}",
@@ -1480,7 +1492,7 @@ fn detect_zone_kind(
     zones: Option<&ZoneRegistry>,
 ) -> Option<ZoneDeathKind> {
     let position = position?;
-    let zone = zones?.find_zone(position.get())?;
+    let zone = zones?.find_zone(DimensionKind::Overworld, position.get())?;
     if zone.spirit_qi < -0.2 {
         Some(ZoneDeathKind::Negative)
     } else {
@@ -2039,6 +2051,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 100,
         });
         app.update();
@@ -2159,6 +2173,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "first".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 10,
         });
         app.update();
@@ -2174,6 +2190,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "second".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 200,
         });
         app.update();
@@ -2236,6 +2254,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "bleed_out".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 200,
         });
         app.update();
@@ -2395,6 +2415,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "negative_zone_drain".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 120,
         });
         app.update();
@@ -2459,6 +2481,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "bleed_out".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 240,
         });
         app.update();
@@ -2528,6 +2552,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2570,6 +2595,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "bleed_out".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 90,
         });
         app.update();
@@ -2842,6 +2869,8 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 100,
         });
         app.update();
@@ -2894,16 +2923,14 @@ mod tests {
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
             &PlayerState {
-                realm: "qi_refining_3".to_string(),
-                spirit_qi: 77.0,
-                spirit_qi_max: 120.0,
                 karma: 0.4,
-                experience: 2_500,
                 inventory_score: 0.8,
             },
             [99.0, 64.0, 99.0],
+            DimensionKind::default(),
             None,
             None,
+            &SkillSet::default(),
         );
 
         let entity = app
@@ -2959,11 +2986,7 @@ mod tests {
                     offline_pause_tick: Some(700),
                 },
                 PlayerState {
-                    realm: "qi_refining_3".to_string(),
-                    spirit_qi: 50.0,
-                    spirit_qi_max: 120.0,
                     karma: 0.4,
-                    experience: 9_999,
                     inventory_score: 0.8,
                 },
                 Position::new([99.0, 64.0, 99.0]),
@@ -3065,11 +3088,7 @@ mod tests {
         );
 
         let player_state = PlayerState {
-            realm: "mortal".to_string(),
-            spirit_qi: 0.0,
-            spirit_qi_max: 100.0,
             karma: 0.9,
-            experience: 0,
             inventory_score: 0.0,
         };
 
@@ -3130,11 +3149,15 @@ mod tests {
         app.world_mut().send_event(DeathEvent {
             target: without_shrine,
             cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 100,
         });
         app.world_mut().send_event(DeathEvent {
             target: with_shrine,
             cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
             at_tick: 100,
         });
         app.update();

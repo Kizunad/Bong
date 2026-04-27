@@ -189,6 +189,8 @@ mod tests {
             spirit_quality: 0.7,
             durability: 1.0,
             freshness,
+            mineral_id: None,
+            charges: None,
         }
     }
 

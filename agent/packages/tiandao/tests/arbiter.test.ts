@@ -126,7 +126,7 @@ describe("Arbiter", () => {
     state.players.push({
       uuid: "offline:newbie",
       name: "newbie",
-      realm: "qi_refining_1",
+      realm: "Awaken",
       composite_power: 0.1,
       breakdown: {
         combat: 0.1,

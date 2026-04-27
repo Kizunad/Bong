@@ -69,6 +69,15 @@ pub struct ColumnSample {
     /// 0..5: 0 none, 1 spacetime_rift, 2 qi_turbulence,
     /// 3 blood_moon_anchor, 4 cursed_echo, 5 wild_formation.
     pub anomaly_kind: u8,
+    // --- TSY-specific layers (plan-tsy-worldgen-v1 §4.1) ---
+    /// 1 if column is inside a TSY family AABB, else 0. Only present on TSY-dim
+    /// rasters; overworld manifest never writes this layer (default = 0).
+    pub tsy_presence: u8,
+    /// 1=daneng_luoluo / 2=zongmen_yiji / 3=zhanchang_chendian /
+    /// 4=gaoshou_sichu / 0=none.
+    pub tsy_origin_id: u8,
+    /// 1=shallow / 2=mid / 3=deep / 0=none.
+    pub tsy_depth_tier: u8,
 }
 
 impl ColumnSample {
@@ -118,6 +127,40 @@ pub struct TerrainProvider {
 
 impl Resource for TerrainProvider {}
 
+/// Per-dimension `TerrainProvider` map (plan-tsy-dimension-v1 §2.2).
+///
+/// Inserted alongside the legacy `TerrainProvider` resource so existing
+/// overworld-only consumers keep compiling. New / TSY-aware consumers should
+/// take `Option<Res<TerrainProviders>>` and route via `DimensionKind`.
+///
+/// `tsy` is `Option` while `plan-tsy-worldgen-v1` is still pre-active and the
+/// TSY raster manifest is not yet produced; once worldgen lands the field
+/// becomes mandatory (§6 contract).
+pub struct TerrainProviders {
+    pub overworld: TerrainProvider,
+    #[allow(dead_code)]
+    pub tsy: Option<TerrainProvider>,
+}
+
+impl Resource for TerrainProviders {}
+
+impl TerrainProviders {
+    /// Look up the provider for the given dimension. Returns `None` for TSY
+    /// when no TSY manifest is loaded (transitional state until worldgen plan
+    /// ships).
+    #[allow(dead_code)]
+    pub fn for_dimension(
+        &self,
+        kind: crate::world::dimension::DimensionKind,
+    ) -> Option<&TerrainProvider> {
+        use crate::world::dimension::DimensionKind;
+        match kind {
+            DimensionKind::Overworld => Some(&self.overworld),
+            DimensionKind::Tsy => self.tsy.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct TileFields {
     height: Mmap,
@@ -149,6 +192,10 @@ struct TileFields {
     flora_variant_id: Option<Mmap>,
     anomaly_intensity: Option<Mmap>,
     anomaly_kind: Option<Mmap>,
+    // plan-tsy-worldgen-v1 §4.1 — TSY-only layers, all uint8 (tile_area sized).
+    tsy_presence: Option<Mmap>,
+    tsy_origin_id: Option<Mmap>,
+    tsy_depth_tier: Option<Mmap>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +295,29 @@ pub struct Decoration {
 }
 
 impl TerrainProvider {
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        Self {
+            tiles: HashMap::new(),
+            tile_size: 16,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: 15,
+                min_z: 0,
+                max_z: 15,
+            },
+            surface_palette: vec![BlockState::STONE],
+            biome_palette: vec![BiomeId::DEFAULT],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+        }
+    }
+
     pub fn load(
         manifest_path: &Path,
         raster_dir: &Path,
@@ -475,6 +545,9 @@ impl TerrainProvider {
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
             anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
             anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
+            tsy_presence: read_optional_u8(&tile.tsy_presence, index, 0),
+            tsy_origin_id: read_optional_u8(&tile.tsy_origin_id, index, 0),
+            tsy_depth_tier: read_optional_u8(&tile.tsy_depth_tier, index, 0),
         }
     }
 }
@@ -515,6 +588,9 @@ impl TileFields {
             flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
             anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
             anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
+            tsy_presence: map_optional_layer(tile_dir, layers, "tsy_presence", tile_area)?,
+            tsy_origin_id: map_optional_layer(tile_dir, layers, "tsy_origin_id", tile_area)?,
+            tsy_depth_tier: map_optional_layer(tile_dir, layers, "tsy_depth_tier", tile_area)?,
         })
     }
 }

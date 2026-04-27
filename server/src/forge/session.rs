@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{Entity, Resource};
 
 use super::blueprint::{BlueprintId, StepKind};
+use super::steps::{ConsecrationResult, InscriptionResult, TemperingResult};
 use crate::cultivation::components::ColorKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -88,12 +89,20 @@ pub struct ForgeSession {
     pub step_state: StepState,
     /// 本次会话总偏差（跨步累积，决定最终 bucket）。
     pub total_deviation: u32,
-    /// 任一 step 是否已走 flawed 路径。
+    /// Billet 自身是否带 flaw（异物 / tolerance 内缺料）。
+    pub billet_flawed: bool,
+    /// Billet 决定的载体品阶上限；后续 step 计算 achieved_tier 不能再从 step_state 回溯。
+    pub billet_carrier_cap: u8,
+    /// 任一 step 是否已走 flawed 路径（仅作快速标记；最终 bucket 以各 step 实际结果为准）。
     pub flawed_marker: bool,
     /// 已锁定不可返还的材料（投入即消耗）。
     pub committed_materials: HashMap<String, u32>,
     /// 最终达成的 tier（坯料后刷新，后续可跳步下调）。
     pub achieved_tier: u8,
+    /// 各步实际结算结果，供最终 bucket / tier 计算复用。
+    pub tempering_result: Option<TemperingResult>,
+    pub inscription_result: Option<InscriptionResult>,
+    pub consecration_result: Option<ConsecrationResult>,
 }
 
 impl ForgeSession {
@@ -112,9 +121,14 @@ impl ForgeSession {
             current_step: ForgeStep::Billet,
             step_state: StepState::None,
             total_deviation: 0,
+            billet_flawed: false,
+            billet_carrier_cap: 1,
             flawed_marker: false,
             committed_materials: HashMap::new(),
             achieved_tier: 0,
+            tempering_result: None,
+            inscription_result: None,
+            consecration_result: None,
         }
     }
 

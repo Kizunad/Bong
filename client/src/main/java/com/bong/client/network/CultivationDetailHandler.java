@@ -4,11 +4,18 @@ import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillMilestoneSnapshot;
+import com.bong.client.skill.SkillMilestoneStore;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
 
 /**
  * 解析服务端 {@code cultivation_detail} CustomPayload，翻译为 {@link MeridianBody}
@@ -73,6 +80,11 @@ public final class CultivationDetailHandler implements ServerDataHandler {
 
         MeridianBody body = buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm, contaminationTotal, lifespan);
         MeridianStateStore.replace(body);
+        syncSkillCapsFromRealm(realm);
+        SkillMilestoneStore.replace(
+            parseSkillMilestones(payload.getAsJsonArray("skill_milestones")),
+            readString(payload, "recent_skill_milestones_summary")
+        );
         return ServerDataDispatch.handled(
             envelope.type(),
             "Applied cultivation_detail snapshot (20 channels) to MeridianStateStore"
@@ -185,5 +197,59 @@ public final class CultivationDetailHandler implements ServerDataHandler {
 
     private static double clamp01(double v) {
         return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    static void syncSkillCapsFromRealm(String realm) {
+        Integer cap = skillCapForRealm(realm);
+        if (cap == null) return;
+
+        SkillSetSnapshot snapshot = SkillSetStore.snapshot();
+        for (SkillId skill : SkillId.values()) {
+            SkillSetSnapshot.Entry cur = snapshot.get(skill);
+            SkillSetStore.updateEntry(
+                skill,
+                new SkillSetSnapshot.Entry(
+                    cur.lv(),
+                    cur.xp(),
+                    cur.xpToNext(),
+                    cur.totalXp(),
+                    cap,
+                    cur.recentGainXp(),
+                    cur.recentGainMillis()
+                )
+            );
+        }
+    }
+
+    static Integer skillCapForRealm(String realm) {
+        if (realm == null || realm.isEmpty()) return null;
+        return switch (realm) {
+            case "Awaken" -> 3;
+            case "Induce" -> 5;
+            case "Condense" -> 7;
+            case "Solidify" -> 8;
+            case "Spirit" -> 9;
+            case "Void" -> 10;
+            default -> null;
+        };
+    }
+
+    static List<SkillMilestoneSnapshot> parseSkillMilestones(JsonArray milestones) {
+        if (milestones == null) return List.of();
+        ArrayList<SkillMilestoneSnapshot> out = new ArrayList<>();
+        for (JsonElement element : milestones) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject obj = element.getAsJsonObject();
+            SkillId skill = SkillId.fromWire(readString(obj, "skill"));
+            if (skill == null) continue;
+            out.add(new SkillMilestoneSnapshot(
+                skill,
+                (int) readDouble(obj, "new_lv"),
+                (long) readDouble(obj, "achieved_at"),
+                readString(obj, "narration"),
+                (long) readDouble(obj, "total_xp_at")
+            ));
+        }
+        return List.copyOf(out);
     }
 }

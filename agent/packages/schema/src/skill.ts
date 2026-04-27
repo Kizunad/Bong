@@ -10,6 +10,7 @@
  * 每份 payload 首字段均为 `v: 1`（版本锚），允许未来演进时 Rust 侧通过 serde::Deserialize 识别版本。
  */
 import { Type, type Static } from "@sinclair/typebox";
+import { validate, type ValidationResult } from "./validate.js";
 
 /** plan §1 首批 skill — MVP 三种；v2+ 战斗武学 / 阵法 / 师承见 plan §11。 */
 export const SkillIdV1 = Type.Union([
@@ -87,6 +88,10 @@ export const SkillLvUpPayloadV1 = Type.Object(
 );
 export type SkillLvUpPayloadV1 = Static<typeof SkillLvUpPayloadV1>;
 
+export function validateSkillLvUpPayloadV1Contract(data: unknown): ValidationResult {
+  return validate(SkillLvUpPayloadV1, data);
+}
+
 /** plan §4 境界软挂钩 cap 变动 → `bong:skill/cap_changed`。 */
 export const SkillCapChangedPayloadV1 = Type.Object(
   {
@@ -98,6 +103,10 @@ export const SkillCapChangedPayloadV1 = Type.Object(
   { additionalProperties: false },
 );
 export type SkillCapChangedPayloadV1 = Static<typeof SkillCapChangedPayloadV1>;
+
+export function validateSkillCapChangedPayloadV1Contract(data: unknown): ValidationResult {
+  return validate(SkillCapChangedPayloadV1, data);
+}
 
 /**
  * plan §3.2 残卷使用结算 → `bong:skill/scroll_used`。
@@ -111,7 +120,36 @@ export const SkillScrollUsedPayloadV1 = Type.Object(
     skill: SkillIdV1,
     xp_granted: Type.Integer({ minimum: 0 }),
     was_duplicate: Type.Boolean(),
+    hydration: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
 export type SkillScrollUsedPayloadV1 = Static<typeof SkillScrollUsedPayloadV1>;
+
+export function validateSkillScrollUsedPayloadV1Contract(data: unknown): ValidationResult {
+  return validate(SkillScrollUsedPayloadV1, data);
+}
+
+export const SkillEntrySnapshotV1 = Type.Object(
+  {
+    lv: Type.Integer({ minimum: 0, maximum: 10 }),
+    xp: Type.Integer({ minimum: 0 }),
+    xp_to_next: Type.Integer({ minimum: 1 }),
+    total_xp: Type.Integer({ minimum: 0 }),
+    cap: Type.Integer({ minimum: 0, maximum: 10 }),
+    recent_gain_xp: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type SkillEntrySnapshotV1 = Static<typeof SkillEntrySnapshotV1>;
+
+export const SkillSnapshotPayloadV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    char_id: Type.Integer({ minimum: 0 }),
+    skills: Type.Record(Type.String({ minLength: 1 }), SkillEntrySnapshotV1),
+    consumed_scrolls: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type SkillSnapshotPayloadV1 = Static<typeof SkillSnapshotPayloadV1>;

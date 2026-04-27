@@ -24,7 +24,7 @@ function createPlayer(name: string, overrides: PlayerOverrides = {}): PlayerProf
   return {
     uuid: overrides.uuid ?? `offline:${name}`,
     name,
-    realm: overrides.realm ?? "qi_refining_1",
+    realm: overrides.realm ?? "Awaken",
     composite_power: overrides.composite_power ?? 0.2,
     breakdown: {
       combat: 0.2,

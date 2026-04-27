@@ -1,0 +1,16 @@
+{
+  "template_id": "spirit_weave_robe",
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.35,
+      "blunt": 0.35,
+      "pierce": 0.35,
+      "burn": 0.40,
+      "concussion": 0.35
+    },
+    "durability_max": 15,
+    "broken_multiplier": 0.3
+  }
+}

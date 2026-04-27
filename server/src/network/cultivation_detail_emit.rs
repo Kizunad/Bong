@@ -9,13 +9,15 @@
 use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, Resource, With};
 
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
-    lifespan_tick_rate_multiplier, DeathRegistry, LifespanCapTable, LifespanComponent,
+    lifespan_tick_rate_multiplier, LifespanCapTable, LifespanComponent,
 };
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
+use crate::schema::cultivation::SkillMilestoneSnapshotV1;
 use crate::schema::server_data::{LifespanPreviewV1, ServerDataPayloadV1, ServerDataV1};
 use crate::world::zone::ZoneRegistry;
 
@@ -33,8 +35,8 @@ type CultivationDetailEmitQueryItem<'a> = (
     &'a Cultivation,
     Option<&'a Contamination>,
     Option<&'a LifespanComponent>,
-    Option<&'a DeathRegistry>,
     Option<&'a Position>,
+    Option<&'a LifeRecord>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -57,8 +59,8 @@ pub fn emit_cultivation_detail_payloads(
         cultivation,
         contamination,
         lifespan,
-        _death_registry,
         position,
+        life_record,
     ) in &mut clients
     {
         let mut opened = Vec::with_capacity(20);
@@ -93,6 +95,19 @@ pub fn emit_cultivation_detail_payloads(
             tick_rate_multiplier: lifespan_tick_rate_multiplier(position, zones),
             is_wind_candle: lifespan.is_wind_candle(),
         });
+        let recent_skill_milestones_summary = life_record
+            .map(|life| life.recent_skill_milestones_summary_text(3))
+            .unwrap_or_default();
+        let skill_milestones = life_record
+            .map(|life| {
+                let len = life.skill_milestones.len();
+                let start = len.saturating_sub(6);
+                life.skill_milestones[start..]
+                    .iter()
+                    .map(SkillMilestoneSnapshotV1::from_runtime)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
             realm: format!("{:?}", cultivation.realm),
@@ -104,6 +119,8 @@ pub fn emit_cultivation_detail_payloads(
             cracks_count,
             contamination_total,
             lifespan,
+            recent_skill_milestones_summary,
+            skill_milestones,
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {

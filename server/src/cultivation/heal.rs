@@ -32,7 +32,10 @@ pub fn meridian_heal_tick(
         return;
     };
     for (pos, mut meridians) in players.iter_mut() {
-        let zone_qi = zones.find_zone(pos.0).map(|z| z.spirit_qi).unwrap_or(0.0);
+        let zone_qi = zones
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .map(|z| z.spirit_qi)
+            .unwrap_or(0.0);
         if zone_qi <= 0.0 {
             continue;
         }

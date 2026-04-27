@@ -3,11 +3,14 @@ use std::collections::HashSet;
 use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, ResMut, With};
 
 use crate::combat::events::CombatEvent;
+use crate::cultivation::breakthrough::skill_cap_for_realm;
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::player::state::canonical_player_id;
-use crate::skill::components::SkillId;
+use crate::skill::components::{SkillId, SkillSet};
+use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
 use super::components::{
@@ -69,6 +72,7 @@ pub fn complete_harvest_for_player(
     player_id: &str,
     plant_query: &mut Query<&mut Plant, With<Plant>>,
     inventory_query: &mut Query<&mut PlayerInventory, With<valence::prelude::Client>>,
+    harvesters: &Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
     kind_registry: &BotanyKindRegistry,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
@@ -115,9 +119,22 @@ pub fn complete_harvest_for_player(
     let receipt =
         add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?;
 
-    // plan §7 植物变异：修饰 spirit_quality + 前缀 display_name。
-    if variant != PlantVariant::None {
-        apply_variant_to_instance(&mut inventory, receipt.instance_id, variant);
+    let herbalism_quality_bonus = harvesters
+        .get(session.client_entity)
+        .ok()
+        .map(|(cultivation, skill_set)| {
+            super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(cultivation, skill_set))
+        })
+        .unwrap_or(0.0);
+
+    // plan-skill-v1 §6.1 品质偏移先投影到连续 spirit_quality，再叠加 botany 变种修饰。
+    if variant != PlantVariant::None || herbalism_quality_bonus > 0.0 {
+        apply_harvest_modifiers_to_instance(
+            &mut inventory,
+            receipt.instance_id,
+            variant,
+            herbalism_quality_bonus,
+        );
     }
 
     let base_xp = match session.mode {
@@ -168,18 +185,21 @@ pub fn complete_harvest_for_player(
     Ok(())
 }
 
-/// 对刚 push 进 main pack 的 ItemInstance 应用 variant 的品质加减与显示名前缀。
-fn apply_variant_to_instance(
+/// 对刚 push 进 main pack 的 ItemInstance 应用 herb skill / variant 品质修饰与显示名前缀。
+fn apply_harvest_modifiers_to_instance(
     inventory: &mut PlayerInventory,
     instance_id: u64,
     variant: PlantVariant,
+    herbalism_quality_bonus: f64,
 ) {
     for container in inventory.containers.iter_mut() {
         for placed in container.items.iter_mut() {
             if placed.instance.instance_id != instance_id {
                 continue;
             }
-            let q = placed.instance.spirit_quality + variant.quality_modifier();
+            let q = placed.instance.spirit_quality
+                + herbalism_quality_bonus
+                + variant.quality_modifier();
             placed.instance.spirit_quality = q.clamp(0.0, 1.0);
             if let Some(prefix) = variant.display_prefix() {
                 placed.instance.display_name =
@@ -188,6 +208,21 @@ fn apply_variant_to_instance(
             return;
         }
     }
+}
+
+fn herbalism_effective_lv(cultivation: Option<&Cultivation>, skill_set: Option<&SkillSet>) -> u8 {
+    let real_lv = skill_set
+        .and_then(|skill_set| {
+            skill_set
+                .skills
+                .get(&SkillId::Herbalism)
+                .map(|entry| entry.lv)
+        })
+        .unwrap_or(0);
+    let cap = cultivation
+        .map(|cultivation| skill_cap_for_realm(cultivation.realm))
+        .unwrap_or(crate::skill::curve::SKILL_MAX_LEVEL);
+    effective_lv(real_lv, cap)
 }
 
 fn format_target_id(target_entity: Option<Entity>) -> String {
@@ -346,6 +381,7 @@ pub fn tick_harvest_sessions(
     mut store: ResMut<HarvestSessionStore>,
     mut plants: Query<&mut Plant, With<Plant>>,
     mut inventories: Query<&mut PlayerInventory, With<valence::prelude::Client>>,
+    harvesters: Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
     kind_registry: Res<BotanyKindRegistry>,
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
@@ -372,6 +408,7 @@ pub fn tick_harvest_sessions(
             player_id.as_str(),
             &mut plants,
             &mut inventories,
+            &harvesters,
             kind_registry.as_ref(),
             item_registry.as_ref(),
             &mut allocator,
@@ -454,8 +491,15 @@ mod tests {
     use super::*;
     use crate::botany::components::PlantLifecycleClock;
     use crate::combat::components::{BodyPart, WoundKind};
+    use crate::cultivation::components::{Cultivation, Realm};
+    use crate::inventory::{
+        load_item_registry, ContainerState, InventoryInstanceIdAllocator, InventoryRevision,
+        PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    };
     use crate::player::gameplay::GameplayTick;
+    use crate::skill::components::{SkillEntry, SkillSet};
     use crate::world::zone::ZoneRegistry;
+    use std::collections::HashMap;
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
 
@@ -484,6 +528,23 @@ mod tests {
                 variant: crate::botany::registry::PlantVariant::None,
             })
             .id()
+    }
+
+    fn empty_inventory_8x8() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.into(),
+                name: "main".into(),
+                rows: 8,
+                cols: 8,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 999.0,
+        }
     }
 
     fn make_app_with_combat_events() -> App {
@@ -520,6 +581,84 @@ mod tests {
 
         let session = store.session_for("offline:Azure").unwrap();
         assert!(session.progress_at(51) >= 1.0);
+    }
+
+    #[test]
+    fn completed_harvest_applies_herbalism_quality_bonus_using_effective_level() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_set = SkillSet::default();
+        skill_set.skills.insert(
+            SkillId::Herbalism,
+            SkillEntry {
+                lv: 7,
+                ..Default::default()
+            },
+        );
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            })
+            .insert(skill_set)
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            store.upsert_session(HarvestSession {
+                player_id: "offline:Azure".to_string(),
+                client_entity,
+                target_entity: Some(target),
+                target_plant: BotanyPlantId::CiSheHao,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 0,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [10.0, 64.0, 10.0],
+            });
+        }
+
+        app.update();
+
+        let base_quality = app
+            .world()
+            .resource::<ItemRegistry>()
+            .get("ci_she_hao")
+            .expect("ci_she_hao template should exist")
+            .spirit_quality_initial;
+        let inventory = app
+            .world()
+            .entity(client_entity)
+            .get::<PlayerInventory>()
+            .expect("client should have inventory");
+        let harvested = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
+            .and_then(|container| {
+                container
+                    .items
+                    .iter()
+                    .find(|placed| placed.instance.template_id == "ci_she_hao")
+            })
+            .expect("harvested herb should be inserted into main pack");
+
+        let expected = base_quality + crate::botany::skill_hook::spirit_quality_bonus(3);
+        assert!(
+            (harvested.instance.spirit_quality - expected).abs() < 1e-6,
+            "harvested spirit_quality should use effective herbalism Lv.3, got {} expected {}",
+            harvested.instance.spirit_quality,
+            expected
+        );
     }
 
     #[test]

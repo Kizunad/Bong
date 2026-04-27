@@ -80,10 +80,18 @@ pub struct CombatEvent {
     pub description: String,
 }
 
+/// plan-tsy-loot-v1 §6 — 死亡事件，附带攻击者链路（Option，因为环境死亡 / 修炼自爆没有"凶手"）。
+///
+/// `attacker` 是 ECS Entity（适合 server 内部 query），`attacker_player_id` 是
+/// canonical player id（如 `"offline:Foo"`），适合 IPC / agent 消费。两者独立维护：
+/// PVP 死亡两者都填；NPC 揍死玩家只填 attacker；环境死亡（tsy_drain / bleed_out
+/// without source）两者都 None。
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct DeathEvent {
     pub target: Entity,
     pub cause: String,
+    pub attacker: Option<Entity>,
+    pub attacker_player_id: Option<String>,
     pub at_tick: u64,
 }
 

@@ -3,6 +3,22 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
+export const SkillMilestoneSnapshotV1 = Type.Object(
+  {
+    skill: Type.Union([
+      Type.Literal("herbalism"),
+      Type.Literal("alchemy"),
+      Type.Literal("forging"),
+    ]),
+    new_lv: Type.Integer({ minimum: 0, maximum: 10 }),
+    achieved_at: Type.Integer({ minimum: 0 }),
+    narration: Type.String({ maxLength: 500 }),
+    total_xp_at: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type SkillMilestoneSnapshotV1 = Static<typeof SkillMilestoneSnapshotV1>;
+
 /** 6 境界常量（plan §1.1）。Rust Realm enum 映射。 */
 export const Realm = Type.Union(
   [
@@ -99,6 +115,8 @@ export type CultivationSnapshotV1 = Static<typeof CultivationSnapshotV1>;
 export const LifeRecordSnapshotV1 = Type.Object(
   {
     recent_biography_summary: Type.String({ maxLength: 4096 }),
+    recent_skill_milestones_summary: Type.String({ maxLength: 4096 }),
+    skill_milestones: Type.Array(SkillMilestoneSnapshotV1),
   },
   { additionalProperties: false },
 );

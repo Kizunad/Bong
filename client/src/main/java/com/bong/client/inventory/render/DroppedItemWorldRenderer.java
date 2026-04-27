@@ -1,5 +1,6 @@
 package com.bong.client.inventory.render;
 
+import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.state.DroppedItemStore;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
@@ -124,6 +125,6 @@ public final class DroppedItemWorldRenderer {
 
     private static Identifier textureFor(String itemId) {
         return TEXTURE_CACHE.computeIfAbsent(itemId,
-            id -> new Identifier("bong-client", "textures/gui/items/" + id + ".png"));
+            GridSlotComponent::textureIdForItemId);
     }
 }

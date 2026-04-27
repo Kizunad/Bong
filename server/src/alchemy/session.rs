@@ -18,6 +18,7 @@ use super::outcome::{
     OutcomeBucket,
 };
 use super::recipe::{Recipe, RecipeId};
+use super::skill_hook::tolerance_scale;
 
 /// 玩家介入事件（plan §1.3）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -175,9 +176,24 @@ impl AlchemySession {
     /// plan §1.3 结算 — 计算 DeviationSummary + OutcomeBucket。
     /// `precise=true` 意味着投入材料精确匹配该 recipe；false 走残缺匹配路径（由外层决定）。
     pub fn summarize(&self, recipe: &Recipe) -> DeviationSummary {
-        let temp_deviation = compute_temp_deviation(&self.temp_track, &recipe.fire_profile);
-        let duration_deviation =
-            compute_duration_deviation(self.elapsed_ticks, &recipe.fire_profile);
+        self.summarize_with_alchemy_effective_lv(recipe, 0)
+    }
+
+    pub fn summarize_with_alchemy_effective_lv(
+        &self,
+        recipe: &Recipe,
+        alchemy_effective_lv: u8,
+    ) -> DeviationSummary {
+        let mut scaled_profile = recipe.fire_profile.clone();
+        let tol_scale = f64::from(tolerance_scale(alchemy_effective_lv));
+        scaled_profile.tolerance.temp_band *= tol_scale;
+        scaled_profile.tolerance.duration_band = ((scaled_profile.tolerance.duration_band as f64)
+            * tol_scale)
+            .round()
+            .max(1.0) as u32;
+
+        let temp_deviation = compute_temp_deviation(&self.temp_track, &scaled_profile);
+        let duration_deviation = compute_duration_deviation(self.elapsed_ticks, &scaled_profile);
         // 未完成的必要阶段
         let missed_stage = !self.staged.missed_stages.is_empty()
             || recipe
@@ -190,7 +206,7 @@ impl AlchemySession {
         // 过热：temp_track 中存在大幅超过 band 的点（> 3x band）
         let severe_overheat = self.temp_track.iter().any(|(_, t)| {
             let over = (t - recipe.fire_profile.target_temp).abs();
-            over > recipe.fire_profile.tolerance.temp_band * 3.0
+            over > scaled_profile.tolerance.temp_band * 3.0
         });
         DeviationSummary {
             temp_deviation,
@@ -202,7 +218,15 @@ impl AlchemySession {
     }
 
     pub fn classify(&self, recipe: &Recipe) -> OutcomeBucket {
-        classify_precise(&self.summarize(recipe))
+        self.classify_with_alchemy_effective_lv(recipe, 0)
+    }
+
+    pub fn classify_with_alchemy_effective_lv(
+        &self,
+        recipe: &Recipe,
+        alchemy_effective_lv: u8,
+    ) -> OutcomeBucket {
+        classify_precise(&self.summarize_with_alchemy_effective_lv(recipe, alchemy_effective_lv))
     }
 }
 
@@ -224,6 +248,7 @@ mod tests {
                 required: vec![IngredientSpec {
                     material: "m".into(),
                     count: 1,
+                    mineral_id: None,
                 }],
                 window: 0,
             }],
@@ -260,6 +285,7 @@ mod tests {
             required: vec![IngredientSpec {
                 material: "n".into(),
                 count: 1,
+                mineral_id: None,
             }],
             window: 2,
         });
@@ -355,6 +381,27 @@ mod tests {
             s.tick();
         }
         assert_eq!(s.classify(&r), OutcomeBucket::Explode);
+    }
+
+    #[test]
+    fn higher_alchemy_skill_expands_tolerance_and_improves_bucket() {
+        let r = simple_single_stage_recipe();
+        let mut s = AlchemySession::new(r.id.clone(), "alice".into());
+        s.feed_stage(&r, 0, &[("m".into(), 1, 1.0)]).unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.75));
+        s.apply_intervention(Intervention::InjectQi(5.0));
+        for _ in 0..10 {
+            s.tick();
+        }
+
+        assert_eq!(
+            s.classify_with_alchemy_effective_lv(&r, 0),
+            OutcomeBucket::Good
+        );
+        assert_eq!(
+            s.classify_with_alchemy_effective_lv(&r, 10),
+            OutcomeBucket::Perfect
+        );
     }
 
     #[test]

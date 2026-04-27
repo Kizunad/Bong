@@ -6,7 +6,7 @@
     {
       "uuid": "offline:Steve",
       "name": "Steve",
-      "realm": "qi_refining_3",
+      "realm": "Induce",
       "composite_power": 0.85,
       "breakdown": {
         "combat": 0.92,
@@ -20,12 +20,32 @@
       "zone": "blood_valley",
       "pos": [128.5, 66.0, 200.3],
       "recent_kills": 5,
-      "recent_deaths": 1
+      "recent_deaths": 1,
+      "life_record": {
+        "recent_biography_summary": "t83200:reach:Spirit | t83800:alchemy:ningmai_powder:exact:凝脉散:-",
+        "recent_skill_milestones_summary": "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2",
+        "skill_milestones": [
+          {
+            "skill": "herbalism",
+            "new_lv": 3,
+            "achieved_at": 82000,
+            "narration": "你摘辨草木渐熟，今已至Lv.3。",
+            "total_xp_at": 550
+          },
+          {
+            "skill": "alchemy",
+            "new_lv": 2,
+            "achieved_at": 83000,
+            "narration": "炉火识性稍深，丹道已至Lv.2。",
+            "total_xp_at": 240
+          }
+        ]
+      }
     },
     {
       "uuid": "offline:NewPlayer1",
       "name": "NewPlayer1",
-      "realm": "mortal",
+      "realm": "Awaken",
       "composite_power": 0.12,
       "breakdown": {
         "combat": 0.05,

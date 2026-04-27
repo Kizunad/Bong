@@ -93,6 +93,17 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   tuple (or into a merged palette — manifest declares both). 0 = none.
     "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- mineral layers (plan-mineral-v1 §2.1) ---
+    # mineral_density: [0,1] likelihood a mineral ore-block occupies this column.
+    #   Rust consumer samples per-chunk and rolls against per-tier rarity (品阶反比 —
+    #   sui_tie / can_tie / ku_jin 极稀). `maximum` blend so zone overlays can ADD
+    #   mineral pockets but never erase neighbour zone's veins.
+    # mineral_kind: uint8 index into the zone profile's MineralPalette tuple
+    #   (0 = none, 1..N = mineral_id from MineralRegistry order). `swap` so per-cell
+    #   the dominant zone wins; 同 vanilla block 多矿 (e.g. ling_tie / dan_sha 共
+    #   redstone_ore) 由此 kind 在 server 区分。
+    "mineral_density":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
+    "mineral_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
     # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
     # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
     #   system spawns themed mobs / visual FX when intensity > threshold.
@@ -101,6 +112,16 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   4 cursed_echo, 5 wild_formation. Declared in manifest.anomaly_kinds.
     "anomaly_intensity":    LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "anomaly_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- TSY-specific layers (plan-tsy-worldgen-v1 §4.1) ---
+    # 仅在 TSY dim manifest 中产出；主世界 manifest 通过 raster_export.layer_whitelist 过滤。
+    # tsy_presence: 1 表示 TSY family 区域内（Rust hot-path mask 查询）；
+    #   maximum blend 让 family 边界外保持 0 不被覆盖。
+    # tsy_origin_id: 1=daneng_luoluo / 2=zongmen_yiji / 3=zhanchang_chendian /
+    #   4=gaoshou_sichu / 0=none.
+    # tsy_depth_tier: 1=shallow / 2=mid / 3=deep / 0=none.
+    "tsy_presence":         LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
+    "tsy_origin_id":        LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    "tsy_depth_tier":       LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
 }
 
 

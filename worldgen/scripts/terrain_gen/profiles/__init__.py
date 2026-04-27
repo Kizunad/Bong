@@ -9,6 +9,10 @@ from .rift_valley import RiftValleyGenerator
 from .sky_isle import SkyIsleGenerator
 from .spawn_plain import SpawnPlainGenerator
 from .spring_marsh import SpringMarshGenerator
+from .tsy_daneng_crater import TsyDanengCraterGenerator
+from .tsy_gaoshou_hermitage import TsyGaoshouHermitageGenerator
+from .tsy_zhanchang import TsyZhanchangGenerator
+from .tsy_zongmen_ruin import TsyZongmenRuinGenerator
 from .waste_plateau import WastePlateauGenerator
 
 _GENERATORS: dict[str, TerrainProfileGenerator] = {
@@ -23,6 +27,10 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         SkyIsleGenerator(),
         AbyssalMazeGenerator(),
         AncientBattlefieldGenerator(),
+        TsyZongmenRuinGenerator(),
+        TsyDanengCraterGenerator(),
+        TsyZhanchangGenerator(),
+        TsyGaoshouHermitageGenerator(),
     )
 }
 

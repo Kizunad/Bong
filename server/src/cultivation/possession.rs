@@ -97,7 +97,7 @@ pub fn duo_she_target_eligibility(
     cultivation: Option<&Cultivation>,
     is_npc: bool,
 ) -> DuoSheTargetEligibility {
-    if player_state.is_some_and(|state| state.realm == "mortal") {
+    if player_state.is_some() && cultivation.is_none() {
         return DuoSheTargetEligibility::Eligible;
     }
     if cultivation.is_some_and(|cultivation| cultivation.realm == Realm::Awaken) {
@@ -170,9 +170,6 @@ pub fn process_duo_she_requests(
             }
             if let Some(mut player_state) = host_player_state {
                 player_state.karma = 1.0;
-                player_state.spirit_qi_max =
-                    (player_state.spirit_qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
-                player_state.spirit_qi = player_state.spirit_qi.min(player_state.spirit_qi_max);
             }
             if let Some(mut host_life_record) = host_life_record {
                 host_life_record.push(BiographyEntry::DuoShePerformed {

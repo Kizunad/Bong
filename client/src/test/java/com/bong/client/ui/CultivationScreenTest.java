@@ -31,7 +31,7 @@ public class CultivationScreenTest {
     @Test
     void syncedModeFormatsStructuredContentInStableOrder() {
         CultivationScreen.RenderContent content = CultivationScreen.describe(PlayerStateViewModel.create(
-            "qi_refining_3",
+            "Induce",
             78.0,
             100.0,
             0.20,
@@ -43,7 +43,7 @@ public class CultivationScreenTest {
         ));
 
         assertFalse(content.placeholder());
-        assertEquals("境界: qi_refining_3", content.lines().get(0));
+        assertEquals("境界: Induce", content.lines().get(0));
         assertEquals("真元: ████████░░ 78/100", content.lines().get(1));
         assertEquals("因果 (karma): +0.20", content.lines().get(2));
         assertEquals("善恶刻度: [═════●══════] 善 ←→ 恶", content.lines().get(3));
@@ -64,7 +64,7 @@ public class CultivationScreenTest {
         assertTrue(unsyncedScreen.playerState().isEmpty());
 
         PlayerStateStore.replace(PlayerStateViewModel.create(
-            "foundation_1",
+            "Condense",
             60.0,
             100.0,
             -0.25,
@@ -76,14 +76,14 @@ public class CultivationScreenTest {
         ));
 
         CultivationScreen syncedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
-        assertEquals("foundation_1", syncedScreen.playerState().realm());
+        assertEquals("Condense", syncedScreen.playerState().realm());
         assertFalse(syncedScreen.playerState().isEmpty());
     }
 
     @Test
     void disconnectResetClearsStaleSnapshotBeforeNextScreenBuild() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
-            "core_formation_2",
+            "Spirit",
             88.0,
             100.0,
             0.45,

@@ -1,10 +1,10 @@
 package com.bong.client.inventory.model;
 
 public enum EquipSlotType {
-    HEAD("头部"),
-    CHEST("护甲"),
+    HEAD("头甲"),
+    CHEST("胸甲"),
     LEGS("腿甲"),
-    FEET("鞋"),
+    FEET("足甲"),
     MAIN_HAND("右手"),
     OFF_HAND("左手"),
     TWO_HAND("双手"),
