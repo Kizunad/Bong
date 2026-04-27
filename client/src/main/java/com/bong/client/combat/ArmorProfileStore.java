@@ -38,8 +38,10 @@ public final class ArmorProfileStore {
     }
 
     private static final Map<String, ArmorMitigation> BY_ITEM_ID = Map.ofEntries(
-        // server/assets/combat/armor_profiles/fake_spirit_hide_chest.json
-        Map.entry("fake_spirit_hide", new ArmorMitigation(0.25f, 0.30f, 0.20f, 0.10f, 0.15f))
+        Map.entry("cloth_robe", new ArmorMitigation(0.10f, 0.20f, 0.05f, 0.00f, 0.10f)),
+        Map.entry("fake_spirit_hide", new ArmorMitigation(0.25f, 0.30f, 0.20f, 0.10f, 0.15f)),
+        Map.entry("spirit_weave_robe", new ArmorMitigation(0.35f, 0.35f, 0.35f, 0.40f, 0.35f)),
+        Map.entry("iron_plate_chest", new ArmorMitigation(0.50f, 0.40f, 0.55f, 0.15f, 0.20f))
     );
 
     private ArmorProfileStore() {
