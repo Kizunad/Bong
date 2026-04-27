@@ -60,6 +60,7 @@ public final class ServerDataRouter {
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
+        ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
 
@@ -99,6 +100,14 @@ public final class ServerDataRouter {
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
+        handlers.put("rift_portal_state", extractServerDataHandler);
+        handlers.put("rift_portal_removed", extractServerDataHandler);
+        handlers.put("extract_started", extractServerDataHandler);
+        handlers.put("extract_progress", extractServerDataHandler);
+        handlers.put("extract_completed", extractServerDataHandler);
+        handlers.put("extract_aborted", extractServerDataHandler);
+        handlers.put("extract_failed", extractServerDataHandler);
+        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
         handlers.put("lingtian_session", lingtianSessionHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());

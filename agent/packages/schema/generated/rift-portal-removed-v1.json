@@ -1,0 +1,12 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entity_id"
+  ],
+  "properties": {
+    "entity_id": {
+      "type": "number"
+    }
+  }
+}

@@ -372,8 +372,8 @@ pub fn tsy_lifecycle_apply_spirit_qi(
 
 /// plan §3.3 + §6 — `TsyCollapseCompleted` 事件消费器。
 ///
-/// 1. 把仍在 zone 内的玩家发 `DimensionTransferRequest` 弹回 `presence.return_to`，
-///    移除其 `TsyPresence`。真元已 ≤ 0 的玩家会在下一 tick 走 DeathEvent 流水线。
+/// 1. 玩家化灰由 `extract_system::on_tsy_collapse_completed` 触发 DeathEvent；
+///    本 cleanup 只处理 loot / 道伥 / zone 移除，不再把玩家安全弹回主世界。
 /// 2. 删除 `DroppedLootRegistry` 中位于本 family 三层 AABB 内的 entry（"凡物随 zone 蒸发"）。
 /// 3. 找出 zone 内所有 `Daoxiang` archetype NPC：50% 跨位面喷出主世界 ±10 格，50% despawn。
 /// 4. 同时把 zone 内未激活的 `CorpseEmbalmed` 立刻激活成道伥（也走 50% Roll）。
@@ -406,17 +406,13 @@ pub fn tsy_collapse_completed_cleanup(
 
         let aabbs = collect_family_aabbs(&zones, &family);
 
-        // Step 1: 玩家弹回主世界
-        for (entity, presence) in &presence_q {
+        // Step 1: 玩家不再弹回主世界。P5 撤离 plan 监听同一个 completed event，
+        // 对仍持 TsyPresence 的玩家发 DeathEvent(cause="tsy_collapsed")，让 P1 death drop
+        // 路径处理干尸 / 化灰。
+        for (_entity, presence) in &presence_q {
             if presence.family_id != family {
                 continue;
             }
-            dim_transfer.send(DimensionTransferRequest {
-                entity,
-                target: presence.return_to.dimension,
-                target_pos: presence.return_to.pos,
-            });
-            commands.entity(entity).remove::<TsyPresence>();
         }
 
         // Step 2: 凡物 / 残留 ancient relic 随 zone 蒸发。
@@ -684,6 +680,7 @@ pub fn register(app: &mut App) {
                 tsy_corpse_to_daoxiang_tick.after(tsy_lifecycle_apply_spirit_qi),
                 tsy_collapse_completed_cleanup
                     .after(tsy_lifecycle_tick)
+                    .after(crate::world::extract_system::on_tsy_collapse_completed)
                     .before(DimensionTransferSet),
                 // plan-tsy-container-v1 §6.2 — RelicCore 容器搜空时的 informational
                 // hook。当前不动状态机（lifecycle 仍由 source_container_id 路径

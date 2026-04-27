@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "entity_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "rift_portal_removed",
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "number"
+    }
+  }
+}

@@ -57,6 +57,15 @@ public class ServerDataRouterTest {
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
+            // plan-tsy-extract-v1 §4.1 撤离点 / 撤离进度 HUD 推送。
+            "rift_portal_state",
+            "rift_portal_removed",
+            "extract_started",
+            "extract_progress",
+            "extract_completed",
+            "extract_aborted",
+            "extract_failed",
+            "tsy_collapse_started_ipc",
             // plan-lingtian-v1 §4 active session 推送。
             "lingtian_session",
             // plan-skill-v1 §8 子技能 IPC（4 条 server→client channel 镜像）。

@@ -1,0 +1,11 @@
+{
+  "tsy_lingxu_01": {
+    "shallow": [
+      { "kind": "main_rift", "pos": [50.0, 100.0, 50.0] }
+    ],
+    "mid": [],
+    "deep": [
+      { "kind": "deep_rift", "pos": [50.0, -20.0, 50.0] }
+    ]
+  }
+}

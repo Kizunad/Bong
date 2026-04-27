@@ -116,6 +116,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeJiemai());
     }
 
+    public static void sendStartExtract(long portalEntityId) {
+        dispatch(ClientRequestProtocol.encodeStartExtractRequest(portalEntityId));
+    }
+
+    public static void sendCancelExtract() {
+        dispatch(ClientRequestProtocol.encodeCancelExtractRequest());
+    }
+
     // ─── 炼丹 (plan-alchemy-v1 §4) ──────────────────────────────────────────
 
     public static void sendAlchemyTurnPage(int delta) {

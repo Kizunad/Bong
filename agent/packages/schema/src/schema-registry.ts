@@ -33,15 +33,27 @@ import {
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
   BotanyHarvestRequestV1,
+  CancelExtractRequestV1,
   BreakthroughRequestV1,
   ClientRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
   SetMeridianTargetRequestV1,
+  StartExtractRequestV1,
 } from "./client-request.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import {
+  ExtractAbortedV1,
+  ExtractCompletedV1,
+  ExtractFailedV1,
+  ExtractProgressV1,
+  ExtractStartedV1,
+  RiftPortalRemovedV1,
+  RiftPortalStateV1,
+  TsyCollapseStartedIpcV1,
+} from "./extract-v1.js";
 import { ForgeEventV1 } from "./forge-event.js";
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
@@ -56,11 +68,19 @@ import {
   ServerDataAlchemySessionV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanySkillV1,
+  ServerDataExtractAbortedV1,
+  ServerDataExtractCompletedV1,
+  ServerDataExtractFailedV1,
+  ServerDataExtractProgressV1,
+  ServerDataExtractStartedV1,
+  ServerDataRiftPortalRemovedV1,
+  ServerDataRiftPortalStateV1,
   ServerDataSkillCapChangedV1,
   ServerDataSkillLvUpV1,
   ServerDataSkillSnapshotV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillXpGainV1,
+  ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
 } from "./server-data.js";
 import {
@@ -118,6 +138,8 @@ export const SCHEMA_REGISTRY = {
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
+  clientRequestStartExtractV1: StartExtractRequestV1,
+  clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
@@ -157,6 +179,23 @@ export const SCHEMA_REGISTRY = {
   tsyCollapseStartedV1: TsyCollapseStartedV1,
   tsyCollapseCompletedV1: TsyCollapseCompletedV1,
   daoxiangSpawnedV1: DaoxiangSpawnedV1,
+  // plan-tsy-extract-v1 §4.1
+  riftPortalStateV1: RiftPortalStateV1,
+  riftPortalRemovedV1: RiftPortalRemovedV1,
+  extractStartedV1: ExtractStartedV1,
+  extractProgressV1: ExtractProgressV1,
+  extractCompletedV1: ExtractCompletedV1,
+  extractAbortedV1: ExtractAbortedV1,
+  extractFailedV1: ExtractFailedV1,
+  tsyCollapseStartedIpcV1: TsyCollapseStartedIpcV1,
+  serverDataRiftPortalStateV1: ServerDataRiftPortalStateV1,
+  serverDataRiftPortalRemovedV1: ServerDataRiftPortalRemovedV1,
+  serverDataExtractStartedV1: ServerDataExtractStartedV1,
+  serverDataExtractProgressV1: ServerDataExtractProgressV1,
+  serverDataExtractCompletedV1: ServerDataExtractCompletedV1,
+  serverDataExtractAbortedV1: ServerDataExtractAbortedV1,
+  serverDataExtractFailedV1: ServerDataExtractFailedV1,
+  serverDataTsyCollapseStartedIpcV1: ServerDataTsyCollapseStartedIpcV1,
   // plan-tsy-container-v1 §5.1 — TSY 容器搜刮
   containerStateV1: ContainerStateV1,
   searchStartedV1: SearchStartedV1,
@@ -204,6 +243,10 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
+  "client-request-start-extract-v1.json":
+    SCHEMA_REGISTRY.clientRequestStartExtractV1,
+  "client-request-cancel-extract-v1.json":
+    SCHEMA_REGISTRY.clientRequestCancelExtractV1,
   "server-data-botany-harvest-progress-v1.json":
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
   "server-data-botany-skill-v1.json":
@@ -265,6 +308,31 @@ export const GENERATED_SCHEMA_FILES = {
   "tsy-collapse-started-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedV1,
   "tsy-collapse-completed-v1.json": SCHEMA_REGISTRY.tsyCollapseCompletedV1,
   "daoxiang-spawned-v1.json": SCHEMA_REGISTRY.daoxiangSpawnedV1,
+  // plan-tsy-extract-v1 §4.1
+  "rift-portal-state-v1.json": SCHEMA_REGISTRY.riftPortalStateV1,
+  "rift-portal-removed-v1.json": SCHEMA_REGISTRY.riftPortalRemovedV1,
+  "extract-started-v1.json": SCHEMA_REGISTRY.extractStartedV1,
+  "extract-progress-v1.json": SCHEMA_REGISTRY.extractProgressV1,
+  "extract-completed-v1.json": SCHEMA_REGISTRY.extractCompletedV1,
+  "extract-aborted-v1.json": SCHEMA_REGISTRY.extractAbortedV1,
+  "extract-failed-v1.json": SCHEMA_REGISTRY.extractFailedV1,
+  "tsy-collapse-started-ipc-v1.json": SCHEMA_REGISTRY.tsyCollapseStartedIpcV1,
+  "server-data-rift-portal-state-v1.json":
+    SCHEMA_REGISTRY.serverDataRiftPortalStateV1,
+  "server-data-rift-portal-removed-v1.json":
+    SCHEMA_REGISTRY.serverDataRiftPortalRemovedV1,
+  "server-data-extract-started-v1.json":
+    SCHEMA_REGISTRY.serverDataExtractStartedV1,
+  "server-data-extract-progress-v1.json":
+    SCHEMA_REGISTRY.serverDataExtractProgressV1,
+  "server-data-extract-completed-v1.json":
+    SCHEMA_REGISTRY.serverDataExtractCompletedV1,
+  "server-data-extract-aborted-v1.json":
+    SCHEMA_REGISTRY.serverDataExtractAbortedV1,
+  "server-data-extract-failed-v1.json":
+    SCHEMA_REGISTRY.serverDataExtractFailedV1,
+  "server-data-tsy-collapse-started-ipc-v1.json":
+    SCHEMA_REGISTRY.serverDataTsyCollapseStartedIpcV1,
   // plan-tsy-container-v1 §5.1
   "container-state-v1.json": SCHEMA_REGISTRY.containerStateV1,
   "search-started-v1.json": SCHEMA_REGISTRY.searchStartedV1,

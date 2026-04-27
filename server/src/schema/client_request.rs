@@ -156,6 +156,13 @@ pub enum ClientRequestV1 {
         slot: u8,
         item_id: Option<String>,
     },
+    StartExtractRequest {
+        v: u8,
+        portal_entity_id: u64,
+    },
+    CancelExtractRequest {
+        v: u8,
+    },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
     /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
@@ -546,5 +553,28 @@ mod tests {
             }
             other => panic!("expected AlchemyIgnite, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn extract_requests_roundtrip() {
+        let start = r#"{"type":"start_extract_request","v":1,"portal_entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(start).unwrap();
+        match req {
+            ClientRequestV1::StartExtractRequest {
+                v,
+                portal_entity_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(portal_entity_id, 42);
+            }
+            other => panic!("expected StartExtractRequest, got {other:?}"),
+        }
+
+        let cancel = r#"{"type":"cancel_extract_request","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(cancel).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::CancelExtractRequest { v: 1 }
+        ));
     }
 }

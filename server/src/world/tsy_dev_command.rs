@@ -24,7 +24,7 @@ use valence::prelude::{
 
 use crate::combat::CombatClock;
 use crate::world::dimension::DimensionKind;
-use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftPortal};
+use crate::world::tsy::{DimensionAnchor, RiftKind, RiftPortal};
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::tsy_container_search::TsyZoneInitialized;
 use crate::world::tsy_container_spawn::{
@@ -238,29 +238,28 @@ pub fn apply_tsy_spawn_requests(
         // Entry portal：主世界，玩家当前坐标
         commands.spawn((
             Position::new([req.player_pos.x, req.player_pos.y, req.player_pos.z]),
-            RiftPortal {
-                family_id: req.family_id.clone(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                req.family_id.clone(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: shallow_center,
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Entry,
-            },
+                1.5,
+            ),
         ));
 
         // Exit portal：TSY dim，shallow 中心
         commands.spawn((
             Position::new([shallow_center.x, shallow_center.y, shallow_center.z]),
-            RiftPortal {
-                family_id: req.family_id.clone(),
-                target: DimensionAnchor {
+            RiftPortal::exit(
+                req.family_id.clone(),
+                DimensionAnchor {
                     dimension: DimensionKind::Overworld,
                     pos: req.player_pos + DVec3::Y,
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Exit,
-            },
+                1.5,
+                RiftKind::MainRift,
+            ),
         ));
 
         results.send(TsySpawnResult {
@@ -376,6 +375,7 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::tsy::PortalDirection;
     use valence::prelude::{App, Events};
 
     fn run_with_world(family_id: &str) -> App {

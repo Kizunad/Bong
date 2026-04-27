@@ -67,6 +67,10 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::extract_system::{
+    CancelExtractRequest as CancelExtractRequestEvent,
+    StartExtractRequest as StartExtractRequestEvent,
+};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -85,6 +89,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
+    pub start_extract_tx: EventWriter<'w, StartExtractRequestEvent>,
+    pub cancel_extract_tx: EventWriter<'w, CancelExtractRequestEvent>,
 }
 
 #[derive(SystemParam)]
@@ -212,6 +218,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::Jiemai { v }
             | ClientRequestV1::UseQuickSlot { v, .. }
             | ClientRequestV1::QuickSlotBind { v, .. }
+            | ClientRequestV1::StartExtractRequest { v, .. }
+            | ClientRequestV1::CancelExtractRequest { v }
             | ClientRequestV1::LingtianStartTill { v, .. }
             | ClientRequestV1::LingtianStartRenew { v, .. }
             | ClientRequestV1::LingtianStartPlanting { v, .. }
@@ -557,6 +565,29 @@ pub fn handle_client_request_payloads(
                     &mut combat_params.bindings_q,
                     &inventories,
                 );
+            }
+            ClientRequestV1::StartExtractRequest {
+                portal_entity_id, ..
+            } => {
+                tracing::info!(
+                    "[bong][network] client_request start_extract entity={:?} portal_bits={portal_entity_id}",
+                    ev.client
+                );
+                combat_params
+                    .start_extract_tx
+                    .send(StartExtractRequestEvent {
+                        player: ev.client,
+                        portal: Entity::from_bits(portal_entity_id),
+                    });
+            }
+            ClientRequestV1::CancelExtractRequest { .. } => {
+                tracing::info!(
+                    "[bong][network] client_request cancel_extract entity={:?}",
+                    ev.client
+                );
+                combat_params
+                    .cancel_extract_tx
+                    .send(CancelExtractRequestEvent { player: ev.client });
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
@@ -972,6 +1003,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -1047,6 +1080,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -1105,6 +1140,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -1157,6 +1194,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -1210,6 +1249,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
@@ -1290,6 +1331,8 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
