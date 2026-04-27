@@ -22,9 +22,9 @@ use valence::prelude::bevy_ecs::{
 };
 use valence::prelude::{bevy_ecs, Resource};
 
-use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
 #[cfg(test)]
 use super::ancient_relics::seed_ancient_relics;
+use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
 use crate::combat::CombatClock;
 use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneStateRegistry};

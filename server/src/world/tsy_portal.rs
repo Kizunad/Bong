@@ -17,6 +17,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftPortal, TsyPresence};
 use crate::world::tsy_filter::{apply_entry_filter, FilteredItem};
+use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 
 /// 出关时把玩家落点推到 entry portal trigger_radius **外** 的安全裕度（格）。
 /// 偏移量 = `trigger_radius + RETURN_ESCAPE_MARGIN`；保证欧氏距离严格大于 radius
@@ -51,10 +52,14 @@ pub struct TsyExitEmit {
 /// gate：玩家在 `Overworld` + 没有 `TsyPresence` + 没有 `NpcMarker`。
 /// 触发：玩家中心距某个 `Entry` 标记的 `RiftPortal` ≤ trigger_radius。
 /// 结果：跑入场过滤 → attach `TsyPresence` → 发 `DimensionTransferRequest` → emit。
+///
+/// plan-tsy-lifecycle-v1 §3.3 / §8.F — 当对应 family 处于 Collapsing 或 Dead 阶段时
+/// 拒绝入场（避免玩家在塌缩窗口里来回 exploit 或踏进已死 family）。被拒玩家保持原坐标。
 #[allow(clippy::type_complexity)]
 pub fn tsy_entry_portal_tick(
     mut commands: Commands,
     clock: Res<CombatClock>,
+    lifecycle: Option<Res<TsyZoneStateRegistry>>,
     mut players: Query<
         (Entity, &Position, &mut PlayerInventory, &CurrentDimension),
         (Without<TsyPresence>, Without<NpcMarker>),
@@ -74,6 +79,17 @@ pub fn tsy_entry_portal_tick(
             }
             if player_pos.0.distance(portal_pos.0) > portal.trigger_radius {
                 continue;
+            }
+
+            // 塌缩 / 死透 family 拒绝入场。
+            if let Some(ref lc) = lifecycle {
+                if lc.is_collapsing(&portal.family_id) || lc.is_dead(&portal.family_id) {
+                    tracing::info!(
+                        family = %portal.family_id,
+                        "[bong][tsy-portal] entry blocked — family is collapsing or dead"
+                    );
+                    continue;
+                }
             }
 
             // Step 1: 入场过滤（剥离高灵质物品）

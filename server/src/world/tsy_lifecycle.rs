@@ -92,6 +92,11 @@ impl TsyLifecycle {
 }
 
 /// 单个 TSY family 的运行时状态。
+///
+/// 部分字段（`source_class` / `*_at_tick`）目前仅供 narration / 未来 IPC 消费，
+/// 运行时 logic 不直接读 —— 用 `#[allow(dead_code)]` 抑制 warning，等 schema bridge
+/// 落地后转为 schema 字段。
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TsyZoneState {
     pub family_id: String,
@@ -114,6 +119,8 @@ pub struct TsyZoneState {
 
 impl TsyZoneState {
     /// 已被取走的骨架数量（initial - remaining）。
+    /// 测试 + 未来 inspect 命令使用；运行时 logic 走 `skeleton_ratio`。
+    #[allow(dead_code)]
     pub fn taken_count(&self) -> usize {
         self.initial_skeleton
             .len()
@@ -216,6 +223,10 @@ pub struct TsyZoneActivated {
 
 /// "塌缩开始"信号。所有还在 zone 内的玩家 client 端会收到（HUD 倒计时）；
 /// 同时 lifecycle_apply_spirit_qi 下一 tick 把 spirit_qi 翻倍。
+///
+/// 字段当前由 schema bridge / agent narration 消费（§7.4 后续 commit），
+/// 运行时模块仅写不读 → 标 dead_code 防 -D warnings。
+#[allow(dead_code)]
 #[derive(Event, Debug, Clone)]
 pub struct TsyCollapseStarted {
     pub family_id: String,
@@ -421,13 +432,8 @@ pub fn tsy_collapse_completed_cleanup(
             // 加速激活：与自然激活同样 spawn，但立刻进 Roll 决定喷不喷。
             if let Some(layer) = layer_entity {
                 let spawn_pos = pos.0;
-                let new_entity = spawn_daoxiang_from_corpse(
-                    &mut commands,
-                    layer,
-                    corpse,
-                    spawn_pos,
-                    clock.tick,
-                );
+                let new_entity =
+                    spawn_daoxiang_from_corpse(&mut commands, layer, corpse, spawn_pos, clock.tick);
                 let (decision, next_seed) = collapse_roll(rng_seed);
                 rng_seed = next_seed;
                 if decision {
@@ -439,11 +445,15 @@ pub fn tsy_collapse_completed_cleanup(
                         target_pos: offset_pos,
                     });
                 } else {
-                    commands.entity(new_entity).insert(valence::prelude::Despawned);
+                    commands
+                        .entity(new_entity)
+                        .insert(valence::prelude::Despawned);
                 }
             }
             // 干尸本体一律消失（已被激活）
-            commands.entity(corpse_entity).insert(valence::prelude::Despawned);
+            commands
+                .entity(corpse_entity)
+                .insert(valence::prelude::Despawned);
         }
 
         // 4b: 已存在的 Daoxiang NPC 同样走 50% Roll
@@ -688,14 +698,13 @@ mod tests {
     #[test]
     fn ensure_active_is_idempotent() {
         let mut reg = TsyZoneStateRegistry::default();
-        reg.ensure_active(
+        reg.ensure_active("tsy_lingxu_01", AncientRelicSource::DaoLord, anchor(), 100);
+        let inserted2 = reg.ensure_active(
             "tsy_lingxu_01",
-            AncientRelicSource::DaoLord,
+            AncientRelicSource::SectRuins,
             anchor(),
-            100,
+            200,
         );
-        let inserted2 =
-            reg.ensure_active("tsy_lingxu_01", AncientRelicSource::SectRuins, anchor(), 200);
         assert!(!inserted2);
         // source_class 不被覆盖；activated_at_tick 不被改写
         let s = reg.by_family.get("tsy_lingxu_01").unwrap();
@@ -816,10 +825,7 @@ mod tests {
         // 期望 ~5000；放宽到 ±10% 通过 CI 抖动
         let lo = (trials as f64 * 0.40) as u32;
         let hi = (trials as f64 * 0.60) as u32;
-        assert!(
-            hits > lo && hits < hi,
-            "hits={hits} not in [{lo},{hi}]"
-        );
+        assert!(hits > lo && hits < hi, "hits={hits} not in [{lo},{hi}]");
     }
 
     #[test]
@@ -839,10 +845,7 @@ mod tests {
 
     #[test]
     fn point_in_any_aabb_works() {
-        let aabbs = vec![(
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(10.0, 10.0, 10.0),
-        )];
+        let aabbs = vec![(DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 10.0))];
         assert!(point_in_any_aabb(DVec3::new(5.0, 5.0, 5.0), &aabbs));
         assert!(point_in_any_aabb(DVec3::new(0.0, 0.0, 0.0), &aabbs));
         assert!(point_in_any_aabb(DVec3::new(10.0, 10.0, 10.0), &aabbs));
