@@ -11,9 +11,13 @@ use valence::prelude::{EventReader, Query, Res, Username, With};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use crate::npc::tsy_hostile::{TsyHostileArchetype, TsyNpcSpawned, TsySentinelPhaseChanged};
 use crate::player::state::canonical_player_id;
 use crate::schema::tsy::{
     TsyDimensionAnchorV1, TsyEnterEventV1, TsyExitEventV1, TsyFilteredItemV1,
+};
+use crate::schema::tsy_hostile::{
+    TsyHostileArchetypeV1, TsyNpcSpawnedV1, TsySentinelPhaseChangedV1,
 };
 use crate::world::tsy_portal::{TsyEnterEmit, TsyExitEmit};
 
@@ -90,6 +94,57 @@ pub fn publish_tsy_exit_events(
     }
 }
 
+pub fn publish_tsy_npc_spawned_events(
+    redis: Res<RedisBridgeResource>,
+    mut events: EventReader<TsyNpcSpawned>,
+) {
+    for ev in events.read() {
+        let wire = TsyNpcSpawnedV1 {
+            v: TSY_EVENT_VERSION,
+            kind: "tsy_npc_spawned".to_string(),
+            family_id: ev.family_id.clone(),
+            archetype: archetype_to_wire(ev.archetype),
+            count: ev.count,
+            at_tick: ev.at_tick,
+        };
+        if let Err(error) = redis.tx_outbound.send(RedisOutbound::TsyNpcSpawned(wire)) {
+            tracing::warn!("[bong][tsy_event_bridge] dropped TsyNpcSpawned: {error}");
+        }
+    }
+}
+
+pub fn publish_tsy_sentinel_phase_changed_events(
+    redis: Res<RedisBridgeResource>,
+    mut events: EventReader<TsySentinelPhaseChanged>,
+) {
+    for ev in events.read() {
+        let wire = TsySentinelPhaseChangedV1 {
+            v: TSY_EVENT_VERSION,
+            kind: "tsy_sentinel_phase_changed".to_string(),
+            family_id: ev.family_id.clone(),
+            container_entity_id: ev.container_entity_id,
+            phase: ev.phase,
+            max_phase: ev.max_phase,
+            at_tick: ev.at_tick,
+        };
+        if let Err(error) = redis
+            .tx_outbound
+            .send(RedisOutbound::TsySentinelPhaseChanged(wire))
+        {
+            tracing::warn!("[bong][tsy_event_bridge] dropped TsySentinelPhaseChanged: {error}");
+        }
+    }
+}
+
+fn archetype_to_wire(archetype: TsyHostileArchetype) -> TsyHostileArchetypeV1 {
+    match archetype {
+        TsyHostileArchetype::Daoxiang => TsyHostileArchetypeV1::Daoxiang,
+        TsyHostileArchetype::Zhinian => TsyHostileArchetypeV1::Zhinian,
+        TsyHostileArchetype::GuardianRelicSentinel => TsyHostileArchetypeV1::GuardianRelicSentinel,
+        TsyHostileArchetype::Fuya => TsyHostileArchetypeV1::Fuya,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,7 +168,17 @@ mod tests {
         });
         app.add_event::<TsyEnterEmit>();
         app.add_event::<TsyExitEmit>();
-        app.add_systems(Update, (publish_tsy_enter_events, publish_tsy_exit_events));
+        app.add_event::<TsyNpcSpawned>();
+        app.add_event::<TsySentinelPhaseChanged>();
+        app.add_systems(
+            Update,
+            (
+                publish_tsy_enter_events,
+                publish_tsy_exit_events,
+                publish_tsy_npc_spawned_events,
+                publish_tsy_sentinel_phase_changed_events,
+            ),
+        );
         (app, rx_outbound)
     }
 
@@ -197,6 +262,52 @@ mod tests {
         assert_eq!(wire.family_id, "tsy_lingxu_01");
         assert_eq!(wire.duration_ticks, 12000);
         assert_eq!(wire.qi_drained_total, 0.0);
+    }
+
+    #[test]
+    fn publish_tsy_npc_spawned_event_emits_correct_payload() {
+        let (mut app, rx) = setup_app();
+        app.world_mut().send_event(TsyNpcSpawned {
+            family_id: "tsy_zongmen_yiji_01".to_string(),
+            archetype: TsyHostileArchetype::GuardianRelicSentinel,
+            count: 3,
+            at_tick: 12000,
+        });
+        app.update();
+        let outbound = rx.try_recv().expect("expected one outbound");
+        let RedisOutbound::TsyNpcSpawned(wire) = outbound else {
+            panic!("wrong outbound");
+        };
+        assert_eq!(wire.v, 1);
+        assert_eq!(wire.kind, "tsy_npc_spawned");
+        assert_eq!(wire.family_id, "tsy_zongmen_yiji_01");
+        assert_eq!(wire.archetype, TsyHostileArchetypeV1::GuardianRelicSentinel);
+        assert_eq!(wire.count, 3);
+        assert_eq!(wire.at_tick, 12000);
+    }
+
+    #[test]
+    fn publish_tsy_sentinel_phase_changed_event_emits_correct_payload() {
+        let (mut app, rx) = setup_app();
+        app.world_mut().send_event(TsySentinelPhaseChanged {
+            family_id: "tsy_zongmen_yiji_01".to_string(),
+            container_entity_id: 42,
+            phase: 1,
+            max_phase: 3,
+            at_tick: 12345,
+        });
+        app.update();
+        let outbound = rx.try_recv().expect("expected one outbound");
+        let RedisOutbound::TsySentinelPhaseChanged(wire) = outbound else {
+            panic!("wrong outbound");
+        };
+        assert_eq!(wire.v, 1);
+        assert_eq!(wire.kind, "tsy_sentinel_phase_changed");
+        assert_eq!(wire.family_id, "tsy_zongmen_yiji_01");
+        assert_eq!(wire.container_entity_id, 42);
+        assert_eq!(wire.phase, 1);
+        assert_eq!(wire.max_phase, 3);
+        assert_eq!(wire.at_tick, 12345);
     }
 
     #[test]

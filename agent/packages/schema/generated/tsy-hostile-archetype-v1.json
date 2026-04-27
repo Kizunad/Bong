@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "daoxiang",
+      "type": "string"
+    },
+    {
+      "const": "zhinian",
+      "type": "string"
+    },
+    {
+      "const": "guardian_relic_sentinel",
+      "type": "string"
+    },
+    {
+      "const": "fuya",
+      "type": "string"
+    }
+  ]
+}

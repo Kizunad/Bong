@@ -114,6 +114,11 @@ import {
   TsyZoneActivatedV1,
 } from "./tsy.js";
 import {
+  TsyHostileArchetypeV1,
+  TsyNpcSpawnedV1,
+  TsySentinelPhaseChangedV1,
+} from "./tsy-hostile-v1.js";
+import {
   CancelSearchRequestV1,
   ContainerStateV1,
   SearchAbortedV1,
@@ -244,6 +249,10 @@ export const SCHEMA_REGISTRY = {
   searchAbortedV1: SearchAbortedV1,
   clientRequestStartSearchV1: StartSearchRequestV1,
   clientRequestCancelSearchV1: CancelSearchRequestV1,
+  // plan-tsy-hostile-v1 §6 — TSY 敌对 NPC 分层
+  tsyHostileArchetypeV1: TsyHostileArchetypeV1,
+  tsyNpcSpawnedV1: TsyNpcSpawnedV1,
+  tsySentinelPhaseChangedV1: TsySentinelPhaseChangedV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -404,6 +413,10 @@ export const GENERATED_SCHEMA_FILES = {
   "search-aborted-v1.json": SCHEMA_REGISTRY.searchAbortedV1,
   "client-request-start-search-v1.json": SCHEMA_REGISTRY.clientRequestStartSearchV1,
   "client-request-cancel-search-v1.json": SCHEMA_REGISTRY.clientRequestCancelSearchV1,
+  // plan-tsy-hostile-v1 §6
+  "tsy-hostile-archetype-v1.json": SCHEMA_REGISTRY.tsyHostileArchetypeV1,
+  "tsy-npc-spawned-v1.json": SCHEMA_REGISTRY.tsyNpcSpawnedV1,
+  "tsy-sentinel-phase-changed-v1.json": SCHEMA_REGISTRY.tsySentinelPhaseChangedV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

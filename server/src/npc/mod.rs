@@ -16,6 +16,7 @@ pub mod spawn;
 pub mod sync;
 pub mod territory;
 pub mod tribulation;
+pub mod tsy_hostile;
 
 use valence::prelude::App;
 
@@ -32,6 +33,7 @@ pub fn register(app: &mut App) {
     patrol::register(app);
     sync::register(app);
     brain::register(app);
+    tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
     navigator::register(app);
     scenario::register(app);

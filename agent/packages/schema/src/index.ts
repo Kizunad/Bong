@@ -47,3 +47,6 @@ export * from "./extract-v1.js";
 
 // 活坍缩渊容器搜刮 (plan-tsy-container-v1 §5.1)
 export * from "./container-interaction.js";
+
+// 活坍缩渊敌对 NPC 分层 (plan-tsy-hostile-v1 §6)
+export * from "./tsy-hostile-v1.js";
