@@ -399,3 +399,54 @@ can_take(pill) = Contamination.entries
 ## §9 进度日志
 
 - 2026-04-25：P0 落地确认（server alchemy/ 3909 行 + 3 份测试 recipe）
+
+---
+
+## Finish Evidence
+
+> 验收日期 2026-04-27 · 阶段 P0–P6 全部 ✅（P6 仅 UI 部分接入，世界右键流程留 §1.2 reminder.md 待办）。
+
+### 落地清单（plan §5 阶段表 ↔ 代码）
+
+| Phase | plan 验收点 | 代码落地 |
+|---|---|---|
+| P0 | RecipeRegistry + JSON 加载 + IPC Schema | `server/src/alchemy/recipe.rs`（503 行，启动期扫 `server/assets/alchemy/recipes/*.json`）· 三份测试 recipe（kai_mai_pill_v0 / hui_yuan_pill_v0 / du_ming_san_v0）· `agent/packages/schema/src/alchemy.ts`（101 行）+ 10 个 sample JSON |
+| P1 | AlchemyFurnace + LearnedRecipes + Screen 客户端拿到 RecipeScrollStore | `server/src/alchemy/furnace.rs`（含 `AlchemyFurnace::placed` / `furnace_tier_from_item_id`）· `learned.rs`（93 行 `LearnedRecipes` component）· `client/.../alchemy/state/RecipeScrollStore.java`（103 行）· `ClientRequestV1::AlchemyFurnacePlace` payload + `PlaceFurnaceRequest` 事件 |
+| P2 | 投料槽 + stages 多阶投料 + 起炉后锁定不返还 | `server/src/alchemy/session.rs`（315 行，`StagedMaterials.completed_stages / missed_stages`，`apply_tick` 多阶 window 判定） |
+| P3 | 火候进程 tick + 偏差计算 + 五桶分桶 | `outcome.rs`（295 行）`DeviationSummary` / `classify_precise` / `ResolvedOutcome::{Perfect,Good,Flawed,Waste,Explode}` |
+| P4 | 残缺匹配 + side_effect_pool + LifeRecord | `resolver.rs`（395 行 `resolve()` 入口）· `outcome.rs::build_flawed_result` · `cultivation/life_record.rs` 扩 `AlchemyAttempt` |
+| P5 | 服药 → ContamSource + 阈值禁服 + 过量 debuff（基础） | `pill.rs`（189 行 `consume_pill`，`TOXIN_THRESHOLD = 1.0`，`SPOIL_TOXIN_MULT`，`AgePeakCheck`，复用 `cultivation::contamination_tick`） |
+| P6 | BaseOwoScreen 全流程（卷轴手札 + 塔科夫背包 + 拖拽投料 + 翻页 / 残卷学习） | `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java`（814 行，三列 600×340，复用 `BackpackGridPanel` 5×7）· 7 个 store（`AlchemyFurnaceStore` / `AlchemySessionStore` / `RecipeScrollStore` / `AlchemyAttemptHistoryStore` / `ContaminationWarningStore` / `AlchemyOutcomeForecastStore` / `InventoryMetaStore`） |
+
+### 关键 commit
+
+- `575bd982` 2026-04-15 — `feat(alchemy): implement plan-alchemy-v1 server slice (P0–P5)`（14 文件 +2159 行；server alchemy/ 主体 + 3 recipe JSON + 50 单测）
+- `2b7d99c7` 2026-04-17 — `feat(HUD): plan-HUD-v1 §11.4 channels end-to-end + textured loadout`（agent schema + 10 sample + `client/alchemy/AlchemyScreen.java` 763 行 + 7 个 store）
+- `f862a6e2` 2026-04-21 — `feat(alchemy): plan-alchemy-v1 §1.2 世界放置炉 server-only MVP`（`AlchemyFurnacePlace` payload + 5 集成测试 + `furnace_fantie` item）
+- `aba0c3e2` 2026-04-21 — `fix(alchemy): codex P1 race + P2 inventory sync + schema artifact`（mod.rs +72 / schema 同步）
+- `e0bf8247` / `3433ae48` / `892503b3` shelflife M5b/c/d — Spoil/Decay/Age 三路径接入 `consume_pill`（plan-shelflife-v1 跨 plan hook）
+- `a7050089` 2026-04-24 — `feat(alchemy): plan-mineral-v1 M5 — IngredientSpec.mineral_id 矿物辅料校验`（recipe.rs +76）
+
+### 测试结果
+
+- `grep -rc '#\[test\]' server/src/alchemy/` → **97 个 `#[test]`**（recipe 13 / session 11 / outcome 14 / pill 19 / resolver 16 / furnace 7 / mod 9 / learned 4 / skill_hook 4）
+- `client/src/test/java/com/bong/client/alchemy/AlchemyScreenSkillHeaderTest.java` — 2 个 `@Test`（卷轴技艺标题渲染）
+- `agent/packages/schema/tests/schema.test.ts`（55 行）含 alchemy schema 正反 sample 对拍
+
+### 跨仓库核验
+
+- **server**：`AlchemyFurnace` / `AlchemySession` / `LearnedRecipes` / `RecipeRegistry` / `consume_pill` / `IngredientSpec.mineral_id` / `ResolvedOutcome` / `DeviationSummary` / `ClientRequestV1::AlchemyFurnacePlace` / `cultivation::Contamination::entries`（复用）
+- **agent**：`agent/packages/schema/src/alchemy.ts`（`RecipeEntry` / `OutcomeBucket` / `StageHint` / `ContaminationLevel`）· `client-request.ts` 的 `AlchemyOpenFurnace` / `AlchemyIgnite` / `AlchemyFeedSlot` / `AlchemyIntervention` / `AlchemyTakeBack` / `AlchemyTakePill` / `AlchemyTurnPage` / `AlchemyLearnRecipe` 8 个 variant
+- **client**：`AlchemyScreen` + `AlchemyScreenBootstrap` + `state/{AlchemyFurnaceStore,AlchemySessionStore,RecipeScrollStore,AlchemyAttemptHistoryStore,ContaminationWarningStore,AlchemyOutcomeForecastStore,InventoryMetaStore}` · `ClientRequestSender.sendAlchemyOpenFurnace`
+
+### 遗留 / 后续（本 plan 不处理，已记 `docs/plans-skeleton/reminder.md`）
+
+- **Fabric 客户端右键炉方块开 Screen**：当前 `AlchemyScreenBootstrap` 仅绑 K 键 debug 打开；vanilla `UseItemOnC2s` 拦截 → `AlchemyOpenFurnace` payload 未接（server 侧已就绪）
+- **多炉 session 路由按 BlockPos**：现 `AlchemyIntervention` 仍按"每玩家一炉"假设，需给相关 payload 加 `furnace_pos`
+- **BlockEntity 持久化**：炉是纯内存对象，重启即丢——等 `plan-persistence-v1` 落地
+- **Redis channel `bong:alchemy/*`**：未接 agent 推演（server↔client 直接 payload 已能跑）
+- **炸炉真正结算**：`ResolvedOutcome::Explode` 的 damage / meridian_crack 还没应用到 caster 实体
+- **side_effect tag 映射真实 buff/debuff**：`minor_qi_regen_boost` / `rare_insight_flash` / `qi_cap_perm_minus_1` 等仍是字符串，等 StatusEffect 系统统一
+- **测试 recipe 进生产**：三份 placeholder 等 `plan-botany-v1` 落地后替换真实灵草采集
+- **跨 plan 钩子尚未接通**：`plan-cultivation-v1` 开脉丹推进经脉进度 · `plan-HUD-v1 §10` 快捷使用栏消费 pill · `plan-inventory-v1` 丹方残卷 item 1×2 + 操作磨损
+- **v2+ 设计开放项**（plan §7）：品阶 / 铭文 / 开光 / 自动化炼丹 AutoProfile / NPC agent 侧炼丹 / 丹心识别全部未实装
