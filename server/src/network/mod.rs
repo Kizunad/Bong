@@ -284,6 +284,8 @@ pub fn register(app: &mut App) {
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+            vfx_event_emit::emit_vanilla_vfx_particles
+                .after(vfx_event_emit::handle_vfx_debug_commands),
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
             tsy_event_bridge::publish_tsy_exit_events,
@@ -366,6 +368,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
+    app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
 }
 
