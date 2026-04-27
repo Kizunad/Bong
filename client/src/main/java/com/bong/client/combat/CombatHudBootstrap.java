@@ -68,6 +68,7 @@ public final class CombatHudBootstrap {
         CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
         QuickUseSlotStore.resetForTests();
+        SkillBarStore.resetForTests();
         UnlockedStylesStore.resetForTests();
         UnifiedEventStore.resetForTests();
         SpellVolumeStore.resetForTests();

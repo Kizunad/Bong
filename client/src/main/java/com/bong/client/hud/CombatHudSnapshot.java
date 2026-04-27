@@ -4,6 +4,7 @@ import com.bong.client.combat.CastState;
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.DefenseWindowState;
 import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SpellVolumeState;
 import com.bong.client.combat.UnifiedEventStream;
 import com.bong.client.combat.UnlockedStyles;
@@ -19,6 +20,7 @@ public final class CombatHudSnapshot {
         CombatHudState.empty(),
         null,
         QuickSlotConfig.empty(),
+        SkillBarConfig.empty(),
         -1,
         CastState.idle(),
         UnifiedEventStream.empty(),
@@ -30,6 +32,7 @@ public final class CombatHudSnapshot {
     private final CombatHudState combatHudState;
     private final PhysicalBody physicalBody;
     private final QuickSlotConfig quickSlotConfig;
+    private final SkillBarConfig skillBarConfig;
     private final int selectedHotbarSlot;
     private final CastState castState;
     private final UnifiedEventStream eventStream;
@@ -41,6 +44,7 @@ public final class CombatHudSnapshot {
         CombatHudState combatHudState,
         PhysicalBody physicalBody,
         QuickSlotConfig quickSlotConfig,
+        SkillBarConfig skillBarConfig,
         int selectedHotbarSlot,
         CastState castState,
         UnifiedEventStream eventStream,
@@ -51,6 +55,7 @@ public final class CombatHudSnapshot {
         this.combatHudState = combatHudState;
         this.physicalBody = physicalBody;
         this.quickSlotConfig = quickSlotConfig;
+        this.skillBarConfig = skillBarConfig;
         this.selectedHotbarSlot = selectedHotbarSlot;
         this.castState = castState;
         this.eventStream = eventStream;
@@ -67,6 +72,7 @@ public final class CombatHudSnapshot {
         CombatHudState combatHudState,
         PhysicalBody physicalBody,
         QuickSlotConfig quickSlotConfig,
+        SkillBarConfig skillBarConfig,
         int selectedHotbarSlot,
         CastState castState,
         UnifiedEventStream eventStream,
@@ -78,6 +84,7 @@ public final class CombatHudSnapshot {
             combatHudState == null ? CombatHudState.empty() : combatHudState,
             physicalBody,
             quickSlotConfig == null ? QuickSlotConfig.empty() : quickSlotConfig,
+            skillBarConfig == null ? SkillBarConfig.empty() : skillBarConfig,
             selectedHotbarSlot,
             castState == null ? CastState.idle() : castState,
             eventStream == null ? UnifiedEventStream.empty() : eventStream,
@@ -90,6 +97,7 @@ public final class CombatHudSnapshot {
     public CombatHudState combatHudState() { return combatHudState; }
     public PhysicalBody physicalBody() { return physicalBody; }
     public QuickSlotConfig quickSlotConfig() { return quickSlotConfig; }
+    public SkillBarConfig skillBarConfig() { return skillBarConfig; }
     public int selectedHotbarSlot() { return selectedHotbarSlot; }
     public CastState castState() { return castState; }
     public UnifiedEventStream eventStream() { return eventStream; }

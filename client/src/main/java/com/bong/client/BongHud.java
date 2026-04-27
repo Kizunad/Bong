@@ -6,6 +6,7 @@ import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.SpellVolumeStore;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.UnlockedStylesStore;
@@ -174,6 +175,7 @@ public class BongHud {
             CombatHudStateStore.snapshot(),
             PhysicalBodyStore.snapshot(),
             QuickUseSlotStore.snapshot(),
+            SkillBarStore.snapshot(),
             selectedSlot,
             CastStateStore.snapshot(),
             UnifiedEventStore.stream(),
