@@ -1435,8 +1435,13 @@ pub fn apply_death_drop_on_revive(
         // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
         // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
         if let Ok(presence) = presences.get(ev.entity) {
-            let tsy_outcome =
-                tsy_death_drop::apply_tsy_death_drop(&mut inventory, presence, base, seed);
+            let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
+                &mut inventory,
+                &registry,
+                presence,
+                base,
+                seed,
+            );
             if tsy_outcome.total_dropped() == 0 {
                 continue;
             }

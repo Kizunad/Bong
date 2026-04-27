@@ -12,7 +12,10 @@ use std::collections::HashSet;
 
 use valence::math::DVec3;
 
-use super::{select_drop_instance_ids, DroppedItemRecord, PlayerInventory};
+use super::{
+    select_drop_instance_ids, DroppedItemRecord, ItemRegistry, PlayerInventory,
+    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND,
+};
 use crate::world::tsy::TsyPresence;
 
 /// 分流结果。`apply_death_drop_on_revive` 据此 spawn DroppedLoot + CorpseEmbalmed。
@@ -44,13 +47,37 @@ impl TsyDeathDropOutcome {
 /// 应用秘境死亡分流：mutate inventory，移除将要掉落的 item，返回 outcome。
 ///
 /// `seed` 控制 50% Roll 的伪随机；调用方通常用 `death_drop_seed(entity, revision)`。
+///
+/// `registry` 用于查 `weapon_spec` —— 与主世界 `apply_death_drop_to_inventory`
+/// 一致，主/副/双手槽里耐久 ≥ 0.5 的真武器免于 50% Roll（Codex review #1：
+/// 不能让玩家在 TSY 内丢主武器，与原 §十二 50% 规则破坏一致性）。秘境所得仍 100% 掉。
 pub fn apply_tsy_death_drop(
     inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
     presence: &TsyPresence,
     corpse_pos: DVec3,
     seed: u64,
 ) -> TsyDeathDropOutcome {
     let snapshot: HashSet<u64> = presence.entry_inventory_snapshot.iter().copied().collect();
+
+    // ----- 武器保护：与 apply_death_drop_to_inventory 一致 -----
+    // 装在 main/off/two-hand 且耐久 ≥ 0.5 的真武器（template 有 weapon_spec）→
+    // 免于原带物 50% Roll。秘境所得仍 100% 掉，保护只对 entry_carry 生效。
+    let protected_weapon_ids: HashSet<u64> = inventory
+        .equipped
+        .iter()
+        .filter(|(slot, item)| {
+            matches!(
+                slot.as_str(),
+                EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
+            ) && item.durability >= 0.5
+        })
+        .filter_map(|(_, item)| {
+            registry
+                .get(&item.template_id)
+                .and_then(|template| template.weapon_spec.as_ref().map(|_| item.instance_id))
+        })
+        .collect();
 
     // ----- 分类阶段 -----
     // 走一遍 inventory，记下每个 instance 的 (location, is_snapshot)；秘境所得直接掉，
@@ -76,7 +103,10 @@ pub fn apply_tsy_death_drop(
     for (slot, item) in &inventory.equipped {
         let instance_id = item.instance_id;
         if snapshot.contains(&instance_id) {
-            entry_carry_ids.push(instance_id);
+            // entry_carry 中的高耐武器不进 candidate（保护）
+            if !protected_weapon_ids.contains(&instance_id) {
+                entry_carry_ids.push(instance_id);
+            }
         } else {
             tsy_acquired_records.push(DroppedItemRecord {
                 container_id: slot.clone(),
@@ -282,7 +312,13 @@ mod tests {
         // 入场空 → 所有都是秘境所得 → 100% 掉
         let mut inv = make_inventory(vec![item(1), item(2), item(3)]);
         let presence = presence_with_snapshot(vec![]);
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 42);
+        let outcome = apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            42,
+        );
         assert_eq!(outcome.entry_carry_dropped.len(), 0);
         assert_eq!(outcome.tsy_acquired_dropped.len(), 3);
         assert_eq!(outcome.entry_carry_kept_ids.len(), 0);
@@ -294,7 +330,13 @@ mod tests {
         // 入场即全部 → 没有秘境所得 → 50% Roll
         let mut inv = make_inventory(vec![item(1), item(2), item(3), item(4)]);
         let presence = presence_with_snapshot(vec![1, 2, 3, 4]);
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 7);
+        let outcome = apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            7,
+        );
         assert_eq!(outcome.tsy_acquired_dropped.len(), 0);
         assert_eq!(
             outcome.entry_carry_dropped.len(),
@@ -316,7 +358,13 @@ mod tests {
         items.shuffle_in_place(); // 模拟乱序
         let mut inv = make_inventory(items);
         let presence = presence_with_snapshot((1..=10).collect());
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 1234);
+        let outcome = apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            1234,
+        );
         assert_eq!(outcome.entry_carry_dropped.len(), 5);
         assert_eq!(outcome.tsy_acquired_dropped.len(), 5);
         assert_eq!(outcome.entry_carry_kept_ids.len(), 5);
@@ -333,7 +381,13 @@ mod tests {
         // 1 件原带 / 2 = 0.5 截断 = 0 → 不掉
         let mut inv = make_inventory(vec![item(1)]);
         let presence = presence_with_snapshot(vec![1]);
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 42);
+        let outcome = apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            42,
+        );
         assert_eq!(outcome.entry_carry_dropped.len(), 0);
         assert_eq!(outcome.entry_carry_kept_ids.len(), 1);
         assert_eq!(inv.containers[0].items.len(), 1);
@@ -344,7 +398,7 @@ mod tests {
         let mut inv = make_inventory(vec![item(1), item(2)]);
         let presence = presence_with_snapshot(vec![]);
         let pos = DVec3::new(123.0, 64.5, -45.0);
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, pos, 0);
+        let outcome = apply_tsy_death_drop(&mut inv, &ItemRegistry::default(), &presence, pos, 0);
         assert_eq!(outcome.corpse_pos, pos);
         assert!(outcome.is_embalmed);
     }
@@ -356,7 +410,13 @@ mod tests {
         inv.hotbar[0] = Some(item(3));
         // snapshot 只含 1 → 2、3 都是秘境所得 → 100% 掉
         let presence = presence_with_snapshot(vec![1]);
-        let outcome = apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 0);
+        let outcome = apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            0,
+        );
         assert_eq!(outcome.tsy_acquired_dropped.len(), 2);
         // 1 件原带 → 50%/2 = 0 → 不掉
         assert_eq!(outcome.entry_carry_dropped.len(), 0);
@@ -370,7 +430,13 @@ mod tests {
         let mut inv = make_inventory(vec![item(1), item(2)]);
         let original = inv.revision.0;
         let presence = presence_with_snapshot(vec![]);
-        apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 0);
+        apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            0,
+        );
         assert!(inv.revision.0 > original, "revision 应在掉落后 bump");
     }
 
@@ -380,8 +446,116 @@ mod tests {
         let mut inv = make_inventory(vec![item(1)]);
         let original = inv.revision.0;
         let presence = presence_with_snapshot(vec![1]);
-        apply_tsy_death_drop(&mut inv, &presence, DVec3::ZERO, 0);
+        apply_tsy_death_drop(
+            &mut inv,
+            &ItemRegistry::default(),
+            &presence,
+            DVec3::ZERO,
+            0,
+        );
         assert_eq!(inv.revision.0, original);
+    }
+
+    fn weapon_template(id: &str) -> crate::inventory::ItemTemplate {
+        use crate::combat::weapon::WeaponKind;
+        use crate::inventory::{ItemCategory, ItemTemplate, WeaponSpec};
+        ItemTemplate {
+            id: id.into(),
+            display_name: id.into(),
+            category: ItemCategory::Weapon,
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 1.0,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: "test weapon".into(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: Some(WeaponSpec {
+                weapon_kind: WeaponKind::Sword,
+                base_attack: 10.0,
+                quality_tier: 0,
+                durability_max: 100.0,
+                qi_cost_mul: 1.0,
+            }),
+        }
+    }
+
+    fn weapon_registry(template_id: &str) -> ItemRegistry {
+        let mut map = HashMap::new();
+        map.insert(template_id.to_string(), weapon_template(template_id));
+        ItemRegistry::from_map(map)
+    }
+
+    #[test]
+    fn entry_carry_weapon_in_main_hand_is_protected() {
+        // Codex review #1 回归：玩家带主世界主武器进 TSY，死了不应丢
+        // —— 与 apply_death_drop_to_inventory 保护规则一致。
+        let registry = weapon_registry("test_sword");
+        // 武器 instance：耐久 0.9（≥ 0.5 → 保护）
+        let mut weapon = item(100);
+        weapon.template_id = "test_sword".into();
+        weapon.durability = 0.9;
+
+        let mut inv = make_inventory(vec![item(1), item(2), item(3), item(4)]);
+        inv.equipped.insert("main_hand".into(), weapon);
+
+        // snapshot 包含 5 件（4 凡物 + 1 武器）
+        let presence = presence_with_snapshot(vec![1, 2, 3, 4, 100]);
+        let outcome = apply_tsy_death_drop(&mut inv, &registry, &presence, DVec3::ZERO, 7);
+
+        // 4 凡物参与 50% Roll = 2 件掉；武器 100 不参与 → 必留
+        assert_eq!(outcome.entry_carry_dropped.len(), 2);
+        assert!(
+            !outcome
+                .entry_carry_dropped
+                .iter()
+                .any(|r| r.instance.instance_id == 100),
+            "受保护武器不应进 dropped"
+        );
+        assert!(
+            inv.equipped.contains_key("main_hand"),
+            "受保护武器应保留在 equipped"
+        );
+        assert_eq!(
+            inv.equipped["main_hand"].instance_id, 100,
+            "保留的就是原武器"
+        );
+    }
+
+    #[test]
+    fn low_durability_weapon_is_not_protected() {
+        // 耐久 < 0.5 的武器不受保护（与主世界一致）
+        let registry = weapon_registry("test_broken_sword");
+        let mut weapon = item(100);
+        weapon.template_id = "test_broken_sword".into();
+        weapon.durability = 0.2; // 残破，不保护
+
+        let mut inv = make_inventory(vec![item(1)]);
+        inv.equipped.insert("main_hand".into(), weapon);
+        let presence = presence_with_snapshot(vec![1, 100]);
+        let outcome = apply_tsy_death_drop(&mut inv, &registry, &presence, DVec3::ZERO, 5);
+
+        // 2 entry 参与 → 50% = 1 件掉；可能是 1 也可能是 100，断言总数即可
+        assert_eq!(outcome.entry_carry_dropped.len(), 1);
+    }
+
+    #[test]
+    fn protection_does_not_extend_to_tsy_acquired_items() {
+        // 在 TSY 内捡到的"武器"不算原带 → 仍 100% 掉，与"秘境所得 100%"规则一致
+        let registry = weapon_registry("test_acquired_blade");
+        let mut weapon = item(200);
+        weapon.template_id = "test_acquired_blade".into();
+        weapon.durability = 0.9;
+        let mut inv = make_inventory(vec![]);
+        inv.equipped.insert("main_hand".into(), weapon);
+        // snapshot 不含 200 → 200 是秘境所得
+        let presence = presence_with_snapshot(vec![]);
+        let outcome = apply_tsy_death_drop(&mut inv, &registry, &presence, DVec3::ZERO, 0);
+
+        assert_eq!(outcome.tsy_acquired_dropped.len(), 1);
+        assert!(inv.equipped.is_empty(), "秘境所得武器即使高耐也 100% 掉");
     }
 
     /// 测试用 trait：让 Vec<ItemInstance> shuffle_in_place 一下，避免引入 rand。
