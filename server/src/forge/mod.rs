@@ -9,6 +9,10 @@
 //!   * §6.P6 flawed_fallback / side_effect_pool     → fallback.rs + history.rs
 //!
 //! 服务器系统负责把 Event 翻译为 StepState 变化，由 client UI / 未来 agent 驱动 Event 输入。
+//!
+//! TODO(plan-persistence-v1): forge 持久化需保存的 Resource/Component：
+//! `ForgeSessions`（在炉进度）、`BlueprintRegistry`（图谱定义版本/校验）、
+//! `LearnedBlueprints`（玩家已学图谱）与 `WeaponForgeStation`（砧方块实体）。
 
 pub mod blueprint;
 pub mod events;

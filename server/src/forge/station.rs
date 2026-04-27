@@ -2,6 +2,9 @@
 //!
 //! MVP：Component 挂到 BlockEntity（或 placeholder Entity）上，
 //! tier 限制能使用的图谱（凡铁砧最高锻法器）。
+//!
+//! TODO(plan-persistence-v1): 将 `WeaponForgeStation` 接到方块实体存档；预留字段形如
+//! `block_entity: Option<BlockEntityRef>`，与 alchemy furnace / lingtian plot 一并落地。
 
 use std::collections::HashSet;
 
@@ -27,6 +30,7 @@ pub struct WeaponForgeStation {
     pub owner: Option<Entity>,
     pub session: Option<ForgeSessionId>,
     pub integrity: f32,
+    // TODO(plan-persistence-v1): block_entity: Option<BlockEntityRef>
     pub pos: Option<(i32, i32, i32)>,
 }
 

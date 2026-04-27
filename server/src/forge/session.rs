@@ -33,7 +33,7 @@ impl ForgeStep {
 }
 
 /// 每步独立状态。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StepState {
     Billet(BilletState),
     Tempering(TemperingState),
@@ -42,7 +42,7 @@ pub enum StepState {
     None,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BilletState {
     /// 投入物料：material -> count。
     pub materials_in: HashMap<String, u32>,
@@ -51,7 +51,7 @@ pub struct BilletState {
     pub resolved_tier_cap: u8,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TemperingState {
     /// 已处理到 pattern 的第几拍。
     pub beat_cursor: usize,
@@ -63,21 +63,21 @@ pub struct TemperingState {
     pub qi_spent: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InscriptionState {
     pub scrolls_in: Vec<String>,
     pub filled_slots: u8,
     pub failed: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConsecrationState {
     pub qi_injected: f64,
     pub qi_required: f64,
     pub color_imprint: Option<ColorKind>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeSession {
     pub id: ForgeSessionId,
     pub blueprint: BlueprintId,
@@ -138,7 +138,7 @@ impl ForgeSession {
 }
 
 /// 所有在炉 session 的总表。ForgeSessionId → ForgeSession。
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ForgeSessions {
     next_id: u64,
     sessions: HashMap<ForgeSessionId, ForgeSession>,

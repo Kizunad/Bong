@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::blueprint::{
     BilletProfile, Blueprint, ConsecrationProfile, InscriptionProfile, MaterialStack, StepKind,
     StepSpec, TemperBeat, TemperingProfile,
@@ -136,7 +138,7 @@ pub fn apply_tempering_hit(
     state.beat_cursor += 1;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TemperingResult {
     Perfect,
     Good,
@@ -167,7 +169,7 @@ pub fn resolve_tempering(
 
 // ══════════════════════════════ Inscription ══════════════════════════════
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InscriptionResult {
     Filled,
     /// 公差内允许的少填（flawed）。
@@ -214,7 +216,7 @@ pub fn resolve_inscription(
 
 // ══════════════════════════════ Consecration ══════════════════════════════
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsecrationResult {
     Succeeded { color: ColorKind },
     Insufficient,
