@@ -234,4 +234,19 @@ mod tests {
         assert!(RiftKind::DeepRift.allows_exit());
         assert!(RiftKind::CollapseTear.allows_exit());
     }
+
+    #[test]
+    fn default_tsy_portals_fixture_loads() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tsy_portals.json");
+        let registry = load_tsy_portals_from_path(path);
+        let family = registry
+            .by_family
+            .get("tsy_lingxu_01")
+            .expect("fixture should define tsy_lingxu_01");
+
+        assert_eq!(family.shallow.len(), 1);
+        assert_eq!(family.shallow[0].kind, RiftKind::MainRift);
+        assert_eq!(family.deep.len(), 1);
+        assert_eq!(family.deep[0].kind, RiftKind::DeepRift);
+    }
 }

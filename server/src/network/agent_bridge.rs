@@ -74,6 +74,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::RiftPortalState => "rift_portal_state",
+        ServerDataType::RiftPortalRemoved => "rift_portal_removed",
         ServerDataType::ExtractStarted => "extract_started",
         ServerDataType::ExtractProgress => "extract_progress",
         ServerDataType::ExtractCompleted => "extract_completed",

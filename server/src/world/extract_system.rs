@@ -155,6 +155,11 @@ pub fn start_extract_request(
 ) {
     for req in events.read() {
         let Ok((portal, portal_pos)) = portals.get(req.portal) else {
+            results.send(StartExtractResult::Rejected {
+                player: req.player,
+                portal: req.portal,
+                reason: ExtractRejectionReason::PortalExpired,
+            });
             continue;
         };
         let Ok((player_pos, presence, combat, wounds, existing_progress)) = players.get(req.player)
@@ -174,7 +179,7 @@ pub fn start_extract_request(
             Some(ExtractRejectionReason::AlreadyBusy)
         } else if is_in_combat(combat, clock.tick) {
             Some(ExtractRejectionReason::InCombat)
-        } else if player_pos.0.distance(portal_pos.0) > PORTAL_INTERACT_RADIUS {
+        } else if player_pos.0.distance(portal_pos.0) > portal.trigger_radius {
             Some(ExtractRejectionReason::OutOfRange)
         } else if presence.family_id != portal.family_id || !portal.kind.allows_exit() {
             Some(ExtractRejectionReason::CannotExit)
@@ -310,10 +315,9 @@ pub fn tick_extract_progress(
         }
 
         progress.elapsed_ticks = progress.elapsed_ticks.saturating_add(1);
-        if clock
-            .tick
-            .saturating_sub(progress.started_at_tick)
-            .is_multiple_of(EXTRACT_PROGRESS_BROADCAST_INTERVAL_TICKS)
+        let ticks_since_start = clock.tick.saturating_sub(progress.started_at_tick);
+        if ticks_since_start > 0
+            && ticks_since_start.is_multiple_of(EXTRACT_PROGRESS_BROADCAST_INTERVAL_TICKS)
         {
             pulse_events.send(ExtractProgressPulse {
                 player,
@@ -607,6 +611,26 @@ mod tests {
         )
     }
 
+    fn portal_with_radius(
+        family_id: &str,
+        kind: RiftKind,
+        pos: DVec3,
+        radius: f64,
+    ) -> (Position, RiftPortal) {
+        (
+            Position(pos),
+            RiftPortal::exit(
+                family_id.to_string(),
+                DimensionAnchor {
+                    dimension: DimensionKind::Overworld,
+                    pos: DVec3::ZERO,
+                },
+                radius,
+                kind,
+            ),
+        )
+    }
+
     fn presence(family_id: &str) -> TsyPresence {
         TsyPresence {
             family_id: family_id.to_string(),
@@ -660,6 +684,62 @@ mod tests {
             collected.first(),
             Some(StartExtractResult::Rejected {
                 reason: ExtractRejectionReason::OutOfRange,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn start_extract_uses_portal_trigger_radius() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let portal = app
+            .world_mut()
+            .spawn(portal_with_radius(
+                "tsy_lingxu_01",
+                RiftKind::MainRift,
+                DVec3::ZERO,
+                1.5,
+            ))
+            .id();
+        let player = spawn_player(&mut app, DVec3::new(1.7, 0.0, 0.0), Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest { player, portal });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        assert!(matches!(
+            collected.first(),
+            Some(StartExtractResult::Rejected {
+                reason: ExtractRejectionReason::OutOfRange,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn start_extract_rejects_missing_portal_as_expired() {
+        let mut app = app_with_extract_system(start_extract_request);
+        let missing_portal = app.world_mut().spawn(()).id();
+        app.world_mut().entity_mut(missing_portal).despawn();
+        let player = spawn_player(&mut app, DVec3::ZERO, Some("tsy_lingxu_01"));
+
+        app.world_mut()
+            .resource_mut::<Events<StartExtractRequest>>()
+            .send(StartExtractRequest {
+                player,
+                portal: missing_portal,
+            });
+        app.update();
+
+        let results = app.world().resource::<Events<StartExtractResult>>();
+        let collected: Vec<_> = results.get_reader().read(results).cloned().collect();
+        assert!(matches!(
+            collected.first(),
+            Some(StartExtractResult::Rejected {
+                reason: ExtractRejectionReason::PortalExpired,
                 ..
             })
         ));

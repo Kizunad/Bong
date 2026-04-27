@@ -309,6 +309,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             extract_emit::emit_rift_portal_state_payloads,
+            extract_emit::emit_rift_portal_removed_payloads
+                .after(crate::world::extract_system::despawn_expired_portals)
+                .after(crate::world::extract_system::on_tsy_collapse_completed),
             extract_emit::emit_rift_portal_state_payloads_to_joined_clients,
             extract_emit::emit_extract_started_payloads
                 .after(crate::world::extract_system::start_extract_request),

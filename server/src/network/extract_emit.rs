@@ -1,6 +1,8 @@
 //! plan-tsy-extract-v1 §4.1 server_data bridge for TSY extraction HUD.
 
-use valence::prelude::{Added, Client, Entity, EventReader, Position, Query, Res, Username};
+use valence::prelude::{
+    Added, Client, Entity, EventReader, Position, Query, RemovedComponents, Res, Username,
+};
 
 use crate::combat::CombatClock;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
@@ -8,15 +10,16 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::canonical_player_id;
 use crate::schema::server_data::{
     ExtractAbortedReasonV1, ExtractAbortedV1, ExtractCompletedV1, ExtractFailedReasonV1,
-    ExtractFailedV1, ExtractProgressV1, ExtractStartedV1, RiftPortalKindV1, RiftPortalStateV1,
-    ServerDataPayloadV1, ServerDataV1, TsyCollapseStartedIpcV1,
+    ExtractFailedV1, ExtractProgressV1, ExtractStartedV1, RiftPortalDirectionV1, RiftPortalKindV1,
+    RiftPortalRemovedV1, RiftPortalStateV1, ServerDataPayloadV1, ServerDataV1,
+    TsyCollapseStartedIpcV1,
 };
 use crate::world::extract_system::{
     ExtractAbortReason, ExtractAborted, ExtractCompleted, ExtractFailed, ExtractFailureReason,
-    ExtractProgressPulse, StartExtractResult,
+    ExtractProgressPulse, ExtractRejectionReason, StartExtractResult,
 };
 use crate::world::rift_portal::RiftPortal;
-use crate::world::tsy::RiftKind;
+use crate::world::tsy::{PortalDirection, RiftKind};
 use crate::world::tsy_lifecycle::{TsyCollapseStarted, COLLAPSE_DURATION_TICKS};
 
 pub fn emit_extract_started_payloads(
@@ -169,6 +172,31 @@ pub fn emit_rift_portal_state_payloads(
     }
 }
 
+pub fn emit_rift_portal_removed_payloads(
+    mut removed: RemovedComponents<RiftPortal>,
+    mut clients: Query<&mut Client>,
+) {
+    let payloads: Vec<_> = removed
+        .read()
+        .filter_map(|entity| {
+            serialize_payload(ServerDataV1::new(ServerDataPayloadV1::RiftPortalRemoved(
+                RiftPortalRemovedV1 {
+                    entity_id: entity.to_bits(),
+                },
+            )))
+        })
+        .collect();
+
+    if payloads.is_empty() {
+        return;
+    }
+    for mut client in &mut clients {
+        for payload in &payloads {
+            send_server_data_payload(&mut client, payload.as_slice());
+        }
+    }
+}
+
 pub fn emit_rift_portal_state_payloads_to_joined_clients(
     portals: Query<(Entity, &RiftPortal, &Position)>,
     mut clients: Query<&mut Client, Added<Client>>,
@@ -213,8 +241,10 @@ fn portal_state_payloads<'a>(
             ServerDataV1::new(ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
                 entity_id: entity.to_bits(),
                 kind: portal_kind_wire(portal.kind),
+                direction: portal_direction_wire(portal.direction),
                 family_id: portal.family_id.clone(),
                 world_pos: [position.0.x, position.0.y, position.0.z],
+                trigger_radius: portal.trigger_radius,
                 current_extract_ticks: portal.current_extract_ticks,
                 activation_window_end: portal.activation_window.map(|win| win.end_at_tick),
             }))
@@ -295,6 +325,13 @@ fn portal_kind_wire(kind: RiftKind) -> RiftPortalKindV1 {
     }
 }
 
+fn portal_direction_wire(direction: PortalDirection) -> RiftPortalDirectionV1 {
+    match direction {
+        PortalDirection::Entry => RiftPortalDirectionV1::Entry,
+        PortalDirection::Exit => RiftPortalDirectionV1::Exit,
+    }
+}
+
 fn abort_reason_wire(reason: ExtractAbortReason) -> ExtractAbortedReasonV1 {
     match reason {
         ExtractAbortReason::Moved => ExtractAbortedReasonV1::Moved,
@@ -305,18 +342,16 @@ fn abort_reason_wire(reason: ExtractAbortReason) -> ExtractAbortedReasonV1 {
     }
 }
 
-fn reject_reason_wire(
-    reason: crate::world::extract_system::ExtractRejectionReason,
-) -> ExtractAbortedReasonV1 {
+fn reject_reason_wire(reason: ExtractRejectionReason) -> ExtractAbortedReasonV1 {
     match reason {
-        crate::world::extract_system::ExtractRejectionReason::InCombat => {
-            ExtractAbortedReasonV1::Combat
-        }
-        crate::world::extract_system::ExtractRejectionReason::PortalExpired
-        | crate::world::extract_system::ExtractRejectionReason::PortalCollapsed => {
+        ExtractRejectionReason::OutOfRange => ExtractAbortedReasonV1::OutOfRange,
+        ExtractRejectionReason::AlreadyBusy => ExtractAbortedReasonV1::AlreadyBusy,
+        ExtractRejectionReason::InCombat => ExtractAbortedReasonV1::Combat,
+        ExtractRejectionReason::NotInTsy => ExtractAbortedReasonV1::NotInTsy,
+        ExtractRejectionReason::PortalExpired | ExtractRejectionReason::PortalCollapsed => {
             ExtractAbortedReasonV1::PortalExpired
         }
-        _ => ExtractAbortedReasonV1::Cancelled,
+        ExtractRejectionReason::CannotExit => ExtractAbortedReasonV1::CannotExit,
     }
 }
 
@@ -381,6 +416,43 @@ mod tests {
                 &payload.payload,
                 ServerDataPayloadV1::RiftPortalState(state)
                     if state.family_id == "tsy_lingxu_01" && state.world_pos == [1.0, 2.0, 3.0]
+            )
+        }));
+    }
+
+    #[test]
+    fn removed_portal_broadcasts_cache_eviction() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_rift_portal_removed_payloads);
+        let portal = app
+            .world_mut()
+            .spawn(RiftPortal {
+                family_id: "tsy_lingxu_01".to_string(),
+                target: DimensionAnchor {
+                    dimension: DimensionKind::Overworld,
+                    pos: DVec3::ZERO,
+                },
+                trigger_radius: 2.0,
+                direction: PortalDirection::Exit,
+                kind: RiftKind::MainRift,
+                current_extract_ticks: 160,
+                activation_window: None,
+            })
+            .id();
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn(client_bundle);
+
+        app.update();
+        app.world_mut().entity_mut(portal).despawn();
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(payloads.iter().any(|payload| {
+            matches!(
+                &payload.payload,
+                ServerDataPayloadV1::RiftPortalRemoved(removed)
+                    if removed.entity_id == portal.to_bits()
             )
         }));
     }

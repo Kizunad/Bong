@@ -61,6 +61,7 @@ pub enum ServerDataType {
     TreasureEquipped,
     LingtianSession,
     RiftPortalState,
+    RiftPortalRemoved,
     ExtractStarted,
     ExtractProgress,
     ExtractCompleted,
@@ -171,6 +172,7 @@ pub enum ServerDataPayloadV1 {
     TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
     RiftPortalState(RiftPortalStateV1),
+    RiftPortalRemoved(RiftPortalRemovedV1),
     ExtractStarted(ExtractStartedV1),
     ExtractProgress(ExtractProgressV1),
     ExtractCompleted(ExtractCompletedV1),
@@ -347,6 +349,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         state: RiftPortalStateV1,
     },
+    RiftPortalRemoved {
+        #[serde(flatten)]
+        removed: RiftPortalRemovedV1,
+    },
     ExtractStarted {
         #[serde(flatten)]
         data: ExtractStartedV1,
@@ -449,16 +455,31 @@ pub enum RiftPortalKindV1 {
     CollapseTear,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiftPortalDirectionV1 {
+    Entry,
+    Exit,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RiftPortalStateV1 {
     pub entity_id: u64,
     pub kind: RiftPortalKindV1,
+    pub direction: RiftPortalDirectionV1,
     pub family_id: String,
     pub world_pos: [f64; 3],
+    pub trigger_radius: f64,
     pub current_extract_ticks: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activation_window_end: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RiftPortalRemovedV1 {
+    pub entity_id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -498,6 +519,10 @@ pub enum ExtractAbortedReasonV1 {
     Damaged,
     Cancelled,
     PortalExpired,
+    OutOfRange,
+    NotInTsy,
+    AlreadyBusy,
+    CannotExit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -762,6 +787,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
             ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
+            ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
+                Ok(Self::RiftPortalRemoved(removed))
+            }
             ServerDataPayloadWireV1::ExtractStarted { data } => Ok(Self::ExtractStarted(data)),
             ServerDataPayloadWireV1::ExtractProgress { data } => Ok(Self::ExtractProgress(data)),
             ServerDataPayloadWireV1::ExtractCompleted { data } => Ok(Self::ExtractCompleted(data)),
@@ -985,6 +1013,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::RiftPortalRemoved(removed) => Self::RiftPortalRemoved {
+                removed: removed.clone(),
+            },
             ServerDataPayloadV1::ExtractStarted(data) => {
                 Self::ExtractStarted { data: data.clone() }
             }
@@ -1145,6 +1176,7 @@ impl ServerDataPayloadV1 {
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
+            Self::RiftPortalRemoved(..) => ServerDataType::RiftPortalRemoved,
             Self::ExtractStarted(..) => ServerDataType::ExtractStarted,
             Self::ExtractProgress(..) => ServerDataType::ExtractProgress,
             Self::ExtractCompleted(..) => ServerDataType::ExtractCompleted,
@@ -1206,11 +1238,14 @@ mod tests {
             ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
                 entity_id: 1,
                 kind: RiftPortalKindV1::MainRift,
+                direction: RiftPortalDirectionV1::Exit,
                 family_id: "tsy_lingxu_01".to_string(),
                 world_pos: [0.0, 64.0, 0.0],
+                trigger_radius: 2.0,
                 current_extract_ticks: 160,
                 activation_window_end: None,
             }),
+            ServerDataPayloadV1::RiftPortalRemoved(RiftPortalRemovedV1 { entity_id: 1 }),
             ServerDataPayloadV1::ExtractStarted(ExtractStartedV1 {
                 player_id: "offline:Kiz".to_string(),
                 portal_entity_id: 1,
@@ -1384,6 +1419,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.rift-portal-removed.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.extract-started.sample.json"
