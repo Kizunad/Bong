@@ -1232,7 +1232,8 @@ mod tests {
             DVec3::new(0.0, 64.0, 0.0),
             Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1257,7 +1258,8 @@ mod tests {
             DVec3::new(0.0, 64.0, 0.0),
             Territory::new(DVec3::new(0.0, 64.0, 0.0), 10.0),
         );
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,
@@ -1463,7 +1465,8 @@ mod tests {
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 50.0);
         let beast = spawn_beast_hunter(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
         // 另一只 Beast（应被排除）
-        app.world_mut()
+        let _ = app
+            .world_mut()
             .spawn((
                 NpcMarker,
                 NpcArchetype::Beast,

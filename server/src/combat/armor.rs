@@ -172,26 +172,8 @@ impl ArmorProfileRegistry {
         self.by_template_id.len()
     }
 
-    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（is_empty 供 registry 消费者使用）
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.by_template_id.is_empty()
-    }
-
     pub fn get(&self, template_id: &str) -> Option<&ArmorProfile> {
         self.by_template_id.get(template_id)
-    }
-
-    // TODO: plan-armor-v1 后续 milestone 接入后取消 allow（insert 供装备 sync 手动装载用）
-    #[allow(dead_code)]
-    pub fn insert(&mut self, template_id: String, profile: ArmorProfile) -> Result<(), String> {
-        let template_id = template_id.trim().to_string();
-        if template_id.is_empty() {
-            return Err("template_id must not be empty".to_string());
-        }
-        profile.validate()?;
-        self.by_template_id.insert(template_id, profile);
-        Ok(())
     }
 
     pub fn load_dir(path: impl AsRef<Path>) -> Result<Self, ArmorProfileLoadError> {
@@ -261,7 +243,6 @@ mod tests {
     #[test]
     fn empty_registry_is_empty() {
         let r = ArmorProfileRegistry::new();
-        assert!(r.is_empty());
         assert_eq!(r.len(), 0);
         assert!(r.get("fake_spirit_hide").is_none());
     }
