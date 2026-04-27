@@ -101,6 +101,7 @@ public final class ServerDataRouter {
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
         handlers.put("rift_portal_state", extractServerDataHandler);
+        handlers.put("rift_portal_removed", extractServerDataHandler);
         handlers.put("extract_started", extractServerDataHandler);
         handlers.put("extract_progress", extractServerDataHandler);
         handlers.put("extract_completed", extractServerDataHandler);

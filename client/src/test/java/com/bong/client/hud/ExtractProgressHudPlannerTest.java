@@ -40,7 +40,7 @@ public class ExtractProgressHudPlannerTest {
     @Test
     void collapseStateBuildsCountdownTint() {
         ExtractState state = new ExtractState(
-            List.of(new RiftPortalView(42L, "collapse_tear", "tsy_lingxu_01", 1, 2, 3, 60, null)),
+            List.of(new RiftPortalView(42L, "collapse_tear", "exit", "tsy_lingxu_01", 1, 2, 3, 2.0, 60, null)),
             null,
             "",
             0,

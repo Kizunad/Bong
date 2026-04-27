@@ -86,7 +86,7 @@ public final class ExtractProgressHudPlanner {
         int x = (screenWidth - PANEL_WIDTH) / 2;
         int y = screenHeight - 78;
         appendPanel(out, x, y, BORDER);
-        String label = kindLabel(portal.kind()) + " · 按 E 开始撤离 [" + secondsLabel(portal.currentExtractTicks()) + "]";
+        String label = kindLabel(portal.kind()) + " · 按 Y 开始撤离 [" + secondsLabel(portal.currentExtractTicks()) + "]";
         out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, clip(label, PANEL_WIDTH - 16, widthMeasurer), x + 8, y + 12, TEXT));
         out.add(HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "移动 / 战斗 / 受击会归零", x + 8, y + 26, MUTED));
     }

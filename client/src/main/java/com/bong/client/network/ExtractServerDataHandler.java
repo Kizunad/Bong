@@ -22,12 +22,22 @@ public final class ExtractServerDataHandler implements ServerDataHandler {
                 ExtractStateStore.upsertPortal(new RiftPortalView(
                     entityId,
                     readString(payload, "kind"),
+                    readString(payload, "direction"),
                     readString(payload, "family_id"),
                     pos[0], pos[1], pos[2],
+                    readDouble(payload, "trigger_radius", ExtractStateStore.PORTAL_INTERACT_RADIUS),
                     readInt(payload, "current_extract_ticks", 0),
                     readLong(payload, "activation_window_end")
                 ));
                 return ServerDataDispatch.handled(envelope.type(), "Applied rift portal state " + entityId);
+            }
+            case "rift_portal_removed" -> {
+                Long entityId = readLong(payload, "entity_id");
+                if (entityId == null) {
+                    return ServerDataDispatch.noOp(envelope.type(), "Ignoring rift_portal_removed: missing entity_id");
+                }
+                ExtractStateStore.removePortal(entityId);
+                return ServerDataDispatch.handled(envelope.type(), "Removed rift portal " + entityId);
             }
             case "extract_started" -> {
                 Long portalId = readLong(payload, "portal_entity_id");
@@ -89,6 +99,11 @@ public final class ExtractServerDataHandler implements ServerDataHandler {
     private static int readInt(JsonObject object, String fieldName, int fallback) {
         JsonPrimitive primitive = readPrimitive(object, fieldName);
         return primitive != null && primitive.isNumber() ? primitive.getAsInt() : fallback;
+    }
+
+    private static double readDouble(JsonObject object, String fieldName, double fallback) {
+        JsonPrimitive primitive = readPrimitive(object, fieldName);
+        return primitive != null && primitive.isNumber() ? primitive.getAsDouble() : fallback;
     }
 
     private static Long readLong(JsonObject object, String fieldName) {

@@ -18,12 +18,28 @@ public class ExtractServerDataHandlerTest {
     @Test
     void portalStateUpdatesStore() {
         ServerDataDispatch dispatch = new ExtractServerDataHandler().handle(parseEnvelope(
-            "{\"v\":1,\"type\":\"rift_portal_state\",\"entity_id\":42,\"kind\":\"main_rift\",\"family_id\":\"tsy_lingxu_01\",\"world_pos\":[1,2,3],\"current_extract_ticks\":160}"
+            "{\"v\":1,\"type\":\"rift_portal_state\",\"entity_id\":42,\"kind\":\"main_rift\",\"direction\":\"exit\",\"family_id\":\"tsy_lingxu_01\",\"world_pos\":[1,2,3],\"trigger_radius\":1.5,\"current_extract_ticks\":160}"
         ));
 
         assertTrue(dispatch.handled());
         assertEquals(1, ExtractStateStore.snapshot().portals().size());
         assertEquals(42L, ExtractStateStore.snapshot().portals().get(0).entityId());
+        assertEquals(1.5, ExtractStateStore.snapshot().portals().get(0).triggerRadius());
+    }
+
+    @Test
+    void portalRemovedEvictsStore() {
+        ExtractServerDataHandler handler = new ExtractServerDataHandler();
+        handler.handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"rift_portal_state\",\"entity_id\":42,\"kind\":\"main_rift\",\"direction\":\"exit\",\"family_id\":\"tsy_lingxu_01\",\"world_pos\":[1,2,3],\"trigger_radius\":1.5,\"current_extract_ticks\":160}"
+        ));
+
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"rift_portal_removed\",\"entity_id\":42}"
+        ));
+
+        assertTrue(dispatch.handled());
+        assertEquals(0, ExtractStateStore.snapshot().portals().size());
     }
 
     @Test
@@ -40,10 +56,11 @@ public class ExtractServerDataHandlerTest {
         assertEquals(20, ExtractStateStore.snapshot().elapsedTicks());
 
         handler.handle(parseEnvelope(
-            "{\"v\":1,\"type\":\"extract_aborted\",\"player_id\":\"offline:Kiz\",\"reason\":\"damaged\"}"
+            "{\"v\":1,\"type\":\"extract_aborted\",\"player_id\":\"offline:Kiz\",\"reason\":\"out_of_range\"}"
         ));
         assertTrue(!ExtractStateStore.snapshot().extracting());
-        assertTrue(ExtractStateStore.snapshot().message().contains("受击"));
+        assertTrue(ExtractStateStore.snapshot().message().contains("无法撤离"));
+        assertTrue(ExtractStateStore.snapshot().message().contains("距离过远"));
     }
 
     @Test

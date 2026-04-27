@@ -36,19 +36,39 @@ public final class ExtractStateStore {
             snapshot.collapseRemainingTicksAtStart(), snapshot.screenFlashUntilMs(), snapshot.screenFlashColor());
     }
 
+    public static synchronized void removePortal(long entityId) {
+        portals.remove(entityId);
+        Long activePortal = snapshot.activePortalEntityId();
+        if (activePortal != null && activePortal == entityId) {
+            refreshSnapshot(null, "", 0, 0, false,
+                "撤离中断：裂口闭合", 0xFFFF7070, System.currentTimeMillis() + STATUS_MESSAGE_MS,
+                snapshot.collapsingFamilyId(), snapshot.collapseStartedAtMs(), snapshot.collapseRemainingTicksAtStart(),
+                snapshot.screenFlashUntilMs(), snapshot.screenFlashColor());
+            return;
+        }
+        refreshSnapshot(activePortal, snapshot.activePortalKind(), snapshot.elapsedTicks(),
+            snapshot.requiredTicks(), snapshot.extracting(), snapshot.message(), snapshot.messageColor(),
+            snapshot.messageUntilMs(), snapshot.collapsingFamilyId(), snapshot.collapseStartedAtMs(),
+            snapshot.collapseRemainingTicksAtStart(), snapshot.screenFlashUntilMs(), snapshot.screenFlashColor());
+    }
+
     public static synchronized RiftPortalView nearestPortal(PlayerEntity player) {
         if (player == null || portals.isEmpty()) {
             return null;
         }
         Vec3d pos = player.getPos();
         RiftPortalView best = null;
-        double bestDistanceSq = PORTAL_INTERACT_RADIUS * PORTAL_INTERACT_RADIUS;
+        double bestDistanceSq = Double.MAX_VALUE;
         for (RiftPortalView portal : portals.values()) {
+            if (!"exit".equals(portal.direction())) {
+                continue;
+            }
+            double radius = portal.triggerRadius() > 0.0 ? portal.triggerRadius() : PORTAL_INTERACT_RADIUS;
             double dx = portal.x() - pos.x;
             double dy = portal.y() - pos.y;
             double dz = portal.z() - pos.z;
             double distanceSq = dx * dx + dy * dy + dz * dz;
-            if (distanceSq <= bestDistanceSq) {
+            if (distanceSq <= radius * radius && distanceSq <= bestDistanceSq) {
                 best = portal;
                 bestDistanceSq = distanceSq;
             }
@@ -78,10 +98,12 @@ public final class ExtractStateStore {
     }
 
     public static synchronized void markAborted(String reason, long nowMs) {
+        boolean rejection = isRejectionReason(reason);
         refreshSnapshot(null, "", 0, 0, false,
-            "撤离中断：" + reasonLabel(reason), 0xFFFF7070, nowMs + STATUS_MESSAGE_MS,
+            (rejection ? "无法撤离：" : "撤离中断：") + reasonLabel(reason), 0xFFFF7070, nowMs + STATUS_MESSAGE_MS,
             snapshot.collapsingFamilyId(), snapshot.collapseStartedAtMs(), snapshot.collapseRemainingTicksAtStart(),
-            nowMs + RED_FLASH_MS, RED_FLASH_COLOR);
+            rejection ? snapshot.screenFlashUntilMs() : nowMs + RED_FLASH_MS,
+            rejection ? snapshot.screenFlashColor() : RED_FLASH_COLOR);
     }
 
     public static synchronized void markFailed(String reason, long nowMs) {
@@ -166,9 +188,20 @@ public final class ExtractStateStore {
             case "combat" -> "战斗";
             case "damaged" -> "受击";
             case "portal_expired" -> "裂口闭合";
+            case "out_of_range" -> "距离过远";
+            case "not_in_tsy" -> "不在坍缩渊";
+            case "already_busy" -> "正在撤离";
+            case "cannot_exit" -> "不可从此裂口撤离";
             case "spirit_qi_drained" -> "真元耗尽";
             case "cancelled" -> "取消";
             default -> "未明";
+        };
+    }
+
+    private static boolean isRejectionReason(String reason) {
+        return switch (reason == null ? "" : reason) {
+            case "out_of_range", "not_in_tsy", "already_busy", "cannot_exit" -> true;
+            default -> false;
         };
     }
 

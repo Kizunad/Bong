@@ -59,6 +59,7 @@ public class ServerDataRouterTest {
             "treasure_equipped",
             // plan-tsy-extract-v1 §4.1 撤离点 / 撤离进度 HUD 推送。
             "rift_portal_state",
+            "rift_portal_removed",
             "extract_started",
             "extract_progress",
             "extract_completed",
