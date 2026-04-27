@@ -11,6 +11,7 @@ use serde::Deserialize;
 use valence::prelude::Resource;
 
 use crate::cultivation::components::{ColorKind, Realm};
+use crate::mineral::MineralRegistry;
 
 pub type BlueprintId = String;
 
@@ -222,6 +223,12 @@ pub enum BlueprintLoadError {
         source: serde_json::Error,
     },
     Duplicate(BlueprintId),
+    InvalidMaterial {
+        path: PathBuf,
+        blueprint_id: BlueprintId,
+        material: String,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for BlueprintLoadError {
@@ -232,6 +239,16 @@ impl std::fmt::Display for BlueprintLoadError {
                 write!(f, "json: {}: {source}", path.display())
             }
             BlueprintLoadError::Duplicate(id) => write!(f, "duplicate blueprint id {id}"),
+            BlueprintLoadError::InvalidMaterial {
+                path,
+                blueprint_id,
+                material,
+                reason,
+            } => write!(
+                f,
+                "invalid forge material `{material}` in blueprint {blueprint_id} at {}: {reason}",
+                path.display()
+            ),
         }
     }
 }
@@ -275,6 +292,13 @@ impl BlueprintRegistry {
 
     /// 扫目录加载全部 *.json。
     pub fn load_dir(path: impl AsRef<Path>) -> Result<Self, BlueprintLoadError> {
+        Self::load_dir_with_minerals(path, None)
+    }
+
+    pub fn load_dir_with_minerals(
+        path: impl AsRef<Path>,
+        minerals: Option<&MineralRegistry>,
+    ) -> Result<Self, BlueprintLoadError> {
         let dir = path.as_ref();
         let mut reg = Self::new();
         if !dir.exists() {
@@ -296,11 +320,60 @@ impl BlueprintRegistry {
                     path: path.clone(),
                     source: e,
                 })?;
+            if let Some(minerals) = minerals {
+                validate_blueprint_minerals(&path, &bp, minerals)?;
+            }
             tracing::info!("[bong][forge] loaded blueprint {} ({})", bp.id, bp.name);
             reg.insert(bp)?;
         }
         Ok(reg)
     }
+}
+
+pub fn validate_blueprint_minerals(
+    path: &Path,
+    bp: &Blueprint,
+    minerals: &MineralRegistry,
+) -> Result<(), BlueprintLoadError> {
+    for step in &bp.steps {
+        let StepSpec::Billet { profile } = step else {
+            continue;
+        };
+        for required in &profile.required {
+            validate_forge_material(path, &bp.id, required.material.as_str(), minerals)?;
+        }
+        for carrier in &profile.optional_carriers {
+            if minerals.is_valid_mineral_id(&carrier.material) {
+                validate_forge_material(path, &bp.id, carrier.material.as_str(), minerals)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_forge_material(
+    path: &Path,
+    blueprint_id: &str,
+    material: &str,
+    minerals: &MineralRegistry,
+) -> Result<(), BlueprintLoadError> {
+    let Some(entry) = minerals.get_by_str(material) else {
+        return Err(BlueprintLoadError::InvalidMaterial {
+            path: path.to_path_buf(),
+            blueprint_id: blueprint_id.to_string(),
+            material: material.to_string(),
+            reason: "unknown mineral_id".to_string(),
+        });
+    };
+    if entry.forge_tier_min == 0 {
+        return Err(BlueprintLoadError::InvalidMaterial {
+            path: path.to_path_buf(),
+            blueprint_id: blueprint_id.to_string(),
+            material: material.to_string(),
+            reason: "mineral is not a forge metal".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -309,8 +382,10 @@ mod tests {
 
     #[test]
     fn load_default_blueprints() {
-        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR)
-            .expect("assets/forge/blueprints should load");
+        let minerals = crate::mineral::build_default_registry();
+        let reg =
+            BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
+                .expect("assets/forge/blueprints should load");
         assert_eq!(reg.len(), 3, "expected 3 test blueprints");
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
@@ -370,5 +445,45 @@ mod tests {
         reg.insert(bp.clone()).unwrap();
         let err = reg.insert(bp).unwrap_err();
         assert!(matches!(err, BlueprintLoadError::Duplicate(_)));
+    }
+
+    #[test]
+    fn rejects_unknown_forge_material() {
+        let minerals = crate::mineral::build_default_registry();
+        let bp = Blueprint {
+            id: "bad".into(),
+            name: "bad".into(),
+            station_tier_min: 1,
+            tier_cap: 1,
+            steps: vec![StepSpec::Billet {
+                profile: BilletProfile {
+                    required: vec![MaterialStack {
+                        material: "iron_ingot".into(),
+                        count: 1,
+                    }],
+                    optional_carriers: vec![],
+                    tolerance: BilletTolerance::default(),
+                },
+            }],
+            outcomes: OutcomesSpec {
+                perfect: None,
+                good: None,
+                flawed: None,
+                waste: None,
+                explode: None,
+            },
+            flawed_fallback: None,
+        };
+
+        let err = validate_blueprint_minerals(Path::new("bad.json"), &bp, &minerals).unwrap_err();
+        assert!(matches!(err, BlueprintLoadError::InvalidMaterial { .. }));
+    }
+
+    #[test]
+    fn rejects_non_metal_forge_material() {
+        let minerals = crate::mineral::build_default_registry();
+        let err = validate_forge_material(Path::new("bad.json"), "bad", "dan_sha", &minerals)
+            .unwrap_err();
+        assert!(matches!(err, BlueprintLoadError::InvalidMaterial { .. }));
     }
 }

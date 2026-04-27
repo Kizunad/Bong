@@ -360,7 +360,7 @@ mod tests {
     fn billet_profile_iron() -> BilletProfile {
         BilletProfile {
             required: vec![MaterialStack {
-                material: "iron_ingot".into(),
+                material: "fan_tie".into(),
                 count: 3,
             }],
             optional_carriers: vec![],
@@ -372,7 +372,7 @@ mod tests {
     fn billet_perfect_when_all_required_satisfied() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 3);
+        inputs.insert("fan_tie".to_string(), 3);
         let r = resolve_billet(&p, &inputs, 1).unwrap();
         assert!(r.perfect);
         assert!(!r.flawed);
@@ -383,7 +383,7 @@ mod tests {
     fn billet_flawed_when_unknown_material_present() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 3);
+        inputs.insert("fan_tie".to_string(), 3);
         inputs.insert("dirt".to_string(), 1);
         let r = resolve_billet(&p, &inputs, 1).unwrap();
         assert!(r.flawed);
@@ -393,7 +393,7 @@ mod tests {
     fn billet_waste_when_missing_beyond_tolerance() {
         let p = billet_profile_iron();
         let mut inputs = HashMap::new();
-        inputs.insert("iron_ingot".to_string(), 1);
+        inputs.insert("fan_tie".to_string(), 1);
         let err = resolve_billet(&p, &inputs, 1).unwrap_err();
         assert!(matches!(err, BilletError::ShortMaterial { .. }));
     }
