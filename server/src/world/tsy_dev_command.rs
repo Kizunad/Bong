@@ -25,7 +25,8 @@ use valence::prelude::{
 use crate::combat::CombatClock;
 use crate::npc::lifecycle::NpcRegistry;
 use crate::npc::tsy_hostile::{
-    spawn_tsy_hostiles_for_family, TsyContainerSpawnRef, TsySpawnPoolRegistry,
+    spawn_tsy_hostiles_for_family, TsyContainerSpawnRef, TsyHostileSpawnedSummary,
+    TsySpawnPoolRegistry,
 };
 use crate::world::dimension::DimensionKind;
 use crate::world::dimension::DimensionLayers;
@@ -165,6 +166,7 @@ pub fn apply_tsy_spawn_requests(
     dimension_layers: Option<Res<DimensionLayers>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     clock: Option<Res<CombatClock>>,
+    mut hostile_summaries: EventWriter<TsyHostileSpawnedSummary>,
 ) {
     let Some(mut zones) = zones else {
         return;
@@ -307,6 +309,11 @@ pub fn apply_tsy_spawn_requests(
                 npc_registry.as_deref_mut(),
             );
             if summary.total() > 0 {
+                hostile_summaries.send(TsyHostileSpawnedSummary::from_summary(
+                    req.family_id.clone(),
+                    summary,
+                    tick,
+                ));
                 tracing::info!(
                     family = %req.family_id,
                     daoxiang = summary.daoxiang,
@@ -432,6 +439,7 @@ mod tests {
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
+        app.add_event::<TsyHostileSpawnedSummary>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -509,6 +517,7 @@ mod tests {
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
+        app.add_event::<TsyHostileSpawnedSummary>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -556,6 +565,7 @@ mod tests {
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
+        app.add_event::<TsyHostileSpawnedSummary>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -618,6 +628,7 @@ mod tests {
         app.add_event::<TsySpawnRequested>();
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
+        app.add_event::<TsyHostileSpawnedSummary>();
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();

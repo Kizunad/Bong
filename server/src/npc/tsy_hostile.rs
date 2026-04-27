@@ -13,8 +13,9 @@ use serde::Deserialize;
 use valence::entity::villager::VillagerEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource,
+    Update, With,
 };
 
 use crate::combat::components::Wounds;
@@ -283,6 +284,31 @@ pub struct TsyHostileSpawnSummary {
     pub sentinel: u32,
 }
 
+#[derive(Event, Debug, Clone)]
+pub struct TsyNpcSpawned {
+    pub family_id: String,
+    pub archetype: TsyHostileArchetype,
+    pub count: u32,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TsyHostileArchetype {
+    Daoxiang,
+    Zhinian,
+    GuardianRelicSentinel,
+    Fuya,
+}
+
+#[derive(Event, Debug, Clone)]
+pub struct TsySentinelPhaseChanged {
+    pub family_id: String,
+    pub container_entity_id: u64,
+    pub phase: u8,
+    pub max_phase: u8,
+    pub at_tick: u64,
+}
+
 impl TsyHostileSpawnSummary {
     pub const fn total(self) -> u32 {
         self.daoxiang + self.zhinian + self.fuya + self.sentinel
@@ -329,7 +355,10 @@ pub fn register(app: &mut App) {
         panic!("[bong][tsy-hostile] failed to load tsy_drops.json: {error}")
     });
 
-    app.insert_resource(spawn_pools)
+    app.add_event::<TsyNpcSpawned>()
+        .add_event::<TsySentinelPhaseChanged>()
+        .add_event::<TsyHostileSpawnedSummary>()
+        .insert_resource(spawn_pools)
         .insert_resource(drop_tables)
         .add_systems(
             PreUpdate,
@@ -354,7 +383,14 @@ pub fn register(app: &mut App) {
             )
                 .in_set(BigBrainSet::Actions),
         )
-        .add_systems(Update, handle_npc_death_drop);
+        .add_systems(
+            Update,
+            (
+                emit_tsy_hostile_spawn_summary
+                    .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
+                handle_npc_death_drop,
+            ),
+        );
 }
 
 pub fn load_tsy_spawn_pool_registry() -> Result<TsySpawnPoolRegistry, String> {
@@ -474,7 +510,7 @@ pub fn spawn_tsy_hostiles_for_family(
 
     let sentinel_count = sentinel_desired.min(remaining);
     for guard in relic_cores.iter().take(sentinel_count as usize) {
-        spawn_tsy_sentinel_at(
+        let entity = spawn_tsy_sentinel_at(
             commands,
             layer,
             family_id,
@@ -482,6 +518,7 @@ pub fn spawn_tsy_hostiles_for_family(
             guard.pos + DVec3::new(2.0, 0.0, 0.0),
             guard.entity,
         );
+        tracing::debug!(?entity, family = %family_id, "[bong][tsy-hostile] spawned TSY sentinel");
         summary.sentinel = summary.sentinel.saturating_add(1);
         remaining = remaining.saturating_sub(1);
     }
@@ -595,6 +632,87 @@ pub fn spawn_tsy_daoxiang_at(
     entity
 }
 
+pub fn emit_tsy_hostile_spawn_summary(
+    mut events: EventWriter<TsyNpcSpawned>,
+    mut summaries: EventReader<TsyHostileSpawnedSummary>,
+) {
+    for summary in summaries.read() {
+        send_spawn_event(
+            &mut events,
+            &summary.family_id,
+            TsyHostileArchetype::Daoxiang,
+            summary.daoxiang,
+            summary.at_tick,
+        );
+        send_spawn_event(
+            &mut events,
+            &summary.family_id,
+            TsyHostileArchetype::Zhinian,
+            summary.zhinian,
+            summary.at_tick,
+        );
+        send_spawn_event(
+            &mut events,
+            &summary.family_id,
+            TsyHostileArchetype::Fuya,
+            summary.fuya,
+            summary.at_tick,
+        );
+        send_spawn_event(
+            &mut events,
+            &summary.family_id,
+            TsyHostileArchetype::GuardianRelicSentinel,
+            summary.sentinel,
+            summary.at_tick,
+        );
+    }
+}
+
+fn send_spawn_event(
+    events: &mut EventWriter<TsyNpcSpawned>,
+    family_id: &str,
+    archetype: TsyHostileArchetype,
+    count: u32,
+    at_tick: u64,
+) {
+    if count == 0 {
+        return;
+    }
+    events.send(TsyNpcSpawned {
+        family_id: family_id.to_string(),
+        archetype,
+        count,
+        at_tick,
+    });
+}
+
+#[derive(Event, Debug, Clone)]
+pub struct TsyHostileSpawnedSummary {
+    pub family_id: String,
+    pub daoxiang: u32,
+    pub zhinian: u32,
+    pub fuya: u32,
+    pub sentinel: u32,
+    pub at_tick: u64,
+}
+
+impl TsyHostileSpawnedSummary {
+    pub fn from_summary(
+        family_id: impl Into<String>,
+        summary: TsyHostileSpawnSummary,
+        at_tick: u64,
+    ) -> Self {
+        Self {
+            family_id: family_id.into(),
+            daoxiang: summary.daoxiang,
+            zhinian: summary.zhinian,
+            fuya: summary.fuya,
+            sentinel: summary.sentinel,
+            at_tick,
+        }
+    }
+}
+
 pub fn spawn_tsy_zhinian_at(
     commands: &mut Commands,
     layer: Entity,
@@ -675,7 +793,7 @@ pub fn spawn_tsy_sentinel_at(
     commands: &mut Commands,
     layer: Entity,
     family_id: &str,
-    home_zone: &str,
+    _home_zone: &str,
     spawn_position: DVec3,
     guarding_container: Entity,
 ) -> Entity {
@@ -713,7 +831,6 @@ pub fn spawn_tsy_sentinel_at(
         MovementController::new(),
         loadout.movement_capabilities,
         MovementCooldowns::default(),
-        NpcPatrol::new(home_zone, spawn_position),
         TsyHostileMarker {
             family_id: family_id.to_string(),
         },
@@ -1074,22 +1191,47 @@ fn sentinel_aggro_scorer_system(
     }
 }
 
-fn update_sentinel_phase_system(mut sentinels: Query<(&mut TsySentinelMarker, &Wounds)>) {
+fn update_sentinel_phase_system(
+    mut sentinels: Query<(&mut TsySentinelMarker, &Wounds)>,
+    mut phase_events: EventWriter<TsySentinelPhaseChanged>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let at_tick = game_tick
+        .as_deref()
+        .map(|tick| u64::from(tick.0))
+        .unwrap_or(0);
     for (mut marker, wounds) in &mut sentinels {
-        let health_ratio = if wounds.health_max <= f32::EPSILON {
-            0.0
-        } else {
-            (wounds.health_current / wounds.health_max).clamp(0.0, 1.0)
-        };
-        marker.phase = if health_ratio <= 1.0 / 3.0 {
-            2
-        } else if health_ratio <= 2.0 / 3.0 {
-            1
-        } else {
-            0
+        let next_phase = sentinel_phase_for_wounds(wounds, marker.max_phase);
+        if next_phase == marker.phase {
+            continue;
         }
-        .min(marker.max_phase.saturating_sub(1));
+        marker.phase = next_phase;
+        if let Some(container) = marker.guarding_container {
+            phase_events.send(TsySentinelPhaseChanged {
+                family_id: marker.family_id.clone(),
+                container_entity_id: container.to_bits(),
+                phase: marker.phase,
+                max_phase: marker.max_phase,
+                at_tick,
+            });
+        }
     }
+}
+
+fn sentinel_phase_for_wounds(wounds: &Wounds, max_phase: u8) -> u8 {
+    let health_ratio = if wounds.health_max <= f32::EPSILON {
+        0.0
+    } else {
+        (wounds.health_current / wounds.health_max).clamp(0.0, 1.0)
+    };
+    let phase = if health_ratio <= 1.0 / 3.0 {
+        2
+    } else if health_ratio <= 2.0 / 3.0 {
+        1
+    } else {
+        0
+    };
+    phase.min(max_phase.saturating_sub(1))
 }
 
 fn sentinel_phase_action_system(
@@ -1669,6 +1811,79 @@ mod tests {
             [(&a, &aura), (&b, &aura), (&c, &aura)],
         );
         assert!((multiplier - 2.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fuya_aura_multiplier_returns_one_without_hits() {
+        let aura = FuyaAura::default();
+        let far = Position::new([100.0, 64.0, 0.0]);
+        let multiplier =
+            compute_fuya_aura_drain_multiplier(DVec3::new(1.0, 64.0, 0.0), [(&far, &aura)]);
+        assert!((multiplier - 1.0).abs() < 1e-9);
+
+        let empty: [(&Position, &FuyaAura); 0] = [];
+        let multiplier = compute_fuya_aura_drain_multiplier(DVec3::ZERO, empty);
+        assert!((multiplier - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fuya_aura_multiplier_pins_nonlinear_three_stack() {
+        let aura = FuyaAura::default();
+        let a = Position::new([0.0, 64.0, 0.0]);
+        let b = Position::new([1.0, 64.0, 0.0]);
+        let c = Position::new([2.0, 64.0, 0.0]);
+        let multiplier = compute_fuya_aura_drain_multiplier(
+            DVec3::new(1.0, 64.0, 0.0),
+            [(&a, &aura), (&b, &aura), (&c, &aura)],
+        );
+        assert!((multiplier - 3.375).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fuya_aura_multiplier_ignores_zero_radius_and_clamps_sub_one_boost() {
+        let zero_radius = FuyaAura {
+            radius_blocks: 0.0,
+            drain_boost_multiplier: 99.0,
+        };
+        let weakening = FuyaAura {
+            radius_blocks: 8.0,
+            drain_boost_multiplier: 0.25,
+        };
+        let pos = Position::new([0.0, 64.0, 0.0]);
+        let multiplier = compute_fuya_aura_drain_multiplier(
+            DVec3::new(0.0, 64.0, 0.0),
+            [(&pos, &zero_radius), (&pos, &weakening)],
+        );
+        assert!((multiplier - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sentinel_phase_thresholds_match_three_stage_health_bands() {
+        let mut wounds = Wounds {
+            entries: Vec::new(),
+            health_current: 100.0,
+            health_max: 100.0,
+        };
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 3), 0);
+        wounds.health_current = 66.0;
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 3), 1);
+        wounds.health_current = 67.0;
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 3), 0);
+        wounds.health_current = 33.0;
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 3), 2);
+        wounds.health_current = 0.0;
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 3), 2);
+    }
+
+    #[test]
+    fn sentinel_phase_clamps_to_max_phase_minus_one() {
+        let wounds = Wounds {
+            entries: Vec::new(),
+            health_current: 0.0,
+            health_max: 100.0,
+        };
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 2), 1);
+        assert_eq!(sentinel_phase_for_wounds(&wounds, 1), 0);
     }
 
     #[test]

@@ -77,7 +77,8 @@ impl NpcArchetype {
             Self::Beast => 80_000.0,
             Self::Disciple => 140_000.0,
             Self::GuardianRelic => 1_000_000.0,
-            Self::Daoxiang => 120_000.0,
+            // 道伥承接 plan-tsy-lifecycle-v1 §4 的"不老"语义；hostile 分层不改该 balance。
+            Self::Daoxiang => 1_000_000.0,
             Self::Zhinian => 180_000.0,
             Self::Fuya => 240_000.0,
         }
