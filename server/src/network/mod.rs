@@ -266,6 +266,9 @@ pub fn register(app: &mut App) {
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
             tsy_event_bridge::publish_tsy_exit_events,
+            tsy_event_bridge::publish_tsy_npc_spawned_events
+                .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
+            tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
         ),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.

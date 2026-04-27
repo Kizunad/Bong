@@ -21,6 +21,7 @@ use crate::schema::cultivation::{
 };
 use crate::schema::narration::NarrationV1;
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
+use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::world_state::WorldStateV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -53,6 +54,8 @@ pub enum RedisOutbound {
     BotanyEcology(BotanyEcologySnapshotV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
+    TsyNpcSpawned(TsyNpcSpawnedV1),
+    TsySentinelPhaseChanged(TsySentinelPhaseChangedV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -364,6 +367,26 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
         RedisOutbound::TsyExit(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize TsyExitEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TsyNpcSpawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TsyNpcSpawnedV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TsySentinelPhaseChanged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TsySentinelPhaseChangedV1: {error}"
+                ))
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_TSY_EVENT,
@@ -1204,6 +1227,52 @@ mod redis_bridge_tests {
                 assert_eq!(v["instance_id"], 88);
                 assert_eq!(v["template_id"], "fake_spirit_hide");
                 assert_eq!(v["broken"], true);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tsy_hostile_events_on_tsy_channel() {
+        let spawned = prepare_outbound_command(RedisOutbound::TsyNpcSpawned(TsyNpcSpawnedV1 {
+            v: 1,
+            kind: "tsy_npc_spawned".to_string(),
+            family_id: "tsy_zongmen_yiji_01".to_string(),
+            archetype: crate::schema::tsy_hostile::TsyHostileArchetypeV1::GuardianRelicSentinel,
+            count: 3,
+            at_tick: 12000,
+        }))
+        .expect("TSY NPC spawned payload should serialize");
+        match spawned {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TSY_EVENT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "tsy_npc_spawned");
+                assert_eq!(v["archetype"], "guardian_relic_sentinel");
+                assert_eq!(v["count"], 3);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let phase = prepare_outbound_command(RedisOutbound::TsySentinelPhaseChanged(
+            TsySentinelPhaseChangedV1 {
+                v: 1,
+                kind: "tsy_sentinel_phase_changed".to_string(),
+                family_id: "tsy_zongmen_yiji_01".to_string(),
+                container_entity_id: 42,
+                phase: 1,
+                max_phase: 3,
+                at_tick: 12345,
+            },
+        ))
+        .expect("TSY sentinel phase payload should serialize");
+        match phase {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TSY_EVENT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "tsy_sentinel_phase_changed");
+                assert_eq!(v["container_entity_id"], 42);
+                assert_eq!(v["phase"], 1);
             }
             other => panic!("expected publish, got {other:?}"),
         }
