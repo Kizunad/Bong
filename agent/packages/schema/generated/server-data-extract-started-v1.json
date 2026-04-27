@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "player_id",
+    "portal_entity_id",
+    "portal_kind",
+    "required_ticks",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "extract_started",
+      "type": "string"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "portal_entity_id": {
+      "type": "number"
+    },
+    "portal_kind": {
+      "anyOf": [
+        {
+          "const": "main_rift",
+          "type": "string"
+        },
+        {
+          "const": "deep_rift",
+          "type": "string"
+        },
+        {
+          "const": "collapse_tear",
+          "type": "string"
+        }
+      ]
+    },
+    "required_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

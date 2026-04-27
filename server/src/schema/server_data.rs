@@ -87,6 +87,14 @@ pub enum ServerDataType {
     LingtianSession,
     DeathScreen,
     TerminateScreen,
+    RiftPortalState,
+    RiftPortalRemoved,
+    ExtractStarted,
+    ExtractProgress,
+    ExtractCompleted,
+    ExtractAborted,
+    ExtractFailed,
+    TsyCollapseStartedIpc,
     SkillXpGain,
     SkillLvUp,
     SkillCapChanged,
@@ -210,6 +218,14 @@ pub enum ServerDataPayloadV1 {
         epilogue: String,
         archetype_suggestion: String,
     },
+    RiftPortalState(RiftPortalStateV1),
+    RiftPortalRemoved(RiftPortalRemovedV1),
+    ExtractStarted(ExtractStartedV1),
+    ExtractProgress(ExtractProgressV1),
+    ExtractCompleted(ExtractCompletedV1),
+    ExtractAborted(ExtractAbortedV1),
+    ExtractFailed(ExtractFailedV1),
+    TsyCollapseStartedIpc(TsyCollapseStartedIpcV1),
     SkillXpGain(Box<SkillXpGainPayloadV1>),
     SkillLvUp(SkillLvUpPayloadV1),
     SkillCapChanged(SkillCapChangedPayloadV1),
@@ -401,6 +417,38 @@ enum ServerDataPayloadWireV1 {
         epilogue: String,
         archetype_suggestion: String,
     },
+    RiftPortalState {
+        #[serde(flatten)]
+        state: RiftPortalStateV1,
+    },
+    RiftPortalRemoved {
+        #[serde(flatten)]
+        removed: RiftPortalRemovedV1,
+    },
+    ExtractStarted {
+        #[serde(flatten)]
+        data: ExtractStartedV1,
+    },
+    ExtractProgress {
+        #[serde(flatten)]
+        data: ExtractProgressV1,
+    },
+    ExtractCompleted {
+        #[serde(flatten)]
+        data: ExtractCompletedV1,
+    },
+    ExtractAborted {
+        #[serde(flatten)]
+        data: ExtractAbortedV1,
+    },
+    ExtractFailed {
+        #[serde(flatten)]
+        data: ExtractFailedV1,
+    },
+    TsyCollapseStartedIpc {
+        #[serde(flatten)]
+        data: TsyCollapseStartedIpcV1,
+    },
     SkillXpGain {
         char_id: u64,
         skill: SkillIdV1,
@@ -469,6 +517,113 @@ pub struct DroppedLootEntryV1 {
     pub source_col: u64,
     pub world_pos: [f64; 3],
     pub item: InventoryItemViewV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiftPortalKindV1 {
+    MainRift,
+    DeepRift,
+    CollapseTear,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiftPortalDirectionV1 {
+    Entry,
+    Exit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RiftPortalStateV1 {
+    pub entity_id: u64,
+    pub kind: RiftPortalKindV1,
+    pub direction: RiftPortalDirectionV1,
+    pub family_id: String,
+    pub world_pos: [f64; 3],
+    pub trigger_radius: f64,
+    pub current_extract_ticks: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_window_end: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RiftPortalRemovedV1 {
+    pub entity_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractStartedV1 {
+    pub player_id: String,
+    pub portal_entity_id: u64,
+    pub portal_kind: RiftPortalKindV1,
+    pub required_ticks: u32,
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractProgressV1 {
+    pub player_id: String,
+    pub portal_entity_id: u64,
+    pub elapsed_ticks: u32,
+    pub required_ticks: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractCompletedV1 {
+    pub player_id: String,
+    pub portal_kind: RiftPortalKindV1,
+    pub family_id: String,
+    pub exit_world_pos: [f64; 3],
+    pub at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractAbortedReasonV1 {
+    Moved,
+    Combat,
+    Damaged,
+    Cancelled,
+    PortalExpired,
+    OutOfRange,
+    NotInTsy,
+    AlreadyBusy,
+    CannotExit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractAbortedV1 {
+    pub player_id: String,
+    pub reason: ExtractAbortedReasonV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractFailedReasonV1 {
+    SpiritQiDrained,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractFailedV1 {
+    pub player_id: String,
+    pub reason: ExtractFailedReasonV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TsyCollapseStartedIpcV1 {
+    pub family_id: String,
+    pub at_tick: u64,
+    pub remaining_ticks: u64,
+    pub collapse_tear_entity_ids: Vec<u64>,
 }
 
 impl TryFrom<ServerDataInventoryEventWireV1> for InventoryEventV1 {
@@ -741,6 +896,18 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 epilogue,
                 archetype_suggestion,
             }),
+            ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
+            ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
+                Ok(Self::RiftPortalRemoved(removed))
+            }
+            ServerDataPayloadWireV1::ExtractStarted { data } => Ok(Self::ExtractStarted(data)),
+            ServerDataPayloadWireV1::ExtractProgress { data } => Ok(Self::ExtractProgress(data)),
+            ServerDataPayloadWireV1::ExtractCompleted { data } => Ok(Self::ExtractCompleted(data)),
+            ServerDataPayloadWireV1::ExtractAborted { data } => Ok(Self::ExtractAborted(data)),
+            ServerDataPayloadWireV1::ExtractFailed { data } => Ok(Self::ExtractFailed(data)),
+            ServerDataPayloadWireV1::TsyCollapseStartedIpc { data } => {
+                Ok(Self::TsyCollapseStartedIpc(data))
+            }
             ServerDataPayloadWireV1::SkillXpGain {
                 char_id,
                 skill,
@@ -991,6 +1158,28 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 epilogue: epilogue.clone(),
                 archetype_suggestion: archetype_suggestion.clone(),
             },
+            ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::RiftPortalRemoved(removed) => Self::RiftPortalRemoved {
+                removed: removed.clone(),
+            },
+            ServerDataPayloadV1::ExtractStarted(data) => {
+                Self::ExtractStarted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractProgress(data) => {
+                Self::ExtractProgress { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractCompleted(data) => {
+                Self::ExtractCompleted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractAborted(data) => {
+                Self::ExtractAborted { data: data.clone() }
+            }
+            ServerDataPayloadV1::ExtractFailed(data) => Self::ExtractFailed { data: data.clone() },
+            ServerDataPayloadV1::TsyCollapseStartedIpc(data) => {
+                Self::TsyCollapseStartedIpc { data: data.clone() }
+            }
             ServerDataPayloadV1::SkillXpGain(data) => Self::SkillXpGain {
                 char_id: data.char_id,
                 skill: data.skill,
@@ -1136,6 +1325,14 @@ impl ServerDataPayloadV1 {
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
+            Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
+            Self::RiftPortalRemoved(..) => ServerDataType::RiftPortalRemoved,
+            Self::ExtractStarted(..) => ServerDataType::ExtractStarted,
+            Self::ExtractProgress(..) => ServerDataType::ExtractProgress,
+            Self::ExtractCompleted(..) => ServerDataType::ExtractCompleted,
+            Self::ExtractAborted(..) => ServerDataType::ExtractAborted,
+            Self::ExtractFailed(..) => ServerDataType::ExtractFailed,
+            Self::TsyCollapseStartedIpc(..) => ServerDataType::TsyCollapseStartedIpc,
             Self::SkillXpGain(..) => ServerDataType::SkillXpGain,
             Self::SkillLvUp(..) => ServerDataType::SkillLvUp,
             Self::SkillCapChanged(..) => ServerDataType::SkillCapChanged,
@@ -1187,6 +1384,51 @@ mod tests {
                 text: "x".to_string(),
                 color: 0,
                 created_at_ms: 0,
+            }),
+            ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
+                entity_id: 1,
+                kind: RiftPortalKindV1::MainRift,
+                direction: RiftPortalDirectionV1::Exit,
+                family_id: "tsy_lingxu_01".to_string(),
+                world_pos: [0.0, 64.0, 0.0],
+                trigger_radius: 2.0,
+                current_extract_ticks: 160,
+                activation_window_end: None,
+            }),
+            ServerDataPayloadV1::RiftPortalRemoved(RiftPortalRemovedV1 { entity_id: 1 }),
+            ServerDataPayloadV1::ExtractStarted(ExtractStartedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                portal_kind: RiftPortalKindV1::MainRift,
+                required_ticks: 160,
+                at_tick: 10,
+            }),
+            ServerDataPayloadV1::ExtractProgress(ExtractProgressV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                elapsed_ticks: 5,
+                required_ticks: 160,
+            }),
+            ServerDataPayloadV1::ExtractCompleted(ExtractCompletedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_kind: RiftPortalKindV1::MainRift,
+                family_id: "tsy_lingxu_01".to_string(),
+                exit_world_pos: [0.0, 64.0, 0.0],
+                at_tick: 170,
+            }),
+            ServerDataPayloadV1::ExtractAborted(ExtractAbortedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractAbortedReasonV1::Damaged,
+            }),
+            ServerDataPayloadV1::ExtractFailed(ExtractFailedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractFailedReasonV1::SpiritQiDrained,
+            }),
+            ServerDataPayloadV1::TsyCollapseStartedIpc(TsyCollapseStartedIpcV1 {
+                family_id: "tsy_lingxu_01".to_string(),
+                at_tick: 100,
+                remaining_ticks: 600,
+                collapse_tear_entity_ids: vec![2, 3, 4],
             }),
         ];
 
@@ -1337,6 +1579,30 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.skill-snapshot.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.rift-portal-removed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-started.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-progress.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-completed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-aborted.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.extract-failed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.tsy-collapse-started-ipc.sample.json"
             ),
         ];
 

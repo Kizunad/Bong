@@ -19,7 +19,7 @@ mod tests {
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::dimension_transfer::DimensionTransferRequest;
-    use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftPortal, TsyPresence};
+    use crate::world::tsy::{DimensionAnchor, RiftPortal, TsyPresence};
     use crate::world::tsy_drain::tsy_drain_tick;
     use crate::world::tsy_portal::{
         tsy_entry_portal_tick, tsy_exit_portal_tick, TsyEnterEmit, TsyExitEmit,
@@ -120,15 +120,14 @@ mod tests {
         // Entry portal 在主世界 (0,64,0)，target = TSY shallow center
         app.world_mut().spawn((
             Position::new([0.0, 64.0, 0.0]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::entry(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: shallow_center,
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Entry,
-            },
+                1.5,
+            ),
         ));
         let player = app
             .world_mut()
@@ -290,15 +289,15 @@ mod tests {
         };
         app.world_mut().spawn((
             Position::new([exit_pos.x, exit_pos.y, exit_pos.z]),
-            RiftPortal {
-                family_id: "tsy_lingxu_01".to_string(),
-                target: DimensionAnchor {
+            RiftPortal::exit(
+                "tsy_lingxu_01".to_string(),
+                DimensionAnchor {
                     dimension: DimensionKind::Overworld,
                     pos: return_to.pos,
                 },
-                trigger_radius: 1.5,
-                direction: PortalDirection::Exit,
-            },
+                1.5,
+                crate::world::tsy::RiftKind::MainRift,
+            ),
         ));
 
         let player = app

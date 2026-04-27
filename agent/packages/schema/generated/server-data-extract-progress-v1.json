@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "player_id",
+    "portal_entity_id",
+    "elapsed_ticks",
+    "required_ticks"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "extract_progress",
+      "type": "string"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "portal_entity_id": {
+      "type": "number"
+    },
+    "elapsed_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "required_ticks": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

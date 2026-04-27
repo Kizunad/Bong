@@ -5677,6 +5677,408 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id",
+        "kind",
+        "direction",
+        "family_id",
+        "world_pos",
+        "trigger_radius",
+        "current_extract_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "rift_portal_state",
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "number"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "const": "entry",
+              "type": "string"
+            },
+            {
+              "const": "exit",
+              "type": "string"
+            }
+          ]
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "trigger_radius": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "current_extract_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "activation_window_end": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "rift_portal_removed",
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_entity_id",
+        "portal_kind",
+        "required_ticks",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_started",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_entity_id": {
+          "type": "number"
+        },
+        "portal_kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "required_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_entity_id",
+        "elapsed_ticks",
+        "required_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_progress",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_entity_id": {
+          "type": "number"
+        },
+        "elapsed_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "required_ticks": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "portal_kind",
+        "family_id",
+        "exit_world_pos",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_completed",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "portal_kind": {
+          "anyOf": [
+            {
+              "const": "main_rift",
+              "type": "string"
+            },
+            {
+              "const": "deep_rift",
+              "type": "string"
+            },
+            {
+              "const": "collapse_tear",
+              "type": "string"
+            }
+          ]
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "exit_world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "reason"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_aborted",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "moved",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "damaged",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            },
+            {
+              "const": "portal_expired",
+              "type": "string"
+            },
+            {
+              "const": "out_of_range",
+              "type": "string"
+            },
+            {
+              "const": "not_in_tsy",
+              "type": "string"
+            },
+            {
+              "const": "already_busy",
+              "type": "string"
+            },
+            {
+              "const": "cannot_exit",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "player_id",
+        "reason"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "extract_failed",
+          "type": "string"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "const": "spirit_qi_drained",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "family_id",
+        "at_tick",
+        "remaining_ticks",
+        "collapse_tear_entity_ids"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "tsy_collapse_started_ipc",
+          "type": "string"
+        },
+        "family_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "remaining_ticks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "collapse_tear_entity_ids": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
     }
   ]
 }

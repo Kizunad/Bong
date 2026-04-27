@@ -344,6 +344,16 @@ public final class ClientRequestProtocol {
         return envelope("jiemai").toString();
     }
 
+    public static String encodeStartExtractRequest(long portalEntityId) {
+        JsonObject obj = envelope("start_extract_request");
+        obj.addProperty("portal_entity_id", portalEntityId);
+        return obj.toString();
+    }
+
+    public static String encodeCancelExtractRequest() {
+        return envelope("cancel_extract_request").toString();
+    }
+
     // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
 
     /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */

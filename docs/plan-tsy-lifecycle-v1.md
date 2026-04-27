@@ -851,4 +851,5 @@ MVP 建议不拆，整吃一次。
 
 - **2026-04-25**：核对 `server/src/` 后确认本 plan（P2 TSY 生命周期与道伥）当前为纯设计骨架，无任何实装；§-1 标注的 P0/P1 现状（`tsy_lifecycle.rs` / `tsy_drain.rs` / `tsy_portal.rs` / `tsy_filter.rs` / `tsy_loot_spawn.rs` / `tsy_death_drop.rs` / `corpse.rs` / `NpcArchetype` 等）在仓库中均未发现对应代码，全部 `[ ]` 维持未勾选。后续推进需先落地 P0（TsyPresence + zone 识别 + 负压 drain + portal + 过滤）和 P1（遗物 spawn + 死亡分流 + 干尸），再开 P2。
 - **2026-04-26**：**P-1 解冻** — `plan-tsy-dimension-v1` 已 PR #47（merge 579fc67e）合并，跨位面基础设施就位；本 plan 仍 blocking on **P0 `tsy-zone` + P1 `tsy-loot`** 串行前置。`NpcArchetype::Daoxiang` variant 由本 plan §4 引入（npc-ai PR #45 已加 `Zombie/Commoner/Rogue/Beast/Disciple/GuardianRelic` 6 variant，未含 Daoxiang）。
+- **2026-04-27**：**主体 merged** — PR #54（merge 99c29ebd）已合并。代码核对：`server/src/world/tsy_lifecycle.rs` 落地，`TsyLifecycle` 枚举（New/Active/Declining/Collapsing/Dead）+ `TsyZoneStateRegistry` + `lifecycle_tick` 系统 + 塌缩 cleanup + 道伥 spawn 系统全部确认；`NpcArchetype::Daoxiang` variant 已加入 `npc/lifecycle.rs`；`tsy_lifecycle_integration_test.rs` 含 26 单测；`tsy_loot_spawn` 已接通家族注册；`tsy_portal` 拒入 Collapsing/Dead 状态。**P3/P4/P5 全部解冻。** 剩余 ~10%：道伥 spawn 平衡参数调优与 e2e smoke 未跑。dashboard percent 90%。
 

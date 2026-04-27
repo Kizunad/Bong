@@ -14,8 +14,8 @@ argument-hint: <plan-name>
 1. **所有 git / commit / push / test / gh 命令必须在 worktree 内执行**。主仓库根目录（`/home/kiz/Code/Bong`）HEAD 指向 `main`，在那里做任何写操作等同于直接写 main 分支——**严禁**。
 2. Agent 的 bash 调用之间 cwd **不保证持久**。每个 bash block 开头都必须 `cd "$WT_ABS"`，或用 `git -C "$WT_ABS" ...` 显式指定。
 3. 只有 step 9 收尾清理才允许 `cd "$REPO_ROOT"` 回主工作区。中途**严禁** `cd ..` / `cd -` / `cd /home/kiz/Code/Bong` 离开 worktree。
-4. 严禁 `--no-verify` / `--no-gpg-sign` / `git reset --hard` / `git push --force` 等绕过或破坏操作。
-5. 严禁修改 `docs/` / `CLAUDE.md` / `worldview.md`（plan 归档由人工决定）。
+4. 严禁 `--no-verify` / `--no-gpg-sign` / `git reset --hard` / `git push --force` 等绕过或破坏操作。**唯一例外**：step 4.2 rebase 解决冲突后允许 `git push --force-with-lease origin "$BRANCH"`（远端 head 校验，不会覆盖他人 commit）。
+5. **`docs/` 写权限严格限于本次消费的 plan**：仅允许在 `docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，并最终 `git mv` 入 `docs/finished_plans/`（详见 step 3 末尾"全 P 完成后"）。其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 6. 严禁用注释掉测试 / `#[ignore]` / skip case / 改断言数值等方式"让测试过"。
 
 ---
@@ -88,6 +88,32 @@ echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 
 **修复范围严格限于"当前 TODO patch 引入的明显错误"**——禁止顺手修其他模块、重构、改 plan 范围外代码。
 
+### 全 P 完成后：写 Finish Evidence + 归档（提 PR 前最后一步）
+
+所有 P0/P1/§N 实施 + 测试都通过后，**提 PR 之前**做以下动作（plan 格式见 `CLAUDE.md` "Plan 工作流"）：
+
+1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
+   - **落地清单**：每个 P 对应的真实模块/文件路径
+   - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息
+   - **测试结果**：跑过的命令 + 数量（如 `cargo test cultivation:: → 94 passed`）
+   - **跨仓库核验**：server / agent / client 各命中的 symbol（plan 跨仓库时）
+   - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办（若有）
+
+2. `git mv` 入归档目录并 atomic commit：
+
+   ```bash
+   cd "$WT_ABS"
+   git mv "docs/plan-$PLAN.md" "docs/finished_plans/plan-$PLAN.md"
+   git add "docs/finished_plans/plan-$PLAN.md"
+   git commit -m "docs(plan-$PLAN): finish evidence 并归档至 finished_plans/"
+   ```
+
+3. 再跑一次对应子项目测试，确认 mv 没破坏路径引用（README / scripts / 其他文档不应硬编码旧 `docs/plan-$PLAN.md` 路径）
+
+PR 内已包含归档动作——merge 后 plan 自动就在 `finished_plans/`，**不另开 PR**。
+
+**review 阶段若 step 7 修改了实施**：相应更新 evidence（已 mv 后路径下的文件 `docs/finished_plans/plan-$PLAN.md`），保持文档与代码一致。
+
 ## 4. 提 PR（不 auto-merge）
 
 ```bash
@@ -116,7 +142,7 @@ echo "PR: $PR_URL (#$PR_NUM)"
 
 ### 4.1 检查 merge conflict
 
-PR 创建后**立即**查 mergeable 状态，避免后续 step 浪费时间在已知冲突的 PR 上：
+PR 创建后**立即**查 mergeable 状态：
 
 ```bash
 cd "$WT_ABS"
@@ -128,24 +154,55 @@ for i in 1 2 3 4 5 6; do
   sleep 5
 done
 echo "[mergeable] $MERGE_STATUS"
-
-case "$MERGE_STATUS" in
-  MERGEABLE)
-    echo "[ok] 无冲突，进 step 5"
-    ;;
-  CONFLICTING)
-    echo "❌ PR 与 origin/main 有冲突，停交人工"
-    gh pr view "$PR_NUM" --json url,mergeStateStatus,headRefName,baseRefName
-    echo "WT: $WT_ABS"
-    exit 1
-    ;;
-  UNKNOWN)
-    echo "[warn] GitHub 仍在计算 mergeable（30s 超时），CI 阶段会再次校验"
-    ;;
-esac
 ```
 
-冲突时**不**自动 rebase / force push——可能涉及业务判断（哪边逻辑保留），交人工更安全。
+- `MERGEABLE` → 进 step 5
+- `UNKNOWN`（30s 仍未算出）→ 不阻塞，进 step 5（CI / merge 阶段会再次校验）
+- `CONFLICTING` → 走 4.2 自行 rebase 解决
+
+### 4.2 自行 rebase 解决冲突（≤2 轮）
+
+冲突时不一律交人工——agent 在 plan 上下文里，通常足以判断"main 改了什么、本 PR 改了什么、应该如何合并"。先尝试 rebase，能解决就解决，拿不准再停。
+
+```bash
+cd "$WT_ABS"
+git fetch origin main
+git rebase origin/main
+```
+
+**Case A：rebase 干净**（git 自动 3-way merge 成功，无冲突标记）
+
+1. 跑对应子项目测试（按 step 3 测试矩阵）
+2. 通过 → `git push --force-with-lease origin "$BRANCH"` → 回 step 5
+   - 用 `--force-with-lease` 不用 `--force`：仅当远端 head 仍是上次 push 时的 head 才推，避免覆盖他人新 commit
+3. 测试不过 → 走 case B 第 5 步
+
+**Case B：rebase 中断**（出现 `<<<<<<<`/`=======`/`>>>>>>>` 冲突标记）
+
+1. `git status` 列出所有冲突文件
+2. 对每个冲突文件做语义合并：
+   - `git log --oneline ..origin/main -- <file>` 看 main 改了什么
+   - `git log --oneline origin/main..HEAD -- <file>` 看本 plan 改了什么
+   - 判断原则：
+     - 双方改同一函数 / 同一字段 / 同一行：合并语义，保留两边逻辑（典型如 imports、enum variant 列表、struct 字段、模块清单）
+     - 一方删一方改：保留改的那边
+     - 双方都加（同一区域）：拼接，注意去重和顺序
+     - **拿不准 / 双方逻辑互斥需要业务决策 / 涉及 plan 范围外的代码** → 走第 5 步
+3. 编辑文件去掉 `<<<<<<<`/`=======`/`>>>>>>>` 标记，`git add <file>`
+4. `git rebase --continue`，可能还有下一个冲突点 → 回到 1
+5. **任一步拿不准就 abort 停**：
+   ```bash
+   git rebase --abort
+   echo "❌ rebase 冲突需要业务判断，停交人工"
+   gh pr view "$PR_NUM" --json url,mergeStateStatus
+   echo "WT: $WT_ABS"
+   exit 1
+   ```
+6. rebase 成功后必须跑对应子项目测试（同 step 3），全绿才能 `git push --force-with-lease origin "$BRANCH"` → 回 step 5
+
+**最多 2 轮**：第 1 轮 abort 后允许再尝试 1 次（例如先详读 main 上的相关 commit 重新评估）。第 2 轮仍卡住 → 停交人工。
+
+修复范围严格限于"解决 rebase 冲突"——禁止顺手重构、改 plan 范围外代码、删 main 上别人新写的逻辑。
 
 ## 5. 等 CI 跑完
 

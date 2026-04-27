@@ -1,0 +1,18 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "player_id",
+    "reason"
+  ],
+  "properties": {
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reason": {
+      "const": "spirit_qi_drained",
+      "type": "string"
+    }
+  }
+}

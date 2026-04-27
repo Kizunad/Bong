@@ -180,6 +180,13 @@ public final class BongHudOrchestrator {
                 botanyAnchor
             ));
         }
+        commands.addAll(ExtractProgressHudPlanner.buildCommands(
+            com.bong.client.tsy.ExtractStateStore.snapshot(),
+            widthMeasurer,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
 
         return List.copyOf(commands);
     }

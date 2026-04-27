@@ -416,3 +416,16 @@ static String humanizeRealm(String realmKey) {
 ## §8 进度日志
 
 - 2026-04-25：Q9 audit 完成（`persistence/mod.rs` 已 Query `&Cultivation`，独立存表）；§7 检查表全绿，可直接进 active 实施（§1/§2 删除-新增清单尚未动）。
+- 2026-04-27：§1 / §2 全部落地（commit `688384e3` `refactor(cultivation): 清理旧 ladder 并统一 realm 来源 (#48)`，70 文件，净减 ~385 行）。
+  - **§1 删除清单**：`gameplay.rs` 的 `BREAKTHROUGH_RULES` / `BreakthroughRule` / `apply_breakthrough_action` / `validate_breakthrough` / `breakthrough_rule` / `realm_display_name` 全删；`progression.rs` 整文件删（REALM_LADDER + apply_progression + 全部 test）；`PlayerState` 缩到 `karma + inventory_score` 两字段（`state.rs:25-27`）。
+  - **§2.1 转发链路**：实际用 `BreakthroughRequest` 而不是 plan 设计的 `AttemptBreakthroughEvent`（Bevy 等价、handler 逻辑相同）。`gameplay.rs` 的 `AttemptBreakthrough` 分支转发到 `cultivation::breakthrough_system`。
+  - **§2.2 cultivation handler**：`breakthrough.rs:245-356` 实装 `breakthrough_system` + 10 个 test，复用现有 `try_breakthrough` 公式。
+  - **§2.3 / §2.5 IPC 源头统一**：`PlayerStatePayload.realm/spirit_qi` 改读 Cultivation（`state.rs:122-123`、`inventory_snapshot_emit.rs:240`），与 `CultivationSnapshotV1.realm` 同格式 PascalCase。
+  - **§2.4 client humanizeRealm**：`PlayerStateViewModel.java:98-115` 替换为六境映射（醒灵/引气/凝脉/固元/通灵/化虚），删除旧 ladder helpers。
+  - **§2.6 test fixtures**：Rust + Java + JSON 全部改为 PascalCase 六境（`"Awaken"` / `"Induce"` / `"Condense"`）。
+  - **§2.7 SQL migration**：实际形式与 plan 设计有出入，但**目标已达成且更完善**——
+    - 项目惯例是 rusqlite 内嵌 migration（`PRAGMA user_version`），不是外置 `server/migrations/NNNN_*.sql` 文件；plan §2.7 路径属笔误。
+    - 由 `user_version 13`（`persistence/mod.rs:1027-1076`，commit `78599eee`）落地：`CREATE TABLE player_cultivation` 独立持久化 + `DROP COLUMN realm/spirit_qi/spirit_qi_max/experience`（idempotent，旧库才 drop）。
+    - **超出 plan 设计**：新增 `backfill_legacy_player_cultivation`（`persistence/mod.rs:1091+`），把旧 `player_core` 的 realm/qi 数据迁到 `player_cultivation`，避免了 plan §2.7 注里"playtest 阶段 reset 存档"的妥协。
+    - INSERT 已对齐缩水后的 PlayerState：`state.rs:460-484` 只写 `karma + inventory_score`。
+  - **状态**：§7 全检查表 ✅，可归档至 `docs/finished_plans/`。

@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "player_id",
+    "reason"
+  ],
+  "properties": {
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "const": "moved",
+          "type": "string"
+        },
+        {
+          "const": "combat",
+          "type": "string"
+        },
+        {
+          "const": "damaged",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "type": "string"
+        },
+        {
+          "const": "portal_expired",
+          "type": "string"
+        },
+        {
+          "const": "out_of_range",
+          "type": "string"
+        },
+        {
+          "const": "not_in_tsy",
+          "type": "string"
+        },
+        {
+          "const": "already_busy",
+          "type": "string"
+        },
+        {
+          "const": "cannot_exit",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

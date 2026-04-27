@@ -25,7 +25,7 @@ use crate::world::dimension::DimensionLayers;
 use crate::world::setup_world;
 use crate::world::terrain::TerrainProviders;
 use crate::world::tsy::{
-    DimensionAnchor, LootContainer, NpcAnchor, PortalDirection, RelicCoreSlot, RiftPortal,
+    DimensionAnchor, LootContainer, NpcAnchor, PortalDirection, RelicCoreSlot, RiftKind, RiftPortal,
 };
 use valence::prelude::{
     App, Commands, DVec3, EntityLayerId, IntoSystemConfigs, Position, Res, Startup,
@@ -134,16 +134,14 @@ pub fn spawn_rift_portals(
         };
 
         commands.spawn((
-            RiftPortal {
+            RiftPortal::entry(
                 family_id,
-                target: DimensionAnchor {
+                DimensionAnchor {
                     dimension: DimensionKind::Tsy,
                     pos: target_pos,
                 },
-                trigger_radius: parse_f64(&tags, "trigger_radius")
-                    .unwrap_or(DEFAULT_TRIGGER_RADIUS),
-                direction: PortalDirection::Entry,
-            },
+                parse_f64(&tags, "trigger_radius").unwrap_or(DEFAULT_TRIGGER_RADIUS),
+            ),
             Position(poi_pos_dvec3(poi.pos_xyz)),
             EntityLayerId(layers.overworld),
         ));
@@ -184,19 +182,17 @@ pub fn spawn_rift_portals(
         };
 
         commands.spawn((
-            RiftPortal {
+            RiftPortal::exit(
                 family_id,
                 // exit's target.pos is filled at runtime from TsyPresence.return_to;
-                // placeholder zero is replaced by tsy_portal.rs when the player
-                // touches the marker.
-                target: DimensionAnchor {
+                // placeholder zero is replaced by extract / portal systems.
+                DimensionAnchor {
                     dimension: DimensionKind::Overworld,
                     pos: DVec3::ZERO,
                 },
-                trigger_radius: parse_f64(&tags, "trigger_radius")
-                    .unwrap_or(DEFAULT_TRIGGER_RADIUS),
-                direction: PortalDirection::Exit,
-            },
+                parse_f64(&tags, "trigger_radius").unwrap_or(DEFAULT_TRIGGER_RADIUS),
+                parse_rift_kind(&tags).unwrap_or(RiftKind::MainRift),
+            ),
             Position(poi_pos_dvec3(poi.pos_xyz)),
             EntityLayerId(layers.tsy),
         ));
@@ -358,6 +354,15 @@ fn parse_direction(tags: &std::collections::HashMap<&str, &str>) -> Option<Porta
     match tags.get("direction").copied()? {
         "entry" => Some(PortalDirection::Entry),
         "exit" => Some(PortalDirection::Exit),
+        _ => None,
+    }
+}
+
+fn parse_rift_kind(tags: &std::collections::HashMap<&str, &str>) -> Option<RiftKind> {
+    match tags.get("kind").copied().unwrap_or("main") {
+        "main" | "main_rift" => Some(RiftKind::MainRift),
+        "deep" | "deep_rift" => Some(RiftKind::DeepRift),
+        "collapse_tear" => Some(RiftKind::CollapseTear),
         _ => None,
     }
 }

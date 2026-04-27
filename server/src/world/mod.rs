@@ -1,7 +1,9 @@
 pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
+pub mod extract_system;
 pub mod loot_pool;
+pub mod rift_portal;
 pub mod terrain;
 pub mod tsy;
 pub mod tsy_container;
@@ -106,8 +108,11 @@ pub fn register(app: &mut App) {
     tsy_dev_command::register(app);
     // plan-tsy-worldgen-v1 §1 — startup 期消费 TerrainProviders.pois() 把 POI 转 marker
     tsy_poi_consumer::register(app);
+    app.insert_resource(rift_portal::load_tsy_portals());
     // plan-tsy-lifecycle-v1 §1 — TSY 生命周期状态机 + 塌缩清理 + 道伥转化
     tsy_lifecycle::register(app);
+    // plan-tsy-extract-v1 — TSY 定点撤离倒计时 + race-out 裂口。
+    extract_system::register(app);
     // plan-tsy-container-v1 §2 — 搜刮 system + event 总线
     tsy_container_search::register(app);
     // plan-tsy-container-v1 §1.4 / §1.5 — loot pool + 容器 spawn 配置 resource
