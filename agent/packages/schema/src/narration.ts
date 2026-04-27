@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-import { NarrationScope, NarrationStyle } from "./common.js";
+import { NarrationKind, NarrationScope, NarrationStyle } from "./common.js";
 import { validate, type ValidationResult } from "./validate.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -15,6 +15,7 @@ export const Narration = Type.Object(
     target: Type.Optional(Type.String({ description: "zone name or player uuid, required when scope != broadcast" })),
     text: Type.String({ maxLength: 500 }),
     style: NarrationStyle,
+    kind: Type.Optional(NarrationKind),
   },
   { additionalProperties: false },
 );

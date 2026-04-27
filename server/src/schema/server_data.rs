@@ -22,6 +22,31 @@ pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifespanPreviewV1 {
+    pub years_lived: f64,
+    pub cap_by_realm: u32,
+    pub remaining_years: f64,
+    pub death_penalty_years: u32,
+    pub tick_rate_multiplier: f64,
+    pub is_wind_candle: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenStageV1 {
+    Fortune,
+    Tribulation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathScreenZoneKindV1 {
+    Ordinary,
+    Death,
+    Negative,
+}
+
 #[derive(Debug)]
 pub enum ServerDataBuildError {
     Json(serde_json::Error),
@@ -60,6 +85,8 @@ pub enum ServerDataType {
     WeaponBroken,
     TreasureEquipped,
     LingtianSession,
+    DeathScreen,
+    TerminateScreen,
     RiftPortalState,
     RiftPortalRemoved,
     ExtractStarted,
@@ -126,6 +153,7 @@ pub enum ServerDataPayloadV1 {
         cracks_count: Vec<u8>,
         /// 整个实体的污染总量（所有 `Contamination.entries.amount` 求和）。
         contamination_total: f64,
+        lifespan: Option<LifespanPreviewV1>,
         /// 最近里程碑摘要，供客户端轻量展示；空串表示暂无。
         recent_skill_milestones_summary: String,
         /// 结构化 skill milestone 列表，通常只传最近若干条。
@@ -171,6 +199,25 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     TreasureEquipped(TreasureEquippedV1),
     LingtianSession(Box<LingtianSessionDataV1>),
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+        stage: Option<DeathScreenStageV1>,
+        death_number: Option<u32>,
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        lifespan: Option<LifespanPreviewV1>,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
+    },
     RiftPortalState(RiftPortalStateV1),
     RiftPortalRemoved(RiftPortalRemovedV1),
     ExtractStarted(ExtractStartedV1),
@@ -237,6 +284,8 @@ enum ServerDataPayloadWireV1 {
         open_progress: Vec<f64>,
         cracks_count: Vec<u8>,
         contamination_total: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
         #[serde(default)]
         recent_skill_milestones_summary: String,
         #[serde(default)]
@@ -344,6 +393,29 @@ enum ServerDataPayloadWireV1 {
     LingtianSession {
         #[serde(flatten)]
         lingtian_session: LingtianSessionDataV1,
+    },
+    DeathScreen {
+        visible: bool,
+        cause: String,
+        luck_remaining: f64,
+        final_words: Vec<String>,
+        countdown_until_ms: u64,
+        can_reincarnate: bool,
+        can_terminate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage: Option<DeathScreenStageV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        death_number: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone_kind: Option<DeathScreenZoneKindV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lifespan: Option<LifespanPreviewV1>,
+    },
+    TerminateScreen {
+        visible: bool,
+        final_words: String,
+        epilogue: String,
+        archetype_suggestion: String,
     },
     RiftPortalState {
         #[serde(flatten)]
@@ -690,6 +762,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             } => Ok(Self::CultivationDetail {
@@ -701,6 +774,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             }),
@@ -786,6 +860,42 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
                 Ok(Self::LingtianSession(Box::new(lingtian_session)))
             }
+            ServerDataPayloadWireV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            } => Ok(Self::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            }),
+            ServerDataPayloadWireV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Ok(Self::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            }),
             ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
             ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
                 Ok(Self::RiftPortalRemoved(removed))
@@ -906,6 +1016,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress,
                 cracks_count,
                 contamination_total,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
             } => Self::CultivationDetail {
@@ -917,6 +1028,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 open_progress: open_progress.clone(),
                 cracks_count: cracks_count.clone(),
                 contamination_total: *contamination_total,
+                lifespan: lifespan.clone(),
                 recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
                 skill_milestones: skill_milestones.clone(),
             },
@@ -1009,6 +1121,42 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
                 lingtian_session: (**s).clone(),
+            },
+            ServerDataPayloadV1::DeathScreen {
+                visible,
+                cause,
+                luck_remaining,
+                final_words,
+                countdown_until_ms,
+                can_reincarnate,
+                can_terminate,
+                stage,
+                death_number,
+                zone_kind,
+                lifespan,
+            } => Self::DeathScreen {
+                visible: *visible,
+                cause: cause.clone(),
+                luck_remaining: *luck_remaining,
+                final_words: final_words.clone(),
+                countdown_until_ms: *countdown_until_ms,
+                can_reincarnate: *can_reincarnate,
+                can_terminate: *can_terminate,
+                stage: stage.clone(),
+                death_number: *death_number,
+                zone_kind: zone_kind.clone(),
+                lifespan: lifespan.clone(),
+            },
+            ServerDataPayloadV1::TerminateScreen {
+                visible,
+                final_words,
+                epilogue,
+                archetype_suggestion,
+            } => Self::TerminateScreen {
+                visible: *visible,
+                final_words: final_words.clone(),
+                epilogue: epilogue.clone(),
+                archetype_suggestion: archetype_suggestion.clone(),
             },
             ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
                 state: state.clone(),
@@ -1175,6 +1323,8 @@ impl ServerDataPayloadV1 {
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::LingtianSession(..) => ServerDataType::LingtianSession,
+            Self::DeathScreen { .. } => ServerDataType::DeathScreen,
+            Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
             Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
             Self::RiftPortalRemoved(..) => ServerDataType::RiftPortalRemoved,
             Self::ExtractStarted(..) => ServerDataType::ExtractStarted,
@@ -1309,6 +1459,14 @@ mod tests {
             open_progress: vec![1.0; 20],
             cracks_count: vec![0; 20],
             contamination_total: 0.0,
+            lifespan: Some(LifespanPreviewV1 {
+                years_lived: 42.0,
+                cap_by_realm: 200,
+                remaining_years: 158.0,
+                death_penalty_years: 10,
+                tick_rate_multiplier: 1.0,
+                is_wind_candle: false,
+            }),
             recent_skill_milestones_summary: "t82000:skill:herbalism:lv3".to_string(),
             skill_milestones: vec![SkillMilestoneSnapshotV1 {
                 skill: "herbalism".to_string(),
@@ -1331,6 +1489,7 @@ mod tests {
             ServerDataPayloadV1::CultivationDetail {
                 opened,
                 flow_rate,
+                lifespan,
                 recent_skill_milestones_summary,
                 skill_milestones,
                 ..
@@ -1338,6 +1497,7 @@ mod tests {
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
+                assert_eq!(lifespan.unwrap().death_penalty_years, 10);
                 assert_eq!(
                     recent_skill_milestones_summary,
                     "t82000:skill:herbalism:lv3"
@@ -1401,6 +1561,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.death-screen.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.skill-xp-gain.sample.json"

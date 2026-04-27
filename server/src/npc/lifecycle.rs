@@ -15,6 +15,8 @@ use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem}
 use crate::cultivation::death_hooks::{
     CultivationDeathCause, CultivationDeathTrigger, PlayerTerminated,
 };
+use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 
@@ -25,15 +27,23 @@ type RegistryNpcQuery<'w, 's> = Query<
     (With<NpcMarker>, Without<Despawned>),
 >;
 
-type AgingNpcQuery<'w, 's> = Query<
+type ActiveNpcFilter = (
+    With<NpcMarker>,
+    Without<Despawned>,
+    Without<PendingRetirement>,
+);
+type SharedAgingNpcQuery<'w, 's> =
+    Query<'w, 's, (&'static mut NpcLifespan, Option<&'static LifespanComponent>), ActiveNpcFilter>;
+type TerminatedNpcQuery<'w, 's> = Query<
     'w,
     's,
-    &'static mut NpcLifespan,
     (
-        With<NpcMarker>,
-        Without<Despawned>,
-        Without<PendingRetirement>,
+        &'static NpcArchetype,
+        &'static NpcLifespan,
+        Option<&'static PendingRetirement>,
+        Option<&'static LifespanComponent>,
     ),
+    With<NpcMarker>,
 >;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
@@ -258,6 +268,10 @@ pub fn register(app: &mut App) {
 pub struct NpcRuntimeBundle {
     pub archetype: NpcArchetype,
     pub lifespan: NpcLifespan,
+    pub shared_lifespan: LifespanComponent,
+    pub death_registry: DeathRegistry,
+    pub life_record: LifeRecord,
+    pub lifespan_extension_ledger: LifespanExtensionLedger,
     pub cultivation: Cultivation,
     pub meridian_system: MeridianSystem,
     pub contamination: Contamination,
@@ -270,9 +284,14 @@ pub struct NpcRuntimeBundle {
 }
 
 pub fn npc_runtime_bundle(entity: Entity, archetype: NpcArchetype) -> NpcRuntimeBundle {
+    let char_id = canonical_npc_id(entity);
     NpcRuntimeBundle {
         archetype,
         lifespan: NpcLifespan::for_archetype(archetype),
+        shared_lifespan: LifespanComponent::for_realm(Cultivation::default().realm),
+        death_registry: DeathRegistry::new(char_id.clone()),
+        life_record: LifeRecord::new(char_id.clone()),
+        lifespan_extension_ledger: LifespanExtensionLedger::default(),
         cultivation: Cultivation::default(),
         meridian_system: MeridianSystem::default(),
         contamination: Contamination::default(),
@@ -282,7 +301,7 @@ pub fn npc_runtime_bundle(entity: Entity, archetype: NpcArchetype) -> NpcRuntime
         status_effects: StatusEffects::default(),
         derived_attrs: DerivedAttrs::default(),
         lifecycle: Lifecycle {
-            character_id: canonical_npc_id(entity),
+            character_id: char_id,
             fortune_remaining: 0,
             ..Default::default()
         },
@@ -305,13 +324,22 @@ fn update_npc_registry(mut registry: ResMut<NpcRegistry>, npcs: RegistryNpcQuery
     registry.refresh_from_counts(live_npc_count, counts_by_archetype);
 }
 
-fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: AgingNpcQuery<'_, '_>) {
+fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) {
     if !config.enabled {
         return;
     }
 
-    for mut lifespan in &mut npcs {
-        lifespan.age_ticks += config.rate_multiplier.max(0.0);
+    for (mut npc_lifespan, shared_lifespan) in &mut npcs {
+        if let Some(shared_lifespan) = shared_lifespan {
+            let ratio = if shared_lifespan.cap_by_realm == 0 {
+                1.0
+            } else {
+                (shared_lifespan.years_lived / shared_lifespan.cap_by_realm as f64).clamp(0.0, 1.0)
+            };
+            npc_lifespan.age_ticks = npc_lifespan.max_age_ticks * ratio;
+        } else {
+            npc_lifespan.age_ticks += config.rate_multiplier.max(0.0);
+        }
     }
 }
 
@@ -368,15 +396,19 @@ fn process_npc_retire_requests(
 fn handle_npc_terminated(
     mut commands: Commands,
     mut terminated: EventReader<PlayerTerminated>,
-    npcs: Query<(&NpcArchetype, &NpcLifespan, Option<&PendingRetirement>), With<NpcMarker>>,
+    npcs: TerminatedNpcQuery<'_, '_>,
     mut notices: EventWriter<NpcDeathNotice>,
 ) {
     for event in terminated.read() {
-        let Ok((archetype, lifespan, pending_retirement)) = npcs.get(event.entity) else {
+        let Ok((archetype, lifespan, pending_retirement, shared_lifespan)) = npcs.get(event.entity)
+        else {
             continue;
         };
 
-        if pending_retirement.is_some() {
+        if pending_retirement.is_some()
+            || lifespan.is_expired()
+            || shared_lifespan.is_some_and(|lifespan| lifespan.remaining_years() <= f64::EPSILON)
+        {
             notices.send(NpcDeathNotice {
                 npc_id: canonical_npc_id(event.entity),
                 archetype: *archetype,
@@ -524,6 +556,30 @@ mod tests {
     }
 
     #[test]
+    fn npc_shared_lifespan_syncs_to_ai_age_view() {
+        let mut app = App::new();
+        app.insert_resource(NpcAgingConfig::default());
+        app.add_systems(Update, age_npcs);
+
+        let mut shared_lifespan = LifespanComponent::new(100);
+        shared_lifespan.years_lived = 75.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Commoner,
+                NpcLifespan::new(0.0, 200.0),
+                shared_lifespan,
+            ))
+            .id();
+
+        app.update();
+
+        let lifespan = app.world().get::<NpcLifespan>(entity).unwrap();
+        assert_eq!(lifespan.age_ticks, 150.0);
+    }
+
+    #[test]
     fn npc_death_notice_fields_are_readable_for_bridge_consumers() {
         let notice = NpcDeathNotice {
             npc_id: "npc_1v1".to_string(),
@@ -542,7 +598,7 @@ mod tests {
 
     /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
     /// → NearDeath → near_death_tick 过 deadline → PlayerTerminated
-    /// → handle_npc_terminated → `Despawned`. 全栈 NPC 无 LifeRecord。
+    /// → handle_npc_terminated → `Despawned`.
     #[test]
     fn npc_full_death_chain_from_attack_to_despawned() {
         use crate::combat::components::NEAR_DEATH_WINDOW_TICKS;
@@ -555,11 +611,30 @@ mod tests {
         use crate::cultivation::death_hooks::{
             CultivationDeathTrigger, PlayerRevived, PlayerTerminated,
         };
+        use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
+        use std::time::{SystemTime, UNIX_EPOCH};
         use valence::prelude::{App, IntoSystemConfigs, Position, Update};
+
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bong-npc-full-death-chain-{}-{unique_suffix}",
+            std::process::id()
+        ));
+        let db_path = root.join("data").join("bong.db");
+        let deceased_dir = root.join("library-web").join("public").join("deceased");
+        bootstrap_sqlite(&db_path, "npc-full-death-chain")
+            .expect("sqlite bootstrap should succeed");
 
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
-        app.insert_resource(crate::persistence::PersistenceSettings::default());
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            &deceased_dir,
+            "npc-full-death-chain",
+        ));
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -602,13 +677,11 @@ mod tests {
         victim_bundle.cultivation.qi_max = 100.0;
         app.world_mut().entity_mut(victim).insert(victim_bundle);
 
-        // victim 应无 LifeRecord（生产形态）。
-        assert!(
-            app.world()
-                .get::<crate::cultivation::life_record::LifeRecord>(victim)
-                .is_none(),
-            "victim must not carry LifeRecord to prove NPC production bundle"
-        );
+        let victim_record = app
+            .world()
+            .get::<crate::cultivation::life_record::LifeRecord>(victim)
+            .expect("death lifecycle NPC bundle should carry LifeRecord");
+        assert_eq!(victim_record.character_id, canonical_npc_id(victim));
 
         // 一击致命。
         app.world_mut().send_event(AttackIntent {
@@ -621,8 +694,9 @@ mod tests {
             debug_command: None,
         });
 
-        // Tick 1: resolve 写 Wounds + DeathEvent；death_arbiter 看到 DeathEvent
-        // 转 NearDeath + 设 deadline = clock.tick + 600。
+        // Tick 1: resolve 写 Wounds + DeathEvent；Tick 2: death_arbiter 消费
+        // DeathEvent，转 NearDeath + 设 deadline = clock.tick + 600。
+        app.update();
         app.update();
 
         let victim_lifecycle = app
@@ -647,9 +721,10 @@ mod tests {
         // 推进 CombatClock 过 deadline：NPC fortune_remaining=0 → 直接 Terminated。
         app.world_mut().resource_mut::<CombatClock>().tick = deadline + 1;
 
-        // Tick 2: near_death_tick 发 PlayerTerminated；handle_npc_terminated
-        //         插 Despawned + 发 NpcDeathNotice（只在 PendingRetirement 存在时，
-        //         这里没有，所以 notice 不 fire — 但 Despawned 必须有）。
+        // near_death_tick 发 PlayerTerminated；下一帧 handle_npc_terminated
+        // 插 Despawned + 发 NpcDeathNotice（只在 PendingRetirement 存在时，
+        // 这里没有，所以 notice 不 fire — 但 Despawned 必须有）。
+        app.update();
         app.update();
 
         assert!(
@@ -673,5 +748,7 @@ mod tests {
             attacker_life.state,
             crate::combat::components::LifecycleState::Alive
         );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

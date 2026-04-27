@@ -35,7 +35,7 @@ public final class TerminateScreen extends Screen {
         int y = height - 60;
         this.addDrawableChild(ButtonWidget.builder(
             Text.literal("\u521b\u5efa\u65b0\u89d2\u8272"),
-            b -> ClientRequestSender.send("combat.create_new_character", null)
+            b -> ClientRequestSender.send("combat_create_new_character", null)
         ).dimensions(width / 2 - 80, y, 160, 20).build());
     }
 

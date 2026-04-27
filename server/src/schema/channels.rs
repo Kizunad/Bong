@@ -11,6 +11,12 @@ pub const CH_INSIGHT_OFFER: &str = "bong:insight_offer";
 pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
 pub const CH_FORGE_EVENT: &str = "bong:forge_event";
 pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
+pub const CH_DEATH: &str = "bong:death";
+pub const CH_REBIRTH: &str = "bong:rebirth";
+pub const CH_DEATH_INSIGHT: &str = "bong:death_insight";
+pub const CH_AGING: &str = "bong:aging";
+pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
+pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
 
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
@@ -45,6 +51,11 @@ mod tests {
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
+        assert_eq!(CH_DEATH, "bong:death");
+        assert_eq!(CH_REBIRTH, "bong:rebirth");
+        assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
+        assert_eq!(CH_AGING, "bong:aging");
+        assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");

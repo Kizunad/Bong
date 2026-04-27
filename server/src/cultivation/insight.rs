@@ -134,6 +134,7 @@ pub enum InsightEffect {
     UnlockPerception {
         kind: String,
     },
+    LifespanExtensionEnlightenment,
 }
 
 impl InsightEffect {
@@ -158,7 +159,7 @@ impl InsightEffect {
             DualForgeDiscount { .. } | ColorMaterialAffinity { .. } | UnlockPractice { .. } => {
                 InsightCategory::Style
             }
-            UnlockPerception { .. } => InsightCategory::Perception,
+            UnlockPerception { .. } | LifespanExtensionEnlightenment => InsightCategory::Perception,
         }
     }
 
@@ -184,6 +185,7 @@ impl InsightEffect {
             | TribulationPredictionWindow
             | UnlockPractice { .. }
             | UnlockPerception { .. }
+            | LifespanExtensionEnlightenment
             | BreakthroughEventConditionDrop { .. } => 0.0,
         }
     }
@@ -273,6 +275,7 @@ impl InsightTriggerRegistry {
                 "killed_higher_realm",
                 "killed_by_higher_realm_survived",
                 "post_rebirth_clarity",
+                "wind_candle_lifespan_extension",
             ],
         }
     }

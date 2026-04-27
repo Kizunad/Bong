@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "character_id": "offline:Ancestor",
+  "at_tick": 84000,
+  "kind": "death_penalty",
+  "delta_years": -50,
+  "source": "bleed_out"
+}

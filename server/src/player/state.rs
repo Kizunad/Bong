@@ -8,6 +8,9 @@ use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, Resource};
 
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::lifespan::{
+    lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
+};
 use crate::inventory::PlayerInventory;
 use crate::persistence::DEFAULT_DATABASE_PATH;
 use crate::schema::cultivation::realm_to_string;
@@ -47,6 +50,7 @@ pub struct LoadedPlayerSlices {
     pub position: [f64; 3],
     pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
+    pub lifespan: Option<LifespanComponent>,
     pub skill_set: SkillSet,
 }
 
@@ -186,6 +190,40 @@ pub fn canonical_player_id(username: &str) -> String {
     format!("offline:{username}")
 }
 
+pub fn player_character_id(username: &str, current_char_id: &str) -> String {
+    if current_char_id.trim().is_empty() {
+        canonical_player_id(username)
+    } else {
+        format!("{}:{current_char_id}", canonical_player_id(username))
+    }
+}
+
+pub fn player_username_from_character_id(character_id: &str) -> Option<&str> {
+    let rest = character_id.strip_prefix("offline:")?;
+    let username = rest.split_once(':').map_or(rest, |(username, _)| username);
+    if username.is_empty() {
+        None
+    } else {
+        Some(username)
+    }
+}
+
+pub fn load_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<String>> {
+    let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
+    connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)
+}
+
 pub fn load_player_state(persistence: &PlayerStatePersistence, username: &str) -> PlayerState {
     let mut connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
@@ -265,6 +303,7 @@ pub fn load_player_slices(
                 position: crate::player::spawn_position(),
                 last_dimension: DimensionKind::default(),
                 inventory: None,
+                lifespan: None,
                 skill_set: SkillSet::default(),
             };
         }
@@ -293,6 +332,17 @@ pub fn load_player_slices(
             None
         }
     };
+    let lifespan = match load_player_lifespan_from_sqlite(&connection, username) {
+        Ok(lifespan) => lifespan,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
+                username,
+                persistence.db_path().display()
+            );
+            None
+        }
+    };
     let skill_set = match load_player_skill_set_from_sqlite(&connection, username) {
         Ok(skill_set) => skill_set,
         Err(error) => {
@@ -310,8 +360,27 @@ pub fn load_player_slices(
         position,
         last_dimension,
         inventory,
+        lifespan,
         skill_set,
     }
+}
+
+pub fn load_player_shrine_anchor_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<[f64; 3]>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_shrine_anchor_from_sqlite(&connection, username)
+}
+
+pub fn save_player_shrine_anchor_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    anchor: Option<[f64; 3]>,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_shrine_anchor_slice_in_sqlite(&mut connection, username, anchor)?;
+    Ok(persistence.db_path().to_path_buf())
 }
 
 pub fn save_player_state(
@@ -326,10 +395,12 @@ pub fn save_player_state(
         crate::player::spawn_position(),
         DimensionKind::default(),
         None,
+        None,
         &SkillSet::default(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn save_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -337,6 +408,7 @@ pub fn save_player_slices(
     position: [f64; 3],
     last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
@@ -347,8 +419,19 @@ pub fn save_player_slices(
         position,
         last_dimension,
         inventory,
+        lifespan,
         skill_set,
     )?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_lifespan_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    lifespan: &LifespanComponent,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -381,6 +464,60 @@ pub fn save_player_inventory_slice(
     let mut connection = open_player_connection(persistence)?;
     persist_player_inventory_slice_in_sqlite(&mut connection, username, inventory)?;
     Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn rotate_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<String> {
+    let connection = open_player_connection(persistence)?;
+    ensure_player_schema(&connection)?;
+    let next_char_id = Uuid::now_v7().to_string();
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                karma,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, 0.0, 0.0, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                next_char_id,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(next_char_id)
+}
+
+fn ensure_player_schema(connection: &Connection) -> io::Result<()> {
+    let has_player_core: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_core'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(io::Error::other)?;
+    if has_player_core == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "player_core table is missing; bootstrap sqlite before loading character ids",
+        ));
+    }
+    Ok(())
 }
 
 pub fn save_player_skill_slice(
@@ -682,6 +819,156 @@ fn load_player_inventory_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn load_player_lifespan_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<LifespanComponent>> {
+    let row: Option<(u64, f64, u32, i64)> = connection
+        .query_row(
+            "
+            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall
+            FROM player_lifespan
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall)) = row else {
+        return Ok(None);
+    };
+    let now_wall = current_unix_seconds();
+    let offline_seconds = if offline_pause_wall > 0 {
+        u64::try_from(now_wall.saturating_sub(offline_pause_wall)).unwrap_or(0)
+    } else {
+        0
+    };
+    let years_lived = years_lived
+        + lifespan_delta_years_for_real_seconds(offline_seconds, LIFESPAN_OFFLINE_MULTIPLIER);
+    let mut lifespan = LifespanComponent {
+        born_at_tick,
+        years_lived: years_lived.min(cap_by_realm as f64),
+        cap_by_realm,
+        offline_pause_tick: None,
+    };
+    lifespan.apply_cap(cap_by_realm.max(1));
+    Ok(Some(lifespan))
+}
+
+fn load_player_shrine_anchor_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<[f64; 3]>> {
+    let row: Option<(f64, f64, f64)> = connection
+        .query_row(
+            "
+            SELECT anchor_x, anchor_y, anchor_z
+            FROM player_shrine
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(row.map(|(x, y, z)| [x, y, z]))
+}
+
+fn persist_player_shrine_anchor_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    anchor: Option<[f64; 3]>,
+) -> io::Result<()> {
+    let last_updated_wall = current_unix_seconds();
+
+    match anchor {
+        Some([x, y, z]) => {
+            connection
+                .execute(
+                    "
+                    INSERT INTO player_shrine (
+                        username,
+                        anchor_x,
+                        anchor_y,
+                        anchor_z,
+                        schema_version,
+                        last_updated_wall
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ON CONFLICT(username) DO UPDATE SET
+                        anchor_x = excluded.anchor_x,
+                        anchor_y = excluded.anchor_y,
+                        anchor_z = excluded.anchor_z,
+                        schema_version = excluded.schema_version,
+                        last_updated_wall = excluded.last_updated_wall
+                    ",
+                    params![
+                        username,
+                        x,
+                        y,
+                        z,
+                        PLAYER_ROW_SCHEMA_VERSION,
+                        last_updated_wall
+                    ],
+                )
+                .map_err(io::Error::other)?;
+        }
+        None => {
+            connection
+                .execute(
+                    "DELETE FROM player_shrine WHERE username = ?1",
+                    params![username],
+                )
+                .map_err(io::Error::other)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn persist_player_lifespan_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    lifespan: &LifespanComponent,
+    offline_pause_wall: Option<i64>,
+) -> io::Result<()> {
+    let last_updated_wall = current_unix_seconds();
+    let offline_pause_wall = offline_pause_wall.unwrap_or(last_updated_wall).max(0);
+    connection
+        .execute(
+            "
+            INSERT INTO player_lifespan (
+                username,
+                born_at_tick,
+                years_lived,
+                cap_by_realm,
+                offline_pause_wall,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(username) DO UPDATE SET
+                born_at_tick = excluded.born_at_tick,
+                years_lived = excluded.years_lived,
+                cap_by_realm = excluded.cap_by_realm,
+                offline_pause_wall = excluded.offline_pause_wall,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                lifespan.born_at_tick,
+                lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                lifespan.cap_by_realm,
+                offline_pause_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn load_player_skill_set_from_sqlite(
     connection: &Connection,
     username: &str,
@@ -741,6 +1028,7 @@ fn persist_player_core_slice_in_sqlite(
             state,
             crate::player::spawn_position(),
             DimensionKind::default(),
+            None,
             None,
             &SkillSet::default(),
         )?;
@@ -891,6 +1179,7 @@ fn persist_player_skill_slice_in_sqlite(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_player_slices_in_sqlite(
     connection: &mut Connection,
     username: &str,
@@ -898,6 +1187,7 @@ fn persist_player_slices_in_sqlite(
     position: [f64; 3],
     last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
 ) -> io::Result<()> {
     let normalized = state.normalized();
@@ -1042,6 +1332,40 @@ fn persist_player_slices_in_sqlite(
             ],
         )
         .map_err(io::Error::other)?;
+    if let Some(lifespan) = lifespan {
+        let offline_pause_wall = last_updated_wall;
+        transaction
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(username) DO UPDATE SET
+                    born_at_tick = excluded.born_at_tick,
+                    years_lived = excluded.years_lived,
+                    cap_by_realm = excluded.cap_by_realm,
+                    offline_pause_wall = excluded.offline_pause_wall,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                params![
+                    username,
+                    lifespan.born_at_tick,
+                    lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                    lifespan.cap_by_realm,
+                    offline_pause_wall,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
     transaction.commit().map_err(io::Error::other)
 }
 
@@ -1160,6 +1484,7 @@ fn migrate_legacy_player_json_to_sqlite(
         crate::player::spawn_position(),
         DimensionKind::default(),
         None,
+        None,
         &SkillSet::default(),
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
@@ -1237,6 +1562,7 @@ fn realm_progress_score(realm: Realm) -> f64 {
 mod player_state_tests {
     use super::*;
     use crate::combat::components::TICKS_PER_SECOND;
+    use crate::cultivation::lifespan::LifespanCapTable;
     use crate::network::agent_bridge::serialize_server_data_payload;
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
@@ -1353,6 +1679,7 @@ mod player_state_tests {
             [64.0, 80.0, -12.0],
             DimensionKind::Tsy,
             None,
+            None,
             &SkillSet::default(),
         )
         .expect("source player slices should persist");
@@ -1426,6 +1753,135 @@ mod player_state_tests {
 
         let _ = fs::remove_dir_all(&source_data_dir);
         let _ = fs::remove_dir_all(&target_data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_slice_roundtrips_with_offline_pause_wall() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-roundtrip");
+        let player_state = PlayerState::default();
+        let lifespan = LifespanComponent {
+            born_at_tick: 144,
+            years_lived: 12.5,
+            cap_by_realm: LifespanCapTable::CONDENSE,
+            offline_pause_tick: Some(120),
+        };
+
+        save_player_slices(
+            &persistence,
+            "Azure",
+            &player_state,
+            [11.0, 70.0, -2.0],
+            DimensionKind::default(),
+            None,
+            Some(&lifespan),
+            &SkillSet::default(),
+        )
+        .expect("lifespan slice should persist with player slices");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let offline_pause_wall: i64 = connection
+            .query_row(
+                "SELECT offline_pause_wall FROM player_lifespan WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_lifespan row should exist");
+
+        assert_eq!(loaded_lifespan.born_at_tick, lifespan.born_at_tick);
+        assert_eq!(loaded_lifespan.cap_by_realm, lifespan.cap_by_realm);
+        assert!(loaded_lifespan.years_lived >= lifespan.years_lived);
+        assert!(loaded_lifespan.years_lived < lifespan.years_lived + 0.01);
+        assert!(offline_pause_wall > 0);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_load_applies_offline_delta_from_pause_wall() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-offline-delta");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let offline_pause_wall = current_unix_seconds()
+            - (crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10);
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    "Azure",
+                    0_u64,
+                    6.0_f64,
+                    LifespanCapTable::AWAKEN,
+                    offline_pause_wall,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    offline_pause_wall,
+                ],
+            )
+            .expect("lifespan fixture should insert");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(
+            (6.99..=7.01).contains(&loaded_lifespan.years_lived),
+            "expected ten offline real hours at x0.1 to add about one year, got {}",
+            loaded_lifespan.years_lived
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifespan_load_treats_zero_pause_wall_as_no_offline_delta() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-zero-pause-wall");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifespan (
+                    username,
+                    born_at_tick,
+                    years_lived,
+                    cap_by_realm,
+                    offline_pause_wall,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    "Azure",
+                    0_u64,
+                    12.0_f64,
+                    LifespanCapTable::AWAKEN,
+                    0_i64,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    0_i64,
+                ],
+            )
+            .expect("legacy zero-pause lifespan fixture should insert");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert_eq!(loaded_lifespan.years_lived, 12.0);
+
+        let _ = fs::remove_dir_all(&data_dir);
     }
 
     #[test]

@@ -88,6 +88,30 @@ class CombatHandlersTest {
     }
 
     @Test
+    void deathScreenHandlerPopulatesLifecycleNoticeFields() {
+        String json = """
+            {"v":1,"type":"death_screen","visible":true,"cause":"negative_zone",
+             "luck_remaining":0.65,"final_words":["劫未尽"],"countdown_until_ms":12345,
+             "can_reincarnate":true,"can_terminate":true,"stage":"tribulation",
+             "death_number":4,"zone_kind":"negative",
+             "lifespan":{"years_lived":78.5,"cap_by_realm":80,"remaining_years":1.5,
+                         "death_penalty_years":4,"tick_rate_multiplier":2.0,"is_wind_candle":true}}
+            """;
+
+        new DeathScreenHandler().handle(parse(json));
+
+        DeathStateStore.State s = DeathStateStore.snapshot();
+        assertTrue(s.visible());
+        assertEquals("tribulation", s.stage());
+        assertEquals(4, s.deathNumber());
+        assertEquals("negative", s.zoneKind());
+        assertEquals(78.5, s.yearsLived(), 1e-9);
+        assertEquals(80, s.lifespanCapByRealm());
+        assertEquals(2.0, s.lifespanTickRateMultiplier(), 1e-9);
+        assertTrue(s.windCandle());
+    }
+
+    @Test
     void terminateScreenHandlerPopulatesFields() {
         String json = """
             {"v":1,"type":"terminate_screen","visible":true,

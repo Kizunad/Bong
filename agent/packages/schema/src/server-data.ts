@@ -73,6 +73,29 @@ const CultivationCracksArrayV1 = Type.Array(
   },
 );
 
+const LifespanPreviewV1 = Type.Object(
+  {
+    years_lived: Type.Number({ minimum: 0 }),
+    cap_by_realm: Type.Integer({ minimum: 1 }),
+    remaining_years: Type.Number({ minimum: 0 }),
+    death_penalty_years: Type.Integer({ minimum: 0 }),
+    tick_rate_multiplier: Type.Number({ minimum: 0 }),
+    is_wind_candle: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+const DeathScreenStageV1 = Type.Union([
+  Type.Literal("fortune"),
+  Type.Literal("tribulation"),
+]);
+
+const DeathScreenZoneKindV1 = Type.Union([
+  Type.Literal("ordinary"),
+  Type.Literal("death"),
+  Type.Literal("negative"),
+]);
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -93,6 +116,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("alchemy_outcome_resolved"),
   Type.Literal("alchemy_recipe_book"),
   Type.Literal("alchemy_contamination"),
+  Type.Literal("death_screen"),
+  Type.Literal("terminate_screen"),
   Type.Literal("skill_xp_gain"),
   Type.Literal("skill_lv_up"),
   Type.Literal("skill_cap_changed"),
@@ -204,6 +229,7 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     open_progress: Type.Optional(CultivationProgressArrayV1),
     cracks_count: Type.Optional(CultivationCracksArrayV1),
     contamination_total: Type.Number({ minimum: 0 }),
+    lifespan: Type.Optional(LifespanPreviewV1),
     recent_skill_milestones_summary: Type.Optional(Type.String({ maxLength: 4096 })),
     skill_milestones: Type.Optional(Type.Array(SkillMilestoneSnapshotV1)),
   },
@@ -438,6 +464,39 @@ export type ServerDataAlchemyContaminationV1 = Static<
   typeof ServerDataAlchemyContaminationV1
 >;
 
+export const ServerDataDeathScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("death_screen"),
+    visible: Type.Boolean(),
+    cause: Type.String(),
+    luck_remaining: Type.Number({ minimum: 0, maximum: 1 }),
+    final_words: Type.Array(Type.String()),
+    countdown_until_ms: Type.Integer({ minimum: 0 }),
+    can_reincarnate: Type.Boolean(),
+    can_terminate: Type.Boolean(),
+    stage: Type.Optional(DeathScreenStageV1),
+    death_number: Type.Optional(Type.Integer({ minimum: 1 })),
+    zone_kind: Type.Optional(DeathScreenZoneKindV1),
+    lifespan: Type.Optional(LifespanPreviewV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataDeathScreenV1 = Static<typeof ServerDataDeathScreenV1>;
+
+export const ServerDataTerminateScreenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("terminate_screen"),
+    visible: Type.Boolean(),
+    final_words: Type.String(),
+    epilogue: Type.String(),
+    archetype_suggestion: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTerminateScreenV1 = Static<typeof ServerDataTerminateScreenV1>;
+
 export const ServerDataSkillXpGainV1 = Type.Object(
   {
     type: Type.Literal("skill_xp_gain"),
@@ -591,6 +650,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
   ServerDataAlchemyContaminationV1,
+  ServerDataDeathScreenV1,
+  ServerDataTerminateScreenV1,
   ServerDataSkillXpGainV1,
   ServerDataSkillLvUpV1,
   ServerDataSkillCapChangedV1,

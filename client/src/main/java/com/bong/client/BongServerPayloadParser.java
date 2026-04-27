@@ -82,7 +82,8 @@ public final class BongServerPayloadParser {
             narrations.add(new BongServerPayload.Narration(
                     readRequiredString(narrationObject, "scope"),
                     readRequiredString(narrationObject, "text"),
-                    readRequiredString(narrationObject, "style")
+                    readRequiredString(narrationObject, "style"),
+                    readOptionalString(narrationObject, "kind")
             ));
         }
 
@@ -197,7 +198,7 @@ public final class BongServerPayloadParser {
 
         String value = primitive.getAsString();
         if (value.isEmpty()) {
-            throw new PayloadParseException("Invalid field '" + fieldName + "': expected non-empty string");
+            return null;
         }
 
         return value;

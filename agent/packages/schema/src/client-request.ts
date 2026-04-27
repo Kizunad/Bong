@@ -128,6 +128,26 @@ export const ApplyPillRequestV1 = Type.Object(
 );
 export type ApplyPillRequestV1 = Static<typeof ApplyPillRequestV1>;
 
+export const DuoSheRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("duo_she_request"),
+    target_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type DuoSheRequestV1 = Static<typeof DuoSheRequestV1>;
+
+export const UseLifeCoreRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("use_life_core"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type UseLifeCoreRequestV1 = Static<typeof UseLifeCoreRequestV1>;
+
 export const PickupDroppedItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -193,6 +213,33 @@ export const BotanyHarvestRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type BotanyHarvestRequestV1 = Static<typeof BotanyHarvestRequestV1>;
+
+export const CombatReincarnateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_reincarnate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatReincarnateRequestV1 = Static<typeof CombatReincarnateRequestV1>;
+
+export const CombatTerminateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_terminate"),
+  },
+  { additionalProperties: false },
+);
+export type CombatTerminateRequestV1 = Static<typeof CombatTerminateRequestV1>;
+
+export const CombatCreateNewCharacterRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("combat_create_new_character"),
+  },
+  { additionalProperties: false },
+);
+export type CombatCreateNewCharacterRequestV1 = Static<typeof CombatCreateNewCharacterRequestV1>;
 
 // ─── 炼丹请求（plan-alchemy-v1 §4） ────────────────────────────────────────
 
@@ -333,12 +380,17 @@ export const ClientRequestV1 = Type.Union([
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
   ApplyPillRequestV1,
+  DuoSheRequestV1,
+  UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
   MineralProbeRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,
   BotanyHarvestRequestV1,
+  CombatReincarnateRequestV1,
+  CombatTerminateRequestV1,
+  CombatCreateNewCharacterRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
   AlchemyTakeBackRequestV1,

@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "host_id": "offline:Host",
+  "target_id": "npc_12v0",
+  "at_tick": 90000,
+  "karma_delta": 100,
+  "host_prev_age": 77,
+  "target_age": 18
+}

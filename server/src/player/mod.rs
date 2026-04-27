@@ -3,8 +3,8 @@ pub mod state;
 
 use self::state::{
     load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_skill_slice, save_player_slices, save_player_slow_slice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_lifespan_slice, save_player_skill_slice, save_player_slices,
+    save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::cultivation::color::PracticeLog;
@@ -12,6 +12,7 @@ use crate::cultivation::components::{Contamination, Cultivation, Karma, Meridian
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::lifespan::LifespanComponent;
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
 use crate::persistence::PersistenceSettings;
@@ -30,6 +31,7 @@ const WELCOME_MESSAGE: &str =
     "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
+const LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const CULTIVATION_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
@@ -83,7 +85,8 @@ pub fn register(app: &mut App) {
             autosave_player_core_slices.after(tick_player_persistence_timer),
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
             autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
-            flush_changed_player_skills.after(autosave_player_cultivation_bundles),
+            autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
+            flush_changed_player_skills.after(autosave_player_lifespan_slices),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_skills),
@@ -167,6 +170,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     {
         let persisted = load_player_slices(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
+        let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
         let last_dimension = persisted.last_dimension;
@@ -192,9 +196,12 @@ pub(crate) fn attach_player_state_to_joined_clients(
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
+        if let Some(lifespan) = persisted.lifespan {
+            entity_commands.insert(lifespan);
+        }
         entity_commands.insert(persisted.skill_set);
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
             username.0,
         );
     }
@@ -236,6 +243,7 @@ fn despawn_disconnected_clients(
         &Position,
         Option<&CurrentDimension>,
         Option<&PlayerInventory>,
+        Option<&LifespanComponent>,
         Option<&SkillSet>,
     )>,
     cultivation_bundle: Query<(
@@ -258,6 +266,7 @@ fn despawn_disconnected_clients(
             position,
             current_dimension,
             player_inventory,
+            lifespan,
             skill_set,
         )) = core_players.get(entity)
         {
@@ -305,6 +314,7 @@ fn despawn_disconnected_clients(
                 position_to_array(position),
                 last_dimension,
                 player_inventory,
+                lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
             ) {
                 Ok(path) => tracing::info!(
@@ -343,6 +353,7 @@ fn flush_connected_players_on_shutdown(
             &Position,
             Option<&CurrentDimension>,
             Option<&PlayerInventory>,
+            Option<&LifespanComponent>,
             Option<&SkillSet>,
         ),
         With<Client>,
@@ -371,6 +382,7 @@ fn flush_connected_players_on_shutdown(
         position,
         current_dimension,
         player_inventory,
+        lifespan,
         skill_set,
     ) in &players
     {
@@ -418,6 +430,7 @@ fn flush_connected_players_on_shutdown(
             position_to_array(position),
             last_dimension,
             player_inventory,
+            lifespan,
             skill_set.unwrap_or(&SkillSet::default()),
         ) {
             Ok(path) => tracing::info!(
@@ -545,6 +558,35 @@ fn autosave_player_cultivation_bundles(
 
     tracing::info!(
         "[bong][player] flushed {saved_count} cultivation bundle(s) after {CULTIVATION_FLUSH_INTERVAL_TICKS} ticks"
+    );
+}
+
+fn autosave_player_lifespan_slices(
+    persistence: Res<PlayerStatePersistence>,
+    timer: Res<PlayerStateAutosaveTimer>,
+    players: Query<(&Username, &LifespanComponent), With<Client>>,
+) {
+    if !timer
+        .ticks
+        .is_multiple_of(LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+
+    let mut saved_count = 0usize;
+
+    for (username, lifespan) in &players {
+        match save_player_lifespan_slice(&persistence, username.0.as_str(), lifespan) {
+            Ok(_) => saved_count += 1,
+            Err(error) => tracing::warn!(
+                "[bong][player] 60s lifespan flush failed for `{}`: {error}",
+                username.0,
+            ),
+        }
+    }
+
+    tracing::info!(
+        "[bong][player] flushed {saved_count} lifespan slice(s) after {LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS} ticks"
     );
 }
 
@@ -976,6 +1018,7 @@ mod tests {
             &PlayerState::default(),
             [12.0, 80.0, -34.0],
             DimensionKind::Tsy,
+            None,
             None,
             &SkillSet::default(),
         )

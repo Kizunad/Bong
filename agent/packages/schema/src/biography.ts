@@ -93,6 +93,54 @@ const Rebirth = Type.Object(
   },
   { additionalProperties: false },
 );
+const NearDeath = Type.Object(
+  {
+    NearDeath: Type.Object({
+      cause: Type.String({ minLength: 1, maxLength: 512 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+const Terminated = Type.Object(
+  {
+    Terminated: Type.Object({
+      cause: Type.String({ minLength: 1, maxLength: 512 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+const LifespanExtended = Type.Object(
+  {
+    LifespanExtended: Type.Object({
+      source: Type.String({ minLength: 1, maxLength: 256 }),
+      delta_years: Type.Integer(),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+const DuoShePerformed = Type.Object(
+  {
+    DuoShePerformed: Type.Object({
+      target_id: Type.String({ minLength: 1, maxLength: 128 }),
+      host_prev_age: Type.Number({ minimum: 0 }),
+      target_age: Type.Number({ minimum: 0 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+const PossessedBy = Type.Object(
+  {
+    PossessedBy: Type.Object({
+      host_id: Type.String({ minLength: 1, maxLength: 128 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
 
 export const BiographyEntryV1 = Type.Union([
   BreakthroughStarted,
@@ -105,6 +153,11 @@ export const BiographyEntryV1 = Type.Union([
   ColorShift,
   InsightTaken,
   Rebirth,
+  NearDeath,
+  Terminated,
+  LifespanExtended,
+  DuoShePerformed,
+  PossessedBy,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;
 

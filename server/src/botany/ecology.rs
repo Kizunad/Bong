@@ -21,6 +21,8 @@ use crate::world::zone::{Zone, ZoneRegistry};
 use super::components::Plant;
 use super::registry::PlantVariant;
 
+type ZonePlantCounts = (BTreeMap<String, u64>, BTreeMap<u8, u64>);
+
 /// 默认每 600 tick（~30s @ 20tps）发一次。避免每 tick 聚合 × publish。
 pub const ECOLOGY_EMIT_INTERVAL_TICKS: u64 = 600;
 
@@ -70,9 +72,7 @@ pub fn aggregate<'a>(
     plants: impl IntoIterator<Item = &'a Plant>,
 ) -> BotanyEcologySnapshotV1 {
     // zone → (kind_id → count, variant → count)。BTreeMap 保证输出排序稳定。
-    #[allow(clippy::type_complexity)]
-    let mut per_zone: BTreeMap<String, (BTreeMap<String, u64>, BTreeMap<u8, u64>)> =
-        BTreeMap::new();
+    let mut per_zone: BTreeMap<String, ZonePlantCounts> = BTreeMap::new();
 
     for plant in plants {
         let entry = per_zone.entry(plant.zone_name.clone()).or_default();

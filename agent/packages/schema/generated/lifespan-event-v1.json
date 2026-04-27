@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "character_id",
+    "at_tick",
+    "kind",
+    "delta_years",
+    "source"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "character_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "aging",
+          "type": "string"
+        },
+        {
+          "const": "death_penalty",
+          "type": "string"
+        },
+        {
+          "const": "extension",
+          "type": "string"
+        }
+      ]
+    },
+    "delta_years": {
+      "type": "integer"
+    },
+    "source": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    }
+  }
+}

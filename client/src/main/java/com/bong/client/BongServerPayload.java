@@ -73,11 +73,12 @@ public sealed interface BongServerPayload permits BongServerPayload.WelcomePaylo
         }
     }
 
-    record Narration(String scope, String text, String style) {
+    record Narration(String scope, String text, String style, String kind) {
         public Narration {
             Objects.requireNonNull(scope, "scope");
             Objects.requireNonNull(text, "text");
             Objects.requireNonNull(style, "style");
+            kind = kind == null ? "" : kind;
         }
     }
 
