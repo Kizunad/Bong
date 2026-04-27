@@ -1,7 +1,7 @@
 //! plan-mineral-v1 §7 — `MineralOreNode` 组件 + `MineralOreIndex` 资源。
 //!
 //! 矿脉单方块（worldgen 写入）：每方块 = 一个 `MineralOreNode` 实体，挂当前
-//! 方块位置 + mineral_id + 剩余储量。`MineralOreIndex` 是 BlockPos→Entity 的
+//! 方块位置 + mineral_id + 剩余储量。`MineralOreIndex` 是 (DimensionKind, BlockPos)→Entity 的
 //! 反查表，让 `BlockBreakEvent` 监听器 O(1) 拿到矿脉数据。
 
 use std::collections::HashMap;
@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, BlockPos, Component, Resource};
 
 use super::types::MineralId;
+use crate::world::dimension::DimensionKind;
 
 /// 单方块矿脉节点 — 挂在 worldgen 创建的 ore-block 实体上。
 ///
@@ -40,25 +41,38 @@ impl MineralOreNode {
     }
 }
 
-/// BlockPos → Entity 反查表 — `BlockBreakEvent` listener 用。
+/// (DimensionKind, BlockPos) → Entity 反查表 — `BlockBreakEvent` listener 用。
 ///
 /// 由 worldgen spawn 矿脉时同步插入；耗尽 / despawn 时同步移除。
 #[derive(Debug, Default, Resource)]
 pub struct MineralOreIndex {
-    by_pos: HashMap<BlockPos, valence::prelude::Entity>,
+    by_pos: HashMap<(DimensionKind, BlockPos), valence::prelude::Entity>,
 }
 
 impl MineralOreIndex {
-    pub fn insert(&mut self, pos: BlockPos, entity: valence::prelude::Entity) {
-        self.by_pos.insert(pos, entity);
+    pub fn insert(
+        &mut self,
+        dimension: DimensionKind,
+        pos: BlockPos,
+        entity: valence::prelude::Entity,
+    ) {
+        self.by_pos.insert((dimension, pos), entity);
     }
 
-    pub fn lookup(&self, pos: BlockPos) -> Option<valence::prelude::Entity> {
-        self.by_pos.get(&pos).copied()
+    pub fn lookup(
+        &self,
+        dimension: DimensionKind,
+        pos: BlockPos,
+    ) -> Option<valence::prelude::Entity> {
+        self.by_pos.get(&(dimension, pos)).copied()
     }
 
-    pub fn remove(&mut self, pos: BlockPos) -> Option<valence::prelude::Entity> {
-        self.by_pos.remove(&pos)
+    pub fn remove(
+        &mut self,
+        dimension: DimensionKind,
+        pos: BlockPos,
+    ) -> Option<valence::prelude::Entity> {
+        self.by_pos.remove(&(dimension, pos))
     }
 
     pub fn len(&self) -> usize {
@@ -69,8 +83,12 @@ impl MineralOreIndex {
         self.by_pos.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (BlockPos, valence::prelude::Entity)> + '_ {
-        self.by_pos.iter().map(|(pos, ent)| (*pos, *ent))
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (DimensionKind, BlockPos, valence::prelude::Entity)> + '_ {
+        self.by_pos
+            .iter()
+            .map(|((dimension, pos), ent)| (*dimension, *pos, *ent))
     }
 }
 
@@ -102,13 +120,18 @@ mod tests {
         let mut idx = MineralOreIndex::default();
         let p1 = BlockPos::new(0, 64, 0);
         let p2 = BlockPos::new(1, 64, 0);
-        idx.insert(p1, e1);
-        idx.insert(p2, e2);
+        idx.insert(DimensionKind::Overworld, p1, e1);
+        idx.insert(DimensionKind::Tsy, p1, e2);
+        idx.insert(DimensionKind::Overworld, p2, e2);
 
-        assert_eq!(idx.lookup(p1), Some(e1));
-        assert_eq!(idx.lookup(p2), Some(e2));
-        assert_eq!(idx.lookup(BlockPos::new(99, 99, 99)), None);
-        assert_eq!(idx.len(), 2);
+        assert_eq!(idx.lookup(DimensionKind::Overworld, p1), Some(e1));
+        assert_eq!(idx.lookup(DimensionKind::Tsy, p1), Some(e2));
+        assert_eq!(idx.lookup(DimensionKind::Overworld, p2), Some(e2));
+        assert_eq!(
+            idx.lookup(DimensionKind::Overworld, BlockPos::new(99, 99, 99)),
+            None
+        );
+        assert_eq!(idx.len(), 3);
     }
 
     #[test]
@@ -118,10 +141,10 @@ mod tests {
 
         let mut idx = MineralOreIndex::default();
         let p = BlockPos::new(0, 64, 0);
-        idx.insert(p, e);
+        idx.insert(DimensionKind::Overworld, p, e);
 
-        assert_eq!(idx.remove(p), Some(e));
+        assert_eq!(idx.remove(DimensionKind::Overworld, p), Some(e));
         assert!(idx.is_empty());
-        assert_eq!(idx.remove(p), None);
+        assert_eq!(idx.remove(DimensionKind::Overworld, p), None);
     }
 }

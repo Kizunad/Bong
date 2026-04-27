@@ -295,6 +295,29 @@ pub struct Decoration {
 }
 
 impl TerrainProvider {
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        Self {
+            tiles: HashMap::new(),
+            tile_size: 16,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: 15,
+                min_z: 0,
+                max_z: 15,
+            },
+            surface_palette: vec![BlockState::STONE],
+            biome_palette: vec![BiomeId::DEFAULT],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+        }
+    }
+
     pub fn load(
         manifest_path: &Path,
         raster_dir: &Path,

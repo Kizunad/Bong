@@ -11,15 +11,17 @@
 //!  * 找不到 inventory / registry miss / allocator 耗尽 → warn + skip（不 panic，
 //!    丢失一次 drop 不阻塞服务器）。
 
-use valence::prelude::{EventReader, Query, Res, ResMut};
+use valence::prelude::{BlockPos, EventReader, Query, Res, ResMut};
 
 use super::events::MineralDropEvent;
+use super::persistence::MineralTickClock;
 use super::registry::{MineralEntry, MineralRegistry};
 use super::types::MineralRarity;
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
+use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
 
 /// Mineral ore drop 的默认堆数 —— 一次挖方块产一枚（与 vanilla 一致）。
 const DEFAULT_DROP_STACK_COUNT: u32 = 1;
@@ -28,6 +30,7 @@ const DEFAULT_DROP_STACK_COUNT: u32 = 1;
 pub fn consume_mineral_drops_into_inventory(
     mut events: EventReader<MineralDropEvent>,
     registry: Res<MineralRegistry>,
+    clock: Res<MineralTickClock>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
 ) {
@@ -61,7 +64,13 @@ pub fn consume_mineral_drops_into_inventory(
             }
         };
 
-        let instance = build_mineral_item_instance(instance_id, entry, DEFAULT_DROP_STACK_COUNT);
+        let instance = build_mineral_item_instance(
+            instance_id,
+            entry,
+            DEFAULT_DROP_STACK_COUNT,
+            clock.tick,
+            event.position,
+        );
 
         let Some(main_pack) = inventory
             .containers
@@ -90,7 +99,10 @@ fn build_mineral_item_instance(
     instance_id: u64,
     entry: &MineralEntry,
     stack_count: u32,
+    created_at_tick: u64,
+    position: BlockPos,
 ) -> ItemInstance {
+    let freshness = build_mineral_freshness(entry, created_at_tick, position, instance_id);
     ItemInstance {
         instance_id,
         template_id: format!("mineral_{}", entry.canonical_name),
@@ -103,10 +115,41 @@ fn build_mineral_item_instance(
         stack_count,
         spirit_quality: 0.0,
         durability: 1.0,
-        freshness: None,
+        freshness,
         mineral_id: Some(entry.canonical_name.to_string()),
         charges: None,
     }
+}
+
+fn build_mineral_freshness(
+    entry: &MineralEntry,
+    created_at_tick: u64,
+    position: BlockPos,
+    instance_id: u64,
+) -> Option<Freshness> {
+    let profile = entry.decay_profile?;
+    let qi_range = entry.ling_shi_qi_range?;
+    let initial_qi =
+        qi_range.min + (qi_range.max - qi_range.min) * mineral_qi_roll(position, instance_id);
+    Some(Freshness {
+        created_at_tick,
+        initial_qi,
+        track: DecayTrack::Decay,
+        profile: DecayProfileId::new(profile),
+        frozen_accumulated: 0,
+        frozen_since_tick: None,
+    })
+}
+
+fn mineral_qi_roll(position: BlockPos, instance_id: u64) -> f32 {
+    let mut hash = instance_id;
+    hash ^= (position.x as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    hash ^= (position.y as i64 as u64).rotate_left(21);
+    hash ^= (position.z as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    hash ^= hash >> 33;
+    (hash as f64 / u64::MAX as f64) as f32
 }
 
 fn rarity_from_mineral(r: MineralRarity) -> ItemRarity {
@@ -164,11 +207,37 @@ mod tests {
     fn build_mineral_item_instance_carries_canonical_mineral_id() {
         let reg = build_default_registry();
         let entry = reg.get(MineralId::SuiTie).unwrap();
-        let item = build_mineral_item_instance(99, entry, 1);
+        let item = build_mineral_item_instance(99, entry, 1, 123, BlockPos::new(1, 2, 3));
         assert_eq!(item.mineral_id.as_deref(), Some("sui_tie"));
         assert_eq!(item.template_id, "mineral_sui_tie");
         assert_eq!(item.display_name, "髓铁");
         assert_eq!(item.rarity, ItemRarity::Rare);
+        assert!(item.freshness.is_none());
+    }
+
+    #[test]
+    fn build_ling_shi_item_instance_carries_freshness_profile() {
+        let reg = build_default_registry();
+        let entry = reg.get(MineralId::LingShiZhong).unwrap();
+        let item = build_mineral_item_instance(100, entry, 1, 123, BlockPos::new(1, 2, 3));
+        let freshness = item.freshness.expect("ling_shi should carry freshness");
+        assert_eq!(freshness.profile.as_str(), "ling_shi_zhong_v1");
+        assert!(
+            (30.0..=60.0).contains(&freshness.initial_qi),
+            "initial_qi should stay inside registry range: {}",
+            freshness.initial_qi
+        );
+        assert_eq!(freshness.created_at_tick, 123);
+        assert_eq!(item.mineral_id.as_deref(), Some("ling_shi_zhong"));
+    }
+
+    #[test]
+    fn mineral_qi_roll_is_position_sensitive() {
+        let left = mineral_qi_roll(BlockPos::new(1, 2, 3), 100);
+        let right = mineral_qi_roll(BlockPos::new(1, 2, 4), 100);
+        assert!((0.0..=1.0).contains(&left));
+        assert!((0.0..=1.0).contains(&right));
+        assert_ne!(left, right);
     }
 
     #[test]
@@ -176,6 +245,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
         app.insert_resource(build_default_registry());
+        app.insert_resource(MineralTickClock::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
 
         let player = app.world_mut().spawn(empty_inventory()).id();
@@ -209,6 +279,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
         app.insert_resource(build_default_registry());
+        app.insert_resource(MineralTickClock::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.add_systems(Update, consume_mineral_drops_into_inventory);
 

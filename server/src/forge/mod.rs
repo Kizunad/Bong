@@ -42,6 +42,7 @@ use self::steps::{
 };
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
+use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -49,10 +50,13 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 pub fn register(app: &mut App) {
     tracing::info!("[bong][forge] registering plan-forge-v1 systems");
 
-    let registry = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap_or_else(|e| {
-        tracing::error!("[bong][forge] blueprint load failed: {e}");
-        BlueprintRegistry::new()
-    });
+    let mineral_registry = build_default_mineral_registry();
+    let registry =
+        BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&mineral_registry))
+            .unwrap_or_else(|e| {
+                tracing::error!("[bong][forge] blueprint load failed: {e}");
+                BlueprintRegistry::new()
+            });
     tracing::info!(
         "[bong][forge] loaded {} blueprints: [{}]",
         registry.len(),
@@ -85,6 +89,7 @@ pub fn register(app: &mut App) {
 fn handle_start_forge_requests(
     mut ev: EventReader<StartForgeRequest>,
     registry: Res<BlueprintRegistry>,
+    minerals: Res<MineralRegistry>,
     mut sessions: ResMut<ForgeSessions>,
     mut stations: Query<&mut WeaponForgeStation>,
     learned: Query<&LearnedBlueprints>,
@@ -116,12 +121,6 @@ fn handle_start_forge_requests(
             continue;
         }
 
-        // 收集投料
-        let mut inputs: HashMap<String, u32> = HashMap::new();
-        for (m, c) in &req.materials {
-            *inputs.entry(m.clone()).or_insert(0) += c;
-        }
-
         // 解析 Billet（step[0] 必须是 billet，否则图谱非法）
         let Some(StepKind::Billet) = bp.steps.first().map(|s| s.kind()) else {
             tracing::error!(
@@ -134,6 +133,21 @@ fn handle_start_forge_requests(
             blueprint::StepSpec::Billet { profile } => profile,
             _ => unreachable!(),
         };
+        if let Some((material, reason)) = invalid_required_forge_material(billet_profile, &minerals)
+        {
+            tracing::info!(
+                "[bong][forge] rejected blueprint {}: required material `{material}` {reason}",
+                bp.id
+            );
+            continue;
+        }
+
+        // 收集投料。optional carrier 允许来自 fauna/spiritwood 等后续专项；required
+        // mineral 已在 blueprint load + runtime 双重校验为正典金属。
+        let mut inputs: HashMap<String, u32> = HashMap::new();
+        for (m, c) in &req.materials {
+            *inputs.entry(m.clone()).or_insert(0) += c;
+        }
         let billet_res = match resolve_billet(billet_profile, &inputs, bp.tier_cap) {
             Ok(r) => r,
             Err(e) => {
@@ -171,6 +185,21 @@ fn handle_start_forge_requests(
         );
         sessions.insert(session);
     }
+}
+
+fn invalid_required_forge_material<'a>(
+    billet_profile: &'a blueprint::BilletProfile,
+    minerals: &MineralRegistry,
+) -> Option<(&'a str, &'static str)> {
+    for required in &billet_profile.required {
+        let Some(entry) = minerals.get_by_str(required.material.as_str()) else {
+            return Some((required.material.as_str(), "is not a registered mineral_id"));
+        };
+        if entry.forge_tier_min == 0 {
+            return Some((required.material.as_str(), "is not a forge metal"));
+        }
+    }
+    None
 }
 
 fn handle_tempering_hits(
@@ -569,4 +598,46 @@ fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f
     x ^= x >> 7;
     x ^= x << 17;
     (x as f64 / u64::MAX as f64).clamp(0.0, 0.999_999) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forge::blueprint::{BilletProfile, BilletTolerance, CarrierSpec, MaterialStack};
+
+    #[test]
+    fn runtime_required_material_accepts_forge_metal() {
+        let minerals = build_default_mineral_registry();
+        let profile = BilletProfile {
+            required: vec![MaterialStack {
+                material: "fan_tie".into(),
+                count: 3,
+            }],
+            optional_carriers: vec![CarrierSpec {
+                material: "ling_wood".into(),
+                unlocks_tier: 3,
+            }],
+            tolerance: BilletTolerance::default(),
+        };
+
+        assert_eq!(invalid_required_forge_material(&profile, &minerals), None);
+    }
+
+    #[test]
+    fn runtime_required_material_rejects_non_metal_mineral() {
+        let minerals = build_default_mineral_registry();
+        let profile = BilletProfile {
+            required: vec![MaterialStack {
+                material: "dan_sha".into(),
+                count: 1,
+            }],
+            optional_carriers: vec![],
+            tolerance: BilletTolerance::default(),
+        };
+
+        assert_eq!(
+            invalid_required_forge_material(&profile, &minerals),
+            Some(("dan_sha", "is not a forge metal"))
+        );
+    }
 }

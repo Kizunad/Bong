@@ -7,7 +7,7 @@
     {
       "kind": "billet",
       "profile": {
-        "required": [{ "material": "iron_ingot", "count": 3 }],
+        "required": [{ "material": "fan_tie", "count": 3 }],
         "optional_carriers": [],
         "tolerance": { "count_miss": 0 }
       }
