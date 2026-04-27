@@ -207,6 +207,71 @@ mod tests {
     }
 
     #[test]
+    fn entry_without_zones_does_not_mark_family_spawned() {
+        // Codex review #2 回归：family 的 mid/deep zone 还没注册时，第一次入场不
+        // 应把 family 标 spawned，否则后续入场永远 skip → family 永久缺 relics。
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(AncientRelicPool::from_seed());
+        app.insert_resource(TsySpawnedFamilies::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_event::<TsyEnterEmit>();
+        app.add_systems(Update, tsy_loot_spawn_on_enter);
+        // 故意不 register_lingxu_subzones —— mid/deep zone 不存在
+
+        let player = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(TsyEnterEmit {
+            player_entity: player,
+            family_id: "tsy_lingxu_01".into(),
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(0.0, 64.0, 0.0),
+            },
+            filtered: Vec::new(),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<DroppedLootRegistry>().entries.len(),
+            0,
+            "无 mid/deep zone 时 spawn 必为 0"
+        );
+        assert!(
+            !app.world()
+                .resource::<TsySpawnedFamilies>()
+                .families
+                .contains("tsy_lingxu_01"),
+            "无 zone 不应标记 family spawned，留给下次入场重试"
+        );
+
+        // 后续 zone 上线 → 再次入场应能 spawn
+        register_lingxu_subzones(&mut app);
+        app.world_mut().send_event(TsyEnterEmit {
+            player_entity: player,
+            family_id: "tsy_lingxu_01".into(),
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(0.0, 64.0, 0.0),
+            },
+            filtered: Vec::new(),
+        });
+        app.update();
+        assert!(
+            app.world().resource::<DroppedLootRegistry>().entries.len() > 0,
+            "zone 就绪后再入场应成功 spawn"
+        );
+        assert!(
+            app.world()
+                .resource::<TsySpawnedFamilies>()
+                .families
+                .contains("tsy_lingxu_01"),
+            "成功 spawn 后才标记"
+        );
+    }
+
+    #[test]
     fn ancient_relic_keeps_rarity_and_zero_spirit_quality() {
         let mut app = make_app_with_loot_spawn();
         let player = app.world_mut().spawn_empty().id();

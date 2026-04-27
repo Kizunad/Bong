@@ -114,8 +114,8 @@ pub fn tsy_loot_spawn_on_enter(
     mut drops: ResMut<DroppedLootRegistry>,
 ) {
     for ev in events.read() {
-        if !spawned.families.insert(ev.family_id.clone()) {
-            // 已经 spawn 过 → 跳
+        // 已经 spawn 过本 family → 跳。
+        if spawned.families.contains(&ev.family_id) {
             continue;
         }
         let source = source_class_from_family_id(&ev.family_id);
@@ -123,7 +123,7 @@ pub fn tsy_loot_spawn_on_enter(
         let count = relic_count_for_source(source, seed);
         let (_shallow, mid_count, deep_count) = layer_distribution(count);
 
-        spawn_for_layer(
+        let placed_mid = spawn_for_layer(
             &ev.family_id,
             TsyDepth::Mid,
             mid_count,
@@ -134,7 +134,7 @@ pub fn tsy_loot_spawn_on_enter(
             &mut allocator,
             &mut drops,
         );
-        spawn_for_layer(
+        let placed_deep = spawn_for_layer(
             &ev.family_id,
             TsyDepth::Deep,
             deep_count,
@@ -146,12 +146,26 @@ pub fn tsy_loot_spawn_on_enter(
             &mut drops,
         );
 
+        // Codex review #2 修复：mid/deep zone 还没 ready 时（worldgen 慢于
+        // 玩家入场）不要把 family 标记成 spawned，否则后续入场全 skip → family
+        // 永远缺 relics。只有真正放下 ≥1 件后才记账。
+        let placed_total = placed_mid + placed_deep;
+        if placed_total == 0 {
+            tracing::debug!(
+                family = %ev.family_id,
+                "[bong][tsy-loot] no relics placed (zones not ready) — leaving family un-marked for retry"
+            );
+            continue;
+        }
+        spawned.families.insert(ev.family_id.clone());
+
         tracing::info!(
             family = %ev.family_id,
             source = ?source,
-            count,
-            mid = mid_count,
-            deep = deep_count,
+            requested = count,
+            placed = placed_total,
+            mid = placed_mid,
+            deep = placed_deep,
             "[bong][tsy-loot] spawned ancient relics on first family entry"
         );
     }
@@ -163,6 +177,8 @@ fn family_seed(family_id: &str) -> u64 {
     hasher.finish()
 }
 
+/// 在指定 depth 上 spawn `count` 件遗物。返回**实际 placed 数量**（zone/池缺失
+/// 时可能 < count，由 caller 判断是否标记 family 为已 spawn）。
 #[allow(clippy::too_many_arguments)]
 fn spawn_for_layer(
     family_id: &str,
@@ -174,14 +190,15 @@ fn spawn_for_layer(
     relic_pool: &AncientRelicPool,
     allocator: &mut InventoryInstanceIdAllocator,
     drops: &mut DroppedLootRegistry,
-) {
+) -> u32 {
+    let mut placed: u32 = 0;
     for i in 0..count {
         let seed = base_seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9);
         let Some(template) = relic_pool.sample(source, seed) else {
             tracing::warn!(
                 "[bong][tsy-loot] empty relic pool — skipping spawn for family={family_id} depth={depth:?}"
             );
-            return;
+            return placed;
         };
         let Some(pos) = sample_position_in_layer(zones, family_id, depth, seed) else {
             tracing::debug!(
@@ -190,7 +207,7 @@ fn spawn_for_layer(
                 "[bong][tsy-loot] no zone at this depth yet — skipping {} drops",
                 count - i
             );
-            return;
+            return placed;
         };
         let instance = match template.to_item_instance(allocator) {
             Ok(item) => item,
@@ -198,7 +215,7 @@ fn spawn_for_layer(
                 tracing::warn!(
                     "[bong][tsy-loot] allocator overflow / failure: {err}; aborting layer"
                 );
-                return;
+                return placed;
             }
         };
         let entry = DroppedLootEntry {
@@ -210,7 +227,9 @@ fn spawn_for_layer(
             item: instance,
         };
         drops.entries.insert(entry.instance_id, entry);
+        placed += 1;
     }
+    placed
 }
 
 /// 测试辅助：返回 seed 起始时的 ancient relics 总池大小。
