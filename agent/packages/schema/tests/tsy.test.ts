@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DaoxiangSpawnedV1,
+  TsyCollapseCompletedV1,
+  TsyCollapseStartedV1,
   TsyCorpseSpawnEventV1,
   TsyEnterEventV1,
   TsyExitEventV1,
+  TsyZoneActivatedV1,
+  validateDaoxiangSpawnedV1Contract,
+  validateTsyCollapseCompletedV1Contract,
+  validateTsyCollapseStartedV1Contract,
   validateTsyCorpseSpawnEventV1Contract,
   validateTsyEnterEventV1Contract,
   validateTsyExitEventV1Contract,
+  validateTsyZoneActivatedV1Contract,
 } from "../src/tsy.js";
 import { validate } from "../src/validate.js";
 
@@ -153,5 +161,127 @@ describe("plan-tsy-loot-v1 §4.4 — TsyCorpseSpawnEventV1", () => {
       death_cause: "attack_intent:offline:Bob",
     });
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("plan-tsy-lifecycle-v1 §1.5 — TsyZoneActivatedV1", () => {
+  const valid = {
+    v: 1 as const,
+    kind: "tsy_zone_activated" as const,
+    tick: 1000,
+    family_id: "tsy_lingxu_01",
+    source_class: "dao_lord" as const,
+  };
+
+  it("accepts a fully populated payload", () => {
+    expect(validate(TsyZoneActivatedV1, valid).ok).toBe(true);
+  });
+
+  it("round-trips through JSON.stringify / parse", () => {
+    const parsed = JSON.parse(JSON.stringify(valid));
+    expect(validateTsyZoneActivatedV1Contract(parsed).ok).toBe(true);
+  });
+
+  it("accepts all three source_class values", () => {
+    for (const sc of ["dao_lord", "sect_ruins", "battle_sediment"] as const) {
+      expect(validate(TsyZoneActivatedV1, { ...valid, source_class: sc }).ok).toBe(true);
+    }
+  });
+
+  it("rejects unknown source_class", () => {
+    expect(
+      validate(TsyZoneActivatedV1, { ...valid, source_class: "ascended_sage" } as never).ok,
+    ).toBe(false);
+  });
+
+  it("rejects extra field", () => {
+    expect(validate(TsyZoneActivatedV1, { ...valid, surprise: 1 } as never).ok).toBe(false);
+  });
+});
+
+describe("plan-tsy-lifecycle-v1 §3.1 — TsyCollapseStartedV1", () => {
+  const valid = {
+    v: 1 as const,
+    kind: "tsy_collapse_started" as const,
+    tick: 50000,
+    family_id: "tsy_lingxu_01",
+    duration_ticks: 600,
+  };
+
+  it("accepts a fully populated payload", () => {
+    expect(validate(TsyCollapseStartedV1, valid).ok).toBe(true);
+  });
+
+  it("round-trips through JSON.stringify / parse", () => {
+    const parsed = JSON.parse(JSON.stringify(valid));
+    expect(validateTsyCollapseStartedV1Contract(parsed).ok).toBe(true);
+  });
+
+  it("rejects negative duration_ticks", () => {
+    expect(
+      validate(TsyCollapseStartedV1, { ...valid, duration_ticks: -1 } as never).ok,
+    ).toBe(false);
+  });
+
+  it("rejects unknown kind", () => {
+    expect(
+      validate(TsyCollapseStartedV1, { ...valid, kind: "tsy_zone_activated" } as never).ok,
+    ).toBe(false);
+  });
+});
+
+describe("plan-tsy-lifecycle-v1 §3.3 — TsyCollapseCompletedV1", () => {
+  const valid = {
+    v: 1 as const,
+    kind: "tsy_collapse_completed" as const,
+    tick: 50600,
+    family_id: "tsy_lingxu_01",
+  };
+
+  it("accepts a fully populated payload", () => {
+    expect(validate(TsyCollapseCompletedV1, valid).ok).toBe(true);
+  });
+
+  it("round-trips through JSON.stringify / parse", () => {
+    const parsed = JSON.parse(JSON.stringify(valid));
+    expect(validateTsyCollapseCompletedV1Contract(parsed).ok).toBe(true);
+  });
+
+  it("rejects empty family_id", () => {
+    expect(validate(TsyCollapseCompletedV1, { ...valid, family_id: "" } as never).ok).toBe(false);
+  });
+});
+
+describe("plan-tsy-lifecycle-v1 §4 — DaoxiangSpawnedV1", () => {
+  const valid = {
+    v: 1 as const,
+    kind: "daoxiang_spawned" as const,
+    tick: 60000,
+    daoxiang_entity_id: "npc_99v1",
+    from_family: "tsy_lingxu_01",
+    from_corpse_death_cause: "tsy_drain",
+    pos: [128.0, 64.0, -32.0],
+    mode: "natural" as const,
+  };
+
+  it("accepts a fully populated payload (natural)", () => {
+    expect(validate(DaoxiangSpawnedV1, valid).ok).toBe(true);
+  });
+
+  it("accepts collapse_accelerated mode", () => {
+    expect(validate(DaoxiangSpawnedV1, { ...valid, mode: "collapse_accelerated" }).ok).toBe(true);
+  });
+
+  it("round-trips through JSON.stringify / parse", () => {
+    const parsed = JSON.parse(JSON.stringify(valid));
+    expect(validateDaoxiangSpawnedV1Contract(parsed).ok).toBe(true);
+  });
+
+  it("rejects pos with wrong arity", () => {
+    expect(validate(DaoxiangSpawnedV1, { ...valid, pos: [0, 0] } as never).ok).toBe(false);
+  });
+
+  it("rejects unknown mode", () => {
+    expect(validate(DaoxiangSpawnedV1, { ...valid, mode: "spawn_aggro" } as never).ok).toBe(false);
   });
 });

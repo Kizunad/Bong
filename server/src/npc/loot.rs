@@ -88,6 +88,13 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
             NpcLootEntry::new("item.relic.engraved_plaque", 1.0),
             NpcLootEntry::new("item.relic.ancient_spark", 0.1),
         ],
+        // plan-tsy-lifecycle-v1 §5.4 — 道伥 MVP loot：
+        // 一件破旧凡物 + 偶尔残卷。完整 loot 继承（从原 corpse 反查 instance）推 P3。
+        NpcArchetype::Daoxiang => vec![
+            NpcLootEntry::new("item.daoxiang.rusty_blade", 0.5),
+            NpcLootEntry::new("item.daoxiang.tattered_scroll", 0.1),
+            NpcLootEntry::new("item.bone_coin", 0.4).with_stack(1, 6),
+        ],
     };
     NpcLootTable::new(archetype, entries)
 }

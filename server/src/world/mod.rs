@@ -8,6 +8,9 @@ pub mod tsy_drain;
 pub mod tsy_filter;
 #[cfg(test)]
 mod tsy_integration_test;
+pub mod tsy_lifecycle;
+#[cfg(test)]
+mod tsy_lifecycle_integration_test;
 pub mod tsy_poi_consumer;
 pub mod tsy_portal;
 pub mod zone;
@@ -99,6 +102,8 @@ pub fn register(app: &mut App) {
     tsy_dev_command::register(app);
     // plan-tsy-worldgen-v1 §1 — startup 期消费 TerrainProviders.pois() 把 POI 转 marker
     tsy_poi_consumer::register(app);
+    // plan-tsy-lifecycle-v1 §1 — TSY 生命周期状态机 + 塌缩清理 + 道伥转化
+    tsy_lifecycle::register(app);
     app.add_systems(Startup, setup_world);
 }
 

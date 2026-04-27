@@ -46,6 +46,8 @@ pub enum NpcArchetype {
     Beast,
     Disciple,
     GuardianRelic,
+    /// plan-tsy-lifecycle-v1 §4 — 道伥（干尸激活后的诡异 NPC，伪装平凡 / 突袭玩家）。
+    Daoxiang,
 }
 
 impl NpcArchetype {
@@ -57,6 +59,7 @@ impl NpcArchetype {
             Self::Beast => "beast",
             Self::Disciple => "disciple",
             Self::GuardianRelic => "guardian_relic",
+            Self::Daoxiang => "daoxiang",
         }
     }
 
@@ -68,6 +71,8 @@ impl NpcArchetype {
             Self::Beast => 80_000.0,
             Self::Disciple => 140_000.0,
             Self::GuardianRelic => 1_000_000.0,
+            // 道伥不老（与守护者类比）；balance 推 P3。
+            Self::Daoxiang => 1_000_000.0,
         }
     }
 }

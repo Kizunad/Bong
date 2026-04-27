@@ -29,6 +29,7 @@ mod tests {
     };
     use crate::world::dimension::DimensionKind;
     use crate::world::tsy::{DimensionAnchor, TsyPresence};
+    use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
     use crate::world::tsy_portal::TsyEnterEmit;
     use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -109,6 +110,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(AncientRelicPool::from_seed());
         app.insert_resource(TsySpawnedFamilies::default());
+        app.insert_resource(TsyZoneStateRegistry::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<TsyEnterEmit>();
@@ -215,6 +217,7 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(AncientRelicPool::from_seed());
         app.insert_resource(TsySpawnedFamilies::default());
+        app.insert_resource(TsyZoneStateRegistry::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<TsyEnterEmit>();
@@ -259,7 +262,10 @@ mod tests {
         });
         app.update();
         assert!(
-            !app.world().resource::<DroppedLootRegistry>().entries.is_empty(),
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .is_empty(),
             "zone 就绪后再入场应成功 spawn"
         );
         assert!(
