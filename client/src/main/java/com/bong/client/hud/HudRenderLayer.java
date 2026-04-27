@@ -19,5 +19,6 @@ public enum HudRenderLayer {
     DAMAGE_FLOATER,
     FLIGHT_HUD,
     TRIBULATION,
-    NEAR_DEATH
+    NEAR_DEATH,
+    TSY_EXTRACT
 }

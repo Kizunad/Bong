@@ -50,6 +50,7 @@ public class BongHud {
         // Tick cast-state + defense-window expiries so they self-clear each frame.
         CastStateStore.tick(nowMillis);
         DefenseWindowStore.tick(nowMillis);
+        com.bong.client.tsy.ExtractStateStore.tick(nowMillis);
         // Open death/terminate screens when the server activates them.
         com.bong.client.combat.screen.CombatScreenOpener.tick();
 
@@ -196,6 +197,7 @@ public class BongHud {
                 return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
                     || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
                     || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
+                    || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
                     || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
             })
             .toList();

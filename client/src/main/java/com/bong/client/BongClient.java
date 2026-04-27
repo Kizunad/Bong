@@ -15,6 +15,7 @@ import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
@@ -55,6 +56,7 @@ public class BongClient implements ClientModInitializer {
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         BotanyHudBootstrap.register();
+        ExtractInteractionBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
 

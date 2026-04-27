@@ -156,6 +156,18 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesExtractRequests() {
+        assertEquals(
+            "{\"type\":\"start_extract_request\",\"v\":1,\"portal_entity_id\":42}",
+            ClientRequestProtocol.encodeStartExtractRequest(42L)
+        );
+        assertEquals(
+            "{\"type\":\"cancel_extract_request\",\"v\":1}",
+            ClientRequestProtocol.encodeCancelExtractRequest()
+        );
+    }
+
+    @Test
     void meridianIdEnumCoversAll20Channels() {
         // 12 正经 + 8 奇经
         assertEquals(20, ClientRequestProtocol.MeridianId.values().length);
