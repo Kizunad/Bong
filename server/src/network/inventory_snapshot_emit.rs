@@ -282,6 +282,8 @@ pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV
         scroll_kind,
         scroll_skill_id,
         scroll_xp_grant,
+        // plan-tsy-loot-v1 §1.3 — Ancient 物品 charges 透传；非 ancient 恒为 None。
+        charges: item.charges,
     }
 }
 
@@ -469,6 +471,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -889,6 +892,7 @@ mod tests {
                 profile,
             )),
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -909,6 +913,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         let mut view = item_view_from_instance(&item);
         assert!(view.freshness_current.is_none());

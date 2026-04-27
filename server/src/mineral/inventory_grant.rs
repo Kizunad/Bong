@@ -105,6 +105,7 @@ fn build_mineral_item_instance(
         durability: 1.0,
         freshness: None,
         mineral_id: Some(entry.canonical_name.to_string()),
+        charges: None,
     }
 }
 

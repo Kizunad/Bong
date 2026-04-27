@@ -783,6 +783,11 @@
                     "minLength": 1,
                     "maxLength": 64,
                     "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }
@@ -1009,6 +1014,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1220,6 +1230,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1431,6 +1446,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1642,6 +1662,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -1853,6 +1878,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2064,6 +2094,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2275,6 +2310,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2486,6 +2526,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2697,6 +2742,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -2908,6 +2958,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -3119,6 +3174,11 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "charges": {
+                      "minimum": 0,
+                      "maximum": 5,
+                      "type": "integer"
                     }
                   }
                 },
@@ -3336,6 +3396,11 @@
                     "minLength": 1,
                     "maxLength": 64,
                     "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               },
@@ -4053,6 +4118,11 @@
                   "minLength": 1,
                   "maxLength": 64,
                   "type": "string"
+                },
+                "charges": {
+                  "minimum": 0,
+                  "maximum": 5,
+                  "type": "integer"
                 }
               }
             }
@@ -4403,6 +4473,11 @@
                     "minLength": 1,
                     "maxLength": 64,
                     "type": "string"
+                  },
+                  "charges": {
+                    "minimum": 0,
+                    "maximum": 5,
+                    "type": "integer"
                   }
                 }
               }

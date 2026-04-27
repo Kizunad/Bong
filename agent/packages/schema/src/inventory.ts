@@ -112,6 +112,10 @@ export const InventoryItemViewV1 = Type.Object(
     // 字符串（如 "fan_tie" / "ling_shi_zhong"），非矿物来源 item 留 undefined。
     // alchemy / forge 配方校验 inventory.material 时即按此字段比对。
     mineral_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    // plan-tsy-loot-v1 §1.3 — Ancient rarity 物品的"剩余使用次数"。
+    // tier 1/3/5 → charges 1/3/5；每次使用 -= 1，归零销毁。
+    // 非 ancient 物品恒为 undefined。durability 字段保持 0..=1 不被破坏。
+    charges: Type.Optional(Type.Integer({ minimum: 0, maximum: 5 })),
   },
   { additionalProperties: false },
 );

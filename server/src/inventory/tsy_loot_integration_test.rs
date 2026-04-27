@@ -47,6 +47,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -227,10 +228,14 @@ mod tests {
                     entry.item.spirit_quality, 0.0,
                     "上古遗物应无灵：spirit_quality 必须 0"
                 );
+                assert_eq!(
+                    entry.item.durability, 1.0,
+                    "ancient durability 恒为 1.0（schema 0..=1）"
+                );
                 assert!(
-                    [1.0, 3.0, 5.0].contains(&entry.item.durability),
-                    "ancient durability 必须 1/3/5（剩余次数语义），实际 {}",
-                    entry.item.durability
+                    matches!(entry.item.charges, Some(1) | Some(3) | Some(5)),
+                    "ancient charges 必须 1/3/5（tier 映射），实际 {:?}",
+                    entry.item.charges
                 );
                 assert!(
                     entry.item.template_id.starts_with("ancient_relic_"),

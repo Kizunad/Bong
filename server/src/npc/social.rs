@@ -261,6 +261,7 @@ mod tests {
             durability,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -330,6 +331,7 @@ mod tests {
             durability: 0.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         assert!(estimate_item_price(&weird) >= 1);
     }

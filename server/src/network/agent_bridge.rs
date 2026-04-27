@@ -277,6 +277,7 @@ mod server_data_tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         }
     }
 
@@ -661,6 +662,7 @@ mod server_data_tests {
                     scroll_kind: None,
                     scroll_skill_id: None,
                     scroll_xp_grant: None,
+                    charges: None,
                 },
             },
         ));

@@ -396,6 +396,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(5),
@@ -501,6 +502,7 @@ mod tests {
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);

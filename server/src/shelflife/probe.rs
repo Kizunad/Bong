@@ -190,6 +190,7 @@ mod tests {
             durability: 1.0,
             freshness,
             mineral_id: None,
+            charges: None,
         }
     }
 

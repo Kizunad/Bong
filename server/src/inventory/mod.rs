@@ -168,6 +168,11 @@ pub struct ItemInstance {
     /// 序列化省略 None 以兼容旧 snapshot（见 freshness）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mineral_id: Option<String>,
+    /// plan-tsy-loot-v1 §1.3 — "剩余使用次数"。Ancient rarity 物品用此存 tier
+    /// 1/3/5 的初始剩余次数，每次使用 -= 1，归零销毁。非 ancient 物品恒为 None；
+    /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -363,6 +368,7 @@ fn instantiate_item_instance(
         durability: template_instance.durability,
         freshness: None,
         mineral_id: None,
+        charges: None,
     })
 }
 
@@ -501,6 +507,7 @@ pub fn add_item_to_player_inventory(
         durability: 1.0,
         freshness: None,
         mineral_id: None,
+        charges: None,
     };
 
     let Some(main_pack) = inventory
@@ -2381,6 +2388,7 @@ fn build_item_instance_from_template(
         durability,
         freshness: None,
         mineral_id: None,
+        charges: None,
     })
 }
 
@@ -2922,6 +2930,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -3032,6 +3041,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3085,6 +3095,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         });
 
@@ -3258,6 +3269,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3298,6 +3310,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3328,6 +3341,7 @@ cols = 4
                 durability: 0.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3397,6 +3411,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3413,6 +3428,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3430,6 +3446,7 @@ cols = 4
                 durability: 0.5,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3490,6 +3507,7 @@ cols = 4
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             });
         }
@@ -3533,6 +3551,7 @@ cols = 4
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             },
         );
@@ -3621,6 +3640,7 @@ cols = 4
                 durability: 0.75,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3679,6 +3699,7 @@ cols = 4
                 durability: 0.25,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3707,6 +3728,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3724,6 +3746,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3779,6 +3802,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 

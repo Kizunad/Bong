@@ -1,12 +1,17 @@
 //! plan-tsy-loot-v1 §1.2 — 上古遗物模板表。
 //!
 //! 定义"99/1 比例铁律"中的那 1%：捡到即用、不绑定、不激活，
-//! 唯一代价是耐久极低（用 `ItemInstance.durability` 的整数计数语义表达）。
+//! 唯一代价是耐久极低 —— 用 `ItemInstance.charges` 的整数计数表达
+//! （而非滥用 0..=1 的 `durability` 字段，避免触碰 `InventoryItemViewV1`
+//! schema 边界，详见 Codex review 反馈）。
 //!
-//! Strength tier → durability：
-//! - tier 1 = 一次性消耗（残卷 / 兽核）
-//! - tier 2 = 三击 / 三次（轻量法宝）
-//! - tier 3 = 五击 / 五次（重量法宝）
+//! Strength tier → charges：
+//! - tier 1 = 1 次（一次性消耗：残卷 / 兽核）
+//! - tier 2 = 3 次（三击 / 三次激活：轻量法宝）
+//! - tier 3 = 5 次（五击 / 五次激活：重量法宝）
+//!
+//! `durability` 字段对 ancient 物品恒为 1.0（"全新但易碎"），由 `charges`
+//! 单独跟踪剩余次数；归零时由消费系统从 inventory 移除。
 //!
 //! Spawn 入口在 `tsy_loot_spawn.rs`，本模块只负责数据 + `to_item_instance` 工厂。
 
@@ -58,13 +63,14 @@ pub struct AncientRelicTemplate {
 }
 
 impl AncientRelicTemplate {
-    /// 把模板实例化为 `ItemInstance`。durability 按 tier 映射为整数计数：
-    /// `1.0 / 3.0 / 5.0`。每次使用由对应系统 `-= 1.0`，归零销毁。
+    /// 把模板实例化为 `ItemInstance`。charges 按 tier 映射为剩余使用次数：
+    /// `1 / 3 / 5`。每次使用由对应系统 `-= 1`，归零销毁。
+    /// `durability` 恒为 1.0（"全新但易碎"），保持在 schema `0..=1` 边界内。
     pub fn to_item_instance(
         &self,
         allocator: &mut InventoryInstanceIdAllocator,
     ) -> Result<ItemInstance, String> {
-        let durability = strength_tier_to_durability(self.strength_tier);
+        let charges = strength_tier_to_charges(self.strength_tier);
         Ok(ItemInstance {
             instance_id: allocator.next_id()?,
             template_id: self.template_id.clone(),
@@ -77,20 +83,22 @@ impl AncientRelicTemplate {
             stack_count: 1,
             // §0 设计轴心 #2：上古遗物本身"无灵"，spirit_quality 恒为 0。
             spirit_quality: 0.0,
-            durability,
+            // schema 约束 0..=1 — ancient 不参与磨损系统，恒满。
+            durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: Some(charges),
         })
     }
 }
 
-/// strength_tier → durability 计数。位于模块根方便 testing。
-pub fn strength_tier_to_durability(tier: u8) -> f64 {
+/// strength_tier → 初始剩余次数（`ItemInstance.charges`）。位于模块根方便 testing。
+pub fn strength_tier_to_charges(tier: u8) -> u32 {
     match tier {
-        1 => 1.0,
-        2 => 3.0,
-        3 => 5.0,
-        _ => 1.0,
+        1 => 1,
+        2 => 3,
+        3 => 5,
+        _ => 1,
     }
 }
 
@@ -262,17 +270,17 @@ mod tests {
     }
 
     #[test]
-    fn strength_tier_durability_mapping() {
-        assert_eq!(strength_tier_to_durability(1), 1.0);
-        assert_eq!(strength_tier_to_durability(2), 3.0);
-        assert_eq!(strength_tier_to_durability(3), 5.0);
+    fn strength_tier_charges_mapping() {
+        assert_eq!(strength_tier_to_charges(1), 1);
+        assert_eq!(strength_tier_to_charges(2), 3);
+        assert_eq!(strength_tier_to_charges(3), 5);
         // 兜底：未知 tier 视作一次性。
-        assert_eq!(strength_tier_to_durability(0), 1.0);
-        assert_eq!(strength_tier_to_durability(99), 1.0);
+        assert_eq!(strength_tier_to_charges(0), 1);
+        assert_eq!(strength_tier_to_charges(99), 1);
     }
 
     #[test]
-    fn to_item_instance_writes_ancient_rarity_and_durability() {
+    fn to_item_instance_writes_ancient_rarity_durability_and_charges() {
         let mut allocator = InventoryInstanceIdAllocator::default();
         let template = &seed_ancient_relics()[0];
         let item = template.to_item_instance(&mut allocator).expect("alloc");
@@ -280,8 +288,13 @@ mod tests {
         assert_eq!(item.spirit_quality, 0.0, "ancient relic 必须无灵");
         assert_eq!(item.template_id, template.template_id);
         assert_eq!(
-            item.durability,
-            strength_tier_to_durability(template.strength_tier)
+            item.durability, 1.0,
+            "ancient durability 恒为 1.0（schema 0..=1 边界）"
+        );
+        assert_eq!(
+            item.charges,
+            Some(strength_tier_to_charges(template.strength_tier)),
+            "charges 跟 strength_tier 1/3/5 映射"
         );
         assert_eq!(item.stack_count, 1);
         assert!(item.freshness.is_none());
