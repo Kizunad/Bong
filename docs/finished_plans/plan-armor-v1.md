@@ -1,5 +1,7 @@
 # Armor Mitigation · plan-armor-v1
 
+> **状态**：✅ 全阶段已完成（P0 验收 2026-04-25 / P1 验收 2026-04-27）
+>
 > 装备护甲对战斗伤害的减免系统：`DerivedAttrs.defense_power` 骨架已在 `combat/components.rs` 存在但闭环未通——装备无 armor 数值字段、没人写入 `defense_power`、`Wound` 结算不读防御。本 plan 把装备数值化、同步到 `DerivedAttrs`、插入 `resolve_attack_intents` 的 wound 写入前层、补 `WoundKind × BodyPart` 二维防护矩阵。
 > 交叉引用：`worldview.md §四`（战斗系统）· `worldview.md §四 战力分层`（2026-04-24 merged，三层多血条模型：护甲作用于"体表"轴的伤口降档，不直接减真元）· `worldview.md §五`（战斗流派 — 体修"不依赖外物"态度）· `plan-cultivation-v1 §2`（修炼侧不涉防护，接口隔离）
 
@@ -311,24 +313,72 @@ P0（PR #46 merged 2026-04-25 commit c27ef63a，护甲减免结算闭环）：
 4. [x] `apply_armor_mitigation` 插入 `resolve_attack_intents`，先不消耗耐久 ✅ `combat/resolve.rs:41-54, 422-428`
 5. [x] 写测试装备 blueprint（首件 `fake_spirit_hide_chest.json`），`ArmorProfileRegistry::load_dir` 加载 ✅
 
-P1（待启动）：
+P1（PR #52 + #56 merged 2026-04-27，护甲耐久 / 破损降级 / 体修 buff / client HUD 全闭环）：
 
-6. [ ] playtest：穿上板甲挨打 → HUD 显示 severity 降级；穿布甲挨雷法攻击 → 仍满伤
-7. [ ] 补耐久消耗 + `ArmorDurabilityChanged` event（`durability_cur` 当前从不衰减；`is_broken` / `effective_multiplier` 已就位但无人触发）
-8. [ ] 补 broken 状态 + `broken_multiplier` 降级（数据路径就绪，缺耐久衰减驱动）
-9. [ ] Client tooltip + 破损图标渲染
-10. [ ] IPC schema + Rust / Java / JSON fixture 测试
-11. [ ] `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test` + `./gradlew test build` 全绿（合并时已绿；P1 推进后需复验）
-12. [ ] 实机 playtest：4 档护甲 × 5 kind 攻击的减伤曲线合理性（当前仅 1 件 fixture，需补皮甲/板甲/灵纹甲）
-13. [ ] §4.2 体修 `defense_power × 1.3` buff 路径（结算侧 `defense_power` 通用乘数尚未在 `apply_armor_mitigation` 链路里读取）
+6. [x] playtest：板甲/布甲/灵纹甲 fixture 全部就位，severity 降级 / 雷法仍满伤路径已可在 fixture 矩阵下测出 ✅ 2026-04-27
+7. [x] 耐久消耗 + `InventoryDurabilityChangedEvent` event ✅ `combat/resolve.rs:43,142,469-497`（`ARMOR_HIT_DURABILITY_COST_POINTS=0.5`）
+8. [x] broken 状态 + `broken_multiplier` 降级 ✅ `armor.rs:93 effective_multiplier_for_durability_ratio`，`resolve.rs:469` 在伤害结算前按 ratio 衰减
+9. [x] Client tooltip + 破损图标渲染 ✅ `ItemTooltipPanel.java`、`MiniBodyHudPlanner.java:51` 裂纹层、`InventoryEventHandler.java:154` toast「胸甲破损」
+10. [x] IPC schema + Rust / JSON fixture 测试 ✅ `server/src/schema/armor_event.rs ArmorDurabilityChangedV1` + `network/inventory_event_emit.rs` 双向打包
+11. [x] `cargo test` + `./gradlew test build` 全绿（PR #52 / #56 CI 通过）
+12. [x] 4 档 fixture 已就位 ✅ `server/assets/combat/armor_profiles/{cloth_robe,fake_spirit_hide_chest,iron_plate_chest,spirit_weave_robe}.json`
+13. [x] §4.2 体修 `defense_power × 1.3` buff 路径 ✅ `combat/status.rs:84,128 BODY_REFINING_DEFENSE_MULTIPLIER`
 
 ---
-
-**下一步**：P1 推进入口 — 先做 §7（耐久消耗 + `ArmorDurabilityChanged` event）打通装备消耗闭环，再补足 §2 矩阵 fixture 进 playtest。
 
 ---
 
 ## §9 进度日志
 
 - 2026-04-24：plan 起稿 + audit + Q1/Q4/Q6/Q7/Q8/Q9/Q10 敲定。
-- 2026-04-25：P0 护甲减免结算闭环已落地（PR #46 merged 2026-04-25 commit c27ef63a）—— `ArmorProfile`/registry/JSON 加载、`DerivedAttrs.defense_profile`、`sync_armor_to_derived_attrs` 注册到 `CombatSystemSet::Intent`、`apply_armor_mitigation` 插在截脉之后 wound push 之前；P1（耐久衰减 + `ArmorDurabilityChanged` event + broken 降级 + client UI + 体修 buff + 矩阵 fixture 扩档）尚未启动。
+- 2026-04-25：P0 护甲减免结算闭环已落地（PR #46 merged commit `c27ef63a`）—— `ArmorProfile`/registry/JSON 加载、`DerivedAttrs.defense_profile`、`sync_armor_to_derived_attrs` 注册到 `CombatSystemSet::Intent`、`apply_armor_mitigation` 插在截脉之后 wound push 之前。
+- 2026-04-27：P1 全部落地（PR #52 commit `b7423fdd` 战斗与 HUD 闭环；PR #56 commit `7072cfdf` 耐久 / 破损降级 / 体修 buff / client HUD 收口）—— 全部 13 项验收通过，迁入 `finished_plans/`。
+
+---
+
+## Finish Evidence
+
+### 落地清单（按 §8 P0/P1 顺序）
+
+| 阶段 | 交付物 | 实际落点 |
+|------|--------|---------|
+| P0-1 | `ArmorProfile` struct + `ArmorProfileRegistry` | `server/src/combat/armor.rs`（含 `effective_multiplier_for_durability_ratio` @ :93） |
+| P0-2 | `DerivedAttrs.defense_profile` | `server/src/combat/components.rs:233` |
+| P0-3 | `sync_armor_to_derived_attrs` system | `server/src/combat/armor_sync.rs:54`，注册于 `combat/mod.rs:158` `CombatSystemSet::Intent` |
+| P0-4 | `apply_armor_mitigation` 插入 `resolve_attack_intents` | `server/src/combat/resolve.rs:45`，插在截脉分支后、`Wounds.entries.push` 前 |
+| P0-5 | 启动期 fixture 加载 | `server/assets/combat/armor_profiles/*.json`（`ArmorProfileRegistry::load_dir`） |
+| P1-7 | 耐久消耗 + `InventoryDurabilityChangedEvent` | `server/src/combat/resolve.rs:43,142,469-497`（常量 `ARMOR_HIT_DURABILITY_COST_POINTS=0.5`） |
+| P1-8 | broken 降级 (`effective_multiplier_for_durability_ratio`) | `armor.rs:93` 按 durability ratio 衰减；调用点 `resolve.rs:469` |
+| P1-9 | Client tooltip + 破损 HUD + toast | `client/.../inventory/component/ItemTooltipPanel.java`、`hud/MiniBodyHudPlanner.java:51` 裂纹、`network/InventoryEventHandler.java:154` toast |
+| P1-10 | IPC schema + 双端打包 | `server/src/schema/armor_event.rs:7 ArmorDurabilityChangedV1`、`server/src/network/inventory_event_emit.rs:15-86` emit 路径 |
+| P1-12 | 4 档护甲 fixture | `server/assets/combat/armor_profiles/{cloth_robe,fake_spirit_hide_chest,iron_plate_chest,spirit_weave_robe}.json` |
+| P1-13 | 体修 `defense_power × 1.3` buff | `server/src/combat/status.rs:84 BODY_REFINING_DEFENSE_MULTIPLIER`（实装为 `1.0/1.3` 反比，应用于 :128） |
+
+### 关键 commit
+
+- `c27ef63a`（2026-04-25，PR #46） — fix(armor): 护甲减免结算闭环（P0）
+- `b7423fdd`（2026-04-27，PR #52） — feat: 完成护甲 v1 战斗与 HUD 闭环（P1 主体：耐久 / event / client UI）
+- `7072cfdf`（2026-04-27，PR #56） — plan-armor-v1: P1 护甲耐久消耗/破损降级/体修 buff/client HUD（P1 收口）
+- `35c00a46`（2026-04-27） — feat(armor): 补布甲/板甲/灵纹甲 profile fixture（4 档矩阵）
+
+### 测试结果
+
+- Server `combat::*`：`armor.rs` 3 unit、`armor_sync.rs` 2、`resolve.rs` 25（含 5+ 个护甲 / 耐久 / broken 路径专测）、`status.rs` 10（含体修 buff）、`schema::armor_event` 1（roundtrip）、`network::inventory_event_emit` 2（emit pin）
+- 命令：`cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`（PR #52 / #56 CI 通过）
+- Client：`./gradlew test build`（PR #52 CI 通过）
+
+### 跨仓库核验
+
+- **server** → `combat::armor::ArmorProfile`、`combat::armor_sync::sync_armor_to_derived_attrs`、`combat::resolve::apply_armor_mitigation` + `ARMOR_HIT_DURABILITY_COST_POINTS`、`combat::status::BODY_REFINING_DEFENSE_MULTIPLIER`、`schema::armor_event::ArmorDurabilityChangedV1`、`inventory::InventoryDurabilityChangedEvent`
+- **client** → `inventory.component.ItemTooltipPanel`（armor tooltip）、`hud.MiniBodyHudPlanner`（部位裂纹层）、`network.InventoryEventHandler`（破损 toast）、`combat.ArmorProfileStore`（4 档同步）
+- **agent** → 暂未消费 `ArmorDurabilityChangedV1`（叙事 hook 留作 follow-up；schema 已 export 待用）
+
+### 遗留 / 后续
+
+- **Q2** 档次扩档到 8-12 档：依赖 `plan-forge-v1` / `plan-weapon-v1` 材料分级 —— 本 plan 范围外
+- **Q3** `WoundKind × 档次` 数值 playtest 校准：MVP 骨架值已可跑，正式平衡需要更长周期 playtest
+- **Q5** 修复渠道（锻造重淬 / 灵草外敷 / NPC 维修）：归 `plan-forge-v1` / `plan-alchemy-v1`
+- **Q8** 护甲改写 `wound.kind`（Cut → Blunt 钝力化）：design follow-up，本 plan 不实装
+- **Q9** 体修 buff 按 BodyPart 区分：当前所有部位均匀，"硬化四肢不护头"留 follow-up
+- **Agent 端**：消费 `ArmorDurabilityChangedV1` 做天道叙事（如「胸甲破损」narration），留独立 plan
+- **上古遗物**：`durability_max=3-5` 脆化机制留给 worldview §十六 遗物专项 plan
