@@ -367,3 +367,4 @@ pub enum DecayFormula {
 
 - 2026-04-24：plan 升 active；M0-M4 完成 ✅，M5 部分（consume.rs 函数层 + alchemy session 占位），M6-M7 待跨 plan blessing。
 - 2026-04-25：alchemy 消费侧实接闭环 —— `alchemy/mod.rs:337` 真调 `consume_pill`，`pill.rs` 接 `SpoilCheckOutcome`/`AgePeakCheck`，`resolver.rs:245` 把 quality_factor 应用到 `Pill.qi_gain`；M5 alchemy 段 verified ✅，forge/cultivation/lingtian/food 仍未接入；`DecayProfileRegistry` 生产仍空。
+- 2026-04-27：**registry 已非空** —— 实地审核发现 plan-mineral-v1 顺手注册了 ling_shi 衰变 profile（commit `f04a18db`），`build_default_registry()` 已注册四档灵石 DecayProfile 并在 `main.rs` 调用，§11 之前自述"生产 registry 仍空"已过时。M0-M5 全确认：`shelflife/` 7 文件含 `compute.rs` 874 行、`container.rs` / `consume.rs` / `probe.rs` / `registry.rs`。剩余 ~20%：M6 item ID 切换（`dead_ling_shi_*` 未注册）、M7 fauna/botany/food 各 plan 自身 profile 注册、forge/cultivation/lingtian 消费入口仍未接。dashboard state 升级为 merged，percent 80%。
