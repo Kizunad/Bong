@@ -4,6 +4,9 @@ import com.bong.client.forge.state.BlueprintScrollStore;
 import com.bong.client.forge.state.ForgeOutcomeStore;
 import com.bong.client.forge.state.ForgeSessionStore;
 import com.bong.client.forge.state.ForgeStationStore;
+import com.bong.client.forge.input.TemperingInputHandler;
+import com.bong.client.forge.screen.TemperingTrackComponent;
+import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
@@ -15,6 +18,7 @@ import net.minecraft.text.Text;
  * 后续 UI（三列布局 + 节奏轨道 + 铭文槽 + 真元注入条）在后续切片中补全。
  */
 public final class ForgeScreen extends Screen {
+    private final TemperingTrackComponent temperingTrack = new TemperingTrackComponent();
 
     public ForgeScreen() {
         super(Text.literal("锻炉"));
@@ -45,6 +49,12 @@ public final class ForgeScreen extends Screen {
                 + " 步骤=" + session.currentStep() + " tier=" + session.achievedTier()),
                 left, y, 0xFFFFFF, true);
             y += 14;
+
+            if ("tempering".equals(session.currentStep())) {
+                TemperingTrackComponent.drawTrack(OwoUIDrawContext.of(context),
+                    temperingTrack.currentRenderState(), left, y + 4);
+                y += TemperingTrackComponent.TRACK_HEIGHT + 10;
+            }
         }
 
         BlueprintScrollStore.Entry current = BlueprintScrollStore.current();
@@ -80,6 +90,9 @@ public final class ForgeScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (TemperingInputHandler.handleKey(this, keyCode)) {
+            return true;
+        }
         if (keyCode == 85) { // U
             this.close();
             return true;

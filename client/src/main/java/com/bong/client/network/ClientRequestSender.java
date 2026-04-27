@@ -106,6 +106,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
     }
 
+    public static void sendForgeTemperingHit(
+        long sessionId,
+        ClientRequestProtocol.TemperBeat beat,
+        int ticksRemaining
+    ) {
+        dispatch(ClientRequestProtocol.encodeForgeTemperingHit(sessionId, beat, ticksRemaining));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

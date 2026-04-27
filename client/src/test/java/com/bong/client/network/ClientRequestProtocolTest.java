@@ -165,6 +165,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeTemperingHit() {
+        String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
+        assertEquals(
+            "{\"type\":\"forge_tempering_hit\",\"v\":1,\"session_id\":7,\"beat\":\"L\",\"ticks_remaining\":4}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(

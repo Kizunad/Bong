@@ -29,6 +29,9 @@ public final class ClientRequestProtocol {
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
     public enum ForgeAxis { Rate, Capacity }
 
+    /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
+    public enum TemperBeat { L, H, F }
+
     private ClientRequestProtocol() {}
 
     /** 将 UI 侧 {@link MeridianChannel} 枚举映射为服务端 {@link MeridianId}。 */
@@ -327,6 +330,23 @@ public final class ClientRequestProtocol {
         obj.addProperty("z", z);
         obj.addProperty("item_instance_id", itemInstanceId);
         obj.addProperty("station_tier", stationTier);
+        return obj.toString();
+    }
+
+    public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
+        if (sessionId < 0) {
+            throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
+        }
+        if (beat == null) {
+            throw new IllegalArgumentException("beat must not be null");
+        }
+        if (ticksRemaining < 0) {
+            throw new IllegalArgumentException("ticksRemaining must be >= 0, got " + ticksRemaining);
+        }
+        JsonObject obj = envelope("forge_tempering_hit");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("beat", beat.name());
+        obj.addProperty("ticks_remaining", ticksRemaining);
         return obj.toString();
     }
 
