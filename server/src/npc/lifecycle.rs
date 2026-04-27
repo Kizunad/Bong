@@ -48,6 +48,10 @@ pub enum NpcArchetype {
     GuardianRelic,
     /// plan-tsy-lifecycle-v1 §4 — 道伥（干尸激活后的诡异 NPC，伪装平凡 / 突袭玩家）。
     Daoxiang,
+    /// plan-tsy-hostile-v1 §1 — 执念（精英敌对 NPC，伪装道伥后伏击）。
+    Zhinian,
+    /// plan-tsy-hostile-v1 §1 — 负压畸变体（环境威胁，带耗真元光环）。
+    Fuya,
 }
 
 impl NpcArchetype {
@@ -60,6 +64,8 @@ impl NpcArchetype {
             Self::Disciple => "disciple",
             Self::GuardianRelic => "guardian_relic",
             Self::Daoxiang => "daoxiang",
+            Self::Zhinian => "zhinian",
+            Self::Fuya => "fuya",
         }
     }
 
@@ -71,8 +77,9 @@ impl NpcArchetype {
             Self::Beast => 80_000.0,
             Self::Disciple => 140_000.0,
             Self::GuardianRelic => 1_000_000.0,
-            // 道伥不老（与守护者类比）；balance 推 P3。
-            Self::Daoxiang => 1_000_000.0,
+            Self::Daoxiang => 120_000.0,
+            Self::Zhinian => 180_000.0,
+            Self::Fuya => 240_000.0,
         }
     }
 }

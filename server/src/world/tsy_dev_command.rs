@@ -23,7 +23,12 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
+use crate::npc::lifecycle::NpcRegistry;
+use crate::npc::tsy_hostile::{
+    spawn_tsy_hostiles_for_family, TsyContainerSpawnRef, TsySpawnPoolRegistry,
+};
 use crate::world::dimension::DimensionKind;
+use crate::world::dimension::DimensionLayers;
 use crate::world::tsy::{DimensionAnchor, RiftKind, RiftPortal};
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::tsy_container_search::TsyZoneInitialized;
@@ -156,6 +161,9 @@ pub fn apply_tsy_spawn_requests(
     zones: Option<ResMut<ZoneRegistry>>,
     portals: Query<&RiftPortal>,
     container_specs: Option<Res<TsyContainerSpawnRegistry>>,
+    hostile_specs: Option<Res<TsySpawnPoolRegistry>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    mut npc_registry: Option<ResMut<NpcRegistry>>,
     clock: Option<Res<CombatClock>>,
 ) {
     let Some(mut zones) = zones else {
@@ -271,16 +279,51 @@ pub fn apply_tsy_spawn_requests(
         });
 
         // plan-tsy-container-v1 §4.1 — portal 就位后撒容器（如果配置 + clock 都在）
+        let mut spawned_containers = SpawnedTsyContainers::default();
         if let (Some(specs), Some(clk)) = (container_specs.as_ref(), clock.as_ref()) {
-            let relic_count =
+            spawned_containers =
                 spawn_containers_for_family(&req.family_id, specs, &zones, clk.tick, &mut commands);
             zone_init.send(TsyZoneInitialized {
                 family_id: req.family_id.clone(),
-                relic_count,
+                relic_count: spawned_containers.relic_count,
                 at_tick: clk.tick,
             });
         }
+
+        // plan-tsy-hostile-v1 §4 — 同一个 !tsy-spawn 在容器后同步撒 TSY hostile。
+        // `Commands::spawn` 是 deferred，守灵绑定 RelicCore 不能靠 query 回读，直接复用
+        // `spawn_containers_for_family` 返回的 entity 引用。
+        if let (Some(hostiles), Some(layers)) = (hostile_specs.as_ref(), dimension_layers.as_ref())
+        {
+            let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or(0);
+            let summary = spawn_tsy_hostiles_for_family(
+                &mut commands,
+                layers.tsy,
+                &req.family_id,
+                hostiles,
+                &zones,
+                &spawned_containers.relic_cores,
+                tick,
+                npc_registry.as_deref_mut(),
+            );
+            if summary.total() > 0 {
+                tracing::info!(
+                    family = %req.family_id,
+                    daoxiang = summary.daoxiang,
+                    zhinian = summary.zhinian,
+                    fuya = summary.fuya,
+                    sentinel = summary.sentinel,
+                    "[bong][tsy-hostile] spawned hostile NPCs"
+                );
+            }
+        }
     }
+}
+
+#[derive(Default)]
+struct SpawnedTsyContainers {
+    relic_count: u32,
+    relic_cores: Vec<TsyContainerSpawnRef>,
 }
 
 /// 在已注册的 TSY family（3 个 subzone）内撒 LootContainer 实体；返回 RelicCore 总数。
@@ -294,13 +337,13 @@ fn spawn_containers_for_family(
     zones: &ZoneRegistry,
     tick: u64,
     commands: &mut Commands,
-) -> u32 {
+) -> SpawnedTsyContainers {
     let Some(family_specs) = specs.get(family_id) else {
         // 未配置容器 → 静默 skip（不算错误，可能 family 是 ad-hoc 测试用）
-        return 0;
+        return SpawnedTsyContainers::default();
     };
     let mult = origin_multiplier_for_family(family_id);
-    let mut relic_count: u32 = 0;
+    let mut spawned = SpawnedTsyContainers::default();
 
     for depth in [TsyDepth::Shallow, TsyDepth::Mid, TsyDepth::Deep] {
         let layer_specs = family_specs.for_depth(depth);
@@ -328,23 +371,28 @@ fn spawn_containers_for_family(
                     );
                     continue;
                 };
-                commands.spawn((
-                    Position::new([pos.x, pos.y, pos.z]),
-                    LootContainer::new(
-                        spec.kind,
-                        family_id.to_string(),
-                        depth,
-                        spec.loot_pool_id.clone(),
-                        tick,
-                    ),
-                ));
+                let entity = commands
+                    .spawn((
+                        Position::new([pos.x, pos.y, pos.z]),
+                        LootContainer::new(
+                            spec.kind,
+                            family_id.to_string(),
+                            depth,
+                            spec.loot_pool_id.clone(),
+                            tick,
+                        ),
+                    ))
+                    .id();
                 if spec.kind == ContainerKind::RelicCore {
-                    relic_count = relic_count.saturating_add(1);
+                    spawned.relic_count = spawned.relic_count.saturating_add(1);
+                    spawned
+                        .relic_cores
+                        .push(TsyContainerSpawnRef { entity, pos });
                 }
             }
         }
     }
-    relic_count
+    spawned
 }
 
 fn depth_suffix(d: TsyDepth) -> &'static str {

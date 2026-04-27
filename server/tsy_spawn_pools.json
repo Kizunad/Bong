@@ -1,0 +1,30 @@
+{
+  "by_origin": {
+    "daneng_luoluo": {
+      "shallow": { "daoxiang": 2, "zhinian": 0, "fuya": 0 },
+      "mid": { "daoxiang": 4, "zhinian": 2, "fuya": 0 },
+      "deep": { "daoxiang": 6, "zhinian": 4, "fuya": 1 }
+    },
+    "zongmen_yiji": {
+      "shallow": { "daoxiang": 3, "zhinian": 0, "fuya": 0 },
+      "mid": { "daoxiang": 5, "zhinian": 1, "fuya": 0 },
+      "deep": { "daoxiang": 8, "zhinian": 2, "fuya": 0 }
+    },
+    "zhanchang_chendian": {
+      "shallow": { "daoxiang": 4, "zhinian": 0, "fuya": 0 },
+      "mid": { "daoxiang": 6, "zhinian": 0, "fuya": 1 },
+      "deep": { "daoxiang": 10, "zhinian": 1, "fuya": 3 }
+    },
+    "gaoshou_shichu": {
+      "shallow": { "daoxiang": 2, "zhinian": 0, "fuya": 0 },
+      "mid": { "daoxiang": 4, "zhinian": 0, "fuya": 0 },
+      "deep": { "daoxiang": 6, "zhinian": 1, "fuya": 0 }
+    }
+  },
+  "sentinel_count_by_origin": {
+    "daneng_luoluo": 1,
+    "zongmen_yiji": 3,
+    "zhanchang_chendian": 0,
+    "gaoshou_shichu": 0
+  }
+}

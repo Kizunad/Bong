@@ -43,7 +43,11 @@ use crate::inventory::corpse::CorpseEmbalmed;
 use crate::inventory::tsy_loot_spawn::source_class_from_family_id;
 use crate::inventory::DroppedLootRegistry;
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
-use crate::npc::spawn::NpcMarker;
+use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
+use crate::npc::navigator::Navigator;
+use crate::npc::patrol::NpcPatrol;
+use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+use crate::npc::tsy_hostile::TsyHostileMarker;
 use crate::world::dimension::{DimensionLayers, TsyLayer};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, TsyPresence};
@@ -424,9 +428,11 @@ pub fn tsy_collapse_completed_cleanup(
         // 能在塌缩时确定性蒸发。AABB 命中作为额外 sanity（同 family 多次实例化时区分）。
         let spawn_prefix = format!("tsy_spawn:{family}");
         let corpse_prefix = format!("tsy_corpse:{family}/");
+        let npc_drop_prefix = format!("tsy_npc_drop:{family}:");
         loot_registry.entries.retain(|_, entry| {
             let belongs_to_family = entry.source_container_id == spawn_prefix
-                || entry.source_container_id.starts_with(&corpse_prefix);
+                || entry.source_container_id.starts_with(&corpse_prefix)
+                || entry.source_container_id.starts_with(&npc_drop_prefix);
             if !belongs_to_family {
                 return true;
             }
@@ -594,10 +600,60 @@ pub fn spawn_daoxiang_from_corpse(
             },
         ))
         .id();
+    let loadout = NpcCombatLoadout::new(
+        NpcMeleeArchetype::Brawler,
+        MovementCapabilities {
+            can_sprint: false,
+            can_dash: false,
+        },
+    );
+    commands.entity(entity).insert((
+        NpcBlackboard::default(),
+        loadout.clone(),
+        loadout.melee_archetype,
+        loadout.melee_profile(),
+        Navigator::new(),
+        MovementController::new(),
+        loadout.movement_capabilities,
+        MovementCooldowns::default(),
+        NpcPatrol::new(&corpse.family_id, pos),
+        crate::npc::brain::WanderState::default(),
+        daoxiang_lifecycle_thinker(),
+        TsyHostileMarker {
+            family_id: corpse.family_id.clone(),
+        },
+    ));
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
     entity
+}
+
+fn daoxiang_lifecycle_thinker() -> big_brain::prelude::ThinkerBuilder {
+    use big_brain::prelude::{FirstToScore, Thinker};
+
+    Thinker::build()
+        .picker(FirstToScore { threshold: 0.05 })
+        .when(
+            crate::npc::brain::AgeingScorer,
+            crate::npc::brain::RetireAction,
+        )
+        .when(
+            crate::npc::tsy_hostile::DaoxiangInstinctScorer,
+            crate::npc::tsy_hostile::DaoxiangInstinctAction,
+        )
+        .when(
+            crate::npc::brain::MeleeRangeScorer,
+            crate::npc::brain::MeleeAttackAction,
+        )
+        .when(
+            crate::npc::brain::ChaseTargetScorer,
+            crate::npc::brain::ChaseAction,
+        )
+        .when(
+            crate::npc::brain::WanderScorer,
+            crate::npc::brain::WanderAction,
+        )
 }
 
 fn collect_family_aabbs(zones: &ZoneRegistry, family: &str) -> Vec<(DVec3, DVec3)> {
