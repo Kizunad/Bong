@@ -632,9 +632,17 @@ pub fn resolve_attack_intents(
                 )
             })
         {
+            // plan-tsy-loot-v1 §6 — 攻击链路：attacker entity 来自 intent；
+            // attacker_player_id 仅在攻击者是 player 时填（canonical id 形如
+            // "offline:Foo"），NPC 攻击者保留 None。
+            let attacker_player_id = attacker_id
+                .starts_with("offline:")
+                .then(|| attacker_id.clone());
             death_events.send(DeathEvent {
                 target: target_entity,
                 cause: format!("{action_label}:{attacker_id}"),
+                attacker: Some(intent.attacker),
+                attacker_player_id,
                 at_tick: clock.tick,
             });
         }
@@ -1030,6 +1038,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             )]),
             hotbar: Default::default(),
@@ -2542,6 +2551,7 @@ mod tests {
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             )]),
             hotbar: Default::default(),
@@ -2674,6 +2684,7 @@ mod tests {
                         durability: 0.04,
                         freshness: None,
                         mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),
@@ -2799,6 +2810,7 @@ mod tests {
                             durability: 1.0,
                             freshness: None,
                             mineral_id: None,
+                            charges: None,
                         },
                     }],
                 }],
@@ -2818,6 +2830,7 @@ mod tests {
                         durability: 0.04,
                         freshness: None,
                         mineral_id: None,
+                        charges: None,
                     },
                 )]),
                 hotbar: Default::default(),

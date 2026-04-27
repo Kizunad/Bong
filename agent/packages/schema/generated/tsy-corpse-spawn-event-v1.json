@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "tick",
+    "corpse_entity_id",
+    "original_player_id",
+    "original_display_name",
+    "family_id",
+    "death_cause",
+    "pos"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "tsy_corpse_spawn",
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "corpse_entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "original_player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "original_display_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "family_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "death_cause": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "pos": {
+      "minItems": 3,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

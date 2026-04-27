@@ -211,6 +211,9 @@ pub const fn rarity_base_price(rarity: ItemRarity) -> u64 {
         ItemRarity::Rare => 40,
         ItemRarity::Epic => 150,
         ItemRarity::Legendary => 600,
+        // plan-tsy-loot-v1 §1.3：上古遗物"无灵 + 易碎"，市场上无定价（修真者捡到即用）。
+        // 暂以 Common 估价占位，避免 NPC 估价器 panic；真实交易禁用由 P3 商人系统决定。
+        ItemRarity::Ancient => 4,
     }
 }
 
@@ -258,6 +261,7 @@ mod tests {
             durability,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 
@@ -327,6 +331,7 @@ mod tests {
             durability: 0.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         assert!(estimate_item_price(&weird) >= 1);
     }

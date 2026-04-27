@@ -141,6 +141,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 
@@ -173,6 +175,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 
@@ -194,6 +198,8 @@ mod tests {
             .send(DeathEvent {
                 target: victim,
                 cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
                 at_tick: 1,
             });
 

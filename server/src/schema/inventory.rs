@@ -40,6 +40,8 @@ pub enum ItemRarityV1 {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.4 — TSY 上古遗物 wire 形态。
+    Ancient,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -86,6 +88,11 @@ pub struct InventoryItemViewV1 {
     pub scroll_skill_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_xp_grant: Option<u32>,
+    /// plan-tsy-loot-v1 §1.3 — Ancient rarity 物品的"剩余使用次数"。
+    /// `durability` 字段保持 0..=1 normalized 不被破坏；charges 是上古遗物
+    /// tier 1/3/5 的整数计数，每次使用 -= 1，归零销毁。非 ancient 恒为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 /// plan-shelflife-v1 M3a — 衍生 freshness 数据（current_qi + track_state）。
@@ -790,6 +797,7 @@ mod tests {
                 scroll_kind: None,
                 scroll_skill_id: None,
                 scroll_xp_grant: None,
+                charges: None,
             },
         };
         let reserialized = serde_json::to_string(&event).expect("dropped event should serialize");
@@ -945,6 +953,7 @@ mod tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -973,6 +982,7 @@ mod tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
 
         let json = serde_json::to_string(&view).expect("serialize");
@@ -1055,6 +1065,7 @@ mod tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(json.contains("\"mineral_id\":\"fan_tie\""));
@@ -1082,6 +1093,7 @@ mod tests {
             scroll_kind: None,
             scroll_skill_id: None,
             scroll_xp_grant: None,
+            charges: None,
         };
         let json = serde_json::to_string(&view).expect("serialize");
         assert!(

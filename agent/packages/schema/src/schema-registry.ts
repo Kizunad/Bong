@@ -61,7 +61,7 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataV1,
 } from "./server-data.js";
-import { TsyEnterEventV1, TsyExitEventV1 } from "./tsy.js";
+import { TsyCorpseSpawnEventV1, TsyEnterEventV1, TsyExitEventV1 } from "./tsy.js";
 import { VfxEventV1 } from "./vfx-event.js";
 import { WorldStateV1 } from "./world-state.js";
 
@@ -129,6 +129,8 @@ export const SCHEMA_REGISTRY = {
   // plan-tsy-zone-v1 §1.4
   tsyEnterEventV1: TsyEnterEventV1,
   tsyExitEventV1: TsyExitEventV1,
+  // plan-tsy-loot-v1 §4.4
+  tsyCorpseSpawnEventV1: TsyCorpseSpawnEventV1,
 } as const satisfies Record<string, TSchema>;
 
 export const GENERATED_SCHEMA_FILES = {
@@ -220,6 +222,8 @@ export const GENERATED_SCHEMA_FILES = {
   // plan-tsy-zone-v1 §1.4 — JSON Schema 导出供 Rust serde 双端校验
   "tsy-enter-event-v1.json": SCHEMA_REGISTRY.tsyEnterEventV1,
   "tsy-exit-event-v1.json": SCHEMA_REGISTRY.tsyExitEventV1,
+  // plan-tsy-loot-v1 §4.4
+  "tsy-corpse-spawn-event-v1.json": SCHEMA_REGISTRY.tsyCorpseSpawnEventV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

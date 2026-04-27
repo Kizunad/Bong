@@ -10,6 +10,18 @@ use valence::prelude::{
 
 use crate::cultivation::death_hooks::PlayerRevived;
 
+// plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
+pub mod ancient_relics;
+// plan-tsy-loot-v1 §4 — 干尸 component。
+pub mod corpse;
+// plan-tsy-loot-v1 §3 — 秘境内死亡分流。
+pub mod tsy_death_drop;
+// plan-tsy-loot-v1 §2 — 99/1 上古遗物 spawn。
+pub mod tsy_loot_spawn;
+// plan-tsy-loot-v1 §8.2 — 端到端集成测试。
+#[cfg(test)]
+mod tsy_loot_integration_test;
+
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
 const DEFAULT_LOADOUT_PATH: &str = "assets/inventory/loadouts/default.toml";
@@ -90,6 +102,9 @@ pub enum ItemRarity {
     Rare,
     Epic,
     Legendary,
+    /// plan-tsy-loot-v1 §1.1 — 上古遗物，仅由 TSY 自然 spawn 产生，
+    /// 灵质恒为 0（"无灵"），耐久作为"剩余使用次数"语义。
+    Ancient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,6 +168,11 @@ pub struct ItemInstance {
     /// 序列化省略 None 以兼容旧 snapshot（见 freshness）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mineral_id: Option<String>,
+    /// plan-tsy-loot-v1 §1.3 — "剩余使用次数"。Ancient rarity 物品用此存 tier
+    /// 1/3/5 的初始剩余次数，每次使用 -= 1，归零销毁。非 ancient 物品恒为 None；
+    /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charges: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -234,9 +254,20 @@ pub fn register(app: &mut App) {
     app.insert_resource(DefaultLoadout(default_loadout));
     app.insert_resource(InventoryInstanceIdAllocator::default());
     app.insert_resource(DroppedLootRegistry::default());
+    // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
+    app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
+    app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
     app.add_event::<DroppedItemEvent>();
     app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, (apply_death_drop_on_revive, sync_overloaded_marker));
+    app.add_systems(
+        Update,
+        (
+            apply_death_drop_on_revive,
+            sync_overloaded_marker,
+            // plan-tsy-loot-v1 §2.2 — 玩家踏入 family 时 spawn 1% 上古遗物（idempotent）。
+            tsy_loot_spawn::tsy_loot_spawn_on_enter,
+        ),
+    );
 }
 
 pub(crate) fn attach_inventory_to_joined_clients(
@@ -337,6 +368,7 @@ fn instantiate_item_instance(
         durability: template_instance.durability,
         freshness: None,
         mineral_id: None,
+        charges: None,
     })
 }
 
@@ -475,6 +507,7 @@ pub fn add_item_to_player_inventory(
         durability: 1.0,
         freshness: None,
         mineral_id: None,
+        charges: None,
     };
 
     let Some(main_pack) = inventory
@@ -1381,9 +1414,11 @@ pub fn consume_item_instance_once(
 
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
+    mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
     registry: bevy_ecs::system::Res<ItemRegistry>,
     positions: Query<&Position>,
+    presences: Query<&crate::world::tsy::TsyPresence>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
 ) {
@@ -1392,17 +1427,72 @@ pub fn apply_death_drop_on_revive(
             continue;
         };
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
+        let base = positions
+            .get(ev.entity)
+            .map(|pos| pos.0)
+            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
 
+        // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
+        // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
+        if let Ok(presence) = presences.get(ev.entity) {
+            let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
+                &mut inventory,
+                &registry,
+                presence,
+                base,
+                seed,
+            );
+            if tsy_outcome.total_dropped() == 0 {
+                continue;
+            }
+            let mut combined: Vec<DroppedItemRecord> = Vec::new();
+            for (idx, record) in tsy_outcome
+                .entry_carry_dropped
+                .iter()
+                .chain(tsy_outcome.tsy_acquired_dropped.iter())
+                .enumerate()
+            {
+                let entry = DroppedLootEntry {
+                    instance_id: record.instance.instance_id,
+                    source_container_id: record.container_id.clone(),
+                    source_row: record.row,
+                    source_col: record.col,
+                    world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
+                    item: record.instance.clone(),
+                };
+                dropped_registry.entries.insert(entry.instance_id, entry);
+                combined.push(record.clone());
+            }
+
+            // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
+            // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
+            let drop_ids: Vec<u64> = combined.iter().map(|r| r.instance.instance_id).collect();
+            commands.spawn((
+                Position(tsy_outcome.corpse_pos),
+                corpse::CorpseEmbalmed {
+                    family_id: presence.family_id.clone(),
+                    died_at_tick: presence.entered_at_tick, // MVP：用 entered_tick 占位；P2 lifecycle 用真 death tick
+                    death_cause: "tsy_death".to_string(),
+                    drops: drop_ids,
+                    activated_to_daoxiang: false,
+                },
+            ));
+
+            dropped_events.send(DroppedItemEvent {
+                entity: ev.entity,
+                revision: inventory.revision,
+                dropped: combined,
+            });
+            continue;
+        }
+
+        // ----- 主世界路径（保持原 §十二 50% 行为） -----
         let outcome = apply_death_drop_to_inventory(&mut inventory, &registry, seed);
 
         if outcome.dropped.is_empty() {
             continue;
         }
 
-        let base = positions
-            .get(ev.entity)
-            .map(|pos| pos.0)
-            .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
         for (idx, dropped) in outcome.dropped.iter().enumerate() {
             let entry = DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
@@ -1688,7 +1778,7 @@ fn death_drop_seed(entity: Entity, revision: u64) -> u64 {
         .wrapping_add(revision.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn select_drop_instance_ids(
+pub(crate) fn select_drop_instance_ids(
     mut instance_ids: Vec<u64>,
     drop_count: usize,
     mut seed: u64,
@@ -1712,7 +1802,7 @@ fn xorshift64(mut x: u64) -> u64 {
     x
 }
 
-fn bump_revision(inventory: &mut PlayerInventory) {
+pub(crate) fn bump_revision(inventory: &mut PlayerInventory) {
     inventory.revision = InventoryRevision(inventory.revision.0.saturating_add(1));
 }
 
@@ -2303,6 +2393,7 @@ fn build_item_instance_from_template(
         durability,
         freshness: None,
         mineral_id: None,
+        charges: None,
     })
 }
 
@@ -2844,6 +2935,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -2954,6 +3046,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3007,6 +3100,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         });
 
@@ -3180,6 +3274,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3220,6 +3315,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3250,6 +3346,7 @@ cols = 4
                 durability: 0.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3319,6 +3416,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3335,6 +3433,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3352,6 +3451,7 @@ cols = 4
                 durability: 0.5,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3412,6 +3512,7 @@ cols = 4
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             });
         }
@@ -3455,6 +3556,7 @@ cols = 4
                     durability: 1.0,
                     freshness: None,
                     mineral_id: None,
+                    charges: None,
                 },
             },
         );
@@ -3543,6 +3645,7 @@ cols = 4
                 durability: 0.75,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3601,6 +3704,7 @@ cols = 4
                 durability: 0.25,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3629,6 +3733,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3646,6 +3751,7 @@ cols = 4
                 durability: 1.0,
                 freshness: None,
                 mineral_id: None,
+                charges: None,
             },
         );
 
@@ -3701,6 +3807,7 @@ cols = 4
             durability: 1.0,
             freshness: None,
             mineral_id: None,
+            charges: None,
         }
     }
 

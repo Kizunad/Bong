@@ -79,3 +79,34 @@ export type TsyExitEventV1 = Static<typeof TsyExitEventV1>;
 export function validateTsyExitEventV1Contract(data: unknown): ValidationResult {
   return validate(TsyExitEventV1, data);
 }
+
+/** plan-tsy-loot-v1 §4.4 — 玩家在 TSY 内死亡时 spawn 的干尸事件。
+ *
+ *  Server → Agent 单向；agent 用此事件做"留下了一具干尸"narration / 后续 P2
+ *  lifecycle 道伥激活推演。
+ *
+ *  - `corpse_entity_id`：server 端 ECS Entity 序列化值（与 `canonical_npc_id` 同
+ *    格式 `"npc_{idx}v{gen}"`），用于 client / agent 引用同一具干尸。
+ *  - `original_player_id`：canonical 玩家 id（如 `"offline:Foo"`）。
+ *  - `family_id`：所在 TSY family（如 `"tsy_lingxu_01"`），与 zone 名同源。
+ *  - `pos`：死亡点世界坐标 `[x, y, z]`，f64 精度。
+ */
+export const TsyCorpseSpawnEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("tsy_corpse_spawn"),
+    tick: Type.Number({ minimum: 0 }),
+    corpse_entity_id: Type.String({ minLength: 1 }),
+    original_player_id: Type.String({ minLength: 1 }),
+    original_display_name: Type.String({ minLength: 1 }),
+    family_id: Type.String({ minLength: 1 }),
+    death_cause: Type.String({ minLength: 1 }),
+    pos: Type.Array(Type.Number(), { minItems: 3, maxItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type TsyCorpseSpawnEventV1 = Static<typeof TsyCorpseSpawnEventV1>;
+
+export function validateTsyCorpseSpawnEventV1Contract(data: unknown): ValidationResult {
+  return validate(TsyCorpseSpawnEventV1, data);
+}
