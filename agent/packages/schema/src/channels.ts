@@ -51,6 +51,14 @@ export const CHANNELS = {
   /** Server → Agent: 夺舍公开流水（plan-death-lifecycle-v1 §7） */
   DUO_SHE_EVENT: "bong:duo_she_event",
 
+  /** Server → Agent: 天劫统一事件流（plan-tribulation-v1 §6） */
+  TRIBULATION: "bong:tribulation",
+  TRIBULATION_OMEN: "bong:tribulation/omen",
+  TRIBULATION_LOCK: "bong:tribulation/lock",
+  TRIBULATION_WAVE: "bong:tribulation/wave",
+  TRIBULATION_SETTLE: "bong:tribulation/settle",
+  TRIBULATION_COLLAPSE: "bong:tribulation/collapse",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -107,6 +115,12 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.AGING,
   CHANNELS.LIFESPAN_EVENT,
   CHANNELS.DUO_SHE_EVENT,
+  CHANNELS.TRIBULATION,
+  CHANNELS.TRIBULATION_OMEN,
+  CHANNELS.TRIBULATION_LOCK,
+  CHANNELS.TRIBULATION_WAVE,
+  CHANNELS.TRIBULATION_SETTLE,
+  CHANNELS.TRIBULATION_COLLAPSE,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,

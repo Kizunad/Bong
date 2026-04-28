@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "ascended",
+      "type": "string"
+    },
+    {
+      "const": "half_step",
+      "type": "string"
+    },
+    {
+      "const": "failed",
+      "type": "string"
+    },
+    {
+      "const": "killed",
+      "type": "string"
+    },
+    {
+      "const": "fled",
+      "type": "string"
+    }
+  ]
+}

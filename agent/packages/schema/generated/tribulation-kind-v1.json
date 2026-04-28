@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "du_xu",
+      "type": "string"
+    },
+    {
+      "const": "zone_collapse",
+      "type": "string"
+    },
+    {
+      "const": "targeted",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "char_id",
+    "outcome",
+    "waves_survived"
+  ],
+  "properties": {
+    "char_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "const": "ascended",
+          "type": "string"
+        },
+        {
+          "const": "half_step",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        },
+        {
+          "const": "killed",
+          "type": "string"
+        },
+        {
+          "const": "fled",
+          "type": "string"
+        }
+      ]
+    },
+    "killer": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "waves_survived": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

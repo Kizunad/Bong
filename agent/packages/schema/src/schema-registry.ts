@@ -34,6 +34,7 @@ import {
   AlchemyTurnPageRequestV1,
   BotanyHarvestRequestV1,
   BreakthroughRequestV1,
+  AbortTribulationRequestV1,
   CancelExtractRequestV1,
   CombatCreateNewCharacterRequestV1,
   CombatReincarnateRequestV1,
@@ -55,6 +56,7 @@ import {
   SetMeridianTargetRequestV1,
   SkillBarBindRequestV1,
   SkillBarCastRequestV1,
+  StartDuXuRequestV1,
   StartExtractRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
@@ -111,6 +113,13 @@ import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
 import { NarrationV1 } from "./narration.js";
+import {
+  DuXuOutcomeV1,
+  DuXuResultV1,
+  TribulationEventV1,
+  TribulationKindV1,
+  TribulationPhaseV1,
+} from "./tribulation.js";
 import {
   ServerDataAlchemyContaminationV1,
   ServerDataAlchemyFurnaceV1,
@@ -216,9 +225,16 @@ export const SCHEMA_REGISTRY = {
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
+  tribulationKindV1: TribulationKindV1,
+  tribulationPhaseV1: TribulationPhaseV1,
+  duXuOutcomeV1: DuXuOutcomeV1,
+  duXuResultV1: DuXuResultV1,
+  tribulationEventV1: TribulationEventV1,
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
+  clientRequestStartDuXuV1: StartDuXuRequestV1,
+  clientRequestAbortTribulationV1: AbortTribulationRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
@@ -383,10 +399,18 @@ export const GENERATED_SCHEMA_FILES = {
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
+  "tribulation-kind-v1.json": SCHEMA_REGISTRY.tribulationKindV1,
+  "tribulation-phase-v1.json": SCHEMA_REGISTRY.tribulationPhaseV1,
+  "du-xu-outcome-v1.json": SCHEMA_REGISTRY.duXuOutcomeV1,
+  "du-xu-result-v1.json": SCHEMA_REGISTRY.duXuResultV1,
+  "tribulation-event-v1.json": SCHEMA_REGISTRY.tribulationEventV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,
   "client-request-breakthrough-v1.json": SCHEMA_REGISTRY.clientRequestBreakthroughV1,
+  "client-request-start-du-xu-v1.json": SCHEMA_REGISTRY.clientRequestStartDuXuV1,
+  "client-request-abort-tribulation-v1.json":
+    SCHEMA_REGISTRY.clientRequestAbortTribulationV1,
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
