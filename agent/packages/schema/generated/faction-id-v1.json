@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "attack",
+      "type": "string"
+    },
+    {
+      "const": "defend",
+      "type": "string"
+    },
+    {
+      "const": "neutral",
+      "type": "string"
+    }
+  ]
+}

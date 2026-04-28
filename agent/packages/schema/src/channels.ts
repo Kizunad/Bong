@@ -51,6 +51,15 @@ export const CHANNELS = {
   /** Server → Agent: 夺舍公开流水（plan-death-lifecycle-v1 §7） */
   DUO_SHE_EVENT: "bong:duo_she_event",
 
+  /** Server → Agent: NPC 生成事件（plan-npc-ai-v1 §6） */
+  NPC_SPAWN: "bong:npc/spawn",
+
+  /** Server → Agent: NPC 死亡事件（plan-npc-ai-v1 §6） */
+  NPC_DEATH: "bong:npc/death",
+
+  /** Server → Agent: 派系状态变更事件（plan-npc-ai-v1 §6） */
+  FACTION_EVENT: "bong:faction/event",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -107,6 +116,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.AGING,
   CHANNELS.LIFESPAN_EVENT,
   CHANNELS.DUO_SHE_EVENT,
+  CHANNELS.NPC_SPAWN,
+  CHANNELS.NPC_DEATH,
+  CHANNELS.FACTION_EVENT,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,

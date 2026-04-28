@@ -1,0 +1,40 @@
+{
+  "anyOf": [
+    {
+      "const": "zombie",
+      "type": "string"
+    },
+    {
+      "const": "commoner",
+      "type": "string"
+    },
+    {
+      "const": "rogue",
+      "type": "string"
+    },
+    {
+      "const": "beast",
+      "type": "string"
+    },
+    {
+      "const": "disciple",
+      "type": "string"
+    },
+    {
+      "const": "guardian_relic",
+      "type": "string"
+    },
+    {
+      "const": "daoxiang",
+      "type": "string"
+    },
+    {
+      "const": "zhinian",
+      "type": "string"
+    },
+    {
+      "const": "fuya",
+      "type": "string"
+    }
+  ]
+}

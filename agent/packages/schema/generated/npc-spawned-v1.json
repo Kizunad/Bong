@@ -1,0 +1,118 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "npc_id",
+    "archetype",
+    "source",
+    "zone",
+    "pos",
+    "initial_age_ticks",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "npc_spawned",
+      "type": "string"
+    },
+    "npc_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "archetype": {
+      "anyOf": [
+        {
+          "const": "zombie",
+          "type": "string"
+        },
+        {
+          "const": "commoner",
+          "type": "string"
+        },
+        {
+          "const": "rogue",
+          "type": "string"
+        },
+        {
+          "const": "beast",
+          "type": "string"
+        },
+        {
+          "const": "disciple",
+          "type": "string"
+        },
+        {
+          "const": "guardian_relic",
+          "type": "string"
+        },
+        {
+          "const": "daoxiang",
+          "type": "string"
+        },
+        {
+          "const": "zhinian",
+          "type": "string"
+        },
+        {
+          "const": "fuya",
+          "type": "string"
+        }
+      ]
+    },
+    "source": {
+      "anyOf": [
+        {
+          "const": "startup",
+          "type": "string"
+        },
+        {
+          "const": "seed",
+          "type": "string"
+        },
+        {
+          "const": "reproduction",
+          "type": "string"
+        },
+        {
+          "const": "agent_command",
+          "type": "string"
+        }
+      ]
+    },
+    "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "initial_age_ticks": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}

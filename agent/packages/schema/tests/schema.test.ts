@@ -29,6 +29,11 @@ import {
 } from "../src/common.js";
 import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
+import {
+  FactionEventV1,
+  NpcDeathV1,
+  NpcSpawnedV1,
+} from "../src/npc.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import {
@@ -180,6 +185,41 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("tsy-sentinel-phase-changed.sample.json");
     const result = validate(TsySentinelPhaseChangedV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("validates NPC and faction event payloads", () => {
+    expect(validate(NpcSpawnedV1, {
+      v: 1,
+      kind: "npc_spawned",
+      npc_id: "npc_1v1",
+      archetype: "rogue",
+      source: "agent_command",
+      zone: "spawn",
+      pos: [1, 66, 2],
+      initial_age_ticks: 0,
+      at_tick: 0,
+    }).ok).toBe(true);
+
+    expect(validate(NpcDeathV1, {
+      v: 1,
+      kind: "npc_death",
+      npc_id: "npc_1v1",
+      archetype: "commoner",
+      cause: "natural_aging",
+      age_ticks: 10,
+      max_age_ticks: 10,
+      at_tick: 0,
+    }).ok).toBe(true);
+
+    expect(validate(FactionEventV1, {
+      v: 1,
+      kind: "faction_event",
+      faction_id: "attack",
+      event_kind: "adjust_loyalty_bias",
+      loyalty_bias: 0.6,
+      mission_queue_size: 1,
+      at_tick: 0,
+    }).ok).toBe(true);
   });
 
   it("server-data.botany-harvest-progress.sample.json", () => {
@@ -697,7 +737,7 @@ describe("schema rejects invalid data", () => {
 
   it("accepts spawn_npc command rows", () => {
     const data = loadObjectSample("agent-command.sample.json");
-    data.commands = [{ type: "spawn_npc", target: "spawn", params: { archetype: "zombie" } }];
+    data.commands = [{ type: "spawn_npc", target: "spawn", params: { archetype: "beast", count: 2 } }];
     expectContractAccepts(
       "AgentCommandV1 spawn_npc parity gate",
       validateAgentCommandV1Contract,
@@ -732,6 +772,26 @@ describe("schema rejects invalid data", () => {
       "AgentCommandV1 faction_event parity gate",
       validateAgentCommandV1Contract,
       data,
+    );
+  });
+
+  it("rejects unsupported npc behavior and faction params", () => {
+    const badBehavior = loadObjectSample("agent-command.sample.json");
+    badBehavior.commands = [{ type: "npc_behavior", target: "npc_1v1", params: {} }];
+    expectContractRejects(
+      "AgentCommandV1 npc_behavior requires flee_threshold",
+      validateAgentCommandV1Contract,
+      badBehavior,
+    );
+
+    const badFaction = loadObjectSample("agent-command.sample.json");
+    badFaction.commands = [
+      { type: "faction_event", target: "neutral", params: { kind: "invent", faction_id: "sky" } },
+    ];
+    expectContractRejects(
+      "AgentCommandV1 faction_event kind/faction whitelist",
+      validateAgentCommandV1Contract,
+      badFaction,
     );
   });
 
