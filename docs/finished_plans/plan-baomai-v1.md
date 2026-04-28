@@ -563,5 +563,5 @@ Client：
 - 提交：`9a3b4472 feat(server): 接通爆脉崩拳真实结算`
 - 提交：`2cc83134 feat(client): 支持崩拳目标与表现`
 - Server gate：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，1690 passed。
-- Agent schema gate：`npm test && npm run generate:check && npm run build`，192 passed，157 generated schemas fresh。
+- Agent schema gate：`npm test && npm run generate:check && npm run build`，194 passed，161 generated schemas fresh。
 - Client gate：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`，BUILD SUCCESSFUL。
