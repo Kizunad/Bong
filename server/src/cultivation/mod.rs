@@ -182,7 +182,9 @@ pub fn register(app: &mut App) {
             tribulation_aoe_system.after(tribulation_phase_tick_system),
             tribulation_failure_system.after(tribulation_aoe_system),
             tribulation_wave_system.after(tribulation_failure_system),
-            tribulation_intercept_death_system.after(crate::combat::lifecycle::death_arbiter_tick),
+            tribulation_intercept_death_system
+                .after(crate::combat::lifecycle::death_arbiter_tick)
+                .before(crate::inventory::apply_death_drop_on_revive),
         ),
     );
     app.add_systems(

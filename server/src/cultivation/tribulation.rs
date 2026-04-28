@@ -18,6 +18,7 @@ use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
+use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::schema::tribulation::{
@@ -571,6 +572,7 @@ pub fn tribulation_intercept_death_system(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     mut q: Query<(&TribulationState, &Lifecycle)>,
+    mut inventories: Query<&mut PlayerInventory>,
     mut settled: EventWriter<TribulationSettled>,
 ) {
     for death in deaths.read() {
@@ -585,6 +587,23 @@ pub fn tribulation_intercept_death_system(
                 "[bong][cultivation] failed to clear intercepted tribulation for {:?}: {error}",
                 death.target,
             );
+        }
+        if let Some(killer_entity) = death.attacker.filter(|attacker| *attacker != death.target) {
+            let loot_outcome = inventories
+                .get_many_mut([death.target, killer_entity])
+                .ok()
+                .map(|[mut victim_inventory, mut killer_inventory]| {
+                    transfer_all_inventory_contents(&mut victim_inventory, &mut killer_inventory)
+                });
+            if let Some(outcome) = loot_outcome {
+                tracing::info!(
+                    "[bong][cultivation] {:?} intercepted DuXu target {:?}; transferred {} item(s), {} bone coin(s)",
+                    killer_entity,
+                    death.target,
+                    outcome.items_moved,
+                    outcome.bone_coins_moved,
+                );
+            }
         }
         settled.send(TribulationSettled {
             entity: death.target,
@@ -725,6 +744,10 @@ mod tests {
     use crate::cultivation::lifespan::{
         DeathRegistry, LifespanCapTable, LifespanComponent, ZoneDeathKind,
     };
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    };
     use crate::network::redis_bridge::RedisOutbound;
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
@@ -774,6 +797,54 @@ mod tests {
             meridian.opened_at = idx as u64;
         }
         meridians
+    }
+
+    fn test_item(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: format!("test_item_{instance_id}"),
+            display_name: format!("test {instance_id}"),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: "test".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
+    fn test_inventory(items: Vec<ItemInstance>, bone_coins: u64) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 5,
+                items: items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, instance)| PlacedItemState {
+                        row: (idx / 5) as u8,
+                        col: (idx % 5) as u8,
+                        instance,
+                    })
+                    .collect(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins,
+            max_weight: 50.0,
+        }
     }
 
     #[test]
@@ -1006,6 +1077,90 @@ mod tests {
                 .is_none(),
             "failed tribulation should clear active row"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn intercepted_tribulation_transfers_all_inventory_to_killer() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("intercept-loot-transfer");
+        app.insert_resource(settings.clone());
+        app.add_event::<DeathEvent>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, tribulation_intercept_death_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec!["offline:Victim".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                test_inventory(vec![test_item(101), test_item(102)], 7),
+            ))
+            .id();
+        let killer = app
+            .world_mut()
+            .spawn(test_inventory(vec![test_item(201)], 3))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "pvp:offline:Killer".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("offline:Killer".to_string()),
+            at_tick: 120,
+        });
+
+        app.update();
+
+        let victim_inventory = app
+            .world()
+            .get::<PlayerInventory>(victim)
+            .expect("victim inventory should remain attached");
+        assert_eq!(victim_inventory.bone_coins, 0);
+        assert!(victim_inventory
+            .containers
+            .iter()
+            .all(|container| container.items.is_empty()));
+        assert!(victim_inventory.equipped.is_empty());
+        assert!(victim_inventory.hotbar.iter().all(Option::is_none));
+
+        let killer_inventory = app
+            .world()
+            .get::<PlayerInventory>(killer)
+            .expect("killer inventory should remain attached");
+        assert_eq!(killer_inventory.bone_coins, 10);
+        let killer_item_ids = killer_inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed| placed.instance.instance_id)
+            .collect::<Vec<_>>();
+        assert!(killer_item_ids.contains(&101));
+        assert!(killer_item_ids.contains(&102));
+        assert!(killer_item_ids.contains(&201));
+
+        assert!(app.world().get::<TribulationState>(victim).is_none());
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
+        assert_eq!(emitted[0].result.killer.as_deref(), Some("offline:Killer"));
 
         let _ = fs::remove_dir_all(root);
     }

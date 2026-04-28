@@ -1553,6 +1553,14 @@ pub struct DeathDropOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct FullInventoryTransferOutcome {
+    pub items_moved: usize,
+    pub bone_coins_moved: u64,
+    pub from_revision: InventoryRevision,
+    pub to_revision: InventoryRevision,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DroppedLootEntry {
     pub instance_id: u64,
     pub source_container_id: String,
@@ -2086,6 +2094,77 @@ pub fn apply_death_drop_to_inventory(
         revision: inventory.revision,
         dropped,
     }
+}
+
+pub fn transfer_all_inventory_contents(
+    from: &mut PlayerInventory,
+    to: &mut PlayerInventory,
+) -> FullInventoryTransferOutcome {
+    let mut items = Vec::new();
+    for container in &mut from.containers {
+        items.extend(container.items.drain(..).map(|placed| placed.instance));
+    }
+    items.extend(from.equipped.drain().map(|(_, item)| item));
+    for slot in &mut from.hotbar {
+        if let Some(item) = slot.take() {
+            items.push(item);
+        }
+    }
+
+    let moved_items = items.len();
+    for item in items {
+        force_attach_item_to_inventory(to, item);
+    }
+
+    let bone_coin_room = JS_SAFE_INTEGER_MAX.saturating_sub(to.bone_coins);
+    let moved_bone_coins = from.bone_coins.min(bone_coin_room);
+    if moved_bone_coins > 0 {
+        from.bone_coins = from.bone_coins.saturating_sub(moved_bone_coins);
+        to.bone_coins = to.bone_coins.saturating_add(moved_bone_coins);
+    }
+
+    if moved_items > 0 || moved_bone_coins > 0 {
+        bump_revision(from);
+        bump_revision(to);
+    }
+
+    FullInventoryTransferOutcome {
+        items_moved: moved_items,
+        bone_coins_moved: moved_bone_coins,
+        from_revision: from.revision,
+        to_revision: to.revision,
+    }
+}
+
+fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, item: ItemInstance) {
+    if let Some(location) = find_first_fit_container_location(inventory, &item) {
+        if attach_at_location(inventory, item.clone(), &location).is_ok() {
+            return;
+        }
+    }
+
+    let target_idx = inventory
+        .containers
+        .iter()
+        .position(|container| container.id == MAIN_PACK_CONTAINER_ID)
+        .or_else(|| (!inventory.containers.is_empty()).then_some(0))
+        .unwrap_or_else(|| {
+            inventory.containers.push(ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 16,
+                cols: 16,
+                items: Vec::new(),
+            });
+            inventory.containers.len() - 1
+        });
+    inventory.containers[target_idx]
+        .items
+        .push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item,
+        });
 }
 
 pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
@@ -4783,6 +4862,69 @@ cols = 4
                 .template_id,
             "pill"
         );
+    }
+
+    #[test]
+    fn transfer_all_contents_moves_containers_equipped_hotbar_and_bone_coins() {
+        let mut from = make_empty_inventory();
+        from.revision = InventoryRevision(12);
+        from.bone_coins = 9;
+        from.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "主背包".to_string(),
+            rows: 2,
+            cols: 2,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(1, "spirit_grass"),
+            }],
+        });
+        from.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            make_test_item_instance(2, "iron_sword"),
+        );
+        from.hotbar[4] = Some(make_test_item_instance(3, "guyuan_pill"));
+
+        let mut to = make_empty_inventory();
+        to.revision = InventoryRevision(20);
+        to.bone_coins = 5;
+        to.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "主背包".to_string(),
+            rows: 3,
+            cols: 3,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(9, "existing"),
+            }],
+        });
+
+        let outcome = transfer_all_inventory_contents(&mut from, &mut to);
+
+        assert_eq!(outcome.items_moved, 3);
+        assert_eq!(outcome.bone_coins_moved, 9);
+        assert_eq!(outcome.from_revision, InventoryRevision(13));
+        assert_eq!(outcome.to_revision, InventoryRevision(21));
+        assert_eq!(from.bone_coins, 0);
+        assert!(from
+            .containers
+            .iter()
+            .all(|container| container.items.is_empty()));
+        assert!(from.equipped.is_empty());
+        assert!(from.hotbar.iter().all(Option::is_none));
+
+        assert_eq!(to.bone_coins, 14);
+        let moved_ids: Vec<u64> = to
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed| placed.instance.instance_id)
+            .collect();
+        for expected in [1, 2, 3, 9] {
+            assert!(moved_ids.contains(&expected));
+        }
     }
 
     #[test]
