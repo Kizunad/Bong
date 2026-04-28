@@ -396,21 +396,36 @@ pub fn lifespan_aging_tick(
         Option<&Position>,
         Option<&Lifecycle>,
         Option<&LifeRecord>,
+        Option<&crate::npc::lifecycle::NpcArchetype>,
     )>,
 ) {
     let persistence = persistence.as_deref();
     let zones = zones.as_deref();
 
-    for (entity, mut lifespan, cultivation, player_state, position, lifecycle, life_record) in
-        &mut actors
+    for (
+        entity,
+        mut lifespan,
+        cultivation,
+        player_state,
+        position,
+        lifecycle,
+        life_record,
+        npc_archetype,
+    ) in &mut actors
     {
+        if npc_archetype.is_some_and(|archetype| !archetype.uses_lifespan_aging()) {
+            continue;
+        }
         if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
             continue;
         }
 
         let previous_years_lived = lifespan.years_lived;
         let previous_remaining = lifespan.remaining_years();
-        let cap = lifespan_cap_for_actor(cultivation, player_state);
+        let cap = match npc_archetype.copied() {
+            Some(crate::npc::lifecycle::NpcArchetype::Commoner) => LifespanCapTable::MORTAL,
+            _ => lifespan_cap_for_actor(cultivation, player_state),
+        };
         lifespan.apply_cap(cap);
 
         let multiplier = lifespan_tick_rate_multiplier(position, zones);

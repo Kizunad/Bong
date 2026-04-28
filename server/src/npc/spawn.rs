@@ -6,7 +6,8 @@ use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId, Update, With,
+    EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId,
+    Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -25,7 +26,8 @@ use crate::npc::faction::{
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
-    npc_runtime_bundle, NpcArchetype, NpcLifespan, NpcRegistry, NpcReproductionRequest,
+    npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry,
+    NpcReproductionRequest, NpcSpawnNotice, NpcSpawnSource,
 };
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
@@ -283,8 +285,10 @@ pub(crate) fn initial_age_for_index(index: u32, max_age_ticks: f64, max_ratio: f
     (bucket * max_ratio).clamp(0.0, 1.0) * max_age_ticks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_initial_rogue_population_on_startup(
     mut commands: Commands,
+    mut notices: EventWriter<NpcSpawnNotice>,
     config: Option<Res<RoguePopulationSeedConfig>>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
@@ -374,7 +378,7 @@ fn seed_initial_rogue_population_on_startup(
         for _ in 0..count {
             let (pos, patrol_target) = seed_position_for_zone(zone, global_index);
             let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
-            spawn_rogue_npc_at(
+            let entity = spawn_rogue_npc_at(
                 &mut commands,
                 NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
                 layer,
@@ -383,6 +387,14 @@ fn seed_initial_rogue_population_on_startup(
                 patrol_target,
                 age,
             );
+            notices.send(spawn_notice(
+                entity,
+                NpcArchetype::Rogue,
+                NpcSpawnSource::Seed,
+                zone.name.as_str(),
+                pos,
+                age,
+            ));
             global_index += 1;
         }
     }
@@ -401,6 +413,7 @@ fn seed_initial_rogue_population_on_startup(
 fn process_npc_reproduction_requests(
     mut commands: Commands,
     mut requests: EventReader<NpcReproductionRequest>,
+    mut notices: EventWriter<NpcSpawnNotice>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
@@ -480,6 +493,14 @@ fn process_npc_reproduction_requests(
             request.home_zone,
             request.position
         );
+        notices.send(spawn_notice(
+            entity,
+            request.archetype,
+            NpcSpawnSource::Reproduction,
+            request.home_zone.as_str(),
+            request.position,
+            request.initial_age_ticks.max(0.0),
+        ));
     }
 }
 
@@ -495,12 +516,25 @@ fn startup_npc_thinker() -> ThinkerBuilder {
 fn spawn_single_zombie_npc_on_startup(
     mut commands: Commands,
     dimension_layers: Option<Res<crate::world::dimension::DimensionLayers>>,
+    mut notices: EventWriter<NpcSpawnNotice>,
 ) {
     let Some(dimension_layers) = dimension_layers else {
         return;
     };
     let layer = dimension_layers.overworld;
     let npc_entity = spawn_single_zombie_npc(&mut commands, layer);
+    notices.send(spawn_notice(
+        npc_entity,
+        NpcArchetype::Zombie,
+        NpcSpawnSource::Startup,
+        DEFAULT_SPAWN_ZONE_NAME,
+        DVec3::new(
+            NPC_SPAWN_POSITION[0],
+            NPC_SPAWN_POSITION[1],
+            NPC_SPAWN_POSITION[2],
+        ),
+        0.0,
+    ));
 
     tracing::info!(
         "[bong][npc] spawned zombie npc entity {npc_entity:?} at [{}, {}, {}]",
@@ -618,12 +652,7 @@ pub fn spawn_rogue_npc_at(
         rogue_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Rogue);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Rogue.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -632,7 +661,7 @@ pub fn spawn_rogue_npc_at(
 /// Spawn a Commoner NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
-/// any value `< NpcLifespan::for_archetype(Commoner).max_age_ticks`.
+/// any value below the Commoner default max age.
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -665,12 +694,7 @@ pub fn spawn_commoner_npc_at(
         commoner_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Commoner);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Commoner.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -831,12 +855,7 @@ pub fn spawn_beast_npc_at(
         beast_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Beast.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -915,12 +934,7 @@ pub fn spawn_disciple_npc_at(
         disciple_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Disciple);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Disciple.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -1042,6 +1056,24 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             NPC_SPAWN_POSITION[2],
         ),
     )
+}
+
+pub fn spawn_notice(
+    entity: Entity,
+    archetype: NpcArchetype,
+    source: NpcSpawnSource,
+    home_zone: &str,
+    position: DVec3,
+    initial_age_ticks: f64,
+) -> NpcSpawnNotice {
+    NpcSpawnNotice {
+        npc_id: crate::npc::brain::canonical_npc_id(entity),
+        archetype,
+        source,
+        home_zone: home_zone.to_string(),
+        position,
+        initial_age_ticks,
+    }
 }
 
 #[cfg(test)]
@@ -1499,6 +1531,7 @@ mod tests {
         app.insert_resource(zones);
         app.insert_resource(NpcRegistry::default());
         app.insert_resource(RoguePopulationSeedConfig::default());
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1552,6 +1585,7 @@ mod tests {
             target_count: 0,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1577,6 +1611,7 @@ mod tests {
             target_count: 10,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1601,6 +1636,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1637,6 +1673,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1673,6 +1710,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1708,6 +1746,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1740,6 +1779,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         let mut registry = NpcRegistry::default();
         registry.live_npc_count = registry.max_npc_count;
         registry.spawn_paused = true;
