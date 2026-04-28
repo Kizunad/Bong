@@ -382,6 +382,7 @@
         "required": [
           "id",
           "kind",
+          "zone",
           "pos",
           "state",
           "blackboard"
@@ -391,6 +392,9 @@
             "type": "string"
           },
           "kind": {
+            "type": "string"
+          },
+          "zone": {
             "type": "string"
           },
           "pos": {

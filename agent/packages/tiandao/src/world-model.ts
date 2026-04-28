@@ -558,6 +558,7 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
   const clonedNpcs: NpcSnapshot[] = state.npcs.map((npc): NpcSnapshot => ({
     id: npc.id,
     kind: npc.kind,
+    zone: npc.zone,
     pos: [...npc.pos],
     state: npc.state,
     blackboard: { ...npc.blackboard },

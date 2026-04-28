@@ -54,13 +54,18 @@ function produceSpiritQiRogueSpawns(
   }
 
   const rogueCount = state.npcs.filter(
-    (npc) => npc.digest?.archetype === "rogue" && nearestZoneName(state, npc.pos) === zone.name,
+    (npc) => npc.digest?.archetype === "rogue" && npc.zone === zone.name,
   ).length;
   if (rogueCount >= ROGUE_SPAWN_MAX_PER_ZONE) {
     return null;
   }
 
-  const count = Math.min(MAX_COMMANDS_PER_TICK, Math.max(1, Math.ceil((zone.spirit_qi - 0.68) * 10)));
+  const availableSlots = ROGUE_SPAWN_MAX_PER_ZONE - rogueCount;
+  const count = Math.min(
+    MAX_COMMANDS_PER_TICK,
+    availableSlots,
+    Math.max(1, Math.ceil((zone.spirit_qi - 0.68) * 10)),
+  );
   return decision([
     {
       type: "spawn_npc",
@@ -175,10 +180,6 @@ function selectRogueSpawnZone(state: WorldStateV1, worldModel?: WorldModel): Zon
     });
 
   return candidates[0]?.zone ?? null;
-}
-
-function nearestZoneName(state: WorldStateV1, _pos: readonly [number, number, number]): string | null {
-  return state.zones[0]?.name ?? null;
 }
 
 function hasTribulationSignal(

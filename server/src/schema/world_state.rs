@@ -43,6 +43,7 @@ pub struct PlayerProfile {
 pub struct NpcSnapshot {
     pub id: String,
     pub kind: String,
+    pub zone: String,
     pub pos: Vec3,
     pub state: NpcStateKind,
     pub blackboard: HashMap<String, serde_json::Value>,

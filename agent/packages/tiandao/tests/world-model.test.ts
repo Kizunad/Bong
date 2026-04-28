@@ -367,6 +367,7 @@ describe("WorldModel", () => {
         {
           id: "npc_disciple_001",
           kind: "zombie",
+          zone: "starter_zone",
           pos: [1, 64, 1],
           state: "idle",
           blackboard: {},

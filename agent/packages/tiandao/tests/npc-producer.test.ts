@@ -62,6 +62,7 @@ describe("deterministic NPC producer", () => {
     state.npcs = Array.from({ length: 12 }, (_, index) => ({
       id: `npc_${index}v1`,
       kind: "minecraft:zombie",
+      zone: "green_cloud_peak",
       pos: [0, 64, 0],
       state: "idle",
       blackboard: {},
@@ -72,6 +73,32 @@ describe("deterministic NPC producer", () => {
       },
     }));
     expect(produce(state)).toEqual([]);
+  });
+
+  it("counts existing rogues by explicit NPC zone and clamps to remaining slots", () => {
+    const state = createTestWorldState();
+    state.tick = 1_200;
+    state.zones = [zone("starter_zone", 0.4), zone("green_cloud_peak", 0.95)];
+    state.npcs = Array.from({ length: 11 }, (_, index) => ({
+      id: `npc_${index}v1`,
+      kind: "minecraft:zombie",
+      zone: "green_cloud_peak",
+      pos: [200 + index, 64, 200],
+      state: "idle",
+      blackboard: {},
+      digest: {
+        archetype: "rogue",
+        age_band: "adult",
+        age_ratio: 0.2,
+      },
+    }));
+
+    const command = firstCommand(state);
+    expect(command).toMatchObject({
+      type: "spawn_npc",
+      target: "green_cloud_peak",
+      params: expect.objectContaining({ count: 1 }),
+    });
   });
 
   it("produces faction event when era agent declares a new era", () => {
@@ -124,6 +151,7 @@ describe("deterministic NPC producer", () => {
       {
         id: "npc_1v1",
         kind: "minecraft:player",
+        zone: "starter_zone",
         pos: [4, 64, 4],
         state: "idle",
         blackboard: {},

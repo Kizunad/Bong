@@ -54,6 +54,7 @@ export function createMockWorldState(): WorldStateV1 {
       {
         id: "npc_zombie_001",
         kind: "zombie",
+        zone: "blood_valley",
         pos: [14, 66, 14],
         state: "idle",
         blackboard: { nearest_player: null, player_distance: 999 },
