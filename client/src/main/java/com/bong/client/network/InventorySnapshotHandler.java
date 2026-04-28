@@ -278,6 +278,10 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         String scrollKind = readOptionalString(itemObject, "scroll_kind");
         String scrollSkillId = readOptionalString(itemObject, "scroll_skill_id");
         Integer scrollXpGrant = readOptionalInt(itemObject, "scroll_xp_grant");
+        Double forgeQuality = readOptionalDouble(itemObject, "forge_quality");
+        String forgeColor = readOptionalString(itemObject, "forge_color");
+        List<String> forgeSideEffects = readOptionalStringArray(itemObject, "forge_side_effects");
+        Integer forgeAchievedTier = readOptionalInt(itemObject, "forge_achieved_tier");
 
         if (instanceId == null || itemId == null || displayName == null
             || gridWidth == null || gridHeight == null || weight == null
@@ -285,11 +289,14 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             || spiritQuality == null || durability == null
             || gridWidth < 1 || gridHeight < 1 || weight < 0.0 || stackCount < 1
             || spiritQuality < 0.0 || spiritQuality > 1.0
-            || durability < 0.0 || durability > 1.0) {
+            || durability < 0.0 || durability > 1.0
+            || forgeSideEffects == null
+            || (forgeQuality != null && (forgeQuality < 0.0 || forgeQuality > 1.0))
+            || (forgeAchievedTier != null && (forgeAchievedTier < 1 || forgeAchievedTier > 4))) {
             return null;
         }
 
-        return InventoryItem.createFullWithScrollMeta(
+        return InventoryItem.createFullWithForgeMeta(
             instanceId,
             itemId,
             displayName,
@@ -303,8 +310,52 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             durability,
             scrollKind,
             scrollSkillId,
-            scrollXpGrant == null ? 0 : scrollXpGrant
+            scrollXpGrant == null ? 0 : scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier
         );
+    }
+
+    private static Double readOptionalDouble(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isNumber()) {
+            return null;
+        }
+        double value = primitive.getAsDouble();
+        return Double.isFinite(value) ? value : null;
+    }
+
+    private static List<String> readOptionalStringArray(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return List.of();
+        }
+        if (!element.isJsonArray()) {
+            return null;
+        }
+        JsonArray array = element.getAsJsonArray();
+        List<String> values = new ArrayList<>(array.size());
+        for (JsonElement item : array) {
+            if (item == null || item.isJsonNull() || !item.isJsonPrimitive()) {
+                return null;
+            }
+            JsonPrimitive primitive = item.getAsJsonPrimitive();
+            if (!primitive.isString()) {
+                return null;
+            }
+            String value = primitive.getAsString();
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            values.add(value.trim());
+        }
+        return values;
     }
 
     private static String readOptionalString(JsonObject object, String fieldName) {

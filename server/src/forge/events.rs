@@ -15,6 +15,16 @@ pub struct StartForgeRequest {
     pub materials: Vec<(String, u32)>,
 }
 
+/// 起炉校验通过并创建 session 后发出，供 Redis 观测桥只发布成功起炉。
+#[derive(Debug, Clone, Event)]
+pub struct ForgeStartAccepted {
+    pub session: ForgeSessionId,
+    pub station: Entity,
+    pub caster: Entity,
+    pub blueprint: BlueprintId,
+    pub materials: Vec<(String, u32)>,
+}
+
 /// 淬炼按键上报（J=Light, K=Heavy, L=Fold）。
 #[derive(Debug, Clone, Event)]
 pub struct TemperingHit {
@@ -56,6 +66,7 @@ pub enum ForgeBucket {
 #[derive(Debug, Clone, Event)]
 pub struct ForgeOutcomeEvent {
     pub session: ForgeSessionId,
+    pub caster: Entity,
     pub blueprint: BlueprintId,
     pub bucket: ForgeBucket,
     pub weapon_item: Option<String>,

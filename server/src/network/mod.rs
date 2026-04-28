@@ -12,6 +12,7 @@ pub mod defense_window_emit;
 pub mod dropped_loot_sync_emit;
 pub mod event_stream_emit;
 pub mod extract_emit;
+pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;

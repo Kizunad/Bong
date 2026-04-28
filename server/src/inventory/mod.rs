@@ -102,6 +102,9 @@ pub struct ItemTemplate {
     pub cooldown_ms: u32,
     /// plan-weapon-v1 §1.1：武器特有属性。非武器恒为 None。
     pub weapon_spec: Option<WeaponSpec>,
+    pub forge_station_spec: Option<ForgeStationSpec>,
+    pub blueprint_scroll_spec: Option<BlueprintScrollSpec>,
+    pub inscription_scroll_spec: Option<InscriptionScrollSpec>,
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -114,6 +117,21 @@ pub struct WeaponSpec {
     pub durability_max: f32,
     /// qi 技能消耗倍率（v1 默认 1.0）。
     pub qi_cost_mul: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForgeStationSpec {
+    pub tier: u8,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlueprintScrollSpec {
+    pub blueprint_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InscriptionScrollSpec {
+    pub inscription_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +223,15 @@ pub struct ItemInstance {
     /// `durability` 字段保持 0..=1 normalized 语义不变（与 schema 边界对齐）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charges: Option<u32>,
+    /// plan-forge-leftovers-v1 §2.2 — 炼器产物运行时品质；None = 非 forge 产物。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_quality: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_color: Option<crate::cultivation::components::ColorKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forge_side_effects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge_achieved_tier: Option<u8>,
 }
 
 #[derive(Debug)]
@@ -678,6 +705,10 @@ fn instantiate_item_instance(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     })
 }
 
@@ -817,6 +848,10 @@ pub fn add_item_to_player_inventory(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     };
 
     let Some(main_pack) = inventory
@@ -873,6 +908,12 @@ struct ItemTemplateToml {
     /// plan-weapon-v1 §1.1：category == "Weapon" 时必填，否则须缺省。
     #[serde(default)]
     weapon: Option<WeaponSpecToml>,
+    #[serde(default)]
+    forge_station: Option<ForgeStationSpecToml>,
+    #[serde(default)]
+    blueprint_scroll: Option<BlueprintScrollSpecToml>,
+    #[serde(default)]
+    inscription_scroll: Option<InscriptionScrollSpecToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -885,6 +926,24 @@ struct WeaponSpecToml {
     durability_max: f32,
     #[serde(default = "default_qi_cost_mul")]
     qi_cost_mul: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForgeStationSpecToml {
+    tier: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlueprintScrollSpecToml {
+    blueprint_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InscriptionScrollSpecToml {
+    inscription_id: String,
 }
 
 fn default_qi_cost_mul() -> f32 {
@@ -960,6 +1019,18 @@ impl ItemTemplateToml {
             }
             (_, None) => None,
         };
+        let forge_station_spec = self
+            .forge_station
+            .map(|raw| parse_forge_station_spec(raw, source_path, id.as_str()))
+            .transpose()?;
+        let blueprint_scroll_spec = self
+            .blueprint_scroll
+            .map(|raw| parse_blueprint_scroll_spec(raw, source_path, id.as_str()))
+            .transpose()?;
+        let inscription_scroll_spec = self
+            .inscription_scroll
+            .map(|raw| parse_inscription_scroll_spec(raw, source_path, id.as_str()))
+            .transpose()?;
 
         Ok(ItemTemplate {
             id,
@@ -975,8 +1046,52 @@ impl ItemTemplateToml {
             cast_duration_ms: self.cast_duration_ms.unwrap_or(DEFAULT_CAST_DURATION_MS),
             cooldown_ms: self.cooldown_ms.unwrap_or(DEFAULT_COOLDOWN_MS),
             weapon_spec,
+            forge_station_spec,
+            blueprint_scroll_spec,
+            inscription_scroll_spec,
         })
     }
+}
+
+pub fn parse_forge_station_spec(
+    raw: ForgeStationSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ForgeStationSpec, String> {
+    if !(1..=4).contains(&raw.tier) {
+        return Err(format!(
+            "{} item `{item_id}` has invalid forge_station.tier {}; expected 1..=4",
+            source_path.display(),
+            raw.tier
+        ));
+    }
+    Ok(ForgeStationSpec { tier: raw.tier })
+}
+
+pub fn parse_blueprint_scroll_spec(
+    raw: BlueprintScrollSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<BlueprintScrollSpec, String> {
+    let blueprint_id = required_non_empty(
+        raw.blueprint_id,
+        source_path,
+        &format!("item `{item_id}` blueprint_scroll.blueprint_id"),
+    )?;
+    Ok(BlueprintScrollSpec { blueprint_id })
+}
+
+pub fn parse_inscription_scroll_spec(
+    raw: InscriptionScrollSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<InscriptionScrollSpec, String> {
+    let inscription_id = required_non_empty(
+        raw.inscription_id,
+        source_path,
+        &format!("item `{item_id}` inscription_scroll.inscription_id"),
+    )?;
+    Ok(InscriptionScrollSpec { inscription_id })
 }
 
 fn parse_weapon_spec(
@@ -2739,6 +2854,10 @@ fn build_item_instance_from_template(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     })
 }
 
@@ -2869,6 +2988,9 @@ mod tests {
                     cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                     cooldown_ms: DEFAULT_COOLDOWN_MS,
                     weapon_spec: None,
+                    forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: None,
                 },
             );
         }
@@ -2895,6 +3017,120 @@ mod tests {
                 source,
             }) if source == "collapse_core"
         ));
+        assert!(matches!(
+            registry
+                .get("ling_iron_anvil")
+                .and_then(|item| item.forge_station_spec.as_ref()),
+            Some(ForgeStationSpec { tier: 2 })
+        ));
+        assert!(matches!(
+            registry
+                .get("blueprint_scroll_ling_feng")
+                .and_then(|item| item.blueprint_scroll_spec.as_ref()),
+            Some(BlueprintScrollSpec { blueprint_id }) if blueprint_id == "ling_feng_v0"
+        ));
+        assert!(matches!(
+            registry
+                .get("inscription_scroll_qi_amplify_v0")
+                .and_then(|item| item.inscription_scroll_spec.as_ref()),
+            Some(InscriptionScrollSpec { inscription_id }) if inscription_id == "qi_amplify_v0"
+        ));
+        for required in [
+            "iron_sword_flawed",
+            "qing_feng_sword",
+            "qing_feng_sword_flawed",
+            "ling_feng_sword",
+            "ling_feng_sword_flawed",
+            "ling_wood",
+            "yi_beast_bone",
+            "xuan_iron",
+            "qing_steel",
+        ] {
+            assert!(
+                registry.get(required).is_some(),
+                "forge asset `{required}` must be registered"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_forge_station_spec_accepts_valid_tier() {
+        let spec = parse_forge_station_spec(
+            ForgeStationSpecToml { tier: 4 },
+            Path::new("<inline-items.toml>"),
+            "dao_anvil",
+        )
+        .expect("tier 4 forge station should parse");
+
+        assert_eq!(spec.tier, 4);
+    }
+
+    #[test]
+    fn parse_forge_station_spec_rejects_invalid_tier() {
+        let error = parse_forge_station_spec(
+            ForgeStationSpecToml { tier: 0 },
+            Path::new("<inline-items.toml>"),
+            "bad_anvil",
+        )
+        .expect_err("tier 0 forge station should fail");
+
+        assert!(error.contains("expected 1..=4"));
+    }
+
+    #[test]
+    fn parse_blueprint_scroll_spec_accepts_blueprint_id() {
+        let spec = parse_blueprint_scroll_spec(
+            BlueprintScrollSpecToml {
+                blueprint_id: "qing_feng_v0".to_string(),
+            },
+            Path::new("<inline-items.toml>"),
+            "blueprint_scroll_qing_feng",
+        )
+        .expect("blueprint scroll should parse");
+
+        assert_eq!(spec.blueprint_id, "qing_feng_v0");
+    }
+
+    #[test]
+    fn parse_blueprint_scroll_spec_rejects_empty_blueprint_id() {
+        let error = parse_blueprint_scroll_spec(
+            BlueprintScrollSpecToml {
+                blueprint_id: " ".to_string(),
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_blueprint_scroll",
+        )
+        .expect_err("empty blueprint id should fail");
+
+        assert!(error.contains("blueprint_scroll.blueprint_id"));
+    }
+
+    #[test]
+    fn parse_inscription_scroll_spec_accepts_inscription_id() {
+        let spec = parse_inscription_scroll_spec(
+            InscriptionScrollSpecToml {
+                inscription_id: "sharp_v0".to_string(),
+            },
+            Path::new("<inline-items.toml>"),
+            "inscription_scroll_sharp_v0",
+        )
+        .expect("inscription scroll should parse");
+
+        assert_eq!(spec.inscription_id, "sharp_v0");
+    }
+
+    #[test]
+    fn parse_inscription_scroll_spec_rejects_empty_inscription_id() {
+        let error = parse_inscription_scroll_spec(
+            InscriptionScrollSpecToml {
+                inscription_id: " ".to_string(),
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_inscription_scroll",
+        )
+        .expect_err("empty inscription id should fail");
+
+        assert!(error.contains("inscription_scroll.inscription_id"));
     }
 
     #[test]
@@ -3109,6 +3345,9 @@ cols = 4
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
                 weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -3166,6 +3405,9 @@ cols = 4
                 cast_duration_ms: DEFAULT_CAST_DURATION_MS,
                 cooldown_ms: DEFAULT_COOLDOWN_MS,
                 weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -3295,6 +3537,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         PlayerInventory {
             revision: InventoryRevision(7),
@@ -3406,6 +3652,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
 
         let outcome = apply_inventory_move(
@@ -3460,6 +3710,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         });
 
@@ -3634,6 +3888,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3675,6 +3933,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3706,6 +3968,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3776,6 +4042,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         });
         inv.hotbar[0] = Some(ItemInstance {
@@ -3793,6 +4063,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -3811,6 +4085,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -3872,6 +4150,10 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             });
         }
@@ -4167,6 +4449,10 @@ cols = 4
                     freshness: None,
                     mineral_id: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             },
         );
@@ -4236,6 +4522,9 @@ cols = 4
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -4256,6 +4545,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4295,6 +4588,9 @@ cols = 4
                     durability_max: 200.0,
                     qi_cost_mul: 1.0,
                 }),
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -4315,6 +4611,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4344,6 +4644,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -4362,6 +4666,10 @@ cols = 4
                 freshness: None,
                 mineral_id: None,
                 charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
             },
         );
 
@@ -4418,6 +4726,10 @@ cols = 4
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 

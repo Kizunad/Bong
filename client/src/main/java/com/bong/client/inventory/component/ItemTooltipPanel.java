@@ -61,6 +61,12 @@ public class ItemTooltipPanel extends BaseComponent {
         if (item.spiritQuality() < 1.0 || item.durability() < 1.0) {
             needed += lineBlock;
         }
+        if (item.forgeQuality() != null) {
+            needed += lineBlock;
+        }
+        if (!item.forgeSideEffects().isEmpty()) {
+            needed += lineBlock;
+        }
 
         // plan-armor-v1 §5：护甲矩阵（仅护甲类物品显示）。
         if (com.bong.client.combat.ArmorProfileStore.isArmor(item.itemId())) {
@@ -140,6 +146,28 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
+        if (hoveredItem.forgeQuality() != null) {
+            StringBuilder forge = new StringBuilder(String.format(
+                Locale.ROOT,
+                "炼成 %.0f%%",
+                hoveredItem.forgeQuality() * 100
+            ));
+            if (hoveredItem.forgeAchievedTier() != null) {
+                forge.append(" · ").append(hoveredItem.forgeAchievedTier()).append("阶");
+            }
+            if (!hoveredItem.forgeColor().isEmpty()) {
+                forge.append(" · ").append(forgeColorLabel(hoveredItem.forgeColor()));
+            }
+            context.drawTextWithShadow(textRenderer, Text.literal(forge.toString()), cx, cy, 0xFF88DDBB);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
+        if (!hoveredItem.forgeSideEffects().isEmpty()) {
+            String sideEffects = "瑕疵 " + String.join("/", hoveredItem.forgeSideEffects());
+            context.drawTextWithShadow(textRenderer, Text.literal(sideEffects), cx, cy, 0xFFDDAA66);
+            cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        }
+
         // plan-armor-v1 §5：护甲减免矩阵（WoundKind×系数）。
         com.bong.client.combat.ArmorProfileStore.ArmorMitigation mitigation =
             com.bong.client.combat.ArmorProfileStore.mitigationForItemId(hoveredItem.itemId());
@@ -184,6 +212,22 @@ public class ItemTooltipPanel extends BaseComponent {
             case "rare" -> "稀有";
             case "uncommon" -> "精良";
             default -> "普通";
+        };
+    }
+
+    private static String forgeColorLabel(String color) {
+        return switch (color) {
+            case "Sharp" -> "锐";
+            case "Heavy" -> "厚";
+            case "Mellow" -> "醇";
+            case "Solid" -> "实";
+            case "Light" -> "轻";
+            case "Intricate" -> "巧";
+            case "Gentle" -> "柔";
+            case "Insidious" -> "阴";
+            case "Violent" -> "烈";
+            case "Turbid" -> "浊";
+            default -> color;
         };
     }
 

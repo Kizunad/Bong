@@ -437,6 +437,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
         PlayerInventory {
             revision: InventoryRevision(5),
@@ -543,6 +547,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);

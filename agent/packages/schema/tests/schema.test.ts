@@ -35,6 +35,10 @@ import {
   TsySentinelPhaseChangedV1,
 } from "../src/tsy-hostile-v1.js";
 import {
+  ForgeOutcomePayloadV1,
+  ForgeStartPayloadV1,
+} from "../src/forge-bridge.js";
+import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
   SkillSnapshotPayloadV1,
@@ -149,6 +153,16 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("inventory-snapshot.sample.json carries forge item metadata", () => {
+    const data = loadSample("inventory-snapshot.sample.json");
+    const result = validate(InventorySnapshotV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.equipped.main_hand.forge_quality).toBe(0.74);
+    expect(data.equipped.main_hand.forge_color).toBe("Sharp");
+    expect(data.equipped.main_hand.forge_side_effects).toEqual(["brittle_edge"]);
+    expect(data.equipped.main_hand.forge_achieved_tier).toBe(1);
+  });
+
   it("server-data.inventory-event.sample.json", () => {
     const data = loadSample("server-data.inventory-event.sample.json");
     const result = validate(ServerDataV1, data);
@@ -257,6 +271,20 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  for (const sample of [
+    "server-data.forge-station.sample.json",
+    "server-data.forge-session.sample.json",
+    "server-data.forge-outcome-perfect.sample.json",
+    "server-data.forge-outcome-flawed.sample.json",
+    "server-data.forge-blueprint-book.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
   it("server-data.skillbar-config.sample.json", () => {
     const data = loadSample("server-data.skillbar-config.sample.json");
     const result = validate(ServerDataV1, data);
@@ -352,6 +380,20 @@ describe("sample files pass schema validation", () => {
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  for (const sample of [
+    "client-request.forge-start.sample.json",
+    "client-request.forge-tempering-hit.sample.json",
+    "client-request.forge-inscription-submit.sample.json",
+    "client-request.forge-consecration-inject.sample.json",
+    "client-request.forge-station-place.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
 
   it("client-request.use-quick-slot.sample.json", () => {
     const data = loadSample("client-request.use-quick-slot.sample.json");
@@ -522,6 +564,12 @@ describe("negative sample files fail schema validation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("client-request.forge-station-place.invalid-missing-tier.sample.json", () => {
+    const data = loadSample("client-request.forge-station-place.invalid-missing-tier.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects extra weapon payload fields", () => {
     const data = loadObjectSample("server-data.weapon-equipped.sample.json");
     data.unexpected = true;
@@ -552,6 +600,26 @@ describe("negative sample files fail schema validation", () => {
     slots[0] = { kind: "skill", display_name: "崩拳" };
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("forge bridge payload samples pass schema validation", () => {
+  it("forge-start-payload.sample.json", () => {
+    const data = loadSample("forge-start-payload.sample.json");
+    const result = validate(ForgeStartPayloadV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("forge-outcome-payload-perfect.sample.json", () => {
+    const data = loadSample("forge-outcome-payload-perfect.sample.json");
+    const result = validate(ForgeOutcomePayloadV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("forge-outcome-payload-flawed.sample.json", () => {
+    const data = loadSample("forge-outcome-payload-flawed.sample.json");
+    const result = validate(ForgeOutcomePayloadV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });
 

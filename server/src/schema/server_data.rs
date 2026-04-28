@@ -1684,6 +1684,21 @@ mod tests {
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.tsy-collapse-started-ipc.sample.json"
             ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.forge-station.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.forge-session.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.forge-outcome-perfect.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.forge-outcome-flawed.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
+            ),
         ];
 
         for json in samples {

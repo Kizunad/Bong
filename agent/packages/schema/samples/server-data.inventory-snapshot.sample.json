@@ -58,7 +58,11 @@
       "description": "门内发放的练习武器。",
       "stack_count": 1,
       "spirit_quality": 0.22,
-      "durability": 0.88
+      "durability": 0.88,
+      "forge_quality": 0.74,
+      "forge_color": "Sharp",
+      "forge_side_effects": ["brittle_edge"],
+      "forge_achieved_tier": 1
     },
     "off_hand": null,
     "two_hand": null,

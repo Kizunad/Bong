@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "session_id": 8,
+  "blueprint_id": "qing_feng_v0",
+  "bucket": "flawed",
+  "weapon_item": "iron_sword",
+  "quality": 0.42,
+  "side_effects": ["brittle_edge"],
+  "achieved_tier": 1,
+  "caster_id": "offline:Azure",
+  "ts": 84040
+}

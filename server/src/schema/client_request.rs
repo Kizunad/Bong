@@ -298,6 +298,7 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
         item_instance_id: u64,
+        station_tier: u8,
     },
 }
 
@@ -812,6 +813,28 @@ mod tests {
                 assert_eq!(item_instance_id, 4242);
             }
             other => panic!("expected AlchemyFurnacePlace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_station_place_roundtrip() {
+        let json = r#"{"type":"forge_station_place","v":1,"x":-12,"y":64,"z":38,"item_instance_id":4242,"station_tier":2}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ForgeStationPlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+                station_tier,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (-12, 64, 38));
+                assert_eq!(item_instance_id, 4242);
+                assert_eq!(station_tier, 2);
+            }
+            other => panic!("expected ForgeStationPlace, got {other:?}"),
         }
     }
 

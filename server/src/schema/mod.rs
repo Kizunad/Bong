@@ -18,6 +18,7 @@ pub mod cultivation;
 pub mod death_insight;
 pub mod death_lifecycle;
 pub mod forge;
+pub mod forge_bridge;
 pub mod inventory;
 pub mod lingtian;
 pub mod narration;

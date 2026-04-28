@@ -102,6 +102,26 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeRepairWeapon(instanceId, x, y, z));
     }
 
+    public static void sendForgeStationPlace(int x, int y, int z, long itemInstanceId, int stationTier) {
+        dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
+    }
+
+    public static void sendForgeTemperingHit(
+        long sessionId,
+        ClientRequestProtocol.TemperBeat beat,
+        int ticksRemaining
+    ) {
+        dispatch(ClientRequestProtocol.encodeForgeTemperingHit(sessionId, beat, ticksRemaining));
+    }
+
+    public static void sendForgeInscriptionScroll(long sessionId, String inscriptionId) {
+        dispatch(ClientRequestProtocol.encodeForgeInscriptionScroll(sessionId, inscriptionId));
+    }
+
+    public static void sendForgeConsecrationInject(long sessionId, double qiAmount) {
+        dispatch(ClientRequestProtocol.encodeForgeConsecrationInject(sessionId, qiAmount));
+    }
+
     // ─── HUD combat intents (plan-HUD-v1 §11.3) ─────────────────────────────
 
     public static void sendUseQuickSlot(int slot) {

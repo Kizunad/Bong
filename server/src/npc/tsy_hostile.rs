@@ -1570,6 +1570,10 @@ fn template_as_item(
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     })
 }
 
@@ -1784,6 +1788,9 @@ mod tests {
             cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
             cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
             weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 

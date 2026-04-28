@@ -182,6 +182,9 @@ mod tests {
             cast_duration_ms: 1500,
             cooldown_ms: 1500,
             weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
         }
     }
 
@@ -211,6 +214,9 @@ mod tests {
                 cast_duration_ms: 1500,
                 cooldown_ms: 1500,
                 weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         map.insert(
@@ -229,6 +235,9 @@ mod tests {
                 cast_duration_ms: 1500,
                 cooldown_ms: 1500,
                 weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
             },
         );
         ItemRegistry::from_map(map)
@@ -267,6 +276,10 @@ mod tests {
             }),
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -355,6 +368,10 @@ mod tests {
             freshness: None,
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
 
         assert!(!apply_variant_switch(
@@ -398,6 +415,10 @@ mod tests {
             }),
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
 
         let now = 5000;
@@ -441,6 +462,10 @@ mod tests {
             }),
             mineral_id: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         };
 
         // bone_coin Linear decay over ~1y; use 2 years for safety margin to ensure ≤ EPSILON.

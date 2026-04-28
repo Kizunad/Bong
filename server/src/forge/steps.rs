@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::blueprint::{
     BilletProfile, Blueprint, ConsecrationProfile, InscriptionProfile, MaterialStack, StepKind,
     StepSpec, TemperBeat, TemperingProfile,
@@ -136,7 +138,7 @@ pub fn apply_tempering_hit(
     state.beat_cursor += 1;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TemperingResult {
     Perfect,
     Good,
@@ -167,7 +169,7 @@ pub fn resolve_tempering(
 
 // ══════════════════════════════ Inscription ══════════════════════════════
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InscriptionResult {
     Filled,
     /// 公差内允许的少填（flawed）。
@@ -178,6 +180,19 @@ pub enum InscriptionResult {
 pub fn apply_scroll(state: &mut InscriptionState, scroll_id: String) {
     state.scrolls_in.push(scroll_id);
     state.filled_slots = state.filled_slots.saturating_add(1);
+}
+
+pub fn apply_scroll_from_item(
+    state: &mut InscriptionState,
+    scroll_item_template_id: &str,
+    registry: &crate::inventory::ItemRegistry,
+) -> Result<(), String> {
+    let spec = registry
+        .get(scroll_item_template_id)
+        .and_then(|template| template.inscription_scroll_spec.as_ref())
+        .ok_or_else(|| format!("item `{scroll_item_template_id}` is not an inscription scroll"))?;
+    apply_scroll(state, spec.inscription_id.clone());
+    Ok(())
 }
 
 /// 在该步结束时判定。`roll_fail ∈ [0,1)` 由调用方提供（通常 RNG）。
@@ -201,7 +216,7 @@ pub fn resolve_inscription(
 
 // ══════════════════════════════ Consecration ══════════════════════════════
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsecrationResult {
     Succeeded { color: ColorKind },
     Insufficient,
@@ -519,6 +534,69 @@ mod tests {
             resolve_inscription(&p, &s, 0.5, 0.0),
             InscriptionResult::Filled
         );
+    }
+
+    #[test]
+    fn apply_scroll_validates_inscription_item() {
+        use crate::inventory::{
+            InscriptionScrollSpec, ItemCategory, ItemRarity, ItemRegistry, ItemTemplate,
+        };
+        use std::collections::HashMap;
+
+        let registry = ItemRegistry::from_map(HashMap::from([
+            (
+                "inscription_scroll_sharp_v0".to_string(),
+                ItemTemplate {
+                    id: "inscription_scroll_sharp_v0".to_string(),
+                    display_name: "锐意铭文残卷".to_string(),
+                    category: ItemCategory::Misc,
+                    grid_w: 1,
+                    grid_h: 1,
+                    base_weight: 0.03,
+                    rarity: ItemRarity::Uncommon,
+                    spirit_quality_initial: 0.8,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                    cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                    weapon_spec: None,
+                    forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: Some(InscriptionScrollSpec {
+                        inscription_id: "sharp_v0".to_string(),
+                    }),
+                },
+            ),
+            (
+                "plain_paper".to_string(),
+                ItemTemplate {
+                    id: "plain_paper".to_string(),
+                    display_name: "白纸".to_string(),
+                    category: ItemCategory::Misc,
+                    grid_w: 1,
+                    grid_h: 1,
+                    base_weight: 0.01,
+                    rarity: ItemRarity::Common,
+                    spirit_quality_initial: 0.0,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                    cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                    weapon_spec: None,
+                    forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: None,
+                },
+            ),
+        ]));
+        let mut state = InscriptionState::default();
+
+        apply_scroll_from_item(&mut state, "inscription_scroll_sharp_v0", &registry)
+            .expect("known inscription scroll should apply");
+
+        assert_eq!(state.filled_slots, 1);
+        assert_eq!(state.scrolls_in, vec!["sharp_v0".to_string()]);
+        assert!(apply_scroll_from_item(&mut state, "plain_paper", &registry).is_err());
     }
 
     #[test]

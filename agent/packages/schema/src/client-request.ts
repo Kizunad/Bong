@@ -522,6 +522,7 @@ export const ForgeStationPlaceRequestV1 = Type.Object(
     y: Type.Integer(),
     z: Type.Integer(),
     item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    station_tier: Type.Integer({ minimum: 1, maximum: 4 }),
   },
   { additionalProperties: false },
 );

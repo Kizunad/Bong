@@ -29,6 +29,9 @@ public final class ClientRequestProtocol {
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
     public enum ForgeAxis { Rate, Capacity }
 
+    /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
+    public enum TemperBeat { L, H, F }
+
     private ClientRequestProtocol() {}
 
     /** 将 UI 侧 {@link MeridianChannel} 枚举映射为服务端 {@link MeridianId}。 */
@@ -317,6 +320,59 @@ public final class ClientRequestProtocol {
         pos.add(y);
         pos.add(z);
         obj.add("station_pos", pos);
+        return obj.toString();
+    }
+
+    public static String encodeForgeStationPlace(int x, int y, int z, long itemInstanceId, int stationTier) {
+        JsonObject obj = envelope("forge_station_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        obj.addProperty("station_tier", stationTier);
+        return obj.toString();
+    }
+
+    public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
+        if (sessionId < 0) {
+            throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
+        }
+        if (beat == null) {
+            throw new IllegalArgumentException("beat must not be null");
+        }
+        if (ticksRemaining < 0) {
+            throw new IllegalArgumentException("ticksRemaining must be >= 0, got " + ticksRemaining);
+        }
+        JsonObject obj = envelope("forge_tempering_hit");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("beat", beat.name());
+        obj.addProperty("ticks_remaining", ticksRemaining);
+        return obj.toString();
+    }
+
+    public static String encodeForgeInscriptionScroll(long sessionId, String inscriptionId) {
+        if (sessionId < 0) {
+            throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
+        }
+        if (inscriptionId == null || inscriptionId.isBlank()) {
+            throw new IllegalArgumentException("inscriptionId must not be blank");
+        }
+        JsonObject obj = envelope("forge_inscription_scroll");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("inscription_id", inscriptionId.trim());
+        return obj.toString();
+    }
+
+    public static String encodeForgeConsecrationInject(long sessionId, double qiAmount) {
+        if (sessionId < 0) {
+            throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
+        }
+        if (!Double.isFinite(qiAmount) || qiAmount < 0.0) {
+            throw new IllegalArgumentException("qiAmount must be finite and >= 0, got " + qiAmount);
+        }
+        JsonObject obj = envelope("forge_consecration_inject");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("qi_amount", qiAmount);
         return obj.toString();
     }
 

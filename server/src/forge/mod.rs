@@ -9,11 +9,16 @@
 //!   * §6.P6 flawed_fallback / side_effect_pool     → fallback.rs + history.rs
 //!
 //! 服务器系统负责把 Event 翻译为 StepState 变化，由 client UI / 未来 agent 驱动 Event 输入。
+//!
+//! TODO(plan-persistence-v1): forge 持久化需保存的 Resource/Component：
+//! `ForgeSessions`（在炉进度）、`BlueprintRegistry`（图谱定义版本/校验）、
+//! `LearnedBlueprints`（玩家已学图谱）与 `WeaponForgeStation`（砧方块实体）。
 
 pub mod blueprint;
 pub mod events;
 pub mod fallback;
 pub mod history;
+pub mod inventory_bridge;
 pub mod learned;
 pub mod session;
 pub mod skill_hook;
@@ -28,8 +33,8 @@ use valence::prelude::{
 
 use self::blueprint::{BlueprintRegistry, StepKind, DEFAULT_BLUEPRINTS_DIR};
 use self::events::{
-    ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, InscriptionScrollSubmit, StartForgeRequest,
-    StepAdvance, TemperingHit,
+    ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
+    InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
 };
 use self::history::{ForgeAttempt, ForgeHistory};
 use self::learned::LearnedBlueprints;
@@ -70,22 +75,30 @@ pub fn register(app: &mut App) {
     app.add_event::<InscriptionScrollSubmit>();
     app.add_event::<ConsecrationInject>();
     app.add_event::<StepAdvance>();
+    app.add_event::<ForgeStartAccepted>();
     app.add_event::<ForgeOutcomeEvent>();
+    app.add_event::<station::PlaceForgeStationRequest>();
 
     app.add_systems(
         Update,
         (
+            station::handle_place_station_request,
             handle_start_forge_requests,
+            crate::network::forge_bridge::publish_forge_start_on_session_create
+                .after(handle_start_forge_requests),
             handle_tempering_hits.after(handle_start_forge_requests),
             handle_scroll_submits.after(handle_tempering_hits),
             handle_consecration_injects.after(handle_scroll_submits),
             handle_step_advance.after(handle_consecration_injects),
+            inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
+            crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
         ),
     );
 }
 
 // ══════════════════════════════ Systems ══════════════════════════════
 
+#[allow(clippy::too_many_arguments)]
 fn handle_start_forge_requests(
     mut ev: EventReader<StartForgeRequest>,
     registry: Res<BlueprintRegistry>,
@@ -93,6 +106,7 @@ fn handle_start_forge_requests(
     mut sessions: ResMut<ForgeSessions>,
     mut stations: Query<&mut WeaponForgeStation>,
     learned: Query<&LearnedBlueprints>,
+    mut accepted: EventWriter<ForgeStartAccepted>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
 ) {
     for req in ev.read() {
@@ -155,6 +169,7 @@ fn handle_start_forge_requests(
                 let id = sessions.allocate_id();
                 outcomes.send(ForgeOutcomeEvent {
                     session: id,
+                    caster: req.caster,
                     blueprint: bp.id.clone(),
                     bucket: ForgeBucket::Waste,
                     weapon_item: None,
@@ -184,6 +199,13 @@ fn handle_start_forge_requests(
             billet_res.state.resolved_tier_cap
         );
         sessions.insert(session);
+        accepted.send(ForgeStartAccepted {
+            session: id,
+            station: req.station,
+            caster: req.caster,
+            blueprint: bp.id.clone(),
+            materials: req.materials.clone(),
+        });
     }
 }
 
@@ -562,6 +584,7 @@ fn finalize_outcome(
 
     outcomes.send(ForgeOutcomeEvent {
         session: session.id,
+        caster: session.caster,
         blueprint: bp.id.clone(),
         bucket,
         weapon_item,

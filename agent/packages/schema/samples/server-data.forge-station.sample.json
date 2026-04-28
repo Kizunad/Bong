@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "forge_station",
+  "station_id": "forge_station_42",
+  "tier": 2,
+  "integrity": 0.92,
+  "owner_name": "Azure",
+  "has_session": true
+}

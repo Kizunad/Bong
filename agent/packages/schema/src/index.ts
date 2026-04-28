@@ -41,6 +41,7 @@ export * from "./alchemy.js";
 
 // 炼器（武器）（plan-forge-v1 §4）
 export * from "./forge.js";
+export * from "./forge-bridge.js";
 
 // 子技能 (plan-skill-v1 §8)
 export * from "./skill.js";

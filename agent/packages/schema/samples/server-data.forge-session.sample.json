@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "type": "forge_session",
+  "session_id": 7,
+  "blueprint_id": "qing_feng_v0",
+  "blueprint_name": "清锋剑谱",
+  "active": true,
+  "current_step": "tempering",
+  "step_index": 1,
+  "achieved_tier": 2,
+  "step_state": {
+    "step": "tempering",
+    "pattern": ["L", "H", "F"],
+    "beat_cursor": 1,
+    "hits": 1,
+    "misses": 0,
+    "deviation": 0,
+    "qi_spent": 8.5
+  }
+}

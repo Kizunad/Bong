@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -70,6 +71,10 @@ public class InventorySnapshotHandlerTest {
         assertNotNull(mainHand);
         assertEquals("training_blade", mainHand.itemId());
         assertEquals(1003L, mainHand.instanceId());
+        assertEquals(0.74, mainHand.forgeQuality(), 0.0001);
+        assertEquals("Sharp", mainHand.forgeColor());
+        assertEquals(List.of("brittle_edge"), mainHand.forgeSideEffects());
+        assertEquals(1, mainHand.forgeAchievedTier());
 
         InventoryItem hotbar0 = snapshot.hotbar().get(0);
         assertNotNull(hotbar0);
@@ -314,6 +319,81 @@ public class InventorySnapshotHandlerTest {
         assertEquals("", blueprintScroll.scrollSkillId());
         assertEquals(0, blueprintScroll.scrollXpGrant());
         assertFalse(blueprintScroll.isSkillScroll());
+    }
+
+    @Test
+    void parsesForgeMetadataOnInventoryItem() {
+        String snapshotJson = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 43,
+              "containers": [
+                {"id":"main_pack","name":"主背包","rows":5,"cols":7},
+                {"id":"small_pouch","name":"小口袋","rows":3,"cols":3},
+                {"id":"front_satchel","name":"前挂包","rows":3,"cols":4}
+              ],
+              "placed_items": [
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 0,
+                  "item": {
+                    "instance_id": 3001,
+                    "item_id": "qing_feng_sword",
+                    "display_name": "青锋剑",
+                    "grid_width": 1,
+                    "grid_height": 2,
+                    "weight": 2.5,
+                    "rarity": "rare",
+                    "description": "炼成之剑。",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "forge_quality": 0.98,
+                    "forge_color": "Sharp",
+                    "forge_side_effects": ["brittle_edge"],
+                    "forge_achieved_tier": 2
+                  }
+                }
+              ],
+              "equipped": {
+                "head": null,
+                "chest": null,
+                "legs": null,
+                "feet": null,
+                "main_hand": null,
+                "off_hand": null,
+                "two_hand": null,
+                "treasure_belt_0": null,
+                "treasure_belt_1": null,
+                "treasure_belt_2": null,
+                "treasure_belt_3": null
+              },
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 0,
+              "weight": {"current": 2.5, "max": 50.0},
+              "realm": "Awaken",
+              "qi_current": 24,
+              "qi_max": 100,
+              "body_level": 0.18
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            snapshotJson,
+            snapshotJson.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+
+        InventoryItem item = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals(0.98, item.forgeQuality(), 0.0001);
+        assertEquals("Sharp", item.forgeColor());
+        assertEquals(List.of("brittle_edge"), item.forgeSideEffects());
+        assertEquals(2, item.forgeAchievedTier());
     }
 
     private static String loadSharedFixture(String fileName) throws IOException {

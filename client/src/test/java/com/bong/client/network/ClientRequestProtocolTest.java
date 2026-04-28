@@ -156,6 +156,42 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesForgeStationPlace() {
+        String json = ClientRequestProtocol.encodeForgeStationPlace(-12, 64, 38, 4242L, 2);
+        assertEquals(
+            "{\"type\":\"forge_station_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242,\"station_tier\":2}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeTemperingHit() {
+        String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
+        assertEquals(
+            "{\"type\":\"forge_tempering_hit\",\"v\":1,\"session_id\":7,\"beat\":\"L\",\"ticks_remaining\":4}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeInscriptionScroll() {
+        String json = ClientRequestProtocol.encodeForgeInscriptionScroll(7L, "sharp_v0");
+        assertEquals(
+            "{\"type\":\"forge_inscription_scroll\",\"v\":1,\"session_id\":7,\"inscription_id\":\"sharp_v0\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeConsecrationInject() {
+        String json = ClientRequestProtocol.encodeForgeConsecrationInject(7L, 2.5);
+        assertEquals(
+            "{\"type\":\"forge_consecration_inject\",\"v\":1,\"session_id\":7,\"qi_amount\":2.5}",
+            json
+        );
+    }
+
+    @Test
     void encodesBotanyHarvestRequest() {
         String json = ClientRequestProtocol.encodeBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.AUTO);
         assertEquals(

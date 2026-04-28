@@ -294,6 +294,10 @@ mod server_data_tests {
             scroll_skill_id: None,
             scroll_xp_grant: None,
             charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
         }
     }
 
@@ -680,6 +684,10 @@ mod server_data_tests {
                     scroll_skill_id: None,
                     scroll_xp_grant: None,
                     charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
                 },
             },
         ));

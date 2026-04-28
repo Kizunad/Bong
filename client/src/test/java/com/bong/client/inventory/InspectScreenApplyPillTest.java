@@ -216,4 +216,76 @@ public class InspectScreenApplyPillTest {
             sent.get(0).body()
         );
     }
+
+    @Test
+    void forgeStationAnvilMenuIncludesPlaceAction() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            2001L,
+            "ling_iron_anvil",
+            "灵铁砧",
+            2,
+            2,
+            12.0,
+            "uncommon",
+            "炼器砧。",
+            1,
+            0.8,
+            1.0
+        );
+
+        assertTrue(screen.openPillContextMenu(item, 10, 20));
+        assertEquals(1, screen.availablePillMenuActions(item).size());
+        assertEquals("放置炼器砧", screen.availablePillMenuActions(item).get(0).label());
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceForgeStationSendsTierFromItemId() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            2002L,
+            "xuan_iron_anvil",
+            "玄铁砧",
+            2,
+            2,
+            16.0,
+            "rare",
+            "炼器砧。",
+            1,
+            0.9,
+            1.0
+        );
+
+        assertTrue(screen.dispatchPlaceForgeStationAt(item, -12, 64, 38));
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"forge_station_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":2002,\"station_tier\":3}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void dispatchPlaceForgeStationSkipsUnsupportedItem() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            2003L,
+            "spirit_wood",
+            "灵木",
+            1,
+            2,
+            1.2,
+            "common",
+            "真元载体。",
+            1,
+            0.8,
+            1.0
+        );
+
+        assertFalse(screen.dispatchPlaceForgeStationAt(item, 0, 64, 0));
+        assertTrue(sent.isEmpty());
+    }
 }

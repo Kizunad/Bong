@@ -1,0 +1,264 @@
+# plan-forge-leftovers-v1 §1.3 — 炼器砧类物品。
+
+[[item]]
+id = "fan_iron_anvil"
+name = "凡铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 10.0
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "最粗陋的炼器砧，只够压住凡铁和入门灵材。"
+
+[item.forge_station]
+tier = 1
+
+[[item]]
+id = "ling_iron_anvil"
+name = "灵铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 12.0
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "以灵铁回炉铸成的炼器砧，可承受低阶灵器锤炼。"
+
+[item.forge_station]
+tier = 2
+
+[[item]]
+id = "xuan_iron_anvil"
+name = "玄铁砧"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 16.0
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "砧面暗沉如夜，能压住玄铁回火时乱窜的脏真元。"
+
+[item.forge_station]
+tier = 3
+
+[[item]]
+id = "dao_anvil"
+name = "道砧"
+category = "treasure"
+grid_w = 2
+grid_h = 2
+base_weight = 20.0
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "旧宗门遗落的道砧，裂纹里还残着不肯熄灭的火星。"
+
+[item.forge_station]
+tier = 4
+
+# ─── 图谱残卷 ────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "blueprint_scroll_iron_sword"
+name = "铁剑图谱残卷"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.7
+description = "边地匠修传下的铁剑图谱残页，墨迹被炉灰熏得发黑。"
+
+[item.blueprint_scroll]
+blueprint_id = "iron_sword_v0"
+
+[[item]]
+id = "blueprint_scroll_qing_feng"
+name = "青锋图谱残卷"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "记着青锋剑淬火节奏的残卷，边角仍有细密剑痕。"
+
+[item.blueprint_scroll]
+blueprint_id = "qing_feng_v0"
+
+[[item]]
+id = "blueprint_scroll_ling_feng"
+name = "灵锋图谱残卷"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "灵锋图谱的残片，只有真元拂过时才浮出铭文槽位。"
+
+[item.blueprint_scroll]
+blueprint_id = "ling_feng_v0"
+
+# ─── 铭文残卷 ────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "inscription_scroll_sharp_v0"
+name = "锐意铭文残卷"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "刻着锐意纹路的残卷，可在铭文步压入一枚铭文槽。"
+
+[item.inscription_scroll]
+inscription_id = "sharp_v0"
+
+[[item]]
+id = "inscription_scroll_qi_amplify_v0"
+name = "聚元铭文残卷"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.03
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "聚拢真元的铭文残卷，常被用于灵锋类器胚开槽。"
+
+[item.inscription_scroll]
+inscription_id = "qi_amplify_v0"
+
+# ─── 载体材料 ────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "ling_wood"
+name = "灵木"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.8
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "仍带木脉灵性的旧木芯，可作灵器级载体材料。"
+
+[[item]]
+id = "yi_beast_bone"
+name = "异兽骨"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.0
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "从异变兽身上取下的硬骨，可短暂承住高阶器胚。"
+
+[[item]]
+id = "xuan_iron"
+name = "玄铁"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.9
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "黑沉玄铁，炉火照上去也只泛一点冷光。"
+
+[[item]]
+id = "qing_steel"
+name = "青钢"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.7
+rarity = "uncommon"
+spirit_quality_initial = 0.75
+description = "回火后泛青的精钢，适合补强锋刃筋骨。"
+
+# ─── 炼器产物模板 ────────────────────────────────────────────────────────────
+
+[[item]]
+id = "iron_sword_flawed"
+name = "残瑕铁剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.2
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "炼坏后勉强成形的铁剑，刃口有肉眼可见的裂纹。"
+
+[item.weapon]
+kind = "sword"
+base_attack = 6.0
+quality_tier = 0
+durability_max = 120.0
+
+[[item]]
+id = "qing_feng_sword"
+name = "青锋剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.25
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "剑脊有一线青光，淬火节奏顺时可显锋鸣。"
+
+[item.weapon]
+kind = "sword"
+base_attack = 13.0
+quality_tier = 1
+durability_max = 360.0
+
+[[item]]
+id = "qing_feng_sword_flawed"
+name = "残瑕青锋"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.25
+rarity = "uncommon"
+spirit_quality_initial = 0.85
+description = "青锋剑的瑕疵成品，剑气偶有泄漏。"
+
+[item.weapon]
+kind = "sword"
+base_attack = 10.0
+quality_tier = 1
+durability_max = 240.0
+
+[[item]]
+id = "ling_feng_sword"
+name = "灵锋剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "灵锋入骨，真元过刃时可听见细碎风声。"
+
+[item.weapon]
+kind = "sword"
+base_attack = 21.0
+quality_tier = 2
+durability_max = 600.0
+
+[[item]]
+id = "ling_feng_sword_flawed"
+name = "残瑕灵锋"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "灵锋剑的瑕疵成品，灵光不稳，握久会刺痛经脉。"
+
+[item.weapon]
+kind = "sword"
+base_attack = 16.0
+quality_tier = 2
+durability_max = 420.0

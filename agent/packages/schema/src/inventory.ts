@@ -1,5 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { ColorKind } from "./cultivation.js";
+
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 const HOTBAR_SLOT_COUNT = 9;
 
@@ -116,6 +118,11 @@ export const InventoryItemViewV1 = Type.Object(
     // tier 1/3/5 → charges 1/3/5；每次使用 -= 1，归零销毁。
     // 非 ancient 物品恒为 undefined。durability 字段保持 0..=1 不被破坏。
     charges: Type.Optional(Type.Integer({ minimum: 0, maximum: 5 })),
+    // plan-forge-leftovers-v1 §2.2 — forge 产物运行时元数据；缺省表示非 forge 产物。
+    forge_quality: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+    forge_color: Type.Optional(ColorKind),
+    forge_side_effects: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }))),
+    forge_achieved_tier: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
   },
   { additionalProperties: false },
 );

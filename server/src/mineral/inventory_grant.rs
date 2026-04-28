@@ -118,6 +118,10 @@ fn build_mineral_item_instance(
         freshness,
         mineral_id: Some(entry.canonical_name.to_string()),
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     }
 }
 

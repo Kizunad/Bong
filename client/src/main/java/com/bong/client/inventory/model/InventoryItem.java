@@ -1,5 +1,6 @@
 package com.bong.client.inventory.model;
 
+import java.util.List;
 import java.util.Objects;
 
 public final class InventoryItem {
@@ -17,6 +18,10 @@ public final class InventoryItem {
     private final String scrollKind;
     private final String scrollSkillId;
     private final int scrollXpGrant;
+    private final Double forgeQuality;
+    private final String forgeColor;
+    private final List<String> forgeSideEffects;
+    private final Integer forgeAchievedTier;
 
     private InventoryItem(
         long instanceId,
@@ -32,7 +37,11 @@ public final class InventoryItem {
         double durability,
         String scrollKind,
         String scrollSkillId,
-        int scrollXpGrant
+        int scrollXpGrant,
+        Double forgeQuality,
+        String forgeColor,
+        List<String> forgeSideEffects,
+        Integer forgeAchievedTier
     ) {
         this.instanceId = instanceId;
         this.itemId = Objects.requireNonNull(itemId, "itemId");
@@ -48,6 +57,16 @@ public final class InventoryItem {
         this.scrollKind = scrollKind == null ? "" : scrollKind;
         this.scrollSkillId = scrollSkillId == null ? "" : scrollSkillId;
         this.scrollXpGrant = Math.max(0, scrollXpGrant);
+        this.forgeQuality = forgeQuality == null ? null : clamp01(forgeQuality);
+        this.forgeColor = forgeColor == null ? "" : forgeColor.trim();
+        this.forgeSideEffects = forgeSideEffects == null
+            ? List.of()
+            : List.copyOf(forgeSideEffects.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .toList());
+        this.forgeAchievedTier = forgeAchievedTier == null ? null : Math.max(1, Math.min(4, forgeAchievedTier));
     }
 
     private static double clamp01(double v) {
@@ -65,7 +84,7 @@ public final class InventoryItem {
         String rarity,
         String description
     ) {
-        return createFullWithScrollMeta(
+        return createFullWithForgeMeta(
             0L,
             itemId,
             displayName,
@@ -79,7 +98,11 @@ public final class InventoryItem {
             1.0,
             "",
             "",
-            0
+            0,
+            null,
+            "",
+            List.of(),
+            null
         );
     }
 
@@ -111,7 +134,11 @@ public final class InventoryItem {
             durability,
             "",
             "",
-            0
+            0,
+            null,
+            "",
+            List.of(),
+            null
         );
     }
 
@@ -131,6 +158,48 @@ public final class InventoryItem {
         String scrollSkillId,
         int scrollXpGrant
     ) {
+        return createFullWithForgeMeta(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            null,
+            "",
+            List.of(),
+            null
+        );
+    }
+
+    public static InventoryItem createFullWithForgeMeta(
+        long instanceId,
+        String itemId,
+        String displayName,
+        int gridWidth,
+        int gridHeight,
+        double weight,
+        String rarity,
+        String description,
+        int stackCount,
+        double spiritQuality,
+        double durability,
+        String scrollKind,
+        String scrollSkillId,
+        int scrollXpGrant,
+        Double forgeQuality,
+        String forgeColor,
+        List<String> forgeSideEffects,
+        Integer forgeAchievedTier
+    ) {
         return new InventoryItem(
             instanceId,
             itemId == null ? "" : itemId.trim(),
@@ -145,7 +214,11 @@ public final class InventoryItem {
             durability,
             scrollKind == null ? "" : scrollKind.trim(),
             scrollSkillId == null ? "" : scrollSkillId.trim(),
-            scrollXpGrant
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier
         );
     }
 
@@ -209,8 +282,37 @@ public final class InventoryItem {
         return scrollXpGrant;
     }
 
+    public Double forgeQuality() {
+        return forgeQuality;
+    }
+
+    public String forgeColor() {
+        return forgeColor;
+    }
+
+    public List<String> forgeSideEffects() {
+        return forgeSideEffects;
+    }
+
+    public Integer forgeAchievedTier() {
+        return forgeAchievedTier;
+    }
+
     public boolean isSkillScroll() {
         return "skill_scroll".equals(scrollKind);
+    }
+
+    public boolean isInscriptionScroll() {
+        return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
+    }
+
+    public String inscriptionId() {
+        if (!isInscriptionScroll()) return "";
+        String prefix = "inscription_scroll_";
+        if (itemId.startsWith(prefix) && itemId.length() > prefix.length()) {
+            return itemId.substring(prefix.length()).trim();
+        }
+        return scrollSkillId.trim();
     }
 
     public boolean isEmpty() {
@@ -243,7 +345,11 @@ public final class InventoryItem {
             && rarity.equals(other.rarity)
             && description.equals(other.description)
             && scrollKind.equals(other.scrollKind)
-            && scrollSkillId.equals(other.scrollSkillId);
+            && scrollSkillId.equals(other.scrollSkillId)
+            && Objects.equals(forgeQuality, other.forgeQuality)
+            && forgeColor.equals(other.forgeColor)
+            && forgeSideEffects.equals(other.forgeSideEffects)
+            && Objects.equals(forgeAchievedTier, other.forgeAchievedTier);
     }
 
     @Override
@@ -251,7 +357,8 @@ public final class InventoryItem {
         return Objects.hash(
             instanceId, itemId, displayName, gridWidth, gridHeight, weight,
             rarity, description, stackCount, spiritQuality, durability,
-            scrollKind, scrollSkillId, scrollXpGrant
+            scrollKind, scrollSkillId, scrollXpGrant, forgeQuality, forgeColor,
+            forgeSideEffects, forgeAchievedTier
         );
     }
 

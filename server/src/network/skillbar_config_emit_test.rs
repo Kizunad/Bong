@@ -47,6 +47,9 @@ fn template(id: &str, display_name: &str) -> ItemTemplate {
         cast_duration_ms: 250,
         cooldown_ms: 1250,
         weapon_spec: None,
+        forge_station_spec: None,
+        blueprint_scroll_spec: None,
+        inscription_scroll_spec: None,
     }
 }
 
@@ -66,6 +69,10 @@ fn item_instance(instance_id: u64, template_id: &str) -> ItemInstance {
         freshness: None,
         mineral_id: None,
         charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
     }
 }
 

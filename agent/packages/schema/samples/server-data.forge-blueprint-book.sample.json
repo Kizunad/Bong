@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "type": "forge_blueprint_book",
+  "learned": [
+    {
+      "id": "iron_sword_v0",
+      "display_name": "凡铁剑谱",
+      "tier_cap": 1,
+      "step_count": 2
+    },
+    {
+      "id": "qing_feng_v0",
+      "display_name": "清锋剑谱",
+      "tier_cap": 2,
+      "step_count": 3
+    },
+    {
+      "id": "ling_feng_v0",
+      "display_name": "灵锋剑谱",
+      "tier_cap": 3,
+      "step_count": 4
+    }
+  ],
+  "current_index": 1
+}
