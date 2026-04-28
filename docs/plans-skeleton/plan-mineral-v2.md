@@ -19,8 +19,8 @@
 - P0 ⬜ UX 反馈链（chat 提示）
 - P1 ⬜ 采矿 gameplay（镐头门槛 + session）
 - P2 ⬜ forge 炉阶 vs 主料品阶 runtime 校验
-- P3 ⬜ alchemy 辅料配方实装
-- P4 ⬜ shelflife 灵石生产 profile 注册
+- P3 🔄 alchemy 辅料配方实装（schema 层 `IngredientSpec.mineral_id` + `matches_mineral` 已就位，缺 4 份 JSON）
+- P4 🔄 shelflife 灵石生产 profile 注册（四档 `ling_shi_*_v1` 已在 `build_default_registry` 生产注册，缺 runtime lookup 接线 + freshness 填充）
 - P5 ⬜ ClientResourcePack 推送方案
 - P6 ⬜ 鲸落化石 structure 算法
 
@@ -66,7 +66,7 @@
 
 > v1 §6 第 217-220 行。schema 层 `IngredientSpec.mineral_id` v1 已就位（commit `a7050089`），**具体配方 JSON 未写**。
 
-- [ ] **dan_sha 解毒丹**：`server/assets/recipes/alchemy/jie_du_dan_v1.json` — Mellow 辅料消费 dan_sha 解 Sharp 毒（接 `docs/library/ecology/辛草试毒录.json` 锚点）
+- [ ] **dan_sha 解毒丹**：`server/assets/alchemy/recipes/jie_du_dan_v1.json` — Mellow 辅料消费 dan_sha 解 Sharp 毒（接 `docs/library/ecology/辛草试毒录.json` 锚点）
 - [ ] **zhu_sha 药引**：现有高阶丹方（如 peiyuan_dan / ningmai_dan）加 `auxiliary_materials[].mineral_id = "zhu_sha"` → 提升成丹率 + 附 Sharp 毒副作用
 - [ ] **xiong_huang 驱邪辅料**（v2+ 半延后）：解蛊丹配方占位 JSON，依赖蛊毒系统立项
 - [ ] **xie_fen 邪丹主料**（v2+ 延后）：需负灵域 / 魔修支线先立项，本 P 仅占位 §10 开放问题
@@ -74,7 +74,7 @@
 
 ## §5 P4 — shelflife 灵石生产 profile 注册
 
-> v1 `§-1 前置依赖` 第 23 行：当前 `ling_shi_fan_v1` 仅 `shelflife/registry.rs:65` 的 test fixture，**生产 registry 未挂**。
+> v1 `§-1 前置依赖` 第 23 行。四档 `ling_shi_*_v1` 已于 `shelflife::build_default_registry()` 注册（`shelflife/mod.rs:55` 生产挂载），**runtime lookup 接线 + freshness 实体填充待做**。
 
 - [ ] **目标**：`shelflife/registry.rs` `register_production_profiles()` hardcode 四档 `ling_shi_fan_v1 / zhong_v1 / shang_v1 / yi_v1`，参数对齐 v1 §1.4 表（Exponential，half_life 3/5/7/14 days，禁止 Freeze）
 - [ ] **lookup 链路**：`mineral/registry.rs:99-134` 已绑定四档 profile name；本 P 让 production `DecayProfileRegistry::get(name)` 在运行时命中（当前因未注册返回 None）
@@ -111,7 +111,7 @@
 | P1 | `MineralRegistry::pickaxe_tier_min: u8` | `server/src/mineral/registry.rs` |
 | P1 | `MiningSession` component + `bong:mining_progress` 通道 | `server/src/mineral/session.rs`（新增） |
 | P2 | `furnace_tier: u8` | `server/assets/items/core.toml furnace_*` |
-| P3 | 4 份 alchemy recipe JSON | `server/assets/recipes/alchemy/` |
+| P3 | 4 份 alchemy recipe JSON | `server/assets/alchemy/recipes/` |
 | P4 | `register_production_profiles` 注册 `ling_shi_*_v1` 四档 | `server/src/shelflife/registry.rs` |
 | P5 | `ResourcePackPrompt` 接线 + pack zip + sha1 校验 | `server/src/network/connection.rs` + `client/resourcepack/` |
 | P6 | `whale_fossil.py` + raster `fossil_bbox` channel + spawn 接入 | `worldgen/scripts/terrain_gen/structures/` + `server/src/mineral/anchors.rs` |
@@ -138,4 +138,5 @@
 
 ## §11 进度日志
 
+- **2026-04-28**：实地核验修正 — P3 `IngredientSpec.mineral_id` / P4 `ling_shi_*_v1` 四档已在 v1 先行落地，阶段状态从 ⬜ 更正为 🔄；修正 alchemy recipe 资产路径 `recipes/alchemy/` → `alchemy/recipes/`。
 - **2026-04-27**：骨架立项 — 承接 plan-mineral-v1 主链路收尾后的 7 项遗留（commit `c331850e` 之后剩余）。等优先级排序 + `/consume-plan mineral-v2` 升 active。
