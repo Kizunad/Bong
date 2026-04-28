@@ -123,9 +123,10 @@
 
 - [ ] 阵法被破解时阵心反噬如何精确——按 qi_invest 比例 vs 固定档？
 - [ ] 多个阵法重叠（聚灵阵 + 防御阵 + 幻阵叠在灵龛上）的天道权重如何累加？
-- [ ] 欺天阵的"假劫气权重"具体在天道 schema 上怎么注入？是否需要 plan-narrative-v1 的天道规划接口？
+- [ ] 欺天阵的"假劫气权重"具体在天道 schema 上怎么注入？`plan-tribulation-v1 §5` 说等 plan-zhenfa 立项后接入；是否需要 `plan-narrative-v1` 的天道规划接口？（依赖 agent 推演层接口确认）
 - [ ] 夜枯藤产能与 worldgen 的接入（哪些区域刷新）？
 - [ ] 阵旗实体是否能被普通玩家拾取（理论上会立刻反噬拾取者）？
+- [ ] **阵法持久化方案**：阵旗 / 阵眼实体的存档量级未评估——轻量（只存 `ZhenfaInstance` 的 BlockPos + owner + imprint），还是完整 ECS snapshot？需在 P0 实体设计时确定（与 `plan-persistence-v1` 对齐）
 
 ## §11 进度日志
 
