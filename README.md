@@ -13,76 +13,92 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-04-28 · 共 59 份 plan_
+_自动生成于 2026-04-29 · 共 72 份 plan_
 
 ```
-总进度  █████████████████████░░░░░░░░░  71.5%
+总进度  ████████████████████░░░░░░░░░░  66.7%
 ```
 
-**分布**：`merged` 9 · `wip` 8 · `design` 6 · `skeleton` 7 · `done` 29
+**分布**：`merged` 12 · `wip` 7 · `design` 4 · `skeleton` 17 · `done` 32
 
 ### 战斗 / HUD / 视觉
-_战斗 ECS、流派、HUD、粒子、动画、Iris · 9 份 · 组均 60%_
+_战斗 ECS、流派、HUD、粒子、动画、Iris · 8 份 · 组均 72%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **武器 v1.1 补完：schema 单一来源与验收证据** <br/><sub>`plan-weapon-v1.1.md`</sub> | `███████████░`  95% | #69 | 2026-04-28 |
-| `merged` | **战斗系统客户端 UI 全量实现 U1–U7** <br/><sub>`plan-combat-ui_impl.md`</sub> | `███████████░`  90% | #20 | 2026-04-25 |
-| `merged` | **武器法宝：数据模型 + 装备槽 + 3D 渲染** <br/><sub>`plan-weapon-v1.md`</sub> | `███████████░`  90% | #41 | 2026-04-25 |
-| `wip` | **HUD 双层快捷栏 + 三状态条 + 事件流** <br/><sub>`plan-HUD-v1.md`</sub> | `██████████░░`  80% | #43 | 2026-04-25 |
-| `wip` | **玩家动画 PlayerAnimator + 20 个 JSON 资产** <br/><sub>`plan-player-animation-v1.md`</sub> | `████████░░░░`  70% | — | 2026-04-25 |
-| `wip` | **粒子与世界内 VFX 三基类 + 触发协议** <br/><sub>`plan-particle-system-v1.md`</sub> | `███████░░░░░`  60% | — | 2026-04-28 |
-| `wip` | **快捷栏双行重构：1-9 技能行与 F1-F9 物品行** <br/><sub>`plan-hotbar-modify-v1.md`</sub> | `█████░░░░░░░`  45% | #65 | 2026-04-27 |
-| `design` | **体修爆脉流 P0 崩拳战斗功法** <br/><sub>`plan-baomai-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-27 |
-| `design` | **Iris 光影集成：修仙状态驱动 shader** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
+| `merged` | **武器 v1.1 补完：schema 对齐 / channel 语义 / Evidence 闭环** <br/><sub>`plan-weapon-v1.1.md`</sub> | `███████████░`  95% | #69 | 2026-04-27 |
+| `merged` | **战斗系统客户端 UI 全套（screens/stores/HUD planners）** <br/><sub>`plan-combat-ui_impl.md`</sub> | `███████████░`  90% | #20 | 2026-04-25 |
+| `merged` | **武器法宝：ItemInstance+Weapon Component+3D 渲染+装备槽** <br/><sub>`plan-weapon-v1.md`</sub> | `██████████░░`  85% | #41 | 2026-04-25 |
+| `wip` | **客户端全局 HUD（双层快捷栏+三状态条+事件流）** <br/><sub>`plan-HUD-v1.md`</sub> | `██████████░░`  82% | #43 | 2026-04-25 |
+| `merged` | **粒子与世界 VFX（Line/Ribbon/GroundDecal 三基类）** <br/><sub>`plan-particle-system-v1.md`</sub> | `██████████░░`  80% | #17 #64 | 2026-04-28 |
+| `wip` | **玩家动画系统（PlayerAnimator + AI 生产线 + 首批 20 动画）** <br/><sub>`plan-player-animation-v1.md`</sub> | `█████████░░░`  75% | — | 2026-04-25 |
+| `merged` | **双行快捷栏：1-9 技能行 + F1-F9 物品行分离** <br/><sub>`plan-hotbar-modify-v1.md`</sub> | `████████░░░░`  65% | #65 | 2026-04-28 |
+| `design` | **Iris 光影集成：修仙状态驱动 shader uniform** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
 
 ### 修炼 / 经济
-_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 4 份 · 组均 73%_
+_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 5 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **炼器全链路收口：schema sample + 装备写入 + 三块客户端 UI** <br/><sub>`plan-forge-leftovers-v1.md`</sub> | `███████████░`  90% | #66 | 2026-04-28 |
-| `merged` | **矿物材料正典：MineralRegistry + worldgen + forge/alchemy 钩子** <br/><sub>`plan-mineral-v1.md`</sub> | `███████████░`  90% | #44 | 2026-04-27 |
-| `merged` | **灵田种植全链路：开垦/种植/生长/收获/补灵/偷菜** <br/><sub>`plan-lingtian-v1.md`</sub> | `███████████░`  88% | #26 | 2026-04-25 |
-| `wip` | **天劫专项：渡虚劫/域崩/定向天罚三类天道手段** <br/><sub>`plan-tribulation-v1.md`</sub> | `███░░░░░░░░░`  25% | — | 2026-04-25 |
+| `merged` | **灵田人工种植 — 开垦→种植→补灵→收获闭环** <br/><sub>`plan-lingtian-v1.md`</sub> | `███████████░`  95% | #26 | 2026-04-26 |
+| `merged` | **矿物材料正典 — 18 矿物 + worldgen + forge/alchemy 钩子** <br/><sub>`plan-mineral-v1.md`</sub> | `███████████░`  90% | #31 #44 #57 | 2026-04-27 |
+| `merged` | **炼器全链路收口 — schema / bridge / 装备写入 / 三块 UI** <br/><sub>`plan-forge-leftovers-v1.md`</sub> | `██████████░░`  85% | #62 #66 | 2026-04-28 |
+| `wip` | **天劫 — 渡虚劫 / 域崩 / 定向天罚** <br/><sub>`plan-tribulation-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-04-27 |
+| `design` | **末法残土植物生态扩展 — 17 新物种 + 三层抽象** <br/><sub>`plan-botany-v2.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-04-29 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 6 份 · 组均 42%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 6 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **背包系统 — Server 权威 inventory + dropped loot** <br/><sub>`plan-inventory-v1.md`</sub> | `███████████░`  88% | #27 | 2026-04-25 |
-| `merged` | **子技能系统 — herbalism/alchemy/forging 熟练度** <br/><sub>`plan-skill-v1.md`</sub> | `█████████░░░`  78% | #42 | 2026-04-25 |
-| `wip` | **NPC 行为 / archetype / 派系 / 渡劫 / LOD** <br/><sub>`plan-npc-ai-v1.md`</sub> | `████████░░░░`  68% | #22 #45 | 2026-04-25 |
-| `design` | **玩家匿名 / 关系 / 声名 / 灵龛社交系统** <br/><sub>`plan-social-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | 2026-04-25 |
-| `design` | **NPC 假玩家实体 + MineSkin 自定义皮肤注入** <br/><sub>`plan-npc-skin-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
-| `design` | **视觉距离 + 神识感知双系统** <br/><sub>`plan-perception-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
+| `merged` | **背包 / 物品 / 死亡掉落 / G 键拾取全链路** <br/><sub>`plan-inventory-v1.md`</sub> | `███████████░`  92% | #27 #42 | 2026-04-28 |
+| `merged` | **NPC 行为 / 老化 / 派系 / 渡劫多 archetype** <br/><sub>`plan-npc-ai-v1.md`</sub> | `██████████░░`  85% | #22 #45 #75 | 2026-04-29 |
+| `merged` | **NPC 假玩家皮肤池 / MineSkin 协议** <br/><sub>`plan-npc-skin-v1.md`</sub> | `██████████░░`  80% | #73 | 2026-04-28 |
+| `wip` | **子技能成长（采药/炼丹/锻造）XP 与残卷** <br/><sub>`plan-skill-v1.md`</sub> | `█████████░░░`  75% | #25 #42 #68 | 2026-04-26 |
+| `design` | **匿名 / 关系图 / 声名 / 灵龛 / 玩家派系挂靠** <br/><sub>`plan-social-v1.md`</sub> | `█░░░░░░░░░░░`   8% | — | 2026-04-28 |
+| `design` | **视野 / 神识双感知（雾化 + 边缘指示器）** <br/><sub>`plan-perception-v1.md`</sub> | `░░░░░░░░░░░░`   3% | — | 2026-04-26 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 4 份 · 组均 49%_
+_IPC schema、持久化、工作流、内容、音效 · 4 份 · 组均 75%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **Server/Agent 统一 SQLite 持久化存档规范** <br/><sub>`plan-persistence-v1.md`</sub> | `█████████░░░`  75% | #24 | 2026-04-25 |
-| `wip` | **末法残土图书馆 18 册 Astro 内容填充** <br/><sub>`plan-library-web-content-v1.md`</sub> | `███████░░░░░`  60% | — | 2026-04-25 |
-| `wip` | **opencode + oh-my-opencode 全自动 plan 消费流水线** <br/><sub>`plan-opencode-workflow-v1.md`</sub> | `███████░░░░░`  55% | #15 | 2026-04-24 |
-| `design` | **修仙音效：100% 复用 vanilla SoundEvent 组合播放** <br/><sub>`plan-audio-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
+| `merged` | **server !xxx 命令迁移至 Valence 原生 brigadier /xxx** <br/><sub>`plan-server-cmd-system-v1.md`</sub> | `███████████░`  90% | #72 | 2026-04-29 |
+| `wip` | **server/agent 双侧跨重启持久化（SQLite WAL）** <br/><sub>`plan-persistence-v1.md`</sub> | `██████████░░`  80% | #24 | 2026-04-26 |
+| `wip` | **library-web Astro 静态站 18 册馆藏内容** <br/><sub>`plan-library-web-content-v1.md`</sub> | `█████████░░░`  75% | #11 | 2026-04-25 |
+| `wip` | **opencode + oh-my-opencode 全自动 plan 消费流水线** <br/><sub>`plan-opencode-workflow-v1.md`</sub> | `███████░░░░░`  55% | — | 2026-04-25 |
+
+### 地形 / 世界生成
+_末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 5 份 · 组均 6%_
+
+| 状态 | Plan | 进度 | PR | 最近更新 |
+|---|---|---|---|---|
+| `skeleton` | **渊口荒丘 — TSY 主世界入口锚点的地表表达** <br/><sub>`plan-terrain-rift-mouth-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-04-28 |
+| `skeleton` | **余烬死域 — qi=0 真死地** <br/><sub>`plan-terrain-ash-deadzone-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **九宗故地 — 上古七崩宗门废墟群** <br/><sub>`plan-terrain-jiuzong-ruin-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **伪灵脉绿洲 — 天道刻意陷阱** <br/><sub>`plan-terrain-pseudo-vein-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **烬焰焦土 — 长期天劫累积带** <br/><sub>`plan-terrain-tribulation-scorch-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 
 ### 骨架 plan
-_战斗流派 + 快捷栏，等待开工 · 7 份 · 组均 6%_
+_战斗流派 + 快捷栏，等待开工 · 12 份 · 组均 5%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
 | `skeleton` | **天道叙事内容侧** <br/><sub>`plan-narrative-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | — |
+| `skeleton` | **炼丹回收** <br/><sub>`plan-alchemy-recycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **器修·暗器流** <br/><sub>`plan-anqi-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **毒蛊流** <br/><sub>`plan-dugu-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **灵田 NPC 行为扩展** <br/><sub>`plan-lingtian-npc-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **灵田流程深化** <br/><sub>`plan-lingtian-process-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **灵田天气与季节** <br/><sub>`plan-lingtian-weather-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
+| `skeleton` | **矿物 v2 扩展** <br/><sub>`plan-mineral-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **替尸·蜕壳流** <br/><sub>`plan-tuike-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **绝灵·涡流流** <br/><sub>`plan-woliu-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **地师·阵法流** <br/><sub>`plan-zhenfa-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 | `skeleton` | **截脉·震爆流** <br/><sub>`plan-zhenmai-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 
 ### 已完成归档
-_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 29 份 · 组均 100%_
+_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 32 份 · 组均 100%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -91,6 +107,8 @@ _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 29 份 · 组均 10
 | `done` | **天道 Agent 闭环（v1）** <br/><sub>`plan-agent.md`</sub> | `████████████` 100% | — | 2026-04-10 |
 | `done` | **炼丹专项：配方/熔炉/火候三系统 + 服药丹毒** <br/><sub>`plan-alchemy-v1.md`</sub> | `████████████` 100% | #21 #28 | 2026-04-27 |
 | `done` | **护甲减免系统：ArmorProfile + 耐久 + 体修 buff** <br/><sub>`plan-armor-v1.md`</sub> | `████████████` 100% | #46 #52 #56 | 2026-04-27 |
+| `done` | **MC vanilla 音效 SoundRecipe 组合管线** <br/><sub>`plan-audio-v1.md`</sub> | `████████████` 100% | #74 | 2026-04-28 |
+| `done` | **体修·爆脉流崩拳 P0（首个真实战斗功法闭环）** <br/><sub>`plan-baomai-v1.md`</sub> | `████████████` 100% | #76 | 2026-04-28 |
 | `done` | **野生植物采集生态** <br/><sub>`plan-botany-v1.md`</sub> | `████████████` 100% | — | 2026-04-25 |
 | `done` | **Client Mod 网络消息路由** <br/><sub>`plan-client.md`</sub> | `████████████` 100% | — | 2026-04-20 |
 | `done` | **战斗系统服务端 ECS + IPC schema（无 UI）** <br/><sub>`plan-combat-no_ui.md`</sub> | `████████████` 100% | #29 #30 | 2026-04-21 |
@@ -112,6 +130,7 @@ _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 29 份 · 组均 10
 | `done` | **TSY Zone P0 收尾（集成测 + Server→Redis 桥）** <br/><sub>`plan-tsy-zone-followup-v1.md`</sub> | `████████████` 100% | #50 | 2026-04-26 |
 | `done` | **TSY Zone P0 基础** <br/><sub>`plan-tsy-zone-v1.md`</sub> | `████████████` 100% | #49 | 2026-04-26 |
 | `done` | **视觉特效基础栈** <br/><sub>`plan-vfx-v1.md`</sub> | `████████████` 100% | — | 2026-04-13 |
+| `done` | **Worldgen 视觉快照 CI（5 角度真画面 + raster 双轨）** <br/><sub>`plan-worldgen-snapshot-v1.md`</sub> | `████████████` 100% | #71 | 2026-04-28 |
 | `done` | **巨树生成方向** <br/><sub>`plan-worldgen-v3.1.md`</sub> | `████████████` 100% | — | 2026-04-13 |
 | `done` | **Rust 运行时地形生成** <br/><sub>`plan-worldgen-v3.md`</sub> | `████████████` 100% | — | 2026-04-20 |
 | `done` | **世界生成混合方案** <br/><sub>`plan-worldgen.md`</sub> | `████████████` 100% | — | 2026-03-30 |
