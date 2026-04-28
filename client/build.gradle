@@ -99,5 +99,11 @@ tasks.named('runClient').configure {
         if (System.getenv('BONG_PREVIEW_CONFIG') == null) {
             environment 'BONG_PREVIEW_CONFIG', file('preview-harness.json').absolutePath
         }
+        // MC 1.20.1 vanilla Main 解析 --quickPlayMultiplayer（23w14a 引入），
+        // 让 client 启动后跳过主菜单直接连 server。不加这个 client 卡在标题
+        // 屏，PreviewSession.WAIT_WORLD 永远等不到 client.world，60s 后超时
+        // 退出 → artifact 0 张图（首轮 CI 实测命中此 bug）。
+        def previewServer = System.getenv('BONG_PREVIEW_SERVER') ?: '127.0.0.1:25565'
+        args '--quickPlayMultiplayer', previewServer
     }
 }
