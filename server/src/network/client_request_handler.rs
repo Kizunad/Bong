@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Events, Query, Res,
-    ResMut, Resource, Username, With,
+    bevy_ecs, ChunkLayer, Client, Commands, Entity, EntityManager, EventReader, EventWriter,
+    Events, Query, Res, ResMut, Resource, Username, With,
 };
 
 use crate::alchemy::{
@@ -36,6 +36,7 @@ use crate::cultivation::known_techniques::technique_definition;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
+use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
@@ -105,6 +106,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub entity_manager: Option<Res<'w, EntityManager>>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
@@ -1716,12 +1719,16 @@ mod tests {
 
     fn register_request_app(app: &mut App) {
         app.insert_resource(CombatClock::default());
+        app.insert_resource(crate::cultivation::skill_registry::init_registry());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<BreakthroughRequest>();
         app.add_event::<ForgeRequest>();
         app.add_event::<InsightChosen>();
@@ -2722,15 +2729,21 @@ mod tests {
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                SkillBarBindings::default(),
-                QuickSlotBindings::default(),
-                empty_inventory(),
-            ))
-            .id();
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            crate::cultivation::components::MeridianSystem::default(),
+            SkillBarBindings::default(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+        ));
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -2745,9 +2758,13 @@ mod tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"npc:1"}"#
-                    .to_vec()
-                    .into_boxed_slice(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: Some(format!("entity:{}", target.to_bits())),
+                })
+                .unwrap()
+                .into_boxed_slice(),
             });
 
         app.update();
@@ -3096,6 +3113,16 @@ fn handle_skill_bar_cast(
         );
         return;
     };
+    let Some(skill_fn) = combat_params
+        .skill_registry
+        .as_deref()
+        .and_then(|registry| registry.lookup(&skill_id))
+    else {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: skill `{skill_id}` has no registered resolver"
+        );
+        return;
+    };
     if combat_params
         .skillbar_bindings_q
         .get(entity)
@@ -3119,46 +3146,82 @@ fn handle_skill_bar_cast(
         cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
     }
 
-    let duration_ticks = u64::from(definition.cast_ticks).max(1);
-    let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
-    let duration_ms = definition.cast_ticks.saturating_mul(50);
-    let started_at_ms = current_unix_millis();
-    let start_position = combat_params
-        .positions
-        .get(entity)
-        .map(|position| position.get())
-        .unwrap_or(valence::prelude::DVec3::ZERO);
-    commands.entity(entity).insert(Casting {
-        source: CastSource::SkillBar,
-        slot,
-        started_at_tick: clock.tick,
-        duration_ticks,
-        started_at_ms,
-        duration_ms,
-        bound_instance_id: None,
-        start_position,
-        complete_cooldown_ticks,
-        skill_id: Some(skill_id.clone()),
+    let resolved_target = resolve_skill_cast_target(target.as_deref(), combat_params);
+    let command_target = resolved_target;
+    commands.add(move |world: &mut bevy_ecs::world::World| {
+        match skill_fn(world, entity, slot, command_target) {
+            CastResult::Started {
+                cooldown_ticks,
+                anim_duration_ticks,
+            } => {
+                push_skill_cast_started_sync(world, entity, slot);
+                tracing::info!(
+                    "[bong][network] skill resolver started entity={entity:?} slot={slot} cooldown_ticks={cooldown_ticks} anim_duration_ticks={anim_duration_ticks}"
+                );
+            }
+            CastResult::Rejected { reason } => {
+                tracing::debug!(
+                    "[bong][network] skill resolver rejected entity={entity:?} slot={slot} reason={reason:?}"
+                );
+            }
+            CastResult::Interrupted => {
+                tracing::debug!(
+                    "[bong][network] skill resolver interrupted entity={entity:?} slot={slot}"
+                );
+            }
+        }
     });
-    if let Ok((username, mut client)) = clients.get_mut(entity) {
-        push_cast_sync(
-            &mut client,
-            CastSyncV1 {
-                phase: CastPhaseV1::Casting,
-                slot,
-                duration_ms,
-                started_at_ms,
-                outcome: CastOutcomeV1::None,
-            },
-            username.0.as_str(),
-            entity,
-        );
-    }
     tracing::info!(
-        "[bong][network] skill cast started entity={entity:?} slot={slot} skill={skill_id} target={target:?} duration_ticks={} cooldown_ticks={} tick={}",
+        "[bong][network] skill cast queued entity={entity:?} slot={slot} skill={skill_id} target={target:?} resolved_target={resolved_target:?} duration_ticks={} cooldown_ticks={} tick={}",
         definition.cast_ticks,
         definition.cooldown_ticks,
         clock.tick
+    );
+}
+
+fn resolve_skill_cast_target(
+    raw: Option<&str>,
+    combat_params: &CombatRequestParams,
+) -> Option<Entity> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let id = raw.strip_prefix("entity:")?;
+    if let Ok(protocol_id) = id.parse::<i32>() {
+        if let Some(entity) = combat_params
+            .entity_manager
+            .as_deref()
+            .and_then(|manager| manager.get_by_id(protocol_id))
+        {
+            return Some(entity);
+        }
+    }
+    id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {
+    let Some(casting) = world.get::<Casting>(entity).cloned() else {
+        return;
+    };
+    let username = world
+        .get::<Username>(entity)
+        .map(|username| username.0.clone())
+        .unwrap_or_else(|| format!("entity:{:?}", entity));
+    let Some(mut client) = world.get_mut::<Client>(entity) else {
+        return;
+    };
+    push_cast_sync(
+        &mut client,
+        CastSyncV1 {
+            phase: CastPhaseV1::Casting,
+            slot,
+            duration_ms: casting.duration_ms,
+            started_at_ms: casting.started_at_ms,
+            outcome: CastOutcomeV1::None,
+        },
+        username.as_str(),
+        entity,
     );
 }
 

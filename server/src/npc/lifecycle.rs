@@ -698,6 +698,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 30.0,
             wound_kind: crate::combat::components::WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
             debug_command: None,
         });
 

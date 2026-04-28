@@ -2,6 +2,7 @@ pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
+pub mod burst_event_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -293,6 +294,7 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::possession::process_duo_she_requests),
             cultivation_bridge::publish_aging_events
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
+            burst_event_emit::emit_burst_meridian_events,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             audio_event_emit::handle_audio_debug_commands,
             audio_event_emit::emit_audio_play_payloads
