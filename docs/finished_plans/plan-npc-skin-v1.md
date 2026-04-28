@@ -330,8 +330,8 @@ pub struct SkinPool {
 
 ## Finish Evidence
 
-- 实现 commit：`47df146b feat(npc-skin): 接入 MineSkin 皮肤池与协议包`，落地 `server/src/skin/`、MineSkin random fetch + retry/backoff、`SkinPool` resource、`NpcPlayerInfoUpdateS2c`/remove packet wrapper、`npc_uuid`、`.env.example` 与依赖锁定。
-- 集成 commit：`740b5371 feat(npc-skin): 将散修凡人接入假玩家外观`，将 Rogue/Commoner spawn 接入 `PlayerEntityBundle` + `NpcPlayerSkin`，保留 Zombie mob 路径，并覆盖启动 100 散修、agent spawn、繁衍 spawn、despawn remove 广播。
+- 实现 commit：`fe0b3a18 feat(npc-skin): 接入 MineSkin 皮肤池与协议包`，落地 `server/src/skin/`、MineSkin random fetch + retry/backoff、`SkinPool` resource、`NpcPlayerInfoUpdateS2c`/remove packet wrapper、`npc_uuid`、`.env.example` 与依赖锁定。
+- 集成 commit：`a69e3eda feat(npc-skin): 将散修凡人接入假玩家外观`，将 Rogue/Commoner spawn 接入 `PlayerEntityBundle` + `NpcPlayerSkin`，保留 Zombie mob 路径，并覆盖启动 100 散修、agent spawn、繁衍 spawn、despawn remove 广播。
 - Fallback：MineSkin key 缺失、拉取失败或池空时不阻塞启动；Rogue/Commoner 会降级到 vanilla fallback，死亡/clear 等 `Despawned` 路径由统一系统发 `PlayerInfoRemove`，避免双发。
 - 验证：在 `server/` 运行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过；`cargo test` 结果 `1616 passed; 0 failed; 0 ignored`。
 - 跨栈核验：本 plan 为 server-only；client/agent/worldgen 未改动，未运行跨栈命令。
