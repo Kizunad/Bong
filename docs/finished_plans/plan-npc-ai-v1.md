@@ -352,5 +352,6 @@ _（无未决项，所有设计问题均已收口）_
 - 2026-04-28：`72c14291 feat(agent): 订阅 NPC runtime 事件` 完成 agent schema、RedisIpc runtime event 订阅/缓存与 dedicated channel contract tests。
 - 2026-04-28：`02bde067 feat(agent): 推演 NPC 长期意图` 完成 deterministic NPC producer、`spawn_npc.count` batch/clamp、agent/server schema 与 runtime tests。
 - 2026-04-28：`f4607564 feat(npc): 接回派系社交与守护行为` 恢复 Beast/Disciple/GuardianRelic 的 territory、mission、social、relic scorer/action 注册，并用 LOD gate 包住新增 scorer 以避免重现历史 TPS 回归。
-- 验证通过：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，server tests `1690 passed`。
-- 验证通过：`cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`，schema tests `194 passed`，tiandao tests `176 passed`。
+- 2026-04-28：PR review fix 补充 NPC world-state `zone` 字段，producer 按显式 zone 统计/夹紧散修上限，并让 NPC runtime events 使用 `GameTick` 输出真实 `at_tick`。
+- 验证通过：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，server tests `1691 passed`。
+- 验证通过：`cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`，schema tests `194 passed`，tiandao tests `177 passed`。
