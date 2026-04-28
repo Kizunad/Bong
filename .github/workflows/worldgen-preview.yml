@@ -94,6 +94,11 @@ jobs:
         run: cargo build --release
 
       - name: Start headless Bong server
+        # BONG_PREVIEW_MODE=1 激活 preview module 的 !preview-tp 命令处理 +
+        # ViewDistance(32) boost；不设的话 client 发命令 server 解析后 event
+        # 不会被消费，5 角度都拍到 spawn 同一位置（fallback 行为）。
+        env:
+          BONG_PREVIEW_MODE: "1"
         run: bash scripts/preview/run-server-headless.sh --release --timeout 120
 
       - name: Run Fabric client headless (xvfb + preview harness)
