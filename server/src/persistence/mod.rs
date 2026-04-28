@@ -1400,6 +1400,19 @@ pub fn complete_tribulation_ascension(
     Ok(quota)
 }
 
+pub fn release_ascension_quota_slot(
+    settings: &PersistenceSettings,
+) -> io::Result<AscensionQuotaRecord> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let mut quota = load_ascension_quota_from_transaction(&transaction)?;
+    quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
+    upsert_ascension_quota(&transaction, &quota, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(quota)
+}
+
 pub fn persist_zone_runtime_snapshot(
     settings: &PersistenceSettings,
     zones: &crate::world::zone::ZoneRegistry,
@@ -5519,6 +5532,33 @@ mod persistence_tests {
         let active = load_active_tribulation(&settings, record.char_id.as_str())
             .expect("active tribulation query should succeed");
         assert!(active.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn release_ascension_quota_slot_decrements_safely() {
+        let (settings, root) = persistence_settings("ascension-quota-release");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let wall_clock = current_unix_seconds();
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should open");
+        upsert_ascension_quota(
+            &transaction,
+            &AscensionQuotaRecord { occupied_slots: 2 },
+            wall_clock,
+        )
+        .expect("quota upsert should succeed");
+        transaction.commit().expect("transaction should commit");
+
+        let quota = release_ascension_quota_slot(&settings).expect("release should succeed");
+        assert_eq!(quota.occupied_slots, 1);
+        let quota = release_ascension_quota_slot(&settings).expect("release should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+        let quota = release_ascension_quota_slot(&settings).expect("empty release should succeed");
+        assert_eq!(quota.occupied_slots, 0);
 
         let _ = fs::remove_dir_all(root);
     }

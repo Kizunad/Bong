@@ -101,7 +101,8 @@ use self::tribulation::{
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
-    load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
+    load_active_tribulation, load_player_cultivation_bundle, release_ascension_quota_slot,
+    PersistenceSettings,
 };
 use crate::player::state::{
     canonical_player_id, load_current_character_id, player_character_id, PlayerState,
@@ -399,10 +400,19 @@ fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error
 }
 
 fn emit_skill_caps_on_realm_regressed(
+    settings: Res<PersistenceSettings>,
     mut regressed: EventReader<RealmRegressed>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for event in regressed.read() {
+        if event.from == Realm::Void && event.to != Realm::Void {
+            if let Err(error) = release_ascension_quota_slot(&settings) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to release ascension quota after realm regression for {:?}: {error}",
+                    event.entity,
+                );
+            }
+        }
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
         for skill in [
             crate::skill::components::SkillId::Herbalism,
@@ -433,6 +443,26 @@ mod tests {
     use crate::skill::events::SkillCapChanged;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
+
+    fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-{test_name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        (settings, temp_root)
+    }
 
     #[test]
     fn joined_clients_receive_canonical_player_character_id() {
@@ -754,6 +784,7 @@ mod tests {
     #[test]
     fn realm_regressed_emits_cap_changed_for_all_skills() {
         let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
         app.add_event::<RealmRegressed>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(Update, emit_skill_caps_on_realm_regressed);
@@ -774,5 +805,36 @@ mod tests {
             .collect();
         assert_eq!(caps.len(), 3);
         assert!(caps.iter().all(|e| e.new_cap == 8));
+    }
+
+    #[test]
+    fn void_realm_regression_releases_ascension_quota() {
+        let (settings, root) = temp_persistence_settings("void-regression-release-quota");
+        crate::persistence::complete_tribulation_ascension(
+            &settings,
+            canonical_player_id("Azure").as_str(),
+        )
+        .expect("quota setup should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_event::<RealmRegressed>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, emit_skill_caps_on_realm_regressed);
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RealmRegressed {
+            entity,
+            from: Realm::Void,
+            to: Realm::Spirit,
+            closed_meridians: 8,
+        });
+
+        app.update();
+
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

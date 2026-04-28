@@ -12,6 +12,7 @@ use super::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
+use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 use valence::prelude::Res;
@@ -77,6 +78,7 @@ pub fn apply_revive_penalty(
 
 pub fn on_player_revived(
     clock: Res<CultivationClock>,
+    settings: Res<PersistenceSettings>,
     mut events: EventReader<PlayerRevived>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut players: Query<(
@@ -97,6 +99,14 @@ pub fn on_player_revived(
             }
             let prior = c.realm;
             apply_revive_penalty(&mut c, &mut ms, &mut cn);
+            if prior == Realm::Void && c.realm != Realm::Void {
+                if let Err(error) = release_ascension_quota_slot(&settings) {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to release ascension quota after revive for {:?}: {error}",
+                        ev.entity,
+                    );
+                }
+            }
             life.push(BiographyEntry::Rebirth {
                 prior_realm: prior,
                 new_realm: c.realm,
@@ -120,8 +130,25 @@ pub fn on_player_revived(
     }
 }
 
-pub fn on_player_terminated(mut commands: Commands, mut events: EventReader<PlayerTerminated>) {
+pub fn on_player_terminated(
+    settings: Res<PersistenceSettings>,
+    mut commands: Commands,
+    mut events: EventReader<PlayerTerminated>,
+    players: Query<&Cultivation>,
+) {
     for ev in events.read() {
+        let was_void = players
+            .get(ev.entity)
+            .map(|cultivation| cultivation.realm == Realm::Void)
+            .unwrap_or(false);
+        if was_void {
+            if let Err(error) = release_ascension_quota_slot(&settings) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to release ascension quota after termination for {:?}: {error}",
+                    ev.entity,
+                );
+            }
+        }
         if let Some(mut e) = commands.get_entity(ev.entity) {
             e.remove::<Cultivation>();
             e.remove::<MeridianSystem>();
@@ -156,8 +183,29 @@ mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
     use crate::cultivation::tick::CultivationClock;
+    use crate::persistence::{complete_tribulation_ascension, load_ascension_quota};
     use crate::player::state::canonical_player_id;
     use valence::prelude::App;
+
+    fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-death-hooks-{test_name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "death-hooks-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        (settings, temp_root)
+    }
 
     #[test]
     fn revive_penalty_drops_one_realm_and_closes_excess() {
@@ -197,6 +245,7 @@ mod tests {
     #[test]
     fn revive_penalty_does_not_mutate_character_anchor() {
         let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
         app.add_event::<SkillCapChanged>();
@@ -235,6 +284,7 @@ mod tests {
     #[test]
     fn revived_hook_skips_when_rebirth_already_recorded_for_tick() {
         let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
         app.add_event::<SkillCapChanged>();
@@ -281,5 +331,38 @@ mod tests {
 
         assert_eq!(cultivation.realm, Realm::Induce);
         assert_eq!(life.biography.len(), 1);
+    }
+
+    #[test]
+    fn terminated_void_player_releases_ascension_quota() {
+        let (settings, root) = temp_persistence_settings("terminated-void-release-quota");
+        complete_tribulation_ascension(&settings, canonical_player_id("Azure").as_str())
+            .expect("quota setup should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Void,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
