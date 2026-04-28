@@ -11,10 +11,11 @@ use crate::npc::faction::{
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
 use crate::npc::spawn::{
-    spawn_commoner_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    spawn_commoner_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
 };
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
+use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::ZoneRegistry;
 
@@ -129,6 +130,7 @@ pub fn execute_agent_commands(
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
     layers: LayerQuery<'_, '_>,
@@ -155,6 +157,7 @@ pub fn execute_agent_commands(
                 &mut zone_registry,
                 &mut active_events,
                 &mut npc_registry,
+                &mut skin_pool,
                 &mut faction_store,
                 &mut npc_behavior,
                 &layers,
@@ -188,6 +191,7 @@ fn execute_single_command(
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     layers: &LayerQuery<'_, '_>,
@@ -206,9 +210,14 @@ fn execute_single_command(
 
     let result = match command.command_type {
         CommandType::ModifyZone => execute_modify_zone(command, zone_registry),
-        CommandType::SpawnNpc => {
-            execute_spawn_npc(command, commands, zone_registry, npc_registry, layers)
-        }
+        CommandType::SpawnNpc => execute_spawn_npc(
+            command,
+            commands,
+            zone_registry,
+            npc_registry,
+            skin_pool,
+            layers,
+        ),
         CommandType::DespawnNpc => {
             execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
         }
@@ -301,6 +310,7 @@ fn execute_spawn_npc(
     commands: &mut Commands,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
+    skin_pool: &mut Option<ResMut<SkinPool>>,
     layers: &LayerQuery<'_, '_>,
 ) -> &'static str {
     let Some(archetype) = command.params.get("archetype").and_then(Value::as_str) else {
@@ -396,6 +406,10 @@ fn execute_spawn_npc(
         NpcArchetype::Commoner => {
             spawn_commoner_npc_at(
                 commands,
+                NpcSkinSpawnContext::new(
+                    skin_pool.as_deref_mut(),
+                    NpcSkinFallbackPolicy::AllowFallback,
+                ),
                 layer,
                 zone.name.as_str(),
                 spawn_position,
@@ -407,6 +421,10 @@ fn execute_spawn_npc(
         NpcArchetype::Rogue => {
             spawn_rogue_npc_at(
                 commands,
+                NpcSkinSpawnContext::new(
+                    skin_pool.as_deref_mut(),
+                    NpcSkinFallbackPolicy::AllowFallback,
+                ),
                 layer,
                 zone.name.as_str(),
                 spawn_position,

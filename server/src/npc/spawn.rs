@@ -1,10 +1,12 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
+use valence::entity::player::PlayerEntityBundle;
 use valence::entity::villager::VillagerEntityBundle;
+use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, Update, With,
+    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId, Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -34,12 +36,27 @@ use crate::npc::patrol::NpcPatrol;
 // 仍保留，等后续 PR 挂新 Scorer/Action 时不用重写 spawn 流程。
 use crate::npc::relic::{GuardState, GuardianDuty, GuardianRelicTag, TrialEval, TrialState};
 use crate::npc::territory::{HuntState, ProtectYoungState, Territory, TerritoryPatrolState};
+use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
 
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct NpcMarker;
+
+pub struct NpcSkinSpawnContext<'a> {
+    pub pool: Option<&'a mut SkinPool>,
+    pub policy: NpcSkinFallbackPolicy,
+}
+
+impl NpcSkinSpawnContext<'_> {
+    pub const fn new(
+        pool: Option<&mut SkinPool>,
+        policy: NpcSkinFallbackPolicy,
+    ) -> NpcSkinSpawnContext<'_> {
+        NpcSkinSpawnContext { pool, policy }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Component)]
 #[allow(dead_code, unfulfilled_lint_expectations)]
@@ -269,6 +286,7 @@ pub(crate) fn initial_age_for_index(index: u32, max_age_ticks: f64, max_ratio: f
 fn seed_initial_rogue_population_on_startup(
     mut commands: Commands,
     config: Option<Res<RoguePopulationSeedConfig>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
@@ -284,6 +302,17 @@ fn seed_initial_rogue_population_on_startup(
         *already_seeded = true;
         return;
     }
+    let skin_policy = match skin_pool.as_deref_mut() {
+        Some(pool) => {
+            pool.drain_ready();
+            if pool.ready_for_spawn() {
+                NpcSkinFallbackPolicy::AllowFallback
+            } else {
+                return;
+            }
+        }
+        None => NpcSkinFallbackPolicy::AllowFallback,
+    };
     let Some(zones) = zone_registry.as_deref() else {
         tracing::warn!("[bong][npc] rogue seed skipped — ZoneRegistry missing");
         return;
@@ -347,6 +376,7 @@ fn seed_initial_rogue_population_on_startup(
             let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
             spawn_rogue_npc_at(
                 &mut commands,
+                NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
                 layer,
                 zone.name.as_str(),
                 pos,
@@ -371,6 +401,7 @@ fn seed_initial_rogue_population_on_startup(
 fn process_npc_reproduction_requests(
     mut commands: Commands,
     mut requests: EventReader<NpcReproductionRequest>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
 ) {
@@ -416,6 +447,10 @@ fn process_npc_reproduction_requests(
         let entity = match request.archetype {
             NpcArchetype::Commoner => spawn_commoner_npc_at(
                 &mut commands,
+                NpcSkinSpawnContext::new(
+                    skin_pool.as_deref_mut(),
+                    NpcSkinFallbackPolicy::AllowFallback,
+                ),
                 layer,
                 request.home_zone.as_str(),
                 request.position,
@@ -548,10 +583,11 @@ fn relic_guard_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
-/// Spawn a Rogue (散修) NPC. 用 `VillagerEntityBundle` 外观（未来接 GeyserMC skin 再区分）。
+/// Spawn a Rogue (散修) NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// `initial_age_ticks` 允许 agent 投放"已修炼多年"的散修。
 pub fn spawn_rogue_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -559,33 +595,21 @@ pub fn spawn_rogue_npc_at(
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
-            Transform::from_xyz(
-                spawn_position.x as f32,
-                spawn_position.y as f32,
-                spawn_position.z as f32,
-            ),
-            GlobalTransform::default(),
-            NpcMarker,
-            NpcBlackboard::default(),
-            loadout.clone(),
-            loadout.melee_archetype,
-            loadout.melee_profile(),
-            NpcArchetype::Rogue,
-            Navigator::new(),
-            MovementController::new(),
-            loadout.movement_capabilities,
-            MovementCooldowns::default(),
-            NpcPatrol::new(home_zone, patrol_target),
-        ))
-        .id();
+    let skin = draw_npc_skin(skin_context, NpcArchetype::Rogue, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        loadout.clone(),
+        NpcArchetype::Rogue,
+        home_zone,
+        patrol_target,
+    );
+
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
+    }
 
     commands.entity(entity).insert((
         WanderState::default(),
@@ -605,12 +629,13 @@ pub fn spawn_rogue_npc_at(
     entity
 }
 
-/// Spawn a Commoner NPC. Uses [`VillagerEntityBundle`] for visual distinction
-/// from the combat-oriented zombie. Starting age is controlled by
+/// Spawn a Commoner NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
+/// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
 /// any value `< NpcLifespan::for_archetype(Commoner).max_age_ticks`.
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -618,33 +643,21 @@ pub fn spawn_commoner_npc_at(
     initial_age_ticks: f64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::civilian();
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
-            Transform::from_xyz(
-                spawn_position.x as f32,
-                spawn_position.y as f32,
-                spawn_position.z as f32,
-            ),
-            GlobalTransform::default(),
-            NpcMarker,
-            NpcBlackboard::default(),
-            loadout.clone(),
-            loadout.melee_archetype,
-            loadout.melee_profile(),
-            NpcArchetype::Commoner,
-            Navigator::new(),
-            MovementController::new(),
-            loadout.movement_capabilities,
-            MovementCooldowns::default(),
-            NpcPatrol::new(home_zone, patrol_target),
-        ))
-        .id();
+    let skin = draw_npc_skin(skin_context, NpcArchetype::Commoner, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        loadout.clone(),
+        NpcArchetype::Commoner,
+        home_zone,
+        patrol_target,
+    );
+
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Commoner, skin);
+    }
 
     commands.entity(entity).insert((
         Hunger::default(),
@@ -661,6 +674,111 @@ pub fn spawn_commoner_npc_at(
     commands.entity(entity).insert(runtime);
 
     entity
+}
+
+fn draw_npc_skin(
+    skin_context: NpcSkinSpawnContext<'_>,
+    archetype: NpcArchetype,
+    spawn_position: DVec3,
+) -> Option<SignedSkin> {
+    let pool = skin_context.pool?;
+    if skin_context.policy == NpcSkinFallbackPolicy::WaitForReady && !pool.ready_for_spawn() {
+        return None;
+    }
+
+    let salt = skin_salt(spawn_position);
+    Some(pool.next_for(archetype, salt))
+}
+
+fn skin_salt(spawn_position: DVec3) -> u64 {
+    spawn_position.x.to_bits()
+        ^ spawn_position.y.to_bits().rotate_left(17)
+        ^ spawn_position.z.to_bits().rotate_left(31)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_rogue_commoner_base(
+    commands: &mut Commands,
+    layer: Entity,
+    spawn_position: DVec3,
+    skin: &Option<SignedSkin>,
+    loadout: NpcCombatLoadout,
+    archetype: NpcArchetype,
+    home_zone: &str,
+    patrol_target: DVec3,
+) -> Entity {
+    let mut entity_commands = commands.spawn_empty();
+    match fallback_rogue_commoner_kind(skin) {
+        EntityKind::PLAYER => {
+            entity_commands.insert(PlayerEntityBundle {
+                kind: EntityKind::PLAYER,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            });
+        }
+        EntityKind::WITCH => {
+            entity_commands.insert(WitchEntityBundle {
+                kind: EntityKind::WITCH,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            });
+        }
+        _ => {
+            entity_commands.insert(VillagerEntityBundle {
+                kind: EntityKind::VILLAGER,
+                layer: EntityLayerId(layer),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            });
+        }
+    }
+
+    entity_commands
+        .insert((
+            Transform::from_xyz(
+                spawn_position.x as f32,
+                spawn_position.y as f32,
+                spawn_position.z as f32,
+            ),
+            GlobalTransform::default(),
+            NpcMarker,
+            NpcBlackboard::default(),
+            loadout.clone(),
+            loadout.melee_archetype,
+            loadout.melee_profile(),
+            archetype,
+            Navigator::new(),
+            MovementController::new(),
+            loadout.movement_capabilities,
+            MovementCooldowns::default(),
+            NpcPatrol::new(home_zone, patrol_target),
+        ))
+        .id()
+}
+
+fn attach_player_skin(
+    commands: &mut Commands,
+    entity: Entity,
+    archetype: NpcArchetype,
+    skin: SignedSkin,
+) {
+    let uuid = npc_uuid(entity);
+    commands.entity(entity).insert((
+        UniqueId(uuid),
+        NpcPlayerSkin {
+            uuid,
+            name: npc_skin_name(entity, archetype),
+            skin,
+        },
+    ));
+}
+
+fn npc_skin_name(entity: Entity, archetype: NpcArchetype) -> String {
+    let mut name = format!("bong_{}_{}", archetype.as_str(), entity.index());
+    name.truncate(16);
+    name
 }
 
 /// Spawn a Beast (妖兽) NPC. 用 `ZombieEntityBundle` 视觉占位（未来换真实 entity model）。
@@ -722,6 +840,16 @@ pub fn spawn_beast_npc_at(
     commands.entity(entity).insert(runtime);
 
     entity
+}
+
+pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
+    if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
+        EntityKind::PLAYER
+    } else if skin.as_ref().is_some_and(SignedSkin::is_fallback) {
+        EntityKind::WITCH
+    } else {
+        EntityKind::VILLAGER
+    }
 }
 
 /// Spawn a Disciple (宗门弟子) NPC. 基于 Rogue 外观 + 挂 FactionMembership。
@@ -1200,6 +1328,7 @@ mod tests {
     fn spawn_test_commoner(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_commoner_npc_at(
             &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(20.0, 66.0, 20.0),
@@ -1246,9 +1375,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
+        assert_eq!(fallback_rogue_commoner_kind(&None), EntityKind::VILLAGER);
+        assert_eq!(
+            fallback_rogue_commoner_kind(&Some(SignedSkin::fallback())),
+            EntityKind::WITCH,
+            "MineSkin fallback sentinel should produce visible vanilla fallback, not Steve"
+        );
+        assert_eq!(
+            fallback_rogue_commoner_kind(&Some(SignedSkin {
+                value: "value".into(),
+                signature: "sig".into(),
+                source: crate::skin::SkinSource::MineSkinRandom {
+                    hash: "hash".into(),
+                },
+            })),
+            EntityKind::PLAYER
+        );
+    }
+
     fn spawn_test_rogue(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_rogue_npc_at(
             &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(18.0, 66.0, 18.0),

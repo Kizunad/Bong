@@ -45,7 +45,6 @@ type TerminatedNpcQuery<'w, 's> = Query<
     ),
     With<NpcMarker>,
 >;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
 #[serde(rename_all = "snake_case")]
 pub enum NpcArchetype {
