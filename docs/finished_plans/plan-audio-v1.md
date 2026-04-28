@@ -320,3 +320,42 @@ pub struct StopSoundRecipePayload {
 ## §11 进度日志
 
 - 2026-04-25：代码核查未发现 SoundRecipe schema/Registry/JSON/网络包/Player 任何实装（server `assets/audio/` 不存在，`SoundRecipe/PlaySoundRecipe` 符号缺失，client 仅 BongPunchCombo 直接用 vanilla SoundEvents），P0/P1 暂按未实装保留 `[ ]`
+
+## Finish Evidence
+
+> 验收日期 2026-04-28 · 阶段 P0-P6 全部落地；未自制 `.ogg`、resource pack 或 sound mod，全部 recipe 使用 `minecraft:*` vanilla SoundEvent。
+
+### 落地清单
+
+| Phase | plan 验收点 | 代码落地 |
+|---|---|---|
+| P0 | SoundRecipe schema + Registry + JSON 加载 | `server/src/schema/audio.rs` 定义 recipe / play / stop payload；`server/src/audio/mod.rs` 启动加载 `server/assets/audio/recipes/*.json`，默认 23 份 recipe 含 §3 MVP 22 条 + `narration_cue` |
+| P1 | Server -> Client 网络包 + `SoundRecipePlayer` | `bong:audio/play` / `bong:audio/stop` channel；server 发送 inline resolved recipe；client `AudioEventEnvelope` 解析并交给 `SoundRecipePlayer` 调度 vanilla sound |
+| P2 | combat 接入 | `server/src/network/audio_trigger.rs` 监听 combat/player state/cast 事件，触发 `heartbeat_low_hp` / `qi_depleted_warning` / `parry_clang` / `cast_interrupt` / `phase_shift_in` / `pill_consume` 等 |
+| P3 | alchemy / forge / botany / lingtian 接入 | alchemy outcome 触发 `pill_consume` / `furnace_boom`；forge start/hit/outcome 触发 stance/hammer/boom/lv-up；botany/lingtian harvest/till/replenish 触发对应交互音 |
+| P4 | tribulation / cultivation / skill 接入 | breakthrough/regression/overload/tribulation wave/fail/skill lv-up/scroll use 已接到 SoundRecipe request |
+| P5 | 混音队列 + ducking + attenuation | client top-N 每 tick 3 one-shot + 1 loop；priority >= 85 抢占同类低优先级 loop；AMBIENT 2 秒线性 duck 到 0.3；server 按 attenuation 路由 Single / Radius / All |
+| P6 | LLM 维护验证 + `/audio reload` | recipe 纯 JSON，`/audio reload` 重扫目录；新增 `narration_cue.json` 不改 client/server schema 即可热加载播放 |
+
+### 关键 commit
+
+- `8418d38f` `audio-v1(server): 接入 SoundRecipe 触发管线`
+- `b15928f3` `audio-v1(schema): 发布音效事件契约`
+- `ceac782c` `audio-v1(client): 播放 SoundRecipe 网络事件`
+- `41ab420f` `audio-v1(server): 连接领域音效触发`
+- `ada33176` `audio-v1(client): 增加混音队列策略`
+- `3210877c` `audio-v1(client): 平滑环境音 ducking`
+- `99651a1a` `audio-v1(server): 补齐叙事提示音钩子`
+- `cf434177` `audio-v1(server): 兼容无音频事件测试`
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — 通过，1620 tests passed。
+- `cd client && export JAVA_HOME="/home/kiz/.sdkman/candidates/java/17.0.18-amzn" && export PATH="$JAVA_HOME/bin:$PATH" && ./gradlew test build` — BUILD SUCCESSFUL。
+- `cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)` — tiandao 166 tests passed，schema 192 tests passed。
+
+### 遗留 / 后续
+
+- `niche_breach` recipe 已落地并保留 player-local attenuation 映射；当前代码库尚无稳定的灵龛失效 / 盟约成立 runtime 事件，未强造触发点，等待 `plan-social-v1` 对应事件后接入。
+- `global_hint` 当前按 All 广播；更精细的“全服可闻但按距离变弱”需要客户端额外距离混音曲线，留 v2。
+- MC vanilla 无 EQ / 滤波，仍按 §9 作为未来 resource pack / 自定义处理开放项。
