@@ -347,10 +347,10 @@ _（无未决项，所有设计问题均已收口）_
 
 ## Finish Evidence
 
-- 2026-04-28：`eceea0e8 feat(npc): 衔接寿元老化与夺舍事件` 完成 NPC 寿元 source-of-truth 同步、非老化 archetype 过滤、老死/战斗/despawn/夺舍 death notice 与夺舍事件转发。
-- 2026-04-28：`1b94a2cc feat(network): 发布 NPC 与派系事件通道` 完成 `bong:npc/spawn`、`bong:npc/death`、`bong:faction/event` dedicated Redis channel 与 server wire schema。
-- 2026-04-28：`f7d0aa26 feat(agent): 订阅 NPC runtime 事件` 完成 agent schema、RedisIpc runtime event 订阅/缓存与 dedicated channel contract tests。
-- 2026-04-28：`4792ebfe feat(agent): 推演 NPC 长期意图` 完成 deterministic NPC producer、`spawn_npc.count` batch/clamp、agent/server schema 与 runtime tests。
-- 2026-04-28：`1921bacc feat(npc): 接回派系社交与守护行为` 恢复 Beast/Disciple/GuardianRelic 的 territory、mission、social、relic scorer/action 注册，并用 LOD gate 包住新增 scorer 以避免重现历史 TPS 回归。
-- 验证通过：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，server tests `1676 passed`。
-- 验证通过：`cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`，schema tests `192 passed`，tiandao tests `176 passed`。
+- 2026-04-28：`3bb7db0e feat(npc): 衔接寿元老化与夺舍事件` 完成 NPC 寿元 source-of-truth 同步、非老化 archetype 过滤、老死/战斗/despawn/夺舍 death notice 与夺舍事件转发。
+- 2026-04-28：`7836121f feat(network): 发布 NPC 与派系事件通道` 完成 `bong:npc/spawn`、`bong:npc/death`、`bong:faction/event` dedicated Redis channel 与 server wire schema。
+- 2026-04-28：`72c14291 feat(agent): 订阅 NPC runtime 事件` 完成 agent schema、RedisIpc runtime event 订阅/缓存与 dedicated channel contract tests。
+- 2026-04-28：`02bde067 feat(agent): 推演 NPC 长期意图` 完成 deterministic NPC producer、`spawn_npc.count` batch/clamp、agent/server schema 与 runtime tests。
+- 2026-04-28：`f4607564 feat(npc): 接回派系社交与守护行为` 恢复 Beast/Disciple/GuardianRelic 的 territory、mission、social、relic scorer/action 注册，并用 LOD gate 包住新增 scorer 以避免重现历史 TPS 回归。
+- 验证通过：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，server tests `1690 passed`。
+- 验证通过：`cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`，schema tests `194 passed`，tiandao tests `176 passed`。
