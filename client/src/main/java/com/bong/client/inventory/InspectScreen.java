@@ -293,6 +293,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         });
         Object[] breakthroughBtn = buildActionButton("突破",
             com.bong.client.network.ClientRequestSender::sendBreakthroughRequest);
+        Object[] duXuBtn = buildActionButton("渡虚劫",
+            com.bong.client.network.ClientRequestSender::sendStartDuXuRequest);
         Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
             var sel = bodyInspect.selectedChannel();
             if (sel != null) {
@@ -314,6 +316,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         var forgeCapLabel = (LabelComponent) forgeCapBtn[1];
         actionBar.child((io.wispforest.owo.ui.core.Component) setTargetBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) breakthroughBtn[0]);
+        actionBar.child((io.wispforest.owo.ui.core.Component) duXuBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) forgeRateBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) forgeCapBtn[0]);
         // 横向可滚动容器：塞不下时可拖滚动条或滚轮横向浏览

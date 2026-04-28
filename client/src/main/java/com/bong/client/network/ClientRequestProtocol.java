@@ -70,6 +70,14 @@ public final class ClientRequestProtocol {
         return envelope("breakthrough_request").toString();
     }
 
+    public static String encodeStartDuXuRequest() {
+        return envelope("start_du_xu").toString();
+    }
+
+    public static String encodeAbortTribulationRequest() {
+        return envelope("abort_tribulation").toString();
+    }
+
     /**
      * 顿悟决定 C2S 回执。{@code chosenIdx = null} 表示拒绝或超时；否则为选中候选下标（0-based）。
      */
