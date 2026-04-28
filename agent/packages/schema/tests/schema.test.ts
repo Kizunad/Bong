@@ -7,6 +7,7 @@ import {
   AgentCommandV1,
   validateAgentCommandV1Contract,
 } from "../src/agent-command.js";
+import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
@@ -482,6 +483,18 @@ describe("sample files pass schema validation", () => {
   it("vfx-event.spawn-particle.sample.json", () => {
     const data = loadSample("vfx-event.spawn-particle.sample.json");
     const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("audio-event.play-sound-recipe.sample.json", () => {
+    const data = loadSample("audio-event.play-sound-recipe.sample.json");
+    const result = validate(AudioEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("audio-event.stop-sound-recipe.sample.json", () => {
+    const data = loadSample("audio-event.stop-sound-recipe.sample.json");
+    const result = validate(AudioEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });

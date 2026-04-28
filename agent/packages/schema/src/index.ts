@@ -8,6 +8,7 @@ export * from "./channels.js";
 export * from "./agent-command.js";
 export * from "./agent-world-model.js";
 export * from "./armor-event.js";
+export * from "./audio-event.js";
 export * from "./botany.js";
 export * from "./biography.js";
 export * from "./chat-message.js";

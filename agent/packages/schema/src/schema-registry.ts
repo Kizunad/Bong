@@ -4,6 +4,12 @@ import { AgentCommandV1 } from "./agent-command.js";
 import { AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1 } from "./agent-world-model.js";
 import { ArmorDurabilityChangedV1 } from "./armor-event.js";
 import {
+  AudioEventV1,
+  PlaySoundRecipeEventV1,
+  SoundRecipeV1,
+  StopSoundRecipeEventV1,
+} from "./audio-event.js";
+import {
   AlchemyContaminationLevelV1,
   AlchemyInterventionV1,
   AlchemyOutcomeBucket,
@@ -216,6 +222,10 @@ export const SCHEMA_REGISTRY = {
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
+  audioEventV1: AudioEventV1,
+  playSoundRecipeEventV1: PlaySoundRecipeEventV1,
+  stopSoundRecipeEventV1: StopSoundRecipeEventV1,
+  soundRecipeV1: SoundRecipeV1,
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
@@ -450,6 +460,10 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
+  "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,
+  "play-sound-recipe-event-v1.json": SCHEMA_REGISTRY.playSoundRecipeEventV1,
+  "stop-sound-recipe-event-v1.json": SCHEMA_REGISTRY.stopSoundRecipeEventV1,
+  "sound-recipe-v1.json": SCHEMA_REGISTRY.soundRecipeV1,
   // 炼丹 (plan-alchemy-v1 §4)
   "alchemy-outcome-bucket.json": SCHEMA_REGISTRY.alchemyOutcomeBucket,
   "alchemy-intervention-v1.json": SCHEMA_REGISTRY.alchemyInterventionV1,
