@@ -3,6 +3,7 @@ package com.bong.client;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
@@ -56,6 +57,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimations.bootstrap();
         BongAnimationPlayer.init();
         BongPunchCombo.bootstrap();
+        SoundRecipePlayer.bootstrap();
         BongAnimCommand.register();
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
