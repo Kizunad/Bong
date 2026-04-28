@@ -1,0 +1,178 @@
+name: Worldgen Preview Snapshot
+
+# P0 + P1 + P2 完整版：worldgen 改动 / 手动触发 → 后台跑 server + xvfb headless
+# client → client 截图 + worldgen raster PNG → compose_grid 拼图 → upload artifact
+# + post_comment 在 PR 上发/编辑 [bong-snapshot] 评论。SSIM diff 留 v2 plan(需双
+# ref 跑 + scikit-image)。
+
+on:
+  pull_request:
+    paths:
+      - "worldgen/**"
+      - "server/zones*.json"
+      - "client/src/main/java/com/bong/client/preview/**"
+      - "client/preview-harness.json"
+      - "server/src/preview/**"
+      - "scripts/preview/**"
+      - ".github/workflows/worldgen-preview.yml"
+  workflow_dispatch: {}
+  # P2 §3.4 占位:issue_comment @preview-worldgen 手动触发尚未实装(GH issue
+  # comment trigger 需要专门 fork 处理 + collaborator 校验,留 v2 plan)。
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: worldgen-preview-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python deps (worldgen + compose_grid)
+        run: pip install numpy pillow
+
+      - name: Run worldgen pipeline (raster + PNG previews)
+        # focus-{layout,surface,height}-preview.png + zone-*-preview.png
+        # 这些是 matplotlib 无关的纯 stdlib + numpy 出图（exporters.py 用 zlib
+        # 手写 PNG），看到的是大尺度 raster 顶视，跟 client 截图互补：
+        # - raster PNG 看几千 blocks 整张图（worldgen 全貌、山脉、zone 布局）
+        # - client 截图看 spawn 周围 ~512 blocks 的真游戏画面
+        working-directory: worldgen
+        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot raster
+
+      - name: Cache Rust target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-preview-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-preview-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Gradle / Loom
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            client/.gradle
+          key: ${{ runner.os }}-gradle-preview-${{ hashFiles('client/build.gradle', 'client/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-preview-
+            ${{ runner.os }}-gradle-
+
+      - name: Build server (release) — 让后续 cargo run 直接命中 cache
+        working-directory: server
+        run: cargo build --release
+
+      - name: Start headless Bong server
+        # BONG_PREVIEW_MODE=1 激活 preview module 的 !preview-tp 命令处理 +
+        # ViewDistance(32) boost；不设的话 client 发命令 server 解析后 event
+        # 不会被消费，5 角度都拍到 spawn 同一位置（fallback 行为）。
+        env:
+          BONG_PREVIEW_MODE: "1"
+        run: bash scripts/preview/run-server-headless.sh --release --timeout 120
+
+      - name: Run Fabric client headless (xvfb + preview harness)
+        working-directory: client
+        env:
+          BONG_PREVIEW_HARNESS: "1"
+          BONG_PREVIEW_CONFIG: ${{ github.workspace }}/client/preview-harness.json
+        # xvfb-run 自带 -a 抢未用 :N display；mesa llvmpipe 自动接管 OpenGL。
+        # client.scheduleStop() 由 PreviewSession 拍完照后调用退出；workflow
+        # timeout-minutes 兜底防止 mod 状态机卡住。
+        run: |
+          xvfb-run -a --server-args='-screen 0 1280x720x24' \
+            ./gradlew runClientPreview --no-daemon --stacktrace
+
+      - name: Stop server (cleanup)
+        if: always()
+        run: |
+          if [ -f /tmp/bong-preview-server.pid ]; then
+            PID=$(cat /tmp/bong-preview-server.pid)
+            kill -TERM "$PID" 2>/dev/null || true
+            rm -f /tmp/bong-preview-server.pid
+          fi
+
+      - name: List screenshot + raster output
+        if: always()
+        run: |
+          echo "=== client 截图 (近景 / 真游戏画面) ==="
+          ls -la client/run/screenshots/ 2>/dev/null || echo "screenshots/ 不存在"
+          find client/run -name "preview-*.png" -ls 2>/dev/null || true
+          echo ""
+          echo "=== worldgen raster PNG (顶视全图 / 大尺度) ==="
+          find worldgen/generated -name "*-preview.png" -ls 2>/dev/null | head -30 || true
+
+      - name: Compose grid PNG (5 client 角度 + raster 拼图总览)
+        if: always()
+        run: |
+          python3 scripts/preview/compose_grid.py \
+            --client-dir client/run/screenshots \
+            --raster-dir worldgen/generated/snapshot \
+            --out client/run/screenshots/preview-grid.png
+
+      - name: Upload screenshot + raster + grid artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgen-snapshot-${{ github.event.pull_request.number || github.run_id }}
+          # 三类内容：
+          #   client/run/screenshots/preview-grid.png  — compose_grid 拼图总览
+          #   client/run/screenshots/preview-*.png     — 5 角度 client 真画面截图
+          #   worldgen/generated/**/*-preview.png      — 30+ raster 顶视图
+          path: |
+            client/run/screenshots/preview-grid.png
+            client/run/screenshots/preview-*.png
+            worldgen/generated/**/*-preview.png
+          if-no-files-found: warn
+
+      - name: Post / edit PR comment with snapshot link
+        # 仅 pull_request 触发时发评论（workflow_dispatch 没 PR# 跳过）
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/preview/post_comment.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --run-id "${{ github.run_id }}" \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --artifact-name "worldgen-snapshot-${{ github.event.pull_request.number }}"
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bong-preview-server-log-${{ github.run_id }}
+          path: /tmp/bong-preview-server.log
+          if-no-files-found: ignore
