@@ -1,0 +1,124 @@
+name: Worldgen Preview Snapshot
+
+# P0 最小版：worldgen 改动 / 手动触发 → 后台跑 server + xvfb headless client →
+# 截图 artifact 上传。P1 加多角度 + 装饰；P2 加 PR comment + base ref SSIM diff。
+#
+# 现状（loom 1.6-SNAPSHOT）：手动 xvfb-run 包 ./gradlew runClientPreview。
+# ubuntu-24.04 预装 xvfb 21.x 无需 apt。FabricMC/fabric-api 官方 CI 同模式实跑。
+
+on:
+  pull_request:
+    paths:
+      - "worldgen/**"
+      - "server/zones*.json"
+      - "client/src/main/java/com/bong/client/preview/**"
+      - "client/preview-harness.json"
+      - "scripts/preview/**"
+      - ".github/workflows/worldgen-preview.yml"
+  workflow_dispatch: {}
+  # P2 占位：issue_comment 含 @preview-worldgen 触发；本 PR 不实装。
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: worldgen-preview-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-preview-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-preview-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Gradle / Loom
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            client/.gradle
+          key: ${{ runner.os }}-gradle-preview-${{ hashFiles('client/build.gradle', 'client/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-preview-
+            ${{ runner.os }}-gradle-
+
+      - name: Build server (release) — 让后续 cargo run 直接命中 cache
+        working-directory: server
+        run: cargo build --release
+
+      - name: Start headless Bong server
+        run: bash scripts/preview/run-server-headless.sh --release --timeout 120
+
+      - name: Run Fabric client headless (xvfb + preview harness)
+        working-directory: client
+        env:
+          BONG_PREVIEW_HARNESS: "1"
+          BONG_PREVIEW_CONFIG: ${{ github.workspace }}/client/preview-harness.json
+        # xvfb-run 自带 -a 抢未用 :N display；mesa llvmpipe 自动接管 OpenGL。
+        # client.scheduleStop() 由 PreviewSession 拍完照后调用退出；workflow
+        # timeout-minutes 兜底防止 mod 状态机卡住。
+        run: |
+          xvfb-run -a --server-args='-screen 0 1280x720x24' \
+            ./gradlew runClientPreview --no-daemon --stacktrace
+
+      - name: Stop server (cleanup)
+        if: always()
+        run: |
+          if [ -f /tmp/bong-preview-server.pid ]; then
+            PID=$(cat /tmp/bong-preview-server.pid)
+            kill -TERM "$PID" 2>/dev/null || true
+            rm -f /tmp/bong-preview-server.pid
+          fi
+
+      - name: List screenshot output
+        if: always()
+        run: |
+          ls -la client/run/screenshots/ 2>/dev/null || echo "screenshots/ 不存在"
+          find client/run -name "preview-*.png" -ls 2>/dev/null || true
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgen-snapshot-${{ github.event.pull_request.number || github.run_id }}
+          path: |
+            client/run/screenshots/preview-*.png
+          if-no-files-found: warn
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bong-preview-server-log-${{ github.run_id }}
+          path: /tmp/bong-preview-server.log
+          if-no-files-found: ignore
