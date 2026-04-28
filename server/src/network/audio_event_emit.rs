@@ -201,7 +201,7 @@ pub fn handle_audio_debug_commands(
                 let pos = position.get();
                 let recipient = registry
                     .get(&recipe_id)
-                    .map(|recipe| debug_recipient_for(recipe.attenuation, entity, pos))
+                    .map(|recipe| recipient_for_attenuation(recipe.attenuation, entity, pos))
                     .unwrap_or(AudioRecipient::Single(entity));
                 play_events.send(PlaySoundRecipeRequest {
                     recipe_id: recipe_id.clone(),
@@ -224,7 +224,7 @@ pub fn handle_audio_debug_commands(
     }
 }
 
-fn debug_recipient_for(
+pub fn recipient_for_attenuation(
     attenuation: AudioAttenuation,
     entity: Entity,
     origin: DVec3,

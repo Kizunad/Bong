@@ -1,6 +1,7 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod audio_event_emit;
+pub mod audio_trigger;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -313,6 +314,22 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        (
+            audio_trigger::emit_combat_audio_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            audio_trigger::emit_cultivation_audio_triggers,
+            audio_trigger::emit_tribulation_audio_triggers,
+            audio_trigger::emit_alchemy_audio_triggers,
+            audio_trigger::emit_forge_audio_triggers,
+            audio_trigger::emit_botany_audio_triggers,
+            audio_trigger::emit_lingtian_audio_triggers,
+            audio_trigger::emit_skill_audio_triggers,
+            audio_trigger::emit_player_state_audio_triggers,
+        )
+            .before(audio_event_emit::emit_audio_play_payloads),
+    );
+    app.add_systems(
+        Update,
         client_request_handler::handle_client_request_payloads,
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
@@ -386,6 +403,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
+    app.init_resource::<audio_trigger::AudioTriggerState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();

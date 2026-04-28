@@ -6,7 +6,7 @@
 //!
 //! 本 plan 只负责检测 + 损伤演化，不感知伤害来源。
 
-use valence::prelude::{Query, Res};
+use valence::prelude::{bevy_ecs, Entity, Event, EventWriter, Query, Res};
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem};
 use super::tick::CultivationClock;
@@ -14,6 +14,12 @@ use super::tick::CultivationClock;
 pub const OVERLOAD_RATIO: f64 = 1.5;
 pub const CRACK_SEVERITY_COEF: f64 = 0.3;
 pub const FREEZE_FACTOR: f64 = 5.0;
+
+#[derive(Debug, Clone, Event)]
+pub struct MeridianOverloadEvent {
+    pub entity: Entity,
+    pub severity: f64,
+}
 
 /// 纯函数：检测一条经脉是否过载，返回应添加的裂痕 severity（0 表示无）。
 pub fn overload_severity(throughput: f64, flow_rate: f64) -> f64 {
@@ -29,14 +35,17 @@ pub fn overload_severity(throughput: f64, flow_rate: f64) -> f64 {
 
 pub fn overload_detection_tick(
     clock: Res<CultivationClock>,
-    mut players: Query<(&mut Cultivation, &mut MeridianSystem)>,
+    mut overload_events: EventWriter<MeridianOverloadEvent>,
+    mut players: Query<(Entity, &mut Cultivation, &mut MeridianSystem)>,
 ) {
     let now = clock.tick;
-    for (mut cultivation, mut meridians) in players.iter_mut() {
+    for (entity, mut cultivation, mut meridians) in players.iter_mut() {
         let mut freeze_add = 0.0;
+        let mut max_severity: f64 = 0.0;
         for m in meridians.iter_mut() {
             let sev = overload_severity(m.throughput_current, m.flow_rate);
             if sev > 0.0 {
+                max_severity = max_severity.max(sev);
                 m.cracks.push(MeridianCrack {
                     severity: sev,
                     healing_progress: 0.0,
@@ -52,6 +61,10 @@ pub fn overload_detection_tick(
         if freeze_add > 0.0 {
             let frozen = cultivation.qi_max_frozen.unwrap_or(0.0) + freeze_add;
             cultivation.qi_max_frozen = Some(frozen.min(cultivation.qi_max * 0.5));
+            overload_events.send(MeridianOverloadEvent {
+                entity,
+                severity: max_severity,
+            });
         }
     }
 }

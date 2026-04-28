@@ -2955,6 +2955,7 @@ fn handle_use_quick_slot(
         bound_instance_id: Some(instance_id),
         start_position,
         complete_cooldown_ticks,
+        skill_id: None,
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(
@@ -3137,6 +3138,7 @@ fn handle_skill_bar_cast(
         bound_instance_id: None,
         start_position,
         complete_cooldown_ticks,
+        skill_id: Some(skill_id.clone()),
     });
     if let Ok((username, mut client)) = clients.get_mut(entity) {
         push_cast_sync(

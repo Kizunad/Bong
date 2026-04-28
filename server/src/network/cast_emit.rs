@@ -14,7 +14,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Client, Commands, Entity, Position, Query, Res, Username};
+use valence::prelude::{Client, Commands, Entity, EventWriter, Position, Query, Res, Username};
 
 use crate::combat::components::{
     CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
@@ -27,6 +27,8 @@ use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
+use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+use crate::network::audio_trigger::emit_player_local_audio;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
@@ -59,6 +61,7 @@ pub fn tick_casts_or_interrupt(
     clock: Res<CombatClock>,
     mut commands: Commands,
     item_registry: Res<ItemRegistry>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
     mut clients: Query<CastTickQueryItem<'_>>,
 ) {
     for (
@@ -104,6 +107,7 @@ pub fn tick_casts_or_interrupt(
                 username.0.as_str(),
                 entity,
             );
+            emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
             tracing::info!(
                 "[bong][network][cast] control interrupt entity={entity:?} `{}` slot={} (Stunned)",
                 username.0,
@@ -137,6 +141,7 @@ pub fn tick_casts_or_interrupt(
                 username.0.as_str(),
                 entity,
             );
+            emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
             continue;
         }
         // 移动中断（plan §4.3）：当前位置与 cast 起始位置距离超阈值。
@@ -162,6 +167,7 @@ pub fn tick_casts_or_interrupt(
                 username.0.as_str(),
                 entity,
             );
+            emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
             tracing::info!(
                 "[bong][network][cast] movement interrupt entity={entity:?} `{}` slot={} moved={:.3}m",
                 username.0,
@@ -228,8 +234,41 @@ pub fn tick_casts_or_interrupt(
                     &Cultivation::default(),
                     "cast_complete_consume",
                 );
+                emit_player_local_audio(
+                    &mut audio_events,
+                    "pill_consume",
+                    entity,
+                    position.get(),
+                    None,
+                    0.8,
+                );
+            }
+            if casting
+                .skill_id
+                .as_deref()
+                .is_some_and(|skill_id| skill_id.contains("xue_beng_bu"))
+            {
+                emit_player_local_audio(
+                    &mut audio_events,
+                    "phase_shift_in",
+                    entity,
+                    position.get(),
+                    None,
+                    0.8,
+                );
             }
         }
+    }
+}
+
+fn emit_cast_interrupt_audio(
+    audio_events: &mut EventWriter<PlaySoundRecipeRequest>,
+    entity: Entity,
+    origin: valence::prelude::DVec3,
+    casting: &Casting,
+) {
+    if casting.source == CastSource::SkillBar {
+        emit_player_local_audio(audio_events, "cast_interrupt", entity, origin, None, 1.0);
     }
 }
 
