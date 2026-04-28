@@ -3671,6 +3671,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::PlotQiDrainedByOther { .. } => "plot_qi_drained_by_other",
         BiographyEntry::PlotQiDrainedFromOther { .. } => "plot_qi_drained_from_other",
         BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
+        BiographyEntry::TribulationIntercepted { .. } => "tribulation_intercepted",
     }
 }
 
@@ -3741,7 +3742,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::PlotHarvestedFromOther { tick, .. }
         | BiographyEntry::PlotQiDrainedByOther { tick, .. }
         | BiographyEntry::PlotQiDrainedFromOther { tick, .. }
-        | BiographyEntry::PlotDestroyedByOther { tick, .. } => *tick,
+        | BiographyEntry::PlotDestroyedByOther { tick, .. }
+        | BiographyEntry::TribulationIntercepted { tick, .. } => *tick,
     }
 }
 

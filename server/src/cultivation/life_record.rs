@@ -130,6 +130,11 @@ pub enum BiographyEntry {
         plot_pos: [i32; 3],
         tick: u64,
     },
+    /// plan-tribulation-v1 §2.6 — 截胡杀死渡虚劫者，获得“戮道者 · 截劫”战绩。
+    TribulationIntercepted {
+        victim_id: String,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +370,9 @@ fn format_entry(entry: &BiographyEntry) -> String {
             "t{tick}:lingtian:destroyed_by_other:[{},{},{}]",
             plot_pos[0], plot_pos[1], plot_pos[2]
         ),
+        BiographyEntry::TribulationIntercepted { victim_id, tick } => {
+            format!("t{tick}:tribulation_intercepted:{victim_id}:戮道者·截劫")
+        }
     }
 }
 

@@ -17,6 +17,7 @@ use valence::prelude::{
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -573,6 +574,7 @@ pub fn tribulation_intercept_death_system(
     settings: Res<PersistenceSettings>,
     mut q: Query<(&TribulationState, &Lifecycle)>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut life_records: Query<&mut LifeRecord>,
     mut settled: EventWriter<TribulationSettled>,
 ) {
     for death in deaths.read() {
@@ -603,6 +605,12 @@ pub fn tribulation_intercept_death_system(
                     outcome.items_moved,
                     outcome.bone_coins_moved,
                 );
+            }
+            if let Ok(mut life_record) = life_records.get_mut(killer_entity) {
+                life_record.push(BiographyEntry::TribulationIntercepted {
+                    victim_id: lifecycle.character_id.clone(),
+                    tick: death.at_tick,
+                });
             }
         }
         settled.send(TribulationSettled {
@@ -740,7 +748,7 @@ mod tests {
     use crate::combat::CombatClock;
     use crate::cultivation::components::MeridianId;
     use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerTerminated};
-    use crate::cultivation::life_record::LifeRecord;
+    use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
     use crate::cultivation::lifespan::{
         DeathRegistry, LifespanCapTable, LifespanComponent, ZoneDeathKind,
     };
@@ -1115,7 +1123,10 @@ mod tests {
             .id();
         let killer = app
             .world_mut()
-            .spawn(test_inventory(vec![test_item(201)], 3))
+            .spawn((
+                test_inventory(vec![test_item(201)], 3),
+                LifeRecord::new("offline:Killer"),
+            ))
             .id();
 
         app.world_mut().send_event(DeathEvent {
@@ -1154,6 +1165,16 @@ mod tests {
         assert!(killer_item_ids.contains(&101));
         assert!(killer_item_ids.contains(&102));
         assert!(killer_item_ids.contains(&201));
+
+        let killer_life_record = app
+            .world()
+            .get::<LifeRecord>(killer)
+            .expect("killer life record should remain attached");
+        assert!(matches!(
+            killer_life_record.biography.last(),
+            Some(BiographyEntry::TribulationIntercepted { victim_id, tick })
+                if victim_id == "offline:Victim" && *tick == 120
+        ));
 
         assert!(app.world().get::<TribulationState>(victim).is_none());
         let settled = app.world().resource::<Events<TribulationSettled>>();
