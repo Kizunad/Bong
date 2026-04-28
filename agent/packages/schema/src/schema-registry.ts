@@ -151,6 +151,7 @@ import {
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  BurstMeridianEventV1,
   TreasureEquippedV1,
   TreasureViewV1,
   WeaponBrokenV1,
@@ -253,6 +254,7 @@ export const SCHEMA_REGISTRY = {
   serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
   serverDataSkillSnapshotV1: ServerDataSkillSnapshotV1,
   serverDataSkillScrollUsedV1: ServerDataSkillScrollUsedV1,
+  burstMeridianEventV1: BurstMeridianEventV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
@@ -440,6 +442,7 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataSkillSnapshotV1,
   "server-data-skill-scroll-used-v1.json":
     SCHEMA_REGISTRY.serverDataSkillScrollUsedV1,
+  "burst-meridian-event-v1.json": SCHEMA_REGISTRY.burstMeridianEventV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,

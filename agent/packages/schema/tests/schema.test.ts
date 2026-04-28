@@ -272,6 +272,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.burst-meridian-event.sample.json", () => {
+    const data = loadSample("server-data.burst-meridian-event.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   for (const sample of [
     "server-data.forge-station.sample.json",
     "server-data.forge-session.sample.json",
@@ -573,6 +579,13 @@ describe("negative sample files fail schema validation", () => {
 
   it("server-data.invalid-unknown-type.sample.json", () => {
     const data = loadSample("server-data.invalid-unknown-type.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects invalid burst meridian event", () => {
+    const data = loadObjectSample("server-data.burst-meridian-event.sample.json");
+    data.overload_ratio = -1;
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });

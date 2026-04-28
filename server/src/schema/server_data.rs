@@ -110,6 +110,7 @@ pub enum ServerDataType {
     ForgeSession,
     ForgeOutcome,
     ForgeBlueprintBook,
+    BurstMeridianEvent,
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +248,19 @@ pub enum ServerDataPayloadV1 {
     ForgeSession(Box<ForgeSessionDataV1>),
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
+    BurstMeridianEvent(BurstMeridianEventV1),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BurstMeridianEventV1 {
+    pub skill: String,
+    pub caster: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub tick: u64,
+    pub overload_ratio: f64,
+    pub integrity_snapshot: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -517,6 +531,10 @@ enum ServerDataPayloadWireV1 {
     ForgeBlueprintBook {
         #[serde(flatten)]
         data: Box<ForgeBlueprintBookDataV1>,
+    },
+    BurstMeridianEvent {
+        #[serde(flatten)]
+        event: BurstMeridianEventV1,
     },
 }
 
@@ -999,6 +1017,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
                 Ok(Self::ForgeBlueprintBook(data))
             }
+            ServerDataPayloadWireV1::BurstMeridianEvent { event } => {
+                validate_burst_meridian_event(&event)?;
+                Ok(Self::BurstMeridianEvent(event))
+            }
         }
     }
 }
@@ -1271,8 +1293,30 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ForgeBlueprintBook(data) => {
                 Self::ForgeBlueprintBook { data: data.clone() }
             }
+            ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
+                event: event.clone(),
+            },
         }
     }
+}
+
+fn validate_burst_meridian_event(event: &BurstMeridianEventV1) -> Result<(), String> {
+    if event.skill.trim().is_empty() {
+        return Err("BurstMeridianEventV1.skill must not be empty".to_string());
+    }
+    if event.caster.trim().is_empty() {
+        return Err("BurstMeridianEventV1.caster must not be empty".to_string());
+    }
+    if event.target.as_deref().is_some_and(str::is_empty) {
+        return Err("BurstMeridianEventV1.target must not be empty when present".to_string());
+    }
+    if !event.overload_ratio.is_finite() || event.overload_ratio < 0.0 {
+        return Err("BurstMeridianEventV1.overload_ratio must be finite and >= 0".to_string());
+    }
+    if !event.integrity_snapshot.is_finite() || !(0.0..=1.0).contains(&event.integrity_snapshot) {
+        return Err("BurstMeridianEventV1.integrity_snapshot must be finite in 0..=1".to_string());
+    }
+    Ok(())
 }
 
 impl Serialize for ServerDataPayloadV1 {
@@ -1407,6 +1451,7 @@ impl ServerDataPayloadV1 {
             Self::ForgeSession(..) => ServerDataType::ForgeSession,
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
+            Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
         }
     }
 }
@@ -1503,6 +1548,14 @@ mod tests {
                 at_tick: 100,
                 remaining_ticks: 600,
                 collapse_tear_entity_ids: vec![2, 3, 4],
+            }),
+            ServerDataPayloadV1::BurstMeridianEvent(BurstMeridianEventV1 {
+                skill: "beng_quan".to_string(),
+                caster: "offline:Kiz".to_string(),
+                target: Some("entity:42".to_string()),
+                tick: 12,
+                overload_ratio: 1.5,
+                integrity_snapshot: 0.9,
             }),
         ];
 
@@ -1698,6 +1751,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.burst-meridian-event.sample.json"
             ),
         ];
 
