@@ -127,7 +127,7 @@ function settlementText(payload: TribulationEventV1): string {
     case "failed":
       return `${actor} 渡虚劫败，雷息回落，经脉闭锁，境界退回通灵初期。`;
     case "killed":
-      return `${actor} 死于劫中截胡，杀者 ${result.killer ?? "不明"}，天雷不为此分辨。`;
+      return `${actor} 死于劫中截胡，杀者 ${result.killer ?? "不明"} 得其遗物；天雷不辨勇怯，只记损益。`;
     case "fled":
       return `${actor} 逃离劫场，劫云记下此名，风声比雷声更冷。`;
   }
