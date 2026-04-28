@@ -12,7 +12,8 @@
 
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
-    bevy_ecs, App, Client, Entity, Event, EventReader, Position, Query, Update, With,
+    bevy_ecs, Added, App, Client, Entity, Event, EventReader, Position, Query, Update,
+    ViewDistance, With,
 };
 
 /// Client → Server 远距离 teleport 请求。由 chat_collector 解析 `!preview-tp` 命令
@@ -38,8 +39,26 @@ pub fn preview_mode_enabled() -> bool {
 pub fn register(app: &mut App) {
     app.add_event::<PreviewTeleportRequested>();
     if preview_mode_enabled() {
-        app.add_systems(Update, handle_preview_teleport);
-        tracing::info!("[bong][preview] BONG_PREVIEW_MODE=1 — !preview-tp 已激活");
+        app.add_systems(
+            Update,
+            (handle_preview_teleport, boost_view_distance_for_preview),
+        );
+        tracing::info!(
+            "[bong][preview] BONG_PREVIEW_MODE=1 — !preview-tp + ViewDistance(32) 已激活"
+        );
+    }
+}
+
+/// 把新加入 client 的 ViewDistance 从 valence default 2 chunks 提到 vanilla 上限
+/// 32 chunks ≈ 512 blocks，让 preview client 截图能看到远处地形（普通玩家不需要
+/// 这么远，所以仅 preview mode 激活）。
+fn boost_view_distance_for_preview(mut clients: Query<&mut ViewDistance, Added<Client>>) {
+    for mut view_distance in &mut clients {
+        view_distance.set(32);
+        tracing::info!(
+            "[bong][preview] boosted ViewDistance → 32 chunks (was {})",
+            view_distance.get()
+        );
     }
 }
 
