@@ -255,16 +255,6 @@ plans:
     blocking_on: []
     summary: "grep 确认 server/client/agent 全无 SoundRecipe、PlaySoundRecipePayload、bong:audio 任何符号，assets/audio/ 目录不存在，client 仅直接调用 vanilla SoundEvent。文档 §11 进度日志自述「P0/P1 暂按未实装」与代码完全吻合。"
 
-  - file: plan-ipc-schema-v1.md
-    group: infrastructure
-    title: "Redis channel + TypeBox schema 双端对齐管理"
-    state: merged
-    percent: 80
-    last_updated: "2026-04-25"
-    pr_refs: []
-    blocking_on: []
-    summary: "agent/packages/schema/src/channels.ts 含 CHANNELS/REDIS_V1_CHANNELS，server/src/schema/channels.rs 含 CH_* 常量 + frozen 测试，samples/ 目录 106 个样本，round-trip 测试与 CI 校验已落地。剩 P2 版本化字段（schemaVersion/migration）未启动，§2/§3 部分条目仍为 [ ]。"
-
   - file: plan-library-web-content-v1.md
     group: infrastructure
     title: "末法残土图书馆 18 册 Astro 内容填充"
@@ -490,6 +480,16 @@ plans:
     pr_refs: [48]
     blocking_on: []
     summary: "PR #48 已落地全部§1/§2清单：删 gameplay.rs BREAKTHROUGH_RULES + progression.rs REALM_LADDER、PlayerState 缩到 karma+inventory_score、IPC 统一 PascalCase 六境、v13 migration 独立 player_cultivation 表，已迁入 finished_plans/。"
+
+  - file: plan-ipc-schema-v1.md
+    group: finished
+    title: "Redis channel + TypeBox schema 双端对齐管理"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-28"
+    pr_refs: []
+    blocking_on: []
+    summary: "agent/packages/schema 28 channel + 156 generated JSON + 106 samples + ~85 roundtrip case + server CH_* frozen 测试全部落地；§2 schemaVersion/migration 因 Bong 三层同版本部署模型显式标非范围，plan 已归档至 finished_plans/。"
 
   - file: plan-alchemy-v1.md
     group: finished

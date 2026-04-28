@@ -16,10 +16,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-04-28 · 共 59 份 plan_
 
 ```
-总进度  █████████████████████░░░░░░░░░  71.2%
+总进度  █████████████████████░░░░░░░░░  71.5%
 ```
 
-**分布**：`merged` 10 · `wip` 8 · `design` 6 · `skeleton` 7 · `done` 28
+**分布**：`merged` 9 · `wip` 8 · `design` 6 · `skeleton` 7 · `done` 29
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 9 份 · 组均 60%_
@@ -59,11 +59,10 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 6 份 · 组均 42
 | `design` | **视觉距离 + 神识感知双系统** <br/><sub>`plan-perception-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-04-25 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 5 份 · 组均 55%_
+_IPC schema、持久化、工作流、内容、音效 · 4 份 · 组均 49%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
-| `merged` | **Redis channel + TypeBox schema 双端对齐管理** <br/><sub>`plan-ipc-schema-v1.md`</sub> | `██████████░░`  80% | — | 2026-04-25 |
 | `merged` | **Server/Agent 统一 SQLite 持久化存档规范** <br/><sub>`plan-persistence-v1.md`</sub> | `█████████░░░`  75% | #24 | 2026-04-25 |
 | `wip` | **末法残土图书馆 18 册 Astro 内容填充** <br/><sub>`plan-library-web-content-v1.md`</sub> | `███████░░░░░`  60% | — | 2026-04-25 |
 | `wip` | **opencode + oh-my-opencode 全自动 plan 消费流水线** <br/><sub>`plan-opencode-workflow-v1.md`</sub> | `███████░░░░░`  55% | #15 | 2026-04-24 |
@@ -83,7 +82,7 @@ _战斗流派 + 快捷栏，等待开工 · 7 份 · 组均 6%_
 | `skeleton` | **截脉·震爆流** <br/><sub>`plan-zhenmai-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
 
 ### 已完成归档
-_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 28 份 · 组均 100%_
+_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 29 份 · 组均 100%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -99,6 +98,7 @@ _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 28 份 · 组均 10
 | `done` | **修炼系统：六境/经脉/真元/污染/突破/顿悟** <br/><sub>`plan-cultivation-v1.md`</sub> | `████████████` 100% | #21 #26 #28 #29 #48 | 2026-04-27 |
 | `done` | **死亡 / 运数 / 寿元 / 遗念 / 亡者博物馆** <br/><sub>`plan-death-lifecycle-v1.md`</sub> | `████████████` 100% | — | 2026-04-27 |
 | `done` | **炼器（武器）专项：四步状态机 + IPC Schema + 客户端占位** <br/><sub>`plan-forge-v1.md`</sub> | `████████████` 100% | #19 #61 | 2026-04-28 |
+| `done` | **Redis channel + TypeBox schema 双端对齐管理** <br/><sub>`plan-ipc-schema-v1.md`</sub> | `████████████` 100% | — | 2026-04-28 |
 | `done` | **Server 基础设施闭环** <br/><sub>`plan-server.md`</sub> | `████████████` 100% | — | 2026-04-21 |
 | `done` | **通用保质期系统：三路径衰减/腐败/陈化 + 消费侧接入** <br/><sub>`plan-shelflife-v1.md`</sub> | `████████████` 100% | #32 #33 #34 #35 #36 #37 #38 #39 #40 #67 | 2026-04-27 |
 | `done` | **TSY 容器搜刮系统（5 档 + 钥匙 + 真元加速）** <br/><sub>`plan-tsy-container-v1.md`</sub> | `████████████` 100% | #55 | 2026-04-27 |
