@@ -20,6 +20,7 @@ mod persistence;
 mod player;
 #[allow(dead_code)]
 mod schema;
+mod skin;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
 #[allow(dead_code)]
@@ -74,6 +75,7 @@ fn run_server() {
 
     world::register(&mut app);
     player::register(&mut app);
+    skin::register(&mut app);
     inventory::register(&mut app);
     botany::register(&mut app);
     cmd::register(&mut app);
