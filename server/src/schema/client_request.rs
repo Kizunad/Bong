@@ -31,6 +31,12 @@ pub enum ClientRequestV1 {
     BreakthroughRequest {
         v: u8,
     },
+    StartDuXu {
+        v: u8,
+    },
+    AbortTribulation {
+        v: u8,
+    },
     ForgeRequest {
         v: u8,
         meridian: MeridianId,

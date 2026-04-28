@@ -36,6 +36,7 @@ use crate::cultivation::known_techniques::technique_definition;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
+use crate::cultivation::tribulation::StartDuXuRequest;
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
@@ -146,6 +147,7 @@ pub struct AlchemyRequestParams<'w, 's> {
 pub struct ClientRequestDispatchParams<'w> {
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
+    pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
@@ -230,6 +232,8 @@ pub fn handle_client_request_payloads(
         let v = match &request {
             ClientRequestV1::SetMeridianTarget { v, .. }
             | ClientRequestV1::BreakthroughRequest { v }
+            | ClientRequestV1::StartDuXu { v }
+            | ClientRequestV1::AbortTribulation { v }
             | ClientRequestV1::ForgeRequest { v, .. }
             | ClientRequestV1::InsightDecision { v, .. }
             | ClientRequestV1::BotanyHarvestRequest { v, .. }
@@ -306,6 +310,24 @@ pub fn handle_client_request_payloads(
                     entity: ev.client,
                     material_bonus: 0.0,
                 });
+            }
+            ClientRequestV1::StartDuXu { .. } => {
+                tracing::info!(
+                    "[bong][network] client_request start_du_xu entity={:?}",
+                    ev.client,
+                );
+                if let Some(start_du_xu_tx) = dispatch.start_du_xu_tx.as_deref_mut() {
+                    start_du_xu_tx.send(StartDuXuRequest {
+                        entity: ev.client,
+                        requested_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::AbortTribulation { .. } => {
+                tracing::warn!(
+                    "[bong][network] client_request abort_tribulation ignored entity={:?}; DuXu cannot be cancelled after confirmation",
+                    ev.client,
+                );
             }
             ClientRequestV1::InsightDecision {
                 trigger_id,

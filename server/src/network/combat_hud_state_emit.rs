@@ -10,6 +10,7 @@ use valence::prelude::{Changed, Client, Entity, Or, Query, Username, With};
 
 use crate::combat::components::{Stamina, Wounds};
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::tribulation::TribulationState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -24,17 +25,23 @@ type CombatHudEmitQueryItem<'a> = (
     &'a Cultivation,
     &'a Stamina,
     &'a Wounds,
+    Option<&'a TribulationState>,
 );
 
 type CombatHudEmitFilter = (
     With<Client>,
-    Or<(Changed<Cultivation>, Changed<Stamina>, Changed<Wounds>)>,
+    Or<(
+        Changed<Cultivation>,
+        Changed<Stamina>,
+        Changed<Wounds>,
+        Changed<TribulationState>,
+    )>,
 );
 
 pub fn emit_combat_hud_state_payloads(
     mut clients: Query<CombatHudEmitQueryItem<'_>, CombatHudEmitFilter>,
 ) {
-    for (entity, mut client, username, cultivation, stamina, wounds) in &mut clients {
+    for (entity, mut client, username, cultivation, stamina, wounds, tribulation) in &mut clients {
         let qi_percent = if cultivation.qi_max > 0.0 {
             (cultivation.qi_current / cultivation.qi_max).clamp(0.0, 1.0) as f32
         } else {
@@ -54,8 +61,10 @@ pub fn emit_combat_hud_state_payloads(
             hp_percent,
             qi_percent,
             stamina_percent,
-            // TODO: surface Flying/Phasing/TribulationLocked components when they exist.
-            derived: DerivedAttrFlagsV1::default(),
+            derived: DerivedAttrFlagsV1 {
+                tribulation_locked: tribulation.is_some(),
+                ..DerivedAttrFlagsV1::default()
+            },
         }));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
