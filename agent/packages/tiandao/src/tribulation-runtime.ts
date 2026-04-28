@@ -55,6 +55,8 @@ function defaultSystemPrompt(): string {
 function narrationTarget(payload: TribulationEventV1): string {
   const charId = payload.result?.char_id ?? payload.char_id ?? "unknown";
   const phase = payload.phase.kind === "wave" ? `wave:${payload.phase.wave}` : payload.phase.kind;
+  if (payload.kind === "zone_collapse") return `tribulation:zone_collapse|zone:${payload.zone ?? "unknown"}|${phase}`;
+  if (payload.kind === "targeted") return `tribulation:targeted|zone:${payload.zone ?? "unknown"}|${phase}`;
   return `tribulation:${payload.kind}|char:${charId}|${phase}`;
 }
 
@@ -63,6 +65,27 @@ function actorLabel(payload: TribulationEventV1): string {
 }
 
 function fallbackNarration(payload: TribulationEventV1): Narration {
+  if (payload.kind === "zone_collapse") {
+    const zone = payload.zone ?? "无名之地";
+    const text = payload.phase.kind === "settle"
+      ? `${zone} 灵机断绝，域崩已成，未退者皆归死寂。`
+      : `${zone} 灵气低伏，灰风先起，此地将崩，尚有片刻可退。`;
+    return {
+      scope: "broadcast",
+      target: narrationTarget(payload),
+      text,
+      style: "narration",
+    };
+  }
+  if (payload.kind === "targeted") {
+    const zone = payload.zone ?? "附近";
+    return {
+      scope: "zone",
+      target: zone,
+      text: `${zone} 近日运道不佳，灵机一动便多一分折耗。`,
+      style: "narration",
+    };
+  }
   const actor = actorLabel(payload);
   let text = `${actor} 的渡虚劫有异动，雷声压低，旁人只宜退远。`;
   switch (payload.phase.kind) {

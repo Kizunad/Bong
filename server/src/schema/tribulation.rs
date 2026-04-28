@@ -83,4 +83,42 @@ impl TribulationEventV1 {
             result,
         }
     }
+
+    pub fn zone_collapse(
+        phase: TribulationPhaseV1,
+        zone: Option<String>,
+        epicenter: Option<[f64; 3]>,
+    ) -> Self {
+        Self {
+            v: 1,
+            kind: TribulationKindV1::ZoneCollapse,
+            phase,
+            char_id: None,
+            actor_name: None,
+            zone,
+            epicenter,
+            wave_current: None,
+            wave_total: None,
+            result: None,
+        }
+    }
+
+    pub fn targeted(
+        phase: TribulationPhaseV1,
+        zone: Option<String>,
+        epicenter: Option<[f64; 3]>,
+    ) -> Self {
+        Self {
+            v: 1,
+            kind: TribulationKindV1::Targeted,
+            phase,
+            char_id: None,
+            actor_name: None,
+            zone,
+            epicenter,
+            wave_current: None,
+            wave_total: None,
+            result: None,
+        }
+    }
 }

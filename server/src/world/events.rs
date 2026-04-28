@@ -1,21 +1,27 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
-    App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Position, Query,
-    ResMut, Resource, Update, Username, With,
+    bevy_ecs, App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Event,
+    EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, Username, With,
 };
 
 use super::zone::ZoneRegistry;
+use crate::combat::events::DeathEvent;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
+use crate::persistence::{
+    load_zone_overlays, persist_zone_overlays, PersistenceSettings, ZoneOverlayRecord,
+};
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
+use crate::schema::common::GameEventType;
+use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
 use crate::schema::world_state::GameEvent;
 use crate::world::zone::Zone;
 
@@ -32,7 +38,8 @@ const DEFAULT_EVENT_INTENSITY: f64 = 0.5;
 const THUNDER_TARGET_BIAS_RADIUS: f64 = 5.0;
 const THUNDER_DEFAULT_Y_OFFSET: f64 = 1.0;
 const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
-const PLACEHOLDER_EVENT_DURATION_TICKS: u64 = 1;
+const KARMA_BACKLASH_EVENT_DURATION_TICKS: u64 = 1;
+const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEvent {
@@ -44,6 +51,7 @@ pub struct ActiveEvent {
     target_player: Option<String>,
     thunder: ThunderRuntimeState,
     beast_tide: BeastTideRuntimeState,
+    collapse: RealmCollapseRuntimeState,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -55,6 +63,11 @@ struct ThunderRuntimeState {
 struct BeastTideRuntimeState {
     spawned_beasts: Vec<Entity>,
     spawn_points: Vec<DVec3>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct RealmCollapseRuntimeState {
+    completed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +111,7 @@ impl ActiveEvent {
                 .map(ToOwned::to_owned),
             thunder: ThunderRuntimeState::default(),
             beast_tide: BeastTideRuntimeState::default(),
+            collapse: RealmCollapseRuntimeState::default(),
         })
     }
 
@@ -110,7 +124,13 @@ impl ActiveEvent {
 pub struct ActiveEventsResource {
     active_events: Vec<ActiveEvent>,
     pending_major_alerts: Vec<MajorEventAlert>,
+    pending_tribulation_events: Vec<TribulationEventV1>,
     recent_game_events: Vec<GameEvent>,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct ZoneCollapsedEvent {
+    pub zone_name: String,
 }
 
 impl Resource for ActiveEventsResource {}
@@ -161,39 +181,39 @@ impl ActiveEventsResource {
             return false;
         }
 
-        let is_placeholder = matches!(
-            event.event_name.as_str(),
-            EVENT_REALM_COLLAPSE | EVENT_KARMA_BACKLASH
-        );
-
-        if is_placeholder {
+        if event.event_name == EVENT_KARMA_BACKLASH {
             tracing::info!(
-                "[bong][world] placeholder schedule accepted for {} in zone `{}`",
+                "[bong][world] hidden schedule accepted for {} in zone `{}`",
                 event.event_name,
                 event.zone_name
             );
 
-            let placeholder_duration = value_to_u64(command.params.get("duration_ticks"))
-                .unwrap_or(PLACEHOLDER_EVENT_DURATION_TICKS)
+            let duration_ticks = value_to_u64(command.params.get("duration_ticks"))
+                .unwrap_or(KARMA_BACKLASH_EVENT_DURATION_TICKS)
                 .max(MIN_EVENT_DURATION_TICKS);
-
-            self.pending_major_alerts.push(MajorEventAlert {
-                event_name: event.event_name.clone(),
-                zone_name: event.zone_name.clone(),
-                duration_ticks: placeholder_duration,
-            });
+            let center = zone.center();
 
             self.record_recent_event(GameEvent {
-                event_type: crate::schema::common::GameEventType::EventTriggered,
+                event_type: GameEventType::EventTriggered,
                 tick: 0,
                 player: None,
                 target: Some(event.event_name.clone()),
                 zone: Some(event.zone_name.clone()),
-                details: Some(HashMap::from([(
-                    "placeholder".to_string(),
-                    Value::Bool(true),
-                )])),
+                details: Some(HashMap::from([
+                    ("hidden".to_string(), Value::Bool(true)),
+                    (
+                        "duration_ticks".to_string(),
+                        Value::Number(duration_ticks.into()),
+                    ),
+                    ("karma_weight".to_string(), json!(event.intensity)),
+                ])),
             });
+            self.pending_tribulation_events
+                .push(TribulationEventV1::targeted(
+                    TribulationPhaseV1::Omen,
+                    Some(event.zone_name.clone()),
+                    Some([center.x, center.y, center.z]),
+                ));
 
             return true;
         }
@@ -219,12 +239,26 @@ impl ActiveEventsResource {
             duration_ticks: event.duration_ticks,
         });
 
+        if event.event_name == EVENT_REALM_COLLAPSE {
+            let center = zone.center();
+            self.pending_tribulation_events
+                .push(TribulationEventV1::zone_collapse(
+                    TribulationPhaseV1::Omen,
+                    Some(event.zone_name.clone()),
+                    Some([center.x, center.y, center.z]),
+                ));
+        }
+
         self.active_events.push(event);
         true
     }
 
     pub fn drain_major_event_alerts(&mut self) -> Vec<MajorEventAlert> {
         std::mem::take(&mut self.pending_major_alerts)
+    }
+
+    pub fn drain_tribulation_events(&mut self) -> Vec<TribulationEventV1> {
+        std::mem::take(&mut self.pending_tribulation_events)
     }
 
     pub fn record_recent_event(&mut self, event: GameEvent) {
@@ -273,18 +307,23 @@ impl ActiveEventsResource {
     /// `None`）。调用方负责把剩余额度通过 `NpcRegistry::release_spawn_batch`
     /// 回滚，以避免预留但未消费的配额把 `spawn_paused` 误触发（P2-5）。
     #[must_use = "leftover budget should be released back to NpcRegistry"]
+    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         zone_registry: Option<&mut ZoneRegistry>,
         layer_entity: Option<Entity>,
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
+        collapse_targets: Option<&[(Entity, DVec3)]>,
+        mut death_events: Option<&mut EventWriter<DeathEvent>>,
+        mut collapsed_events: Option<&mut EventWriter<ZoneCollapsedEvent>>,
         mut npc_spawn_budget: Option<usize>,
     ) -> Option<usize> {
         let Some(zone_registry) = zone_registry else {
             self.tick_metadata_only(None);
             return npc_spawn_budget;
         };
+        let mut recent_events = Vec::new();
 
         for event in &mut self.active_events {
             if event.is_expired() {
@@ -385,8 +424,56 @@ impl ActiveEventsResource {
                         }
                     }
                 }
+                EVENT_REALM_COLLAPSE => {
+                    if event.elapsed_ticks.saturating_add(1) >= event.duration_ticks
+                        && !event.collapse.completed
+                    {
+                        let Some(death_events) = death_events.as_deref_mut() else {
+                            tracing::warn!(
+                                "[bong][world] realm_collapse runtime for zone `{}` skipped: missing DeathEvent writer",
+                                event.zone_name
+                            );
+                            continue;
+                        };
+
+                        let killed = collapse_zone(
+                            zone_registry,
+                            &zone,
+                            event.elapsed_ticks.saturating_add(1),
+                            collapse_targets.unwrap_or(&[]),
+                            death_events,
+                        );
+                        if let Some(collapsed_events) = collapsed_events.as_deref_mut() {
+                            collapsed_events.send(ZoneCollapsedEvent {
+                                zone_name: event.zone_name.clone(),
+                            });
+                        }
+                        event.collapse.completed = true;
+                        self.pending_tribulation_events
+                            .push(TribulationEventV1::zone_collapse(
+                                TribulationPhaseV1::Settle,
+                                Some(event.zone_name.clone()),
+                                Some([zone.center().x, zone.center().y, zone.center().z]),
+                            ));
+                        recent_events.push(GameEvent {
+                            event_type: GameEventType::EventTriggered,
+                            tick: event.elapsed_ticks.saturating_add(1),
+                            player: None,
+                            target: Some(EVENT_REALM_COLLAPSE.to_string()),
+                            zone: Some(event.zone_name.clone()),
+                            details: Some(HashMap::from([(
+                                "killed_entities".to_string(),
+                                Value::Number((killed as u64).into()),
+                            )])),
+                        });
+                    }
+                }
                 _ => {}
             }
+        }
+
+        for event in recent_events {
+            self.record_recent_event(event);
         }
 
         for event in &mut self.active_events {
@@ -400,7 +487,9 @@ impl ActiveEventsResource {
             }
 
             if let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) {
-                zone.active_events.retain(|name| name != &event.event_name);
+                if event.event_name != EVENT_REALM_COLLAPSE {
+                    zone.active_events.retain(|name| name != &event.event_name);
+                }
             }
 
             if event.event_name == EVENT_BEAST_TIDE {
@@ -493,22 +582,40 @@ impl ActiveEventsResource {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering active events scheduler");
     app.insert_resource(ActiveEventsResource::default());
-    app.add_systems(Update, tick_active_events);
+    app.add_event::<ZoneCollapsedEvent>();
+    app.add_systems(
+        Update,
+        (
+            tick_active_events,
+            persist_zone_collapsed_overlays.after(tick_active_events),
+        ),
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tick_active_events(
     mut commands: Commands,
     mut active_events: ResMut<ActiveEventsResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
+    redis: Option<Res<crate::network::RedisBridgeResource>>,
+    mut death_events: EventWriter<DeathEvent>,
+    mut collapsed_events: EventWriter<ZoneCollapsedEvent>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
-    players: Query<(&Username, &Position), With<Client>>,
+    players: Query<(Entity, &Username, &Position), With<Client>>,
+    npcs: Query<(Entity, &Position), With<NpcMarker>>,
 ) {
     let layer_entity = layers.iter().next();
-    let player_positions = players
-        .iter()
-        .map(|(username, position)| (canonical_player_id(username.0.as_str()), position.get()))
-        .collect::<Vec<_>>();
+    let mut player_positions = Vec::new();
+    let mut collapse_targets = Vec::new();
+    for (entity, username, position) in &players {
+        let pos = position.get();
+        player_positions.push((canonical_player_id(username.0.as_str()), pos));
+        collapse_targets.push((entity, pos));
+    }
+    for (entity, position) in &npcs {
+        collapse_targets.push((entity, position.get()));
+    }
 
     let npc_spawn_budget = if let Some(registry) = npc_registry.as_deref_mut() {
         let desired = active_events
@@ -537,8 +644,20 @@ fn tick_active_events(
         layer_entity,
         Some(&mut commands),
         Some(player_positions.as_slice()),
+        Some(collapse_targets.as_slice()),
+        Some(&mut death_events),
+        Some(&mut collapsed_events),
         npc_spawn_budget,
     );
+
+    let tribulation_events = active_events.drain_tribulation_events();
+    if let Some(redis) = redis.as_deref() {
+        for event in tribulation_events {
+            let _ = redis
+                .tx_outbound
+                .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(event));
+        }
+    }
 
     // P2-5: 把 reserve 了但没消费掉（eg. beast_tide 因 missing layer/commands
     // 提前 continue）的额度归还给 registry，防止 1-tick 暂态 `spawn_paused`。
@@ -571,6 +690,55 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
     }
 
     value.as_i64().map(|v| v as f64)
+}
+
+pub(crate) fn persist_zone_collapsed_overlays(
+    settings: Option<Res<PersistenceSettings>>,
+    mut events: valence::prelude::EventReader<ZoneCollapsedEvent>,
+) {
+    let Some(settings) = settings else {
+        return;
+    };
+    for event in events.read() {
+        let mut overlays = match load_zone_overlays(&settings) {
+            Ok(overlays) => overlays,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][persistence] failed to load zone overlays before realm_collapse persist: {error}"
+                );
+                Vec::new()
+            }
+        };
+        if !overlays.iter().any(|overlay| {
+            overlay.zone_id == event.zone_name && overlay.overlay_kind == "collapsed"
+        }) {
+            overlays.push(ZoneOverlayRecord {
+                zone_id: event.zone_name.clone(),
+                overlay_kind: "collapsed".to_string(),
+                payload_json: json!({
+                    "danger_level": COLLAPSED_ZONE_DANGER_LEVEL,
+                    "active_events": [EVENT_REALM_COLLAPSE],
+                    "blocked_tiles": [],
+                })
+                .to_string(),
+                payload_version: 1,
+                since_wall: current_unix_seconds_for_overlay(),
+            });
+        }
+        if let Err(error) = persist_zone_overlays(&settings, &overlays) {
+            tracing::warn!(
+                "[bong][persistence] failed to persist collapsed overlay for zone `{}`: {error}",
+                event.zone_name
+            );
+        }
+    }
+}
+
+fn current_unix_seconds_for_overlay() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or(0)
 }
 
 fn resolve_target_player_position(
@@ -734,6 +902,56 @@ fn spawn_beast_tide_zombie(
     entity
 }
 
+fn collapse_zone(
+    zone_registry: &mut ZoneRegistry,
+    zone: &Zone,
+    collapse_tick: u64,
+    collapse_targets: &[(Entity, DVec3)],
+    death_events: &mut EventWriter<DeathEvent>,
+) -> usize {
+    let Some(active_zone) = zone_registry.find_zone_mut(zone.name.as_str()) else {
+        return 0;
+    };
+
+    active_zone.spirit_qi = 0.0;
+    active_zone.danger_level = COLLAPSED_ZONE_DANGER_LEVEL;
+    if !active_zone
+        .active_events
+        .iter()
+        .any(|name| name == EVENT_REALM_COLLAPSE)
+    {
+        active_zone
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+    }
+
+    let mut killed = 0usize;
+    for (entity, position) in collapse_targets
+        .iter()
+        .copied()
+        .filter(|(_, position)| zone.contains(*position))
+    {
+        death_events.send(DeathEvent {
+            target: entity,
+            cause: "realm_collapse".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: collapse_tick,
+        });
+        killed += 1;
+        tracing::info!(
+            "[bong][world] realm_collapse killed entity={:?} at ({:.1},{:.1},{:.1}) in zone `{}`",
+            entity,
+            position.x,
+            position.y,
+            position.z,
+            zone.name
+        );
+    }
+
+    killed
+}
+
 #[cfg(test)]
 mod events_tests {
     use std::collections::HashMap;
@@ -741,16 +959,21 @@ mod events_tests {
     use serde_json::json;
     use serde_json::Value;
     use valence::entity::lightning::LightningEntity;
-    use valence::prelude::{bevy_ecs, App, DVec3, Entity, EntityKind, Position, Update, With};
+    use valence::prelude::{
+        bevy_ecs, App, DVec3, Entity, EntityKind, Events, IntoSystemConfigs, Position, Update, With,
+    };
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        tick_active_events, ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
+        persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
+        ZoneCollapsedEvent, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
         EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     };
+    use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::NpcRegistry;
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
+    use crate::persistence::{bootstrap_sqlite, load_zone_overlays, PersistenceSettings};
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
     use crate::world::zone::Zone;
@@ -800,6 +1023,8 @@ mod events_tests {
             .insert(crate::world::dimension::OverworldLayer);
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<ZoneCollapsedEvent>();
         app.add_systems(Update, tick_active_events);
         (app, layer)
     }
@@ -1202,8 +1427,14 @@ mod events_tests {
     }
 
     #[test]
-    fn placeholder_realm_collapse_produces_alert_and_recent_event() {
-        let (mut app, _layer) = setup_events_app();
+    fn realm_collapse_collapses_zone_and_kills_occupants() {
+        let (mut app, layer) = setup_events_app();
+        let player = spawn_mock_player(&mut app, layer, "Azure", [8.0, 66.0, 8.0]);
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([10.0, 66.0, 10.0])))
+            .id();
+        let outsider = spawn_mock_player(&mut app, layer, "Far", [300.0, 66.0, 300.0]);
         let command = spawn_event_command("spawn", EVENT_REALM_COLLAPSE, 2);
 
         {
@@ -1211,31 +1442,90 @@ mod events_tests {
             world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
                 let mut events = world.resource_mut::<ActiveEventsResource>();
                 let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
-                assert!(accepted, "placeholder event should be accepted");
+                assert!(accepted, "realm_collapse event should be accepted");
             });
         }
 
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .contains("spawn", EVENT_REALM_COLLAPSE));
+
+        app.update();
+        app.update();
+
         let world = app.world();
-        let events = world.resource::<ActiveEventsResource>();
+        let zone = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist");
+        assert_eq!(zone.spirit_qi, 0.0);
+        assert_eq!(zone.danger_level, COLLAPSED_ZONE_DANGER_LEVEL);
+        assert!(zone
+            .active_events
+            .iter()
+            .any(|event| event == EVENT_REALM_COLLAPSE));
 
         assert!(
-            !events.contains("spawn", EVENT_REALM_COLLAPSE),
-            "placeholder event should not remain in active scheduler queue"
+            !world
+                .resource::<ActiveEventsResource>()
+                .contains("spawn", EVENT_REALM_COLLAPSE),
+            "realm_collapse should leave scheduler after collapse while zone keeps collapsed marker"
         );
 
-        let recent = events.recent_events_snapshot();
+        let deaths = world.resource::<Events<DeathEvent>>();
+        let collected: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
+        assert!(collected
+            .iter()
+            .any(|event| event.target == player && event.cause == "realm_collapse"));
+        assert!(collected
+            .iter()
+            .any(|event| event.target == npc && event.cause == "realm_collapse"));
         assert!(
-            recent.iter().any(
-                |event| event.target.as_deref() == Some(EVENT_REALM_COLLAPSE)
-                    && event.zone.as_deref() == Some("spawn")
-                    && event
-                        .details
-                        .as_ref()
-                        .and_then(|details| details.get("placeholder"))
-                        .is_some_and(|flag| flag == &Value::Bool(true))
-            ),
-            "realm_collapse placeholder should append verifiable recent event"
+            !collected.iter().any(|event| event.target == outsider),
+            "realm_collapse must not kill entities outside zone bounds"
         );
+    }
+
+    #[test]
+    fn realm_collapse_persists_collapsed_overlay() {
+        let (mut app, layer) = setup_events_app();
+        let db_path = unique_test_db("realm-collapse-persists-overlay");
+        std::fs::create_dir_all(db_path.parent().expect("test db should have parent"))
+            .expect("test db parent should be creatable");
+        let settings = PersistenceSettings::with_paths(
+            db_path.clone(),
+            db_path.with_extension("deceased"),
+            "realm-collapse-test",
+        );
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("test sqlite should bootstrap");
+        app.insert_resource(settings.clone());
+        app.add_systems(
+            Update,
+            persist_zone_collapsed_overlays.after(tick_active_events),
+        );
+        let _player = spawn_mock_player(&mut app, layer, "Azure", [8.0, 66.0, 8.0]);
+
+        {
+            let world = app.world_mut();
+            let command = spawn_event_command("spawn", EVENT_REALM_COLLAPSE, 1);
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones));
+            });
+        }
+
+        app.update();
+
+        let overlays = load_zone_overlays(&settings).expect("collapsed overlay should load");
+        assert!(overlays.iter().any(|overlay| {
+            overlay.zone_id == DEFAULT_SPAWN_ZONE_NAME
+                && overlay.overlay_kind == "collapsed"
+                && overlay.payload_version == 1
+                && overlay.payload_json.contains(EVENT_REALM_COLLAPSE)
+        }));
     }
 
     #[test]
@@ -1309,7 +1599,16 @@ mod events_tests {
         assert!(events.enqueue_from_spawn_command(&cmd, Some(&mut zones)));
 
         // 不传 layer / commands，模拟"事件已 enqueue 但 chunk layer 尚未就位"。
-        let leftover = events.tick(Some(&mut zones), None, None, None, Some(reserved));
+        let leftover = events.tick(
+            Some(&mut zones),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reserved),
+        );
         assert_eq!(
             leftover,
             Some(reserved),
@@ -1328,7 +1627,7 @@ mod events_tests {
     }
 
     #[test]
-    fn placeholder_karma_backlash_produces_alert_and_recent_event() {
+    fn hidden_karma_backlash_records_internal_marker() {
         let (mut app, _layer) = setup_events_app();
         let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
 
@@ -1337,7 +1636,7 @@ mod events_tests {
             world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
                 let mut events = world.resource_mut::<ActiveEventsResource>();
                 let accepted = events.enqueue_from_spawn_command(&command, Some(&mut zones));
-                assert!(accepted, "placeholder event should be accepted");
+                assert!(accepted, "hidden event should be accepted");
             });
         }
 
@@ -1346,7 +1645,7 @@ mod events_tests {
 
         assert!(
             !events.contains("spawn", EVENT_KARMA_BACKLASH),
-            "placeholder event should not remain in active scheduler queue"
+            "hidden event should not remain in active scheduler queue"
         );
 
         let recent = events.recent_events_snapshot();
@@ -1357,10 +1656,20 @@ mod events_tests {
                     && event
                         .details
                         .as_ref()
-                        .and_then(|details| details.get("placeholder"))
+                        .and_then(|details| details.get("hidden"))
                         .is_some_and(|flag| flag == &Value::Bool(true))
             ),
-            "karma_backlash placeholder should append verifiable recent event"
+            "karma_backlash should append an internal hidden marker"
         );
+    }
+
+    fn unique_test_db(test_name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("bong-world-events-{test_name}-{nanos}"))
+            .join("bong.db")
     }
 }
