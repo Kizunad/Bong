@@ -11,11 +11,11 @@
   "exit_on_complete": true,
   "screenshots": [
     {
-      "_doc": "P0 单角度 — 落在 server 默认 spawn (8, 150, 8) 上，pitch -90 俯视 spawn 地形。tp 与 spawn 同坐标避免 server anti-cheat reject；P1 多角度需配套 server preview module 做 server-side teleport。",
+      "_doc": "P0 单角度 — 落在 server 默认 spawn (8, 150, 8) 上，pitch +90 俯视 spawn 地形。MC pitch 约定：-90 仰头朝天，+90 低头朝地，0 水平（plan §1.5 与首版 JSON 写反为 -90，CI 实测拍到原版天空）。tp 与 spawn 同坐标避免 server anti-cheat reject；P1 多角度需配套 server preview module 做 server-side teleport。",
       "name": "top",
       "tp": [8, 150, 8],
       "yaw": 0,
-      "pitch": -90
+      "pitch": 90
     }
   ]
 }
