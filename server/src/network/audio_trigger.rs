@@ -8,10 +8,11 @@ use valence::prelude::{
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome};
 use crate::botany::components::HarvestTerminalEvent;
-use crate::combat::components::Wounds;
+use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::cultivation::qi_zero_decay::RealmRegressed;
@@ -25,6 +26,7 @@ use crate::lingtian::events::{HarvestCompleted, ReplenishCompleted, TillComplete
 use crate::network::audio_event_emit::{
     recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
+use crate::npc::brain::canonical_npc_id;
 use crate::schema::audio::AudioAttenuation;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 
@@ -422,21 +424,19 @@ pub fn emit_skill_audio_triggers(
 
 pub fn emit_social_audio_triggers(
     mut duo_she_warnings: EventReader<DuoSheWarningEvent>,
-    positions: Query<&Position>,
+    targets: Query<(Entity, &Position, Option<&LifeRecord>, Option<&Lifecycle>)>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for warning in duo_she_warnings.read() {
-        let Some(entity) = entity_from_char_target(warning.target_id.as_str()) else {
-            continue;
-        };
-        let Ok(position) = positions.get(entity) else {
+        let Some((entity, position)) = resolve_audio_target(warning.target_id.as_str(), &targets)
+        else {
             continue;
         };
         emit_play(
             &mut audio,
             "exposure_name",
             entity,
-            position.get(),
+            position,
             None,
             1.0,
             0.0,
@@ -461,6 +461,17 @@ pub fn emit_player_local_audio(
         pitch_shift: 0.0,
         recipient: AudioRecipient::Single(entity),
     });
+}
+
+pub fn emit_recipe_audio(
+    audio: &mut EventWriter<PlaySoundRecipeRequest>,
+    recipe_id: impl Into<String>,
+    entity: Entity,
+    origin: DVec3,
+    flag: Option<String>,
+    volume_mul: f32,
+) {
+    emit_play(audio, recipe_id, entity, origin, flag, volume_mul, 0.0);
 }
 
 fn emit_play(
@@ -535,11 +546,24 @@ fn severity_volume(severity: f64) -> f32 {
     (0.6 + severity as f32).clamp(0.6, 1.5)
 }
 
-fn entity_from_char_target(target: &str) -> Option<Entity> {
-    target
+fn resolve_audio_target(
+    target_id: &str,
+    targets: &Query<(Entity, &Position, Option<&LifeRecord>, Option<&Lifecycle>)>,
+) -> Option<(Entity, DVec3)> {
+    let char_entity = target_id
         .strip_prefix("char:")
         .and_then(|bits| bits.parse::<u64>().ok())
-        .map(Entity::from_bits)
+        .map(Entity::from_bits);
+
+    targets
+        .iter()
+        .find(|(entity, _, life_record, lifecycle)| {
+            char_entity.is_some_and(|target| target == *entity)
+                || life_record.is_some_and(|record| record.character_id == target_id)
+                || lifecycle.is_some_and(|lifecycle| lifecycle.character_id == target_id)
+                || canonical_npc_id(*entity) == target_id
+        })
+        .map(|(entity, position, _, _)| (entity, position.get()))
 }
 
 #[allow(dead_code)]
@@ -612,5 +636,36 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "skill_lv_up");
         assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == player));
+    }
+
+    #[test]
+    fn duo_she_warning_matches_life_record_target() {
+        let mut app = App::new();
+        app.add_event::<DuoSheWarningEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_social_audio_triggers);
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([3.0, 64.0, 3.0]),
+                LifeRecord::new("offline:Target"),
+            ))
+            .id();
+        app.world_mut().send_event(DuoSheWarningEvent {
+            host_id: "offline:Host".to_string(),
+            target_id: "offline:Target".to_string(),
+            at_tick: 1,
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].recipe_id, "exposure_name");
+        assert!(matches!(emitted[0].recipient, AudioRecipient::Single(entity) if entity == target));
     }
 }
