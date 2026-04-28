@@ -31,7 +31,7 @@ public final class BotanySkillHandler implements ServerDataHandler {
             );
         }
 
-        // 镜像到 SkillSetStore 的 herbalism 条目 —— BotanySkillStore 改为派生视图，不再独立持有。
+        // 镜像到 SkillSetStore 的 herbalism 条目，老通道不再独立持有 skill 状态。
         SkillSetSnapshot.Entry cur = SkillSetStore.snapshot().get(SkillId.HERBALISM);
         SkillSetSnapshot.Entry next = new SkillSetSnapshot.Entry(
             level,

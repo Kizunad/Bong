@@ -1,0 +1,52 @@
+{
+  "char_id": "offline:Ancestor",
+  "died_at_tick": 77,
+  "lifecycle": {
+    "character_id": "offline:Ancestor",
+    "death_count": 3,
+    "fortune_remaining": 0,
+    "last_death_tick": 77,
+    "last_revive_tick": 55,
+    "near_death_deadline_tick": null,
+    "weakened_until_tick": null,
+    "state": "Terminated"
+  },
+  "life_record": {
+    "character_id": "offline:Ancestor",
+    "created_at": 11,
+    "biography": [
+      {
+        "BreakthroughSucceeded": {
+          "realm": "Induce",
+          "tick": 18
+        }
+      },
+      {
+        "CombatHit": {
+          "attacker_id": "offline:Rival",
+          "body_part": "Chest",
+          "wound_kind": "Cut",
+          "damage": 12.5,
+          "tick": 54
+        }
+      },
+      {
+        "Terminated": {
+          "cause": "fortune_exhausted",
+          "tick": 77
+        }
+      }
+    ],
+    "insights_taken": [],
+    "skill_milestones": [
+      {
+        "skill": "alchemy",
+        "new_lv": 4,
+        "achieved_at": 75,
+        "narration": "丹火三转，炉意已成。",
+        "total_xp_at": 1280
+      }
+    ],
+    "spirit_root_first": null
+  }
+}

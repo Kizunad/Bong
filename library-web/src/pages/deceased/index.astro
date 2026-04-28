@@ -84,7 +84,7 @@ import Base from "../../layouts/Base.astro";
           var category = entry.termination_category || "横死";
           var charId = entry.char_id || "unknown";
           var path = entry.path || "";
-          var href = path ? "/" + path.replace(/^\/+/, "") : "#";
+          var detailHref = path ? "/deceased/view?path=" + encodeURIComponent(path.replace(/^\/+/, "")) : "#";
           return "<article class=\"deceased-card ink-reveal visible\">" +
             "<div>" +
               "<div class=\"deceased-card-id\">" + escapeHtml(charId) + "</div>" +
@@ -93,7 +93,7 @@ import Base from "../../layouts/Base.astro";
             "</div>" +
             "<div class=\"deceased-card-side\">" +
               "<span class=\"deceased-category " + labelClass(category) + "\">" + escapeHtml(category) + "</span>" +
-              "<a class=\"deceased-json-link font-kai\" href=\"" + escapeHtml(href) + "\">查看生平卷 JSON</a>" +
+              "<a class=\"deceased-json-link font-kai\" href=\"" + escapeHtml(detailHref) + "\">查看生平卷</a>" +
             "</div>" +
           "</article>";
         }).join("");
