@@ -26,7 +26,7 @@ class TechniquesSnapshotHandlerTest {
               "description":"凝劲贯臂，短距爆发。",
               "required_realm":"凝脉一层",
               "required_meridians":[{"channel":"LargeIntestine","min_health":0.5}],
-              "qi_cost":30,
+              "qi_cost":0.4,
               "cast_ticks":8,
               "cooldown_ticks":60,
               "range":1.8
@@ -36,7 +36,7 @@ class TechniquesSnapshotHandlerTest {
         assertEquals(1, TechniquesListPanel.snapshot().size());
         var technique = TechniquesListPanel.snapshot().get(0);
         assertEquals(TechniquesListPanel.Grade.YELLOW, technique.grade());
-        assertEquals(30, technique.qiCost());
+        assertEquals(0.4f, technique.qiCost(), 0.0001f);
         assertEquals("LargeIntestine", technique.requiredMeridians().get(0).channel());
     }
 

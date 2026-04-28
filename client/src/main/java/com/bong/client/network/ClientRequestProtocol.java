@@ -397,8 +397,15 @@ public final class ClientRequestProtocol {
     }
 
     public static String encodeSkillBarCast(int slot) {
+        return encodeSkillBarCast(slot, null);
+    }
+
+    public static String encodeSkillBarCast(int slot, String target) {
         JsonObject obj = envelope("skill_bar_cast");
         obj.addProperty("slot", slot);
+        if (target != null && !target.isBlank()) {
+            obj.addProperty("target", target.trim());
+        }
         return obj.toString();
     }
 

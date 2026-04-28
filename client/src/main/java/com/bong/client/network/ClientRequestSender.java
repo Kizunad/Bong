@@ -136,6 +136,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSkillBarCast(slot));
     }
 
+    public static void sendSkillBarCast(int slot, String target) {
+        dispatch(ClientRequestProtocol.encodeSkillBarCast(slot, target));
+    }
+
     public static void sendSkillBarBindClear(int slot) {
         dispatch(ClientRequestProtocol.encodeSkillBarBindClear(slot));
     }
