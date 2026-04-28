@@ -4,7 +4,10 @@
 //! 肉身接管、两卷交叉引用、坐标继承等由 plan-death §4e 接入。该模块
 //! 提供稳定的事件契约，避免 §4e 实装时与 NPC 层冲突。
 
-use valence::prelude::{bevy_ecs, App, Entity, Event, EventReader, Update};
+use valence::prelude::{bevy_ecs, App, Entity, Event, EventReader, EventWriter, Update};
+
+use crate::cultivation::possession::DuoSheRequestEvent;
+use crate::npc::brain::canonical_npc_id;
 
 /// 玩家请求夺舍某 NPC。§4e 之前仅被 stub 消费。
 #[derive(Clone, Debug, Event)]
@@ -35,17 +38,23 @@ impl DuoSheReason {
 
 pub fn register(app: &mut App) {
     app.add_event::<DuoSheIntent>()
-        .add_systems(Update, log_duoshe_intent);
+        .add_systems(Update, forward_duoshe_intent);
 }
 
-fn log_duoshe_intent(mut events: EventReader<DuoSheIntent>) {
+fn forward_duoshe_intent(
+    mut events: EventReader<DuoSheIntent>,
+    mut requests: EventWriter<DuoSheRequestEvent>,
+) {
     for event in events.read() {
         tracing::info!(
-            "[bong][npc][possession] DuoSheIntent stub — player={:?} target={:?} reason={}",
-            event.player_entity,
-            event.npc_target,
-            event.reason.as_str()
+            "[bong][npc] forwarding duo_she intent reason={} target={}",
+            event.reason.as_str(),
+            canonical_npc_id(event.npc_target)
         );
+        requests.send(DuoSheRequestEvent {
+            host: event.player_entity,
+            target_id: canonical_npc_id(event.npc_target),
+        });
     }
 }
 
@@ -57,6 +66,7 @@ mod tests {
     #[test]
     fn duoshe_intent_event_is_registered_and_consumed_without_panic() {
         let mut app = App::new();
+        app.add_event::<DuoSheRequestEvent>();
         register(&mut app);
 
         let player = app.world_mut().spawn_empty().id();
@@ -74,6 +84,11 @@ mod tests {
             .world()
             .resource::<bevy_ecs::event::Events<DuoSheIntent>>();
         assert!(events.len() <= 1, "event should be drained by stub");
+
+        let requests = app
+            .world()
+            .resource::<bevy_ecs::event::Events<DuoSheRequestEvent>>();
+        assert_eq!(requests.len(), 1);
     }
 
     #[test]

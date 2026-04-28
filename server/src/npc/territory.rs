@@ -8,8 +8,7 @@
 
 use std::collections::HashMap;
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
-use valence::client::ClientMarker;
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EventWriter, IntoSystemConfigs,
     Position, PreUpdate, Query, Res, ResMut, Resource, With, Without,
@@ -22,6 +21,7 @@ use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
     NpcArchetype, NpcLifespan, NpcRegistry, NpcReproductionRequest, PendingRetirement,
 };
+use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::movement::GameTick;
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
@@ -193,13 +193,28 @@ impl ActionBuilder for ProtectYoungAction {
 }
 
 pub fn register(app: &mut App) {
-    // 只注册繁衍所需的系统；Beast Scorer/Action 的 register 临时撤回，
-    // 测试走 add_systems 不受影响。等实际场景产出 Beast NPC 再接入。
     app.insert_resource(BeastReproductionTick::default())
         .add_systems(
             PreUpdate,
             (mark_young_beasts, beast_reproduction_tick_system)
                 .before(big_brain::prelude::BigBrainSet::Scorers),
+        )
+        .add_systems(
+            PreUpdate,
+            (
+                territory_intruder_scorer_system,
+                protect_young_scorer_system,
+            )
+                .in_set(BigBrainSet::Scorers),
+        )
+        .add_systems(
+            PreUpdate,
+            (
+                territory_patrol_action_system,
+                hunt_action_system,
+                protect_young_action_system,
+            )
+                .in_set(BigBrainSet::Actions),
         );
 }
 
@@ -386,34 +401,39 @@ fn emigrate_fallback_direction(actor: Entity) -> DVec3 {
 // Beast 行为（Scorer / Action）实现
 // -------------------------------------------------------------------------
 
-type TerritoryOwnerQuery<'w, 's> =
-    Query<'w, 's, (&'static Position, &'static Territory), (With<NpcMarker>, Without<Despawned>)>;
-
-type PlayerPositionQuery<'w, 's> = Query<'w, 's, &'static Position, With<ClientMarker>>;
-
-type NpcPosArchQuery<'w, 's> = Query<
+type TerritoryOwnerQuery<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static Position, &'static NpcArchetype),
+    (
+        &'static Position,
+        &'static Territory,
+        Option<&'static NpcLodTier>,
+    ),
     (With<NpcMarker>, Without<Despawned>),
 >;
 
 fn territory_intruder_scorer_system(
     beasts: TerritoryOwnerQuery<'_, '_>,
-    players: PlayerPositionQuery<'_, '_>,
-    npcs: NpcPosArchQuery<'_, '_>,
+    candidates: HuntCandidateQuery<'_, '_>,
+    npc_arch: Query<&NpcArchetype, With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<TerritoryIntruderScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((_, territory)) = beasts.get(*actor) {
-            let has_player = players.iter().any(|p| territory.contains(p.get()));
-            let has_hostile_npc = npcs.iter().any(|(ent, p, arch)| {
-                ent != *actor && *arch != NpcArchetype::Beast && territory.contains(p.get())
-            });
-            if has_player || has_hostile_npc {
-                1.0
-            } else {
-                0.0
+        let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
+            match lod_gated_score(tier, tick, &cfg, || {
+                if pick_hunt_target(pos.get(), territory, &candidates, &npc_arch, *actor).is_some()
+                {
+                    1.0
+                } else {
+                    0.0
+                }
+            }) {
+                Some(value) => value,
+                None => continue,
             }
         } else {
             0.0
@@ -433,23 +453,48 @@ fn protect_young_scorer_system(
     beasts: TerritoryOwnerQuery<'_, '_>,
     young: InjuredYoungQuery<'_, '_>,
     mut scorers: Query<(&Actor, &mut Score), With<ProtectYoungScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((_, territory)) = beasts.get(*actor) {
-            let injured = young.iter().any(|(_, pos, wounds)| {
-                let ratio = wounds.health_current / wounds.health_max.max(1.0);
-                ratio < PROTECT_YOUNG_WOUND_RATIO && territory.contains(pos.get())
-            });
-            if injured {
-                1.0
-            } else {
-                0.0
+        let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
+            match lod_gated_score(tier, tick, &cfg, || {
+                if nearest_injured_young(pos.get(), territory, &young).is_some() {
+                    1.0
+                } else {
+                    0.0
+                }
+            }) {
+                Some(value) => value,
+                None => continue,
             }
         } else {
             0.0
         };
         score.set(value);
     }
+}
+
+fn nearest_injured_young(
+    pos: DVec3,
+    territory: &Territory,
+    young: &InjuredYoungQuery<'_, '_>,
+) -> Option<(Entity, DVec3, f64)> {
+    young
+        .iter()
+        .filter_map(|(ent, ypos, wounds)| {
+            let ratio = wounds.health_current / wounds.health_max.max(1.0);
+            if ratio < PROTECT_YOUNG_WOUND_RATIO && territory.contains(ypos.get()) {
+                let d = pos.distance(ypos.get());
+                if d <= PROTECT_YOUNG_SEARCH_RADIUS {
+                    return Some((ent, ypos.get(), d));
+                }
+            }
+            None
+        })
+        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 /// Territory 内基于 actor.index + tick 的确定性巡逻目标。
@@ -681,19 +726,7 @@ fn protect_young_action_system(
         };
 
         // 重新选一次最近低血幼崽
-        let nearest_injured = young
-            .iter()
-            .filter_map(|(ent, ypos, wounds)| {
-                let ratio = wounds.health_current / wounds.health_max.max(1.0);
-                if ratio < PROTECT_YOUNG_WOUND_RATIO && territory.contains(ypos.get()) {
-                    let d = pos.get().distance(ypos.get());
-                    if d <= PROTECT_YOUNG_SEARCH_RADIUS {
-                        return Some((ent, ypos.get(), d));
-                    }
-                }
-                None
-            })
-            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        let nearest_injured = nearest_injured_young(pos.get(), territory, &young);
 
         match *state {
             ActionState::Requested => {
@@ -741,6 +774,7 @@ mod tests {
     use super::*;
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcBlackboard;
+    use valence::client::ClientMarker;
     use valence::prelude::{App, Events, PreUpdate};
 
     fn spawn_adult_beast(
@@ -1092,7 +1126,11 @@ mod tests {
         );
         let _player = app
             .world_mut()
-            .spawn((ClientMarker, Position::new([5.0, 64.0, 5.0])))
+            .spawn((
+                ClientMarker,
+                Position::new([5.0, 64.0, 5.0]),
+                Cultivation::default(),
+            ))
             .id();
         let scorer = app
             .world_mut()
@@ -1116,6 +1154,7 @@ mod tests {
                 NpcMarker,
                 NpcArchetype::Rogue,
                 Position::new([6.0, 64.0, 6.0]),
+                Cultivation::default(),
             ))
             .id();
         let scorer = app
@@ -1164,7 +1203,11 @@ mod tests {
         );
         let _player = app
             .world_mut()
-            .spawn((ClientMarker, Position::new([50.0, 64.0, 50.0])))
+            .spawn((
+                ClientMarker,
+                Position::new([50.0, 64.0, 50.0]),
+                Cultivation::default(),
+            ))
             .id();
         let scorer = app
             .world_mut()

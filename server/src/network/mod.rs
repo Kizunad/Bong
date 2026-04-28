@@ -18,6 +18,7 @@ pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod npc_event_bridge;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod skill_emit;
@@ -60,6 +61,7 @@ use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
+use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
@@ -276,6 +278,14 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        (
+            npc_event_bridge::publish_npc_spawn_events,
+            npc_event_bridge::publish_npc_death_events,
+            npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+        ),
+    );
+    app.add_systems(
+        Update,
         techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
             .after(crate::player::attach_player_state_to_joined_clients),
     );
@@ -477,6 +487,7 @@ fn publish_world_state_to_redis(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
@@ -572,6 +583,7 @@ fn build_world_state_snapshot(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
@@ -587,7 +599,12 @@ fn build_world_state_snapshot(
         ts,
         tick,
         players,
-        npcs: collect_npc_snapshots(npcs, npc_action_states, &player_ids_by_entity),
+        npcs: collect_npc_snapshots(
+            npcs,
+            npc_action_states,
+            &player_ids_by_entity,
+            &zone_registry,
+        ),
         factions: faction_store.map(collect_faction_summaries),
         zones: collect_zone_snapshots(&zone_registry, &player_counts_by_zone),
         recent_events: active_events
@@ -835,19 +852,33 @@ fn collect_npc_snapshots(
             Option<&NpcArchetype>,
             Option<&NpcLifespan>,
             Option<&FactionMembership>,
+            Option<&NpcPatrol>,
         ),
         With<NpcMarker>,
     >,
     npc_action_states: &HashMap<Entity, NpcStateKind>,
     player_ids_by_entity: &HashMap<Entity, String>,
+    zone_registry: &ZoneRegistry,
 ) -> Vec<NpcSnapshot> {
     let mut npc_snapshots = npcs
         .iter()
         .map(
-            |(entity, position, blackboard, kind, archetype, lifespan, faction_membership)| {
+            |(
+                entity,
+                position,
+                blackboard,
+                kind,
+                archetype,
+                lifespan,
+                faction_membership,
+                patrol,
+            )| {
                 NpcSnapshot {
                     id: canonical_npc_id(entity),
                     kind: format!("{kind:?}"),
+                    zone: patrol
+                        .map(|patrol| patrol.home_zone.clone())
+                        .unwrap_or_else(|| zone_name_for_position(zone_registry, position.get())),
                     pos: vec3_to_array(position.get()),
                     state: npc_action_states
                         .get(&entity)

@@ -23,6 +23,7 @@ pub mod forge_bridge;
 pub mod inventory;
 pub mod lingtian;
 pub mod narration;
+pub mod npc;
 pub mod server_data;
 pub mod skill;
 pub mod tsy;

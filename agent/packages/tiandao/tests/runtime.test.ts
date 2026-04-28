@@ -404,6 +404,84 @@ describe("runTick", () => {
     );
   });
 
+  it("merges deterministic NPC producer commands before publishing", async () => {
+    const state = createTestWorldState();
+    const publishCommands = vi.fn(async () => {});
+    const publishNarrations = vi.fn(async () => {});
+    const producer = vi.fn(() => [
+      {
+        source: "npc_producer",
+        decision: {
+          commands: [
+            {
+              type: "spawn_npc" as const,
+              target: "starter_zone",
+              params: { archetype: "rogue", count: 2, reason: "test_producer" },
+            },
+          ],
+          narrations: [],
+          reasoning: "producer",
+        },
+      },
+    ]);
+
+    await runTick(state, {
+      agents: [
+        new FakeAgent("mutation", {
+          commands: [{ type: "modify_zone", target: "starter_zone", params: { spirit_qi_delta: 0.05 } }],
+          narrations: [],
+          reasoning: "llm",
+        }),
+      ],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      publishCommands,
+      publishNarrations,
+      logger: { log: vi.fn(), error: vi.fn() },
+      deterministicNpcProducer: producer,
+    });
+
+    expect(producer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state,
+        sourcedDecisions: [expect.objectContaining({ source: "mutation" })],
+        metadata: { sourceTick: 123, correlationId: "tiandao-tick-123" },
+      }),
+    );
+    expect(publishCommands).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: expect.arrayContaining([
+          expect.objectContaining({ type: "modify_zone", target: "starter_zone" }),
+          expect.objectContaining({ type: "spawn_npc", target: "starter_zone" }),
+        ]),
+      }),
+    );
+  });
+
+  it("filters invalid producer commands through Arbiter constraints", async () => {
+    const publishCommands = vi.fn(async () => {});
+    await runTick(createTestWorldState(), {
+      agents: [],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      publishCommands,
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+      deterministicNpcProducer: () => [
+        {
+          source: "npc_producer",
+          decision: {
+            commands: [{ type: "spawn_npc", target: "missing_zone", params: { archetype: "rogue" } }],
+            narrations: [],
+            reasoning: "invalid producer target",
+          },
+        },
+      ],
+    });
+
+    expect(publishCommands).not.toHaveBeenCalled();
+  });
+
   it("skips publish when agent returns null", async () => {
     const publishCommands = vi.fn(async () => {});
     const publishNarrations = vi.fn(async () => {});

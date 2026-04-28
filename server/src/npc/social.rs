@@ -7,11 +7,15 @@
 
 #![allow(dead_code)]
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
-use valence::prelude::{bevy_ecs, App, Commands, Component, Entity, Position, Query, With};
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
+use valence::prelude::{
+    bevy_ecs, App, Commands, Component, Entity, IntoSystemConfigs, Position, PreUpdate, Query, Res,
+    With,
+};
 
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::faction::FactionMembership;
+use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
 
@@ -69,9 +73,15 @@ impl ActionBuilder for SocializeAction {
     }
 }
 
-pub fn register(_app: &mut App) {
-    // Scorer/Action 注册临时撤回；等 FactionMembership NPC 真实投放后
-    // 单独 PR 再接入。测试走局部 add_systems 不依赖 register。
+pub fn register(app: &mut App) {
+    app.add_systems(
+        PreUpdate,
+        (socialize_scorer_system, faction_duel_scorer_system).in_set(BigBrainSet::Scorers),
+    )
+    .add_systems(
+        PreUpdate,
+        socialize_action_system.in_set(BigBrainSet::Actions),
+    );
 }
 
 type SocializeNpcQuery<'w, 's> =
@@ -84,6 +94,7 @@ type SocializeSelfQuery<'w, 's> = Query<
         &'static Position,
         &'static FactionMembership,
         Option<&'static DuelTarget>,
+        Option<&'static NpcLodTier>,
     ),
     With<NpcMarker>,
 >;
@@ -92,25 +103,34 @@ fn socialize_scorer_system(
     self_q: SocializeSelfQuery<'_, '_>,
     peers: SocializeNpcQuery<'_, '_>,
     mut scorers: Query<(&Actor, &mut Score), With<SocializeScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match self_q.get(*actor) {
-            Ok((pos, membership, duel)) => {
-                if duel.is_some() {
-                    // 有敌对目标就不寒暄
-                    0.0
-                } else {
-                    let p = pos.get();
-                    let has_same_faction_peer = peers.iter().any(|(ent, ppos, pmem)| {
-                        ent != *actor
-                            && pmem.faction_id == membership.faction_id
-                            && p.distance(ppos.get()) <= SOCIALIZE_RANGE
-                    });
-                    if has_same_faction_peer {
-                        SOCIALIZE_BASELINE_SCORE
-                    } else {
+            Ok((pos, membership, duel, tier)) => {
+                match lod_gated_score(tier, tick, &cfg, || {
+                    if duel.is_some() {
+                        // 有敌对目标就不寒暄
                         0.0
+                    } else {
+                        let p = pos.get();
+                        let has_same_faction_peer = peers.iter().any(|(ent, ppos, pmem)| {
+                            ent != *actor
+                                && pmem.faction_id == membership.faction_id
+                                && p.distance(ppos.get()) <= SOCIALIZE_RANGE
+                        });
+                        if has_same_faction_peer {
+                            SOCIALIZE_BASELINE_SCORE
+                        } else {
+                            0.0
+                        }
                     }
+                }) {
+                    Some(value) => value,
+                    None => continue,
                 }
             }
             Err(_) => 0.0,
@@ -141,7 +161,7 @@ fn socialize_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<SocializeAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((pos, membership, _)) = self_q.get(*actor) else {
+        let Ok((pos, membership, _, _)) = self_q.get(*actor) else {
             *state = ActionState::Failure;
             continue;
         };

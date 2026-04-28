@@ -1,0 +1,28 @@
+{
+  "anyOf": [
+    {
+      "const": "set_leader",
+      "type": "string"
+    },
+    {
+      "const": "clear_leader",
+      "type": "string"
+    },
+    {
+      "const": "set_leader_lineage",
+      "type": "string"
+    },
+    {
+      "const": "adjust_loyalty_bias",
+      "type": "string"
+    },
+    {
+      "const": "enqueue_mission",
+      "type": "string"
+    },
+    {
+      "const": "pop_mission",
+      "type": "string"
+    }
+  ]
+}

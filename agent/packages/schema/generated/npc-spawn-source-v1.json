@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "startup",
+      "type": "string"
+    },
+    {
+      "const": "seed",
+      "type": "string"
+    },
+    {
+      "const": "reproduction",
+      "type": "string"
+    },
+    {
+      "const": "agent_command",
+      "type": "string"
+    }
+  ]
+}

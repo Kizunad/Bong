@@ -2,6 +2,9 @@ import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 import {
   CHANNELS,
+  validateFactionEventV1Contract,
+  validateNpcDeathV1Contract,
+  validateNpcSpawnedV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
 } from "@bong/schema";
@@ -9,7 +12,10 @@ import type {
   AgentWorldModelEnvelopeV1,
   AgentWorldModelSnapshotV1,
   AgentCommandV1,
+  FactionEventV1,
   NarrationV1,
+  NpcDeathV1,
+  NpcSpawnedV1,
   ChatMessageV1,
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
@@ -18,11 +24,21 @@ import type {
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
 
-const { WORLD_STATE, AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, TSY_EVENT } =
-  CHANNELS;
+const {
+  WORLD_STATE,
+  AGENT_COMMAND,
+  AGENT_NARRATE,
+  AGENT_WORLD_MODEL,
+  PLAYER_CHAT,
+  TSY_EVENT,
+  NPC_SPAWN,
+  NPC_DEATH,
+  FACTION_EVENT,
+} = CHANNELS;
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
+const NPC_EVENT_BUFFER_LIMIT = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
@@ -44,6 +60,7 @@ export interface PublishAgentWorldModelRequest {
 }
 
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
+export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
 
 const DRAIN_SCRIPT = `
 local items = redis.call('lrange', ARGV[1], 0, -1)
@@ -94,8 +111,10 @@ export class RedisIpc {
   private pub: RedisIpcClient;
   private latestState: WorldStateV1 | null = null;
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
+  private latestNpcEvents: NpcRuntimeEventV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
+  private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -106,6 +125,11 @@ export class RedisIpc {
 
     if (channel === TSY_EVENT) {
       this.handleTsyEventMessage(message);
+      return;
+    }
+
+    if (channel === NPC_SPAWN || channel === NPC_DEATH || channel === FACTION_EVENT) {
+      this.handleNpcRuntimeEventMessage(channel, message);
     }
   };
 
@@ -164,6 +188,35 @@ export class RedisIpc {
     }
   }
 
+  private handleNpcRuntimeEventMessage(channel: string, message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result =
+        channel === NPC_SPAWN
+          ? validateNpcSpawnedV1Contract(data)
+          : channel === NPC_DEATH
+            ? validateNpcDeathV1Contract(data)
+            : validateFactionEventV1Contract(data);
+      if (!result.ok) {
+        console.warn(`[redis-ipc] invalid NPC runtime event on ${channel}:`, result.errors.join("; "));
+        return;
+      }
+      this.recordNpcRuntimeEvent(data as NpcRuntimeEventV1);
+    } catch (e) {
+      console.warn(`[redis-ipc] failed to parse NPC runtime event on ${channel}:`, e);
+    }
+  }
+
+  private recordNpcRuntimeEvent(event: NpcRuntimeEventV1): void {
+    this.latestNpcEvents.push(event);
+    if (this.latestNpcEvents.length > NPC_EVENT_BUFFER_LIMIT) {
+      this.latestNpcEvents = this.latestNpcEvents.slice(-NPC_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.npcEventCallbacks) {
+      cb(event);
+    }
+  }
+
   constructor(config: RedisIpcConfig, deps?: RedisIpcDeps) {
     const createClient =
       config.createClient ??
@@ -180,10 +233,15 @@ export class RedisIpc {
 
     await this.sub.subscribe(WORLD_STATE);
     await this.sub.subscribe(TSY_EVENT);
+    await this.sub.subscribe(NPC_SPAWN);
+    await this.sub.subscribe(NPC_DEATH);
+    await this.sub.subscribe(FACTION_EVENT);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
-    console.log(`[redis-ipc] subscribed to ${WORLD_STATE}, ${TSY_EVENT}`);
+    console.log(
+      `[redis-ipc] subscribed to ${WORLD_STATE}, ${TSY_EVENT}, ${NPC_SPAWN}, ${NPC_DEATH}, ${FACTION_EVENT}`,
+    );
   }
 
   getLatestState(): WorldStateV1 | null {
@@ -200,6 +258,14 @@ export class RedisIpc {
 
   onTsyHostileEvent(cb: (event: TsyHostileEventV1) => void): void {
     this.tsyHostileCallbacks.push(cb);
+  }
+
+  getLatestNpcEvents(): NpcRuntimeEventV1[] {
+    return [...this.latestNpcEvents];
+  }
+
+  onNpcRuntimeEvent(cb: (event: NpcRuntimeEventV1) => void): void {
+    this.npcEventCallbacks.push(cb);
   }
 
   async publishCommands(request: CommandPublishRequest): Promise<void> {

@@ -100,6 +100,7 @@ export const NpcSnapshot = Type.Object(
   {
     id: Type.String(),
     kind: Type.String(),
+    zone: Type.String(),
     pos: Vec3,
     state: NpcState,
     blackboard: Type.Record(Type.String(), Type.Any()),

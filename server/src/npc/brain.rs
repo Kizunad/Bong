@@ -20,7 +20,7 @@ use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{
     NpcAgingConfig, NpcArchetype, NpcLifespan, NpcRegistry, NpcRetireRequest, PendingRetirement,
 };
-use crate::npc::lod::{is_dormant, should_skip_scorer_tick, NpcLodConfig, NpcLodTick, NpcLodTier};
+use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
@@ -667,19 +667,14 @@ fn player_proximity_scorer_system(
             .clamp(0.0, 1.0);
 
         let value = if let Ok((blackboard, tier)) = npcs.get(*actor) {
-            if is_dormant(tier) {
-                0.0
-            } else if tier
-                .copied()
-                .map(|t| should_skip_scorer_tick(t, tick, &cfg))
-                .unwrap_or(false)
-            {
-                continue;
-            } else {
+            match lod_gated_score(tier, tick, &cfg, || {
                 score_for_flee_threshold(
                     proximity_score(blackboard.player_distance),
                     flee_threshold,
                 )
+            }) {
+                Some(value) => value,
+                None => continue,
             }
         } else {
             0.0
@@ -1152,19 +1147,10 @@ fn hunger_scorer_system(
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
-            Ok((h, tier)) => {
-                if is_dormant(tier) {
-                    0.0
-                } else if tier
-                    .copied()
-                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
-                    .unwrap_or(false)
-                {
-                    continue;
-                } else {
-                    h.hunger_pressure()
-                }
-            }
+            Ok((h, tier)) => match lod_gated_score(tier, tick, &cfg, || h.hunger_pressure()) {
+                Some(value) => value,
+                None => continue,
+            },
             Err(_) => 0.0,
         };
         score.set(value);
@@ -1181,21 +1167,16 @@ fn wander_scorer_system(
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
-            Ok((pending, tier)) => {
-                if is_dormant(tier) {
-                    0.0
-                } else if tier
-                    .copied()
-                    .map(|t| should_skip_scorer_tick(t, tick, &cfg))
-                    .unwrap_or(false)
-                {
-                    continue;
-                } else if pending.is_some() {
+            Ok((pending, tier)) => match lod_gated_score(tier, tick, &cfg, || {
+                if pending.is_some() {
                     0.0
                 } else {
                     WANDER_BASELINE_SCORE
                 }
-            }
+            }) {
+                Some(value) => value,
+                None => continue,
+            },
             Err(_) => 0.0,
         };
         score.set(value);

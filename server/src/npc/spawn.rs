@@ -6,7 +6,8 @@ use valence::entity::witch::WitchEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
-    IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId, Update, With,
+    EventWriter, IntoSystemConfigs, Position, PostStartup, Query, Res, ResMut, Resource, UniqueId,
+    Update, With,
 };
 
 use crate::combat::components::WoundKind;
@@ -20,22 +21,26 @@ use crate::npc::brain::{
     WanderState,
 };
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteState, MissionQueue,
-    Reputation,
+    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
+    MissionQueue, MissionQueueScorer, Reputation,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
-    npc_runtime_bundle, NpcArchetype, NpcLifespan, NpcRegistry, NpcReproductionRequest,
+    npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry,
+    NpcReproductionRequest, NpcSpawnNotice, NpcSpawnSource,
 };
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-// Scorer/Action symbols (TerritoryIntruderScorer / LoyaltyScorer / GuardianDutyScorer / ...)
-// 暂不 import —— thinker 已降级到 core scorers，直到 ccfbb458 撤回的 ECS
-// 注册恢复后再接回。状态组件 (HuntState / GuardState / TrialState / MissionExecuteState)
-// 仍保留，等后续 PR 挂新 Scorer/Action 时不用重写 spawn 流程。
-use crate::npc::relic::{GuardState, GuardianDuty, GuardianRelicTag, TrialEval, TrialState};
-use crate::npc::territory::{HuntState, ProtectYoungState, Territory, TerritoryPatrolState};
+use crate::npc::relic::{
+    GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
+    TrialEval, TrialEvalScorer, TrialState,
+};
+use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
+use crate::npc::territory::{
+    HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
+    TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
+};
 use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -283,8 +288,10 @@ pub(crate) fn initial_age_for_index(index: u32, max_age_ticks: f64, max_ratio: f
     (bucket * max_ratio).clamp(0.0, 1.0) * max_age_ticks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_initial_rogue_population_on_startup(
     mut commands: Commands,
+    mut notices: EventWriter<NpcSpawnNotice>,
     config: Option<Res<RoguePopulationSeedConfig>>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
@@ -374,7 +381,7 @@ fn seed_initial_rogue_population_on_startup(
         for _ in 0..count {
             let (pos, patrol_target) = seed_position_for_zone(zone, global_index);
             let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
-            spawn_rogue_npc_at(
+            let entity = spawn_rogue_npc_at(
                 &mut commands,
                 NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
                 layer,
@@ -383,6 +390,14 @@ fn seed_initial_rogue_population_on_startup(
                 patrol_target,
                 age,
             );
+            notices.send(spawn_notice(
+                entity,
+                NpcArchetype::Rogue,
+                NpcSpawnSource::Seed,
+                zone.name.as_str(),
+                pos,
+                age,
+            ));
             global_index += 1;
         }
     }
@@ -401,6 +416,7 @@ fn seed_initial_rogue_population_on_startup(
 fn process_npc_reproduction_requests(
     mut commands: Commands,
     mut requests: EventReader<NpcReproductionRequest>,
+    mut notices: EventWriter<NpcSpawnNotice>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut registry: Option<ResMut<NpcRegistry>>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
@@ -480,6 +496,14 @@ fn process_npc_reproduction_requests(
             request.home_zone,
             request.position
         );
+        notices.send(spawn_notice(
+            entity,
+            request.archetype,
+            NpcSpawnSource::Reproduction,
+            request.home_zone.as_str(),
+            request.position,
+            request.initial_age_ticks.max(0.0),
+        ));
     }
 }
 
@@ -495,12 +519,25 @@ fn startup_npc_thinker() -> ThinkerBuilder {
 fn spawn_single_zombie_npc_on_startup(
     mut commands: Commands,
     dimension_layers: Option<Res<crate::world::dimension::DimensionLayers>>,
+    mut notices: EventWriter<NpcSpawnNotice>,
 ) {
     let Some(dimension_layers) = dimension_layers else {
         return;
     };
     let layer = dimension_layers.overworld;
     let npc_entity = spawn_single_zombie_npc(&mut commands, layer);
+    notices.send(spawn_notice(
+        npc_entity,
+        NpcArchetype::Zombie,
+        NpcSpawnSource::Startup,
+        DEFAULT_SPAWN_ZONE_NAME,
+        DVec3::new(
+            NPC_SPAWN_POSITION[0],
+            NPC_SPAWN_POSITION[1],
+            NPC_SPAWN_POSITION[2],
+        ),
+        0.0,
+    ));
 
     tracing::info!(
         "[bong][npc] spawned zombie npc entity {npc_entity:?} at [{}, {}, {}]",
@@ -531,31 +568,18 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
-/// Beast thinker（plan §2）：
-/// 完整行为链是 ProtectYoung → Hunt（入侵者）→ 近战 → Chase → 领地巡逻
-/// → Wander。但 Phase 4 的 `TerritoryIntruder` / `ProtectYoung` Scorer
-/// 与 `Hunt` / `TerritoryPatrol` / `ProtectYoung` Action 的 ECS 注册在
-/// `ccfbb458` 因 e2e TPS 回归被撤回，尚未接入。
-///
-/// 当前降级到已注册的 core scorers / actions —— 幼崽繁衍真的 spawn
-/// 后仍能走"老化退休 / 近战 / 追击 / 游荡"的基础链，不会卡在
-/// `TerritoryPatrolAction::Requested`。下一 PR 恢复 Scorer/Action
-/// 注册时把 territory 行为接回来。
 fn beast_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
+        .when(ProtectYoungScorer, ProtectYoungAction)
+        .when(TerritoryIntruderScorer, HuntAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
+        .when(WanderScorer, TerritoryPatrolAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// Disciple thinker（plan §2）：完整设计是 Rogue 基线 + `MissionQueue` /
-/// `Loyalty` 的派系任务链；`MissionExecuteAction` / `LoyaltyScorer` /
-/// `MissionQueueScorer` 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到
-/// Rogue 行为链，行为和 `rogue_npc_thinker` 等价（保留独立 fn 是为了
-/// 让 spawn_disciple_npc_at 的 FactionMembership 组件仍有唯一入口，
-/// 等任务行为接入时从此处扩展）。
 #[allow(dead_code)]
 fn disciple_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
@@ -563,23 +587,22 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(FactionDuelScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
+        .when(MissionQueueScorer, MissionExecuteAction)
         .when(CultivationDriveScorer, CultivateAction)
+        .when(SocializeScorer, SocializeAction)
         .when(CuriosityScorer, WanderAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// GuardianRelic thinker（plan §2）：完整行为包括 `GuardianDuty` 追入侵者
-/// 和 `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
-/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander。
-///
-/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
-///
-/// 不走 AgeingScorer —— GuardianRelic 不老。
 #[allow(dead_code)]
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
+        .when(GuardianDutyScorer, GuardAction)
+        .when(TrialEvalScorer, TrialAction)
         .when(WanderScorer, WanderAction)
 }
 
@@ -618,12 +641,7 @@ pub fn spawn_rogue_npc_at(
         rogue_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Rogue);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Rogue.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -632,7 +650,7 @@ pub fn spawn_rogue_npc_at(
 /// Spawn a Commoner NPC. MineSkin 池可用时走假玩家 skin；否则退回 vanilla villager。
 /// Starting age is controlled by
 /// `initial_age_ticks` — newborns pass `0.0`, agent-spawned adults can pass
-/// any value `< NpcLifespan::for_archetype(Commoner).max_age_ticks`.
+/// any value below the Commoner default max age.
 pub fn spawn_commoner_npc_at(
     commands: &mut Commands,
     skin_context: NpcSkinSpawnContext<'_>,
@@ -665,12 +683,7 @@ pub fn spawn_commoner_npc_at(
         commoner_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Commoner);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Commoner.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -831,12 +844,7 @@ pub fn spawn_beast_npc_at(
         beast_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Beast.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -901,6 +909,7 @@ pub fn spawn_disciple_npc_at(
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),
+        SocializeState::default(),
         MissionExecuteState::default(),
         FactionMembership {
             faction_id,
@@ -915,12 +924,7 @@ pub fn spawn_disciple_npc_at(
         disciple_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Disciple);
-    runtime.lifespan = NpcLifespan::new(
-        initial_age_ticks.max(0.0),
-        NpcArchetype::Disciple.default_max_age_ticks(),
-    );
-
+    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -1042,6 +1046,24 @@ fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
             NPC_SPAWN_POSITION[2],
         ),
     )
+}
+
+pub fn spawn_notice(
+    entity: Entity,
+    archetype: NpcArchetype,
+    source: NpcSpawnSource,
+    home_zone: &str,
+    position: DVec3,
+    initial_age_ticks: f64,
+) -> NpcSpawnNotice {
+    NpcSpawnNotice {
+        npc_id: crate::npc::brain::canonical_npc_id(entity),
+        archetype,
+        source,
+        home_zone: home_zone.to_string(),
+        position,
+        initial_age_ticks,
+    }
 }
 
 #[cfg(test)]
@@ -1407,6 +1429,121 @@ mod tests {
         );
     }
 
+    #[test]
+    fn spawn_beast_npc_at_attaches_live_territory_brain_components() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (setup_test_layer, spawn_test_beast.after(setup_test_layer)),
+        );
+        app.update();
+        app.update();
+
+        let beast = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<TerritoryPatrolState>(beast).is_some());
+        assert!(app.world().get::<HuntState>(beast).is_some());
+        assert!(app.world().get::<ProtectYoungState>(beast).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(beast)
+            .expect("beast should carry the live territory thinker");
+    }
+
+    #[test]
+    fn spawn_disciple_npc_at_attaches_mission_and_social_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<MissionExecuteState>(disciple).is_some());
+        assert!(app.world().get::<SocializeState>(disciple).is_some());
+        assert!(app.world().get::<FactionMembership>(disciple).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(disciple)
+            .expect("disciple should carry the live faction/social thinker");
+    }
+
+    #[test]
+    fn spawn_relic_guard_npc_at_attaches_guardian_trial_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<GuardState>(guard).is_some());
+        assert!(app.world().get::<TrialState>(guard).is_some());
+        assert!(app.world().get::<GuardianDuty>(guard).is_some());
+        assert!(app.world().get::<TrialEval>(guard).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(guard)
+            .expect("relic guard should carry the live guardian thinker");
+    }
+
+    fn only_spawned_npc(app: &mut App) -> Entity {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+        let npcs = query.iter(world).collect::<Vec<_>>();
+        assert_eq!(npcs.len(), 1);
+        npcs[0]
+    }
+
+    fn spawn_test_beast(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_beast_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(40.0, 66.0, 40.0),
+            Territory::new(DVec3::new(40.0, 66.0, 40.0), 30.0),
+            0.0,
+        );
+    }
+
+    fn spawn_test_disciple(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_disciple_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(42.0, 66.0, 42.0),
+            DVec3::new(42.0, 66.0, 42.0),
+            FactionId::Attack,
+            FactionRank::Disciple,
+            None,
+            0.0,
+        );
+    }
+
+    fn spawn_test_relic_guard(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_relic_guard_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(44.0, 66.0, 44.0),
+            24.0,
+            "relic:test",
+            "trial:test",
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Rogue population seed — pure-function tests + full-stack spawn smoke
     // -----------------------------------------------------------------------
@@ -1499,6 +1636,7 @@ mod tests {
         app.insert_resource(zones);
         app.insert_resource(NpcRegistry::default());
         app.insert_resource(RoguePopulationSeedConfig::default());
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1552,6 +1690,7 @@ mod tests {
             target_count: 0,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1577,6 +1716,7 @@ mod tests {
             target_count: 10,
             ..RoguePopulationSeedConfig::default()
         });
+        app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, seed_initial_rogue_population_on_startup);
 
         app.update();
@@ -1601,6 +1741,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1637,6 +1778,7 @@ mod tests {
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1673,6 +1815,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1708,6 +1851,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         app.insert_resource(NpcRegistry::default());
         app.add_systems(Update, process_npc_reproduction_requests);
 
@@ -1740,6 +1884,7 @@ mod tests {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcSpawnNotice>();
         let mut registry = NpcRegistry::default();
         registry.live_npc_count = registry.max_npc_count;
         registry.spawn_paused = true;

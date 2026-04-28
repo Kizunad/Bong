@@ -2,8 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { RedisIpc, WORLD_MODEL_STATE_FIELDS, WORLD_MODEL_STATE_KEY } from "../src/redis-ipc.js";
 import { CHANNELS } from "@bong/schema";
 
-const { AGENT_COMMAND, AGENT_NARRATE, AGENT_WORLD_MODEL, PLAYER_CHAT, TSY_EVENT, WORLD_STATE } =
-  CHANNELS;
+const {
+  AGENT_COMMAND,
+  AGENT_NARRATE,
+  AGENT_WORLD_MODEL,
+  FACTION_EVENT,
+  NPC_DEATH,
+  NPC_SPAWN,
+  PLAYER_CHAT,
+  TSY_EVENT,
+  WORLD_STATE,
+} = CHANNELS;
 
 interface FakeMultiResult {
   lrange: string[];
@@ -302,6 +311,73 @@ describe("redis-ipc", () => {
     expect(ipc.getLatestTsyHostileEvents()).toEqual([
       expect.objectContaining({ kind: "tsy_npc_spawned", count: 3 }),
       expect.objectContaining({ kind: "tsy_sentinel_phase_changed", phase: 1 }),
+    ]);
+  });
+
+  it("observes NPC runtime events from dedicated channels", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onNpcRuntimeEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      NPC_SPAWN,
+      JSON.stringify({
+        v: 1,
+        kind: "npc_spawned",
+        npc_id: "npc_1v1",
+        archetype: "rogue",
+        source: "agent_command",
+        zone: "spawn",
+        pos: [1, 66, 2],
+        initial_age_ticks: 0,
+        at_tick: 0,
+      }),
+    );
+    await sub.publish(
+      NPC_DEATH,
+      JSON.stringify({
+        v: 1,
+        kind: "npc_death",
+        npc_id: "npc_1v1",
+        archetype: "rogue",
+        cause: "combat",
+        age_ticks: 1,
+        max_age_ticks: 100,
+        at_tick: 1,
+      }),
+    );
+    await sub.publish(
+      FACTION_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "faction_event",
+        faction_id: "attack",
+        event_kind: "adjust_loyalty_bias",
+        loyalty_bias: 0.6,
+        mission_queue_size: 1,
+        at_tick: 2,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(3);
+    expect(ipc.getLatestNpcEvents()).toEqual([
+      expect.objectContaining({ kind: "npc_spawned", npc_id: "npc_1v1" }),
+      expect.objectContaining({ kind: "npc_death", cause: "combat" }),
+      expect.objectContaining({ kind: "faction_event", faction_id: "attack" }),
     ]);
   });
 
