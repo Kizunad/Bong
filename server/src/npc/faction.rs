@@ -3,7 +3,8 @@
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Position, Query, Res, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, Position, Query, Res, Resource,
+    Update, With,
 };
 
 use crate::npc::navigator::Navigator;
@@ -320,6 +321,11 @@ pub struct FactionEventApplied {
     pub mission_queue_size: u32,
 }
 
+#[derive(Clone, Debug, Event)]
+pub struct FactionEventNotice {
+    pub applied: FactionEventApplied,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FactionEventError {
     UnknownFaction(FactionId),
@@ -397,7 +403,8 @@ impl ActionBuilder for MissionExecuteAction {
 }
 
 pub fn register(app: &mut App) {
-    app.insert_resource(FactionStore::default());
+    app.insert_resource(FactionStore::default())
+        .add_event::<FactionEventNotice>();
     app.add_systems(Update, assign_hostile_encounters);
     // Disciple Scorer/Action 注册临时撤回；等 spawn_disciple 真实铺开
     // FactionMembership NPC 后单独 PR 再接入。测试走局部 add_systems。

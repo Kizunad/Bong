@@ -10,9 +10,9 @@ use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
-    CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_PLAYER_CHAT, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
+    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -24,6 +24,7 @@ use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
+use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::world_state::WorldStateV1;
@@ -61,6 +62,9 @@ pub enum RedisOutbound {
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
+    NpcSpawned(NpcSpawnedV1),
+    NpcDeath(NpcDeathV1),
+    FactionEvent(FactionEventV1),
     BotanyEcology(BotanyEcologySnapshotV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
@@ -409,6 +413,33 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DUO_SHE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::NpcSpawned(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize NpcSpawnedV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_NPC_SPAWN,
+                payload,
+            })
+        }
+        RedisOutbound::NpcDeath(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize NpcDeathV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_NPC_DEATH,
+                payload,
+            })
+        }
+        RedisOutbound::FactionEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize FactionEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FACTION_EVENT,
                 payload,
             })
         }
@@ -1216,6 +1247,75 @@ mod redis_bridge_tests {
         .expect("death payload should serialize");
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_npc_and_faction_events_on_dedicated_channels() {
+        let spawned = prepare_outbound_command(RedisOutbound::NpcSpawned(NpcSpawnedV1 {
+            v: 1,
+            kind: "npc_spawned".to_string(),
+            npc_id: "npc_1v1".to_string(),
+            archetype: "rogue".to_string(),
+            source: "agent_command".to_string(),
+            zone: "spawn".to_string(),
+            pos: [1.0, 66.0, 2.0],
+            initial_age_ticks: 0.0,
+            at_tick: 0,
+        }))
+        .expect("NPC spawn payload should serialize");
+        match spawned {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_NPC_SPAWN);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "npc_spawned");
+                assert_eq!(v["archetype"], "rogue");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let death = prepare_outbound_command(RedisOutbound::NpcDeath(NpcDeathV1 {
+            v: 1,
+            kind: "npc_death".to_string(),
+            npc_id: "npc_1v1".to_string(),
+            archetype: "commoner".to_string(),
+            cause: "natural_aging".to_string(),
+            faction_id: None,
+            life_record_snapshot: Some("生平摘要".to_string()),
+            age_ticks: 10.0,
+            max_age_ticks: 10.0,
+            at_tick: 0,
+        }))
+        .expect("NPC death payload should serialize");
+        match death {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_NPC_DEATH);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "npc_death");
+                assert_eq!(v["cause"], "natural_aging");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let faction = prepare_outbound_command(RedisOutbound::FactionEvent(FactionEventV1 {
+            v: 1,
+            kind: "faction_event".to_string(),
+            faction_id: "attack".to_string(),
+            event_kind: "adjust_loyalty_bias".to_string(),
+            leader_id: None,
+            loyalty_bias: 0.6,
+            mission_queue_size: 1,
+            at_tick: 0,
+        }))
+        .expect("faction payload should serialize");
+        match faction {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_FACTION_EVENT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "faction_event");
+                assert_eq!(v["event_kind"], "adjust_loyalty_bias");
+            }
             other => panic!("expected publish, got {other:?}"),
         }
     }

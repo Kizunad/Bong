@@ -18,6 +18,7 @@ pub mod forge_bridge;
 pub mod forge_snapshot_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod npc_event_bridge;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
 pub mod skill_emit;
@@ -272,6 +273,14 @@ pub fn register(app: &mut App) {
             combat_bridge::publish_death_insight_requests
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            npc_event_bridge::publish_npc_spawn_events,
+            npc_event_bridge::publish_npc_death_events,
+            npc_event_bridge::publish_faction_events.after(execute_agent_commands),
         ),
     );
     app.add_systems(

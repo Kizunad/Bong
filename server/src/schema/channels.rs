@@ -18,6 +18,12 @@ pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
 pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
 
+// NPC / 派系观测（plan-npc-ai-v1 §6）。Agent → Server 指令仍统一走
+// `bong:agent_command`，这里仅声明 server → agent 事件流水。
+pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
+pub const CH_NPC_DEATH: &str = "bong:npc/death";
+pub const CH_FACTION_EVENT: &str = "bong:faction/event";
+
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
@@ -61,6 +67,10 @@ mod tests {
         assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
         assert_eq!(CH_AGING, "bong:aging");
         assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
+        assert_eq!(CH_DUO_SHE_EVENT, "bong:duo_she_event");
+        assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
+        assert_eq!(CH_NPC_DEATH, "bong:npc/death");
+        assert_eq!(CH_FACTION_EVENT, "bong:faction/event");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");
