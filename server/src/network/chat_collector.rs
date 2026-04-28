@@ -14,6 +14,22 @@ use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 const MAX_CHAT_MESSAGES_PER_PLAYER_PER_TICK: usize = 3;
+const LEGACY_BANG_COMMANDS: &[&str] = &[
+    "!shrine",
+    "!spawn",
+    "!top",
+    "!gm",
+    "!gamemode",
+    "!tptree",
+    "!tpzone",
+    "!zones",
+    "!wound",
+    "!health",
+    "!stamina",
+    "!tsy-spawn",
+    "!npc_scenario",
+    "!scenario",
+];
 
 #[derive(Default)]
 pub struct ChatCollectorRateLimit {
@@ -129,7 +145,11 @@ fn is_command_like(message: &str) -> bool {
 }
 
 fn is_legacy_bang_command(message: &str) -> bool {
-    message.trim_start().starts_with('!')
+    message
+        .trim_start()
+        .split_whitespace()
+        .next()
+        .is_some_and(|command| LEGACY_BANG_COMMANDS.contains(&command))
 }
 
 fn is_oversize_message(message: &str) -> bool {
@@ -315,5 +335,25 @@ mod chat_collector_tests {
             rx_outbound.try_recv().is_err(),
             "legacy ! commands should be dropped after migration to slash commands"
         );
+    }
+
+    #[test]
+    fn unknown_bang_messages_are_forwarded_as_chat() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+        send_chat_event(&mut app, alice, "!hello everyone", 1_712_345_704);
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("unknown ! chat should still be forwarded");
+
+        match outbound {
+            RedisOutbound::PlayerChat(chat) => {
+                assert_eq!(chat.raw, "!hello everyone");
+            }
+            other => panic!("expected player chat outbound, got {other:?}"),
+        }
     }
 }
