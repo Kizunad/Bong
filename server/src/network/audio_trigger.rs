@@ -550,15 +550,14 @@ fn resolve_audio_target(
     target_id: &str,
     targets: &Query<(Entity, &Position, Option<&LifeRecord>, Option<&Lifecycle>)>,
 ) -> Option<(Entity, DVec3)> {
-    let char_entity = target_id
+    let char_entity_bits = target_id
         .strip_prefix("char:")
-        .and_then(|bits| bits.parse::<u64>().ok())
-        .map(Entity::from_bits);
+        .and_then(|bits| bits.parse::<u64>().ok());
 
     targets
         .iter()
         .find(|(entity, _, life_record, lifecycle)| {
-            char_entity.is_some_and(|target| target == *entity)
+            char_entity_bits.is_some_and(|bits| entity.to_bits() == bits)
                 || life_record.is_some_and(|record| record.character_id == target_id)
                 || lifecycle.is_some_and(|lifecycle| lifecycle.character_id == target_id)
                 || canonical_npc_id(*entity) == target_id
