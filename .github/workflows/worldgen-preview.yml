@@ -1,10 +1,9 @@
 name: Worldgen Preview Snapshot
 
-# P0 最小版：worldgen 改动 / 手动触发 → 后台跑 server + xvfb headless client →
-# 截图 artifact 上传。P1 加多角度 + 装饰；P2 加 PR comment + base ref SSIM diff。
-#
-# 现状（loom 1.6-SNAPSHOT）：手动 xvfb-run 包 ./gradlew runClientPreview。
-# ubuntu-24.04 预装 xvfb 21.x 无需 apt。FabricMC/fabric-api 官方 CI 同模式实跑。
+# P0 + P1 + P2 完整版：worldgen 改动 / 手动触发 → 后台跑 server + xvfb headless
+# client → client 截图 + worldgen raster PNG → compose_grid 拼图 → upload artifact
+# + post_comment 在 PR 上发/编辑 [bong-snapshot] 评论。SSIM diff 留 v2 plan(需双
+# ref 跑 + scikit-image)。
 
 on:
   pull_request:
@@ -13,14 +12,16 @@ on:
       - "server/zones*.json"
       - "client/src/main/java/com/bong/client/preview/**"
       - "client/preview-harness.json"
+      - "server/src/preview/**"
       - "scripts/preview/**"
       - ".github/workflows/worldgen-preview.yml"
   workflow_dispatch: {}
-  # P2 占位：issue_comment 含 @preview-worldgen 触发；本 PR 不实装。
+  # P2 §3.4 占位:issue_comment @preview-worldgen 手动触发尚未实装(GH issue
+  # comment trigger 需要专门 fork 处理 + collaborator 校验,留 v2 plan)。
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: worldgen-preview-${{ github.event.pull_request.number || github.run_id }}
@@ -53,8 +54,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install worldgen Python deps
-        run: pip install numpy
+      - name: Install Python deps (worldgen + compose_grid)
+        run: pip install numpy pillow
 
       - name: Run worldgen pipeline (raster + PNG previews)
         # focus-{layout,surface,height}-preview.png + zone-*-preview.png
@@ -132,21 +133,41 @@ jobs:
           echo "=== worldgen raster PNG (顶视全图 / 大尺度) ==="
           find worldgen/generated -name "*-preview.png" -ls 2>/dev/null | head -30 || true
 
-      - name: Upload screenshot + raster artifact
+      - name: Compose grid PNG (5 client 角度 + raster 拼图总览)
+        if: always()
+        run: |
+          python3 scripts/preview/compose_grid.py \
+            --client-dir client/run/screenshots \
+            --raster-dir worldgen/generated/snapshot \
+            --out client/run/screenshots/preview-grid.png
+
+      - name: Upload screenshot + raster + grid artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: worldgen-snapshot-${{ github.event.pull_request.number || github.run_id }}
-          # 双轨：client 真游戏画面 + worldgen raster 顶视大全图
-          # raster PNG 包含：
-          #   focus-{layout,surface,height}-preview.png  — 蓝图全图聚焦视
-          #   {layout,surface,height}-preview.png        — 整张地图大全景
-          #   zone-<name>-{layout,surface,height}-preview.png  — 每个 zone 顶视
-          # 一次跑产 30+ 张 PNG，看 zone 布局 / 山脉 / 灵气分布等大尺度信息
+          # 三类内容：
+          #   client/run/screenshots/preview-grid.png  — compose_grid 拼图总览
+          #   client/run/screenshots/preview-*.png     — 5 角度 client 真画面截图
+          #   worldgen/generated/**/*-preview.png      — 30+ raster 顶视图
           path: |
+            client/run/screenshots/preview-grid.png
             client/run/screenshots/preview-*.png
             worldgen/generated/**/*-preview.png
           if-no-files-found: warn
+
+      - name: Post / edit PR comment with snapshot link
+        # 仅 pull_request 触发时发评论（workflow_dispatch 没 PR# 跳过）
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/preview/post_comment.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --run-id "${{ github.run_id }}" \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --artifact-name "worldgen-snapshot-${{ github.event.pull_request.number }}"
 
       - name: Upload server log on failure
         if: failure()
