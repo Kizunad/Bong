@@ -317,6 +317,54 @@ describe("Arbiter", () => {
     ]);
   });
 
+  it("drops spawn_npc commands targeting unknown zones", () => {
+    const result = runMerge([
+      {
+        source: "npc_producer",
+        decision: {
+          commands: [
+            {
+              type: "spawn_npc",
+              target: "missing_zone",
+              params: { archetype: "rogue", count: 3 },
+            },
+          ],
+          narrations: [],
+          reasoning: "invalid target",
+        },
+      },
+    ]);
+
+    expect(result.commands).toEqual([]);
+  });
+
+  it("passes faction_event through without zone folding", () => {
+    const result = runMerge([
+      {
+        source: "npc_producer",
+        decision: {
+          commands: [
+            {
+              type: "faction_event",
+              target: "attack",
+              params: {
+                kind: "enqueue_mission",
+                faction_id: "attack",
+                mission_id: "mission:intercept_duxu:123:offline_test",
+              },
+            },
+          ],
+          narrations: [],
+          reasoning: "npc mission",
+        },
+      },
+    ]);
+
+    expect(result.commands).toHaveLength(1);
+    expect(result.commands[0].type).toBe("faction_event");
+    expect(result.commands[0].target).toBe("attack");
+  });
+
   it("materializes an era decree into currentEra and uniform global modify_zone commands", () => {
     const state = createTestWorldState();
     state.tick = 888;

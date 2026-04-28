@@ -8,12 +8,13 @@ const TREND_WINDOW = 3;
 const TREND_EPSILON = 0.02;
 const KEY_PLAYER_LIMIT = 3;
 
-const AGENT_ORDER = ["calamity", "mutation", "era"] as const;
+const AGENT_ORDER = ["calamity", "mutation", "era", "npc_producer"] as const;
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   calamity: "灾劫 Agent",
   mutation: "变化 Agent",
   era: "演绎时代 Agent",
+  npc_producer: "NPC 推演器",
 };
 
 export type TrendDirection = "rising" | "stable" | "falling";
