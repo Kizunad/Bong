@@ -25,6 +25,15 @@ class TribulationBroadcastHudPlannerTest {
         assertTrue(hasWarn);
     }
 
+    @Test void drawsLockedStage() {
+        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
+            true, "甲", "locked", 0, 0, 10_000L, false, 0
+        ));
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+        boolean hasLocked = cmds.stream().anyMatch(c -> c.isText() && c.text().contains("劫锁已成"));
+        assertTrue(hasLocked);
+    }
+
     @Test void hiddenWhenExpired() {
         TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
             true, "甲", "warn", 0, 0, 1_000L, false, 0

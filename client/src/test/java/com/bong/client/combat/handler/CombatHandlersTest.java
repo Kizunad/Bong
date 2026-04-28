@@ -139,11 +139,11 @@ class CombatHandlersTest {
     void tribulationBroadcastActivation() {
         String json = """
             {"v":1,"type":"tribulation_broadcast","active":true,
-             "actor_name":"甲","stage":"warn","world_x":10,"world_z":-5,
+             "actor_name":"甲","stage":"locked","world_x":10,"world_z":-5,
              "expires_at_ms":9999999999}""";
         new TribulationBroadcastHandler().handle(parse(json));
         assertTrue(TribulationBroadcastStore.snapshot().active());
-        assertEquals("warn", TribulationBroadcastStore.snapshot().stage());
+        assertEquals("locked", TribulationBroadcastStore.snapshot().stage());
     }
 
     private static ServerDataEnvelope parse(String json) {

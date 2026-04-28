@@ -96,7 +96,8 @@ use self::tribulation::{
     start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
     tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
     tribulation_wave_system, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationSettled, TribulationState, TribulationWaveCleared,
+    TribulationFailed, TribulationLocked, TribulationSettled, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -134,6 +135,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<StartDuXuRequest>();
     app.add_event::<TribulationAnnounce>();
+    app.add_event::<TribulationLocked>();
     app.add_event::<TribulationWaveCleared>();
     app.add_event::<TribulationFailed>();
     app.add_event::<TribulationSettled>();

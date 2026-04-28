@@ -137,6 +137,15 @@ pub struct TribulationAnnounce {
 }
 
 #[derive(Debug, Clone, Event)]
+pub struct TribulationLocked {
+    pub entity: Entity,
+    pub char_id: String,
+    pub actor_name: String,
+    pub epicenter: [f64; 3],
+    pub waves_total: u32,
+}
+
+#[derive(Debug, Clone, Event)]
 pub struct TribulationSettled {
     pub entity: Entity,
     pub result: DuXuResultV1,
@@ -283,16 +292,36 @@ pub fn start_tribulation_system(
 #[allow(clippy::type_complexity)]
 pub fn tribulation_phase_tick_system(
     clock: Res<CombatClock>,
-    mut query: Query<(Entity, &mut TribulationState)>,
+    mut query: Query<(
+        Entity,
+        &mut TribulationState,
+        Option<&Lifecycle>,
+        Option<&Username>,
+    )>,
+    mut locked: EventWriter<TribulationLocked>,
     mut cleared: EventWriter<TribulationWaveCleared>,
 ) {
-    for (entity, mut state) in &mut query {
+    for (entity, mut state, lifecycle, username) in &mut query {
         match state.phase {
             TribulationPhase::Omen
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_OMEN_TICKS =>
             {
+                let char_id = lifecycle
+                    .map(|lifecycle| lifecycle.character_id.clone())
+                    .or_else(|| state.participants.first().cloned())
+                    .unwrap_or_else(|| format!("entity:{entity:?}"));
+                let actor_name = username
+                    .map(|name| name.0.clone())
+                    .unwrap_or_else(|| char_id.clone());
                 state.phase = TribulationPhase::Lock;
                 state.phase_started_tick = clock.tick;
+                locked.send(TribulationLocked {
+                    entity,
+                    char_id,
+                    actor_name,
+                    epicenter: state.epicenter,
+                    waves_total: state.waves_total,
+                });
             }
             TribulationPhase::Lock
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_LOCK_TICKS =>
@@ -573,6 +602,7 @@ pub fn tribulation_intercept_death_system(
 pub fn publish_tribulation_events(
     redis: Res<RedisBridgeResource>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
     states: Query<&TribulationState>,
@@ -580,6 +610,20 @@ pub fn publish_tribulation_events(
     for ev in announce.read() {
         let payload = TribulationEventV1::du_xu(
             TribulationPhaseV1::Omen,
+            Some(ev.char_id.clone()),
+            Some(ev.actor_name.clone()),
+            Some(ev.epicenter),
+            Some(0),
+            Some(ev.waves_total),
+            None,
+        );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+    for ev in locked.read() {
+        let payload = TribulationEventV1::du_xu(
+            TribulationPhaseV1::Lock,
             Some(ev.char_id.clone()),
             Some(ev.actor_name.clone()),
             Some(ev.epicenter),
@@ -681,12 +725,14 @@ mod tests {
     use crate::cultivation::lifespan::{
         DeathRegistry, LifespanCapTable, LifespanComponent, ZoneDeathKind,
     };
+    use crate::network::redis_bridge::RedisOutbound;
     use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use valence::prelude::{App, Events, IntoSystemConfigs, Position, Update};
+    use valence::prelude::{App, Entity, Events, IntoSystemConfigs, Position, Update, Username};
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -728,6 +774,99 @@ mod tests {
             meridian.opened_at = idx as u64;
         }
         meridians
+    }
+
+    #[test]
+    fn omen_to_lock_emits_lock_event() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUXU_OMEN_TICKS,
+        });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Omen,
+                    epicenter: [12.0, 66.0, -8.0],
+                    wave_current: 0,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Lock);
+
+        let events = app.world().resource::<Events<TribulationLocked>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].char_id, "offline:Azure");
+        assert_eq!(emitted[0].actor_name, "Azure");
+        assert_eq!(emitted[0].epicenter, [12.0, 66.0, -8.0]);
+        assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    #[test]
+    fn publish_lock_event_to_tribulation_channel() {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, publish_tribulation_events);
+
+        app.world_mut()
+            .resource_mut::<Events<TribulationLocked>>()
+            .send(TribulationLocked {
+                entity: Entity::PLACEHOLDER,
+                char_id: "offline:Azure".to_string(),
+                actor_name: "Azure".to_string(),
+                epicenter: [12.0, 66.0, -8.0],
+                waves_total: 3,
+            });
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("lock event should publish to redis bridge");
+        match outbound {
+            RedisOutbound::TribulationEvent(payload) => {
+                assert_eq!(payload.phase, TribulationPhaseV1::Lock);
+                assert_eq!(payload.char_id.as_deref(), Some("offline:Azure"));
+                assert_eq!(payload.actor_name.as_deref(), Some("Azure"));
+                assert_eq!(payload.epicenter, Some([12.0, 66.0, -8.0]));
+                assert_eq!(payload.wave_total, Some(3));
+            }
+            other => panic!("unexpected outbound payload: {other:?}"),
+        }
     }
 
     #[test]

@@ -30,6 +30,7 @@ public final class TribulationBroadcastHudPlanner {
 
         String stageLabel = switch (state.stage()) {
             case "warn" -> "\u5929\u52ab\u5c06\u81f3";
+            case "locked" -> "\u52ab\u9501\u5df2\u6210";
             case "striking" -> "\u5929\u96f7\u964d\u4e34";
             case "done" -> "\u5929\u52ab\u5df2\u8fc7";
             default -> "\u5929\u52ab\u5f02\u52a8";

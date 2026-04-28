@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use valence::prelude::{Client, Entity, EventReader, Local, Query};
 
 use crate::cultivation::tribulation::{
-    TribulationAnnounce, TribulationSettled, TribulationWaveCleared,
+    TribulationAnnounce, TribulationLocked, TribulationSettled, TribulationWaveCleared,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
@@ -15,6 +15,7 @@ pub fn emit_tribulation_broadcast_payloads(
     mut clients: Query<&mut Client>,
     mut active_broadcasts: Local<HashMap<Entity, TribulationBroadcastV1>>,
     mut announce: EventReader<TribulationAnnounce>,
+    mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
 ) {
@@ -28,6 +29,20 @@ pub fn emit_tribulation_broadcast_payloads(
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
+    }
+    for ev in locked.read() {
+        let data = active_broadcasts.entry(ev.entity).or_insert_with(|| {
+            TribulationBroadcastV1::active(
+                ev.actor_name.clone(),
+                "locked",
+                ev.epicenter[0],
+                ev.epicenter[2],
+                BROADCAST_LIFETIME_MS,
+            )
+        });
+        data.stage = "locked".to_string();
+        data.refresh(BROADCAST_LIFETIME_MS);
+        broadcast(&mut clients, data.clone());
     }
     for ev in cleared.read() {
         let stage = if ev.wave == 0 { "warn" } else { "striking" };
