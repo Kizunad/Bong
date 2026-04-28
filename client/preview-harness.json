@@ -1,0 +1,19 @@
+{
+  "_doc": "Preview harness 默认配置 (P0 单角度版)。激活方式：BONG_PREVIEW_HARNESS=1 + BONG_PREVIEW_CONFIG 指向本文件（绝对路径）。详见 docs/plan-worldgen-snapshot-v1.md §1.5。",
+  "server": "127.0.0.1:25565",
+  "username": "PreviewBot",
+  "wait_world_ticks": 1200,
+  "wait_chunks_ticks": 100,
+  "settle_ticks": 20,
+  "output_dir": "screenshots",
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "_doc": "P0 单角度 — 落在 server 默认 spawn (8, 150, 8) 上，pitch -90 俯视 spawn 地形。tp 与 spawn 同坐标避免 server anti-cheat reject；P1 多角度需配套 server preview module 做 server-side teleport。",
+      "name": "top",
+      "tp": [8, 150, 8],
+      "yaw": 0,
+      "pitch": -90
+    }
+  ]
+}

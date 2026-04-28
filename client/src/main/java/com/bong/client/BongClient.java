@@ -17,6 +17,7 @@ import com.bong.client.forge.ForgeScreenBootstrap;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
@@ -65,6 +66,7 @@ public class BongClient implements ClientModInitializer {
         ExtractInteractionBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
+        PreviewHarnessClient.install();
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /spawnp commands active.");
     }
