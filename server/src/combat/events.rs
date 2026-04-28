@@ -114,9 +114,9 @@ pub struct RevivalActionIntent {
     pub issued_at_tick: u64,
 }
 
-/// plan-combat-no_ui §13 C1 — 调试命令注入通道 (`!wound add` / `!health set` / `!stamina set`)。
+/// plan-combat-no_ui §13 C1 — 调试命令注入通道 (`/wound add` / `/health set` / `/stamina set`)。
 ///
-/// 由 `chat_collector.rs` 在开发命令分支写入，`combat::debug::apply_debug_combat_commands`
+/// 由 `cmd::dev` 命令 handler 写入，`combat::debug::apply_debug_combat_commands`
 /// 消费并直接改写目标实体的 `Wounds` / `Stamina`。
 ///
 /// **仅调试用** — 不走 AttackIntent 管线，不触发污染/防御/状态效果。

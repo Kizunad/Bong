@@ -359,7 +359,7 @@ pub fn emit_vanilla_vfx_particles(
 /// 用于独自测试某个动画能否正确触发与回显。
 ///
 /// 约束：
-///  * 只识别 `/bong-vfx` 前缀；`/bong combat …`、`!spawn` 等既有命令不受影响。
+///  * 只识别 `/bong-vfx` 前缀；`/bong combat …`、`/spawn` 等既有命令不受影响。
 ///  * `anim_id` 必须是 `namespace:path`，priority 缺省 `DEFAULT_DEBUG_PRIORITY`，
 ///    fade_in_ticks 缺省 `DEFAULT_DEBUG_FADE_IN_TICKS`。
 ///  * priority/fade 超出 schema 合法区间时自动 clamp 到边界——dev 体验优先。

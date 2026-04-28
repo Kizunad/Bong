@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_command = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_command_macros = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
 big-brain = "0.21"
 bevy_transform = "0.14.2"
 pathfinding = "4"

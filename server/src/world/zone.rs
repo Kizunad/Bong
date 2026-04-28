@@ -116,7 +116,7 @@ impl Zone {
 
     /// plan-tsy-zone-v1 §1.2 — 解析 TSY 层深（None = 不是 TSY 或后缀不规范）。
     ///
-    /// 当前 P0 暴露公共 API，由 `!tsy-spawn` 调试命令（plan §3.1）/ worldgen plan /
+    /// 当前 P0 暴露公共 API，由 `/tsy_spawn` 调试命令（plan §3.1）/ worldgen plan /
     /// loot plan 后续消费；P0 自身 drain / portal 不使用层深字段。
     #[allow(dead_code)]
     pub fn tsy_depth(&self) -> Option<TsyDepth> {
@@ -136,7 +136,7 @@ impl Zone {
 
     /// plan-tsy-zone-v1 §1.2 — TSY 系列 id（"tsy_lingxu_01_shallow" → "tsy_lingxu_01"）。
     ///
-    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn`（用于 family→3-subzone 检索）
+    /// 当前 P0 暴露公共 API；消费方为 `/tsy_spawn`（用于 family→3-subzone 检索）
     /// 与后续 worldgen plan。
     #[allow(dead_code)]
     pub fn tsy_family_id(&self) -> Option<String> {
@@ -152,7 +152,7 @@ impl Zone {
 
     /// plan-tsy-zone-v1 §1.1 — 入口层标记（active_events 含 `tsy_entry` tag）。
     ///
-    /// 当前 P0 暴露公共 API；消费方为 `!tsy-spawn` 调试命令（plan §3.1）+ worldgen plan
+    /// 当前 P0 暴露公共 API；消费方为 `/tsy_spawn` 调试命令（plan §3.1）+ worldgen plan
     /// 用于"哪一层是着陆点"的查询。
     #[allow(dead_code)]
     pub fn is_tsy_entry(&self) -> bool {
@@ -264,7 +264,7 @@ impl ZoneRegistry {
         self.zones.iter_mut().find(|zone| zone.name == name)
     }
 
-    /// plan-tsy-zone-v1 §-1 隐形前置 — 运行时动态 add 一个 zone（如 `!tsy-spawn`
+    /// plan-tsy-zone-v1 §-1 隐形前置 — 运行时动态 add 一个 zone（如 `/tsy_spawn`
     /// 调试命令追加 TSY subzone）。同名 zone 已存在则拒绝（idempotent guard）。
     /// 不做 AABB 相交校验：调用方负责保证语义正确（同 family 三层共享 XZ 是合法例外）。
     pub fn register_runtime_zone(&mut self, zone: Zone) -> Result<(), String> {

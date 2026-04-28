@@ -19,12 +19,12 @@ use crate::npc::spawn::{
 };
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
-/// Marker component for NPCs spawned by the `!npc_scenario` command.
-/// Used for bulk cleanup on `!npc_scenario clear`.
+/// Marker component for NPCs spawned by the `/npc_scenario` command.
+/// Used for bulk cleanup on `/npc_scenario clear`.
 #[derive(Clone, Copy, Debug, Component)]
 pub struct ScenarioNpc;
 
-/// Scenario types available via `!npc_scenario`.
+/// Scenario types available via `/npc_scenario`.
 #[derive(Clone, Copy, Debug)]
 pub enum ScenarioType {
     /// NPC chases the nearest player.

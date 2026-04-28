@@ -1,7 +1,7 @@
-//! plan-tsy-zone-v1 §3.1 — `!tsy-spawn <family_id>` 调试命令实现。
+//! plan-tsy-zone-v1 §3.1 — `/tsy_spawn <family_id>` 调试命令实现。
 //!
 //! 流程：
-//! 1. chat_collector 解析 `!tsy-spawn <family_id>` → emit `TsySpawnRequested`
+//! 1. `/tsy_spawn <family_id>` 命令 handler → emit `TsySpawnRequested`
 //! 2. 本模块的 `apply_tsy_spawn_requests` 系统消费 event：
 //!    a. 从 `server/zones.tsy.json` 读 3 个 subzone（family_id 匹配）
 //!    b. 调 `ZoneRegistry::register_runtime_zone` 追加（已存在 → 报错）
@@ -292,7 +292,7 @@ pub fn apply_tsy_spawn_requests(
             });
         }
 
-        // plan-tsy-hostile-v1 §4 — 同一个 !tsy-spawn 在容器后同步撒 TSY hostile。
+        // plan-tsy-hostile-v1 §4 — 同一个 /tsy_spawn 在容器后同步撒 TSY hostile。
         // `Commands::spawn` 是 deferred，守灵绑定 RelicCore 不能靠 query 回读，直接复用
         // `spawn_containers_for_family` 返回的 entity 引用。
         if let (Some(hostiles), Some(layers)) = (hostile_specs.as_ref(), dimension_layers.as_ref())

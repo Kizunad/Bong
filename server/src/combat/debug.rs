@@ -29,7 +29,7 @@ pub fn drain_combat_events_for_debug(mut events: EventReader<CombatEvent>) {
     }
 }
 
-/// plan §13 C1 — 消费 `!wound add` / `!health set` / `!stamina set` 调试命令，直接改写组件。
+/// plan §13 C1 — 消费 `/wound add` / `/health set` / `/stamina set` 调试命令，直接改写组件。
 pub fn apply_debug_combat_commands(
     mut events: EventReader<DebugCombatCommand>,
     clock: Res<CombatClock>,
