@@ -183,7 +183,7 @@ pub fn register(app: &mut App) {
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
             // plan §13 C1 调试命令消费 — 放 Intent 阶段，早于 WoundBleedTick，
-            // 使 !health set / !wound add 当 tick 即可被后续 tick 系统感知。
+            // 使 /health set / /wound add 当 tick 即可被后续 tick 系统感知。
             debug::apply_debug_combat_commands.in_set(CombatSystemSet::Intent),
             // plan-weapon-v1 §2.3: 装备槽 → Weapon component 同步。放 Intent 阶段,
             // 让 resolve 阶段查 Weapon 时已经是当前 tick 的最新装备状态。

@@ -29,7 +29,7 @@ use valence::prelude::{
 
 const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
 const WELCOME_MESSAGE: &str =
-    "Welcome to Bong! Test commands: !zones, !tpzone <zone>, !top, !gm <c|a|s>, !spawn";
+    "Welcome to Bong! Test commands: /zones, /tpzone <zone>, /top, /gm <c|a|s>, /spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
