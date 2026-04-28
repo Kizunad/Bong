@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::StatusCode;
+use reqwest::{header::USER_AGENT, StatusCode};
 use serde::Deserialize;
 use tokio::time::sleep;
 
@@ -8,6 +8,7 @@ use super::{SignedSkin, SkinSource};
 
 const DEFAULT_BASE_URL: &str = "https://api.mineskin.org";
 const DEFAULT_RETRY_COUNT: usize = 3;
+const MINESKIN_USER_AGENT: &str = concat!("Bong/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, Debug)]
 pub struct MineSkinClient {
@@ -69,23 +70,75 @@ impl MineSkinClient {
 
     async fn fetch_random_once(&self, count: usize) -> Result<Vec<SignedSkin>, MineSkinError> {
         let size = count.min(100);
-        let mut request = self
-            .client
+        let response = self
             .get(format!("{}/v2/skins", self.base_url))
-            .query(&[("size", size.to_string()), ("type", "random".to_string())]);
-
-        if let Some(api_key) = &self.api_key {
-            request = request.bearer_auth(api_key);
-        }
-
-        let response = request.send().await.map_err(MineSkinError::Http)?;
+            .query(&[("size", size.to_string())])
+            .send()
+            .await
+            .map_err(MineSkinError::Http)?;
         let status = response.status();
         if !status.is_success() {
             return Err(MineSkinError::Status(status));
         }
 
         let payload: MineSkinListResponse = response.json().await.map_err(MineSkinError::Http)?;
-        Ok(payload.into_signed_skins())
+        let mut detail_refs = Vec::new();
+        let mut skins = Vec::new();
+        for entry in payload.skins {
+            let lookup_id = entry.lookup_id();
+            match entry.into_signed_skin() {
+                Some(skin) => skins.push(skin),
+                None => {
+                    if let Some(lookup_id) = lookup_id {
+                        detail_refs.push(lookup_id);
+                    }
+                }
+            }
+        }
+
+        let mut last_error = None;
+        for lookup_id in detail_refs {
+            match self.fetch_skin_detail(lookup_id.as_str()).await {
+                Ok(Some(skin)) => skins.push(skin),
+                Ok(None) => {}
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        if skins.is_empty() {
+            if let Some(error) = last_error {
+                return Err(error);
+            }
+        }
+
+        Ok(skins)
+    }
+
+    async fn fetch_skin_detail(
+        &self,
+        lookup_id: &str,
+    ) -> Result<Option<SignedSkin>, MineSkinError> {
+        let response = self
+            .get(format!("{}/v2/skins/{lookup_id}", self.base_url))
+            .send()
+            .await
+            .map_err(MineSkinError::Http)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(MineSkinError::Status(status));
+        }
+
+        let payload: MineSkinDetailResponse = response.json().await.map_err(MineSkinError::Http)?;
+        Ok(payload.into_signed_skin())
+    }
+
+    fn get(&self, url: String) -> reqwest::RequestBuilder {
+        let request = self.client.get(url).header(USER_AGENT, MINESKIN_USER_AGENT);
+        if let Some(api_key) = &self.api_key {
+            request.bearer_auth(api_key)
+        } else {
+            request
+        }
     }
 }
 
@@ -128,16 +181,23 @@ impl std::error::Error for MineSkinError {}
 
 #[derive(Debug, Deserialize)]
 struct MineSkinListResponse {
-    #[serde(default, alias = "skins", alias = "items")]
-    data: Vec<MineSkinEntry>,
+    #[serde(default, alias = "data", alias = "items")]
+    skins: Vec<MineSkinEntry>,
 }
 
-impl MineSkinListResponse {
-    fn into_signed_skins(self) -> Vec<SignedSkin> {
-        self.data
-            .into_iter()
-            .filter_map(MineSkinEntry::into_signed_skin)
-            .collect()
+#[derive(Debug, Deserialize)]
+struct MineSkinDetailResponse {
+    #[serde(default)]
+    skin: Option<MineSkinEntry>,
+    #[serde(flatten)]
+    entry: MineSkinEntry,
+}
+
+impl MineSkinDetailResponse {
+    fn into_signed_skin(self) -> Option<SignedSkin> {
+        self.skin
+            .and_then(MineSkinEntry::into_signed_skin)
+            .or_else(|| self.entry.into_signed_skin())
     }
 }
 
@@ -147,6 +207,8 @@ struct MineSkinEntry {
     uuid: Option<String>,
     #[serde(default)]
     id: Option<String>,
+    #[serde(default, alias = "shortId")]
+    short_id: Option<String>,
     #[serde(default)]
     hash: Option<String>,
     #[serde(default)]
@@ -158,20 +220,32 @@ struct MineSkinEntry {
 }
 
 impl MineSkinEntry {
+    fn lookup_id(&self) -> Option<String> {
+        self.uuid
+            .clone()
+            .or_else(|| self.short_id.clone())
+            .or_else(|| self.id.clone())
+    }
+
     fn into_signed_skin(self) -> Option<SignedSkin> {
-        let property = self.texture.and_then(|texture| texture.data).or_else(|| {
-            self.data
-                .and_then(|data| data.texture)
-                .and_then(|texture| texture.value_signature())
-        })?;
+        let texture_hash = self.texture.as_ref().and_then(MineSkinTexture::skin_hash);
+        let property = self
+            .texture
+            .and_then(MineSkinTexture::into_data)
+            .or_else(|| {
+                self.data
+                    .and_then(|data| data.texture)
+                    .and_then(|texture| texture.value_signature())
+            })?;
 
         Some(SignedSkin {
             value: property.value,
             signature: property.signature.unwrap_or_default(),
             source: SkinSource::MineSkinRandom {
-                hash: self
-                    .hash
+                hash: texture_hash
+                    .or(self.hash)
                     .or(self.id)
+                    .or(self.short_id)
                     .or(self.uuid)
                     .unwrap_or_else(|| self.timestamp.unwrap_or_default().to_string()),
             },
@@ -180,9 +254,37 @@ impl MineSkinEntry {
 }
 
 #[derive(Debug, Deserialize)]
-struct MineSkinTexture {
+#[serde(untagged)]
+enum MineSkinTexture {
+    Hash(String),
+    Detail {
+        #[serde(default)]
+        data: Option<MineSkinProperty>,
+        #[serde(default)]
+        hash: Option<MineSkinTextureHash>,
+    },
+}
+
+impl MineSkinTexture {
+    fn skin_hash(&self) -> Option<String> {
+        match self {
+            Self::Hash(hash) => Some(hash.clone()),
+            Self::Detail { hash, .. } => hash.as_ref().and_then(|hash| hash.skin.clone()),
+        }
+    }
+
+    fn into_data(self) -> Option<MineSkinProperty> {
+        match self {
+            Self::Hash(_) => None,
+            Self::Detail { data, .. } => data,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct MineSkinTextureHash {
     #[serde(default)]
-    data: Option<MineSkinProperty>,
+    skin: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,13 +329,42 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/v2/skins"))
             .and(query_param("size", "2"))
-            .and(query_param("type", "random"))
             .and(header("authorization", "Bearer test-key"))
+            .and(header("user-agent", MINESKIN_USER_AGENT))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [
-                    {"hash": "skin-a", "texture": {"data": {"value": "value-a", "signature": "sig-a"}}},
-                    {"id": "skin-b", "data": {"texture": {"value": "value-b", "signature": "sig-b"}}}
+                "skins": [
+                    {"uuid": "skin-a", "shortId": "a", "texture": "hash-a", "timestamp": 1},
+                    {"uuid": "skin-b", "shortId": "b", "texture": "hash-b", "timestamp": 2}
                 ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins/skin-a"))
+            .and(header("authorization", "Bearer test-key"))
+            .and(header("user-agent", MINESKIN_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "skin": {
+                    "uuid": "skin-a",
+                    "texture": {
+                        "data": {"value": "value-a", "signature": "sig-a"},
+                        "hash": {"skin": "hash-a"}
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins/skin-b"))
+            .and(header("authorization", "Bearer test-key"))
+            .and(header("user-agent", MINESKIN_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "skin": {
+                    "uuid": "skin-b",
+                    "data": {"texture": {"value": "value-b", "signature": "sig-b"}}
+                }
             })))
             .mount(&server)
             .await;
@@ -247,7 +378,7 @@ mod tests {
         assert_eq!(
             skins[0].source,
             SkinSource::MineSkinRandom {
-                hash: "skin-a".into()
+                hash: "hash-a".into()
             }
         );
         assert_eq!(skins[1].value, "value-b");
@@ -258,13 +389,23 @@ mod tests {
     async fn fetch_random_retries_transient_status() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
+            .and(path("/v2/skins"))
             .respond_with(ResponseTemplate::new(503))
             .up_to_n_times(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
+            .and(path("/v2/skins"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "skins": [{"hash": "skin-ok", "texture": {"data": {"value": "value-ok", "signature": "sig-ok"}}}]
+                "skins": [{"uuid": "skin-ok", "texture": "hash-ok"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins/skin-ok"))
+            .and(header("user-agent", MINESKIN_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "skin": {"uuid": "skin-ok", "texture": {"data": {"value": "value-ok", "signature": "sig-ok"}}}
             })))
             .mount(&server)
             .await;
