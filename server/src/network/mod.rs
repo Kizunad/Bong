@@ -290,6 +290,7 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::possession::process_duo_she_requests),
             cultivation_bridge::publish_aging_events
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
+            crate::cultivation::tribulation::publish_tribulation_events,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
@@ -1160,7 +1161,7 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
     let event_label = match event_name {
         crate::world::events::EVENT_THUNDER_TRIBULATION => "天劫",
         crate::world::events::EVENT_BEAST_TIDE => "兽潮",
-        crate::world::events::EVENT_REALM_COLLAPSE => "境界坍塌",
+        crate::world::events::EVENT_REALM_COLLAPSE => "域崩",
         crate::world::events::EVENT_KARMA_BACKLASH => "因果反噬",
         _ => "异变",
     };

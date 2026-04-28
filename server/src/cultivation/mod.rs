@@ -93,9 +93,10 @@ use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    start_tribulation_system, tribulation_failure_system, tribulation_wave_system,
-    InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed, TribulationState,
-    TribulationWaveCleared,
+    start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
+    tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
+    tribulation_wave_system, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -131,9 +132,11 @@ pub fn register(app: &mut App) {
     app.add_event::<DuoSheWarningEvent>();
     app.add_event::<UseLifeCoreEvent>();
     app.add_event::<InitiateXuhuaTribulation>();
+    app.add_event::<StartDuXuRequest>();
     app.add_event::<TribulationAnnounce>();
     app.add_event::<TribulationWaveCleared>();
     app.add_event::<TribulationFailed>();
+    app.add_event::<TribulationSettled>();
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
@@ -160,15 +163,24 @@ pub fn register(app: &mut App) {
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             meridian_heal_tick.after(overload_detection_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
-            // plan §3.2 渡劫
-            start_tribulation_system,
-            tribulation_wave_system,
-            tribulation_failure_system,
             // plan §4 死亡/重生钩子
             on_player_revived,
             on_player_terminated,
             // plan §11-5 业力
             karma_decay_tick,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            // plan §3.2 渡劫：单独分组，避免 Bevy 0.14 tuple arity 上限。
+            start_du_xu_request_system,
+            start_tribulation_system.after(start_du_xu_request_system),
+            tribulation_phase_tick_system.after(start_tribulation_system),
+            tribulation_aoe_system.after(tribulation_phase_tick_system),
+            tribulation_failure_system.after(tribulation_aoe_system),
+            tribulation_wave_system.after(tribulation_failure_system),
+            tribulation_intercept_death_system.after(crate::combat::lifecycle::death_arbiter_tick),
         ),
     );
     app.add_systems(
@@ -335,13 +347,15 @@ fn attach_cultivation_to_joined_clients(
                 None
             }
         };
-        let restored_tribulation = active_tribulation.as_ref().map(|record| TribulationState {
-            wave_current: record
-                .wave_current
-                .saturating_add(1)
-                .min(record.waves_total),
-            waves_total: record.waves_total,
-            started_tick: record.started_tick,
+        let restored_tribulation = active_tribulation.as_ref().map(|record| {
+            TribulationState::restored(
+                record
+                    .wave_current
+                    .saturating_add(1)
+                    .min(record.waves_total),
+                record.waves_total,
+                record.started_tick,
+            )
         });
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
@@ -661,6 +675,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.add_event::<tribulation::TribulationWaveCleared>();
+        app.add_event::<tribulation::TribulationSettled>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_systems(
             Update,

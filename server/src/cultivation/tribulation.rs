@@ -10,11 +10,19 @@
 //! P1/P5：本文件只定义状态机 + 事件；真实天劫伤害由战斗 plan 实施。
 
 use valence::prelude::{
-    bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Position, Query,
+    bevy_ecs, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Position,
+    Query, Res, Username, With,
 };
 
-use crate::combat::components::Wounds;
+use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
+use crate::combat::events::DeathEvent;
+use crate::combat::CombatClock;
+use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::network::RedisBridgeResource;
+use crate::schema::tribulation::{
+    DuXuOutcomeV1, DuXuResultV1, TribulationEventV1, TribulationPhaseV1,
+};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
@@ -23,15 +31,87 @@ use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianSystem, Realm};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
-    complete_tribulation_ascension, delete_active_tribulation, persist_active_tribulation,
-    ActiveTribulationRecord, PersistenceSettings,
+    complete_tribulation_ascension, delete_active_tribulation, load_ascension_quota,
+    persist_active_tribulation, ActiveTribulationRecord, PersistenceSettings,
 };
+
+pub const DUXU_OMEN_TICKS: u64 = 60 * 20;
+pub const DUXU_LOCK_TICKS: u64 = 30 * 20;
+pub const DUXU_WAVE_COOLDOWN_TICKS: u64 = 15 * 20;
+pub const DUXU_MAX_WAVES: u32 = 5;
+pub const TRIBULATION_DANGER_RADIUS: f64 = 100.0;
+pub const DUXU_LOCK_RADIUS_SOFT: f64 = 50.0;
+pub const DUXU_LOCK_RADIUS_HARD: f64 = 20.0;
+pub const DUXU_LOCK_RADIUS_FINAL: f64 = 10.0;
+
+const DUXU_DEFAULT_WAVES: u32 = 3;
+const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
+const DUXU_QI_DRAIN_BASE: f64 = 35.0;
+const HALF_STEP_QI_MAX_MULTIPLIER: f64 = 1.10;
+const HALF_STEP_LIFESPAN_YEARS: u32 = 200;
 
 #[derive(Debug, Clone, Component)]
 pub struct TribulationState {
+    pub kind: TribulationKind,
+    pub phase: TribulationPhase,
+    pub epicenter: [f64; 3],
     pub wave_current: u32,
     pub waves_total: u32,
     pub started_tick: u64,
+    pub phase_started_tick: u64,
+    pub next_wave_tick: u64,
+    pub participants: Vec<String>,
+    pub failed: bool,
+    pub half_step_on_success: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TribulationKind {
+    DuXu,
+    ZoneCollapse,
+    Targeted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TribulationPhase {
+    Omen,
+    Lock,
+    Wave(u32),
+    HeartDemon,
+    Settle,
+}
+
+impl TribulationState {
+    pub fn restored(wave_current: u32, waves_total: u32, started_tick: u64) -> Self {
+        Self {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(wave_current.max(1)),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current,
+            waves_total,
+            started_tick,
+            phase_started_tick: started_tick,
+            next_wave_tick: started_tick,
+            participants: Vec::new(),
+            failed: false,
+            half_step_on_success: false,
+        }
+    }
+
+    pub fn lock_radius(&self, now_tick: u64) -> f64 {
+        match self.phase {
+            TribulationPhase::Omen => {
+                if now_tick.saturating_sub(self.started_tick) >= DUXU_OMEN_TICKS / 2 {
+                    DUXU_LOCK_RADIUS_SOFT
+                } else {
+                    TRIBULATION_DANGER_RADIUS
+                }
+            }
+            TribulationPhase::Lock => DUXU_LOCK_RADIUS_HARD,
+            TribulationPhase::Wave(_) | TribulationPhase::HeartDemon => DUXU_LOCK_RADIUS_FINAL,
+            TribulationPhase::Settle => 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Event)]
@@ -42,8 +122,24 @@ pub struct InitiateXuhuaTribulation {
 }
 
 #[derive(Debug, Clone, Event)]
+pub struct StartDuXuRequest {
+    pub entity: Entity,
+    pub requested_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event)]
 pub struct TribulationAnnounce {
     pub entity: Entity,
+    pub char_id: String,
+    pub actor_name: String,
+    pub epicenter: [f64; 3],
+    pub waves_total: u32,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct TribulationSettled {
+    pub entity: Entity,
+    pub result: DuXuResultV1,
 }
 
 /// 单波次通过（由战斗 plan 发送）。
@@ -60,17 +156,46 @@ pub struct TribulationFailed {
     pub wave: u32,
 }
 
+#[allow(clippy::type_complexity)]
+pub fn start_du_xu_request_system(
+    mut requests: EventReader<StartDuXuRequest>,
+    mut initiate: EventWriter<InitiateXuhuaTribulation>,
+    players: Query<(&Cultivation, &MeridianSystem, Option<&TribulationState>)>,
+) {
+    for request in requests.read() {
+        let Ok((cultivation, meridians, active)) = players.get(request.entity) else {
+            continue;
+        };
+        if active.is_some() || !du_xu_prereqs_met(cultivation, meridians) {
+            tracing::warn!(
+                "[bong][cultivation] start_du_xu rejected entity={:?} realm={:?} opened_meridians={}",
+                request.entity,
+                cultivation.realm,
+                meridians.opened_count(),
+            );
+            continue;
+        }
+        initiate.send(InitiateXuhuaTribulation {
+            entity: request.entity,
+            waves_total: DUXU_DEFAULT_WAVES,
+            started_tick: request.requested_at_tick,
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn start_tribulation_system(
-    settings: valence::prelude::Res<PersistenceSettings>,
+    settings: Res<PersistenceSettings>,
     mut events: EventReader<InitiateXuhuaTribulation>,
     mut announce: EventWriter<TribulationAnnounce>,
-    mut players: Query<(&Cultivation, &crate::combat::components::Lifecycle)>,
-    mut commands: valence::prelude::Commands,
+    mut players: Query<(&Cultivation, &MeridianSystem, &Lifecycle, Option<&Username>)>,
+    player_count: Query<(), With<Client>>,
+    mut commands: Commands,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for ev in events.read() {
-        if let Ok((c, lifecycle)) = players.get_mut(ev.entity) {
+        if let Ok((c, meridians, lifecycle, username)) = players.get_mut(ev.entity) {
             if c.realm != Realm::Spirit {
                 tracing::warn!(
                     "[bong][cultivation] {:?} tried to tribulate from {:?}, rejected",
@@ -79,10 +204,35 @@ pub fn start_tribulation_system(
                 );
                 continue;
             }
+            if !du_xu_prereqs_met(c, meridians) {
+                tracing::warn!(
+                    "[bong][cultivation] {:?} tried to tribulate without all meridians open",
+                    ev.entity,
+                );
+                continue;
+            }
+            let p = positions
+                .get(ev.entity)
+                .map(|pos| pos.get())
+                .unwrap_or(valence::math::DVec3::new(0.0, 64.0, 0.0));
+            let occupied_slots = load_ascension_quota(&settings)
+                .map(|quota| quota.occupied_slots)
+                .unwrap_or(0);
+            let quota_limit = ascension_quota_limit(player_count.iter().count());
             let state = TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Omen,
+                epicenter: [p.x, p.y, p.z],
                 wave_current: 0,
-                waves_total: ev.waves_total,
+                waves_total: ev.waves_total.clamp(1, DUXU_MAX_WAVES),
                 started_tick: ev.started_tick,
+                phase_started_tick: ev.started_tick,
+                next_wave_tick: ev
+                    .started_tick
+                    .saturating_add(DUXU_OMEN_TICKS + DUXU_LOCK_TICKS),
+                participants: vec![lifecycle.character_id.clone()],
+                failed: false,
+                half_step_on_success: occupied_slots >= quota_limit,
             };
             if let Err(error) = persist_active_tribulation(
                 &settings,
@@ -99,72 +249,223 @@ pub fn start_tribulation_system(
                 );
             }
             commands.entity(ev.entity).insert(state);
-            announce.send(TribulationAnnounce { entity: ev.entity });
+            announce.send(TribulationAnnounce {
+                entity: ev.entity,
+                char_id: lifecycle.character_id.clone(),
+                actor_name: username
+                    .map(|name| name.0.clone())
+                    .unwrap_or_else(|| lifecycle.character_id.clone()),
+                epicenter: [p.x, p.y, p.z],
+                waves_total: ev.waves_total.clamp(1, DUXU_MAX_WAVES),
+            });
             tracing::info!(
                 "[bong][cultivation] {:?} initiated tribulation ({} waves)",
                 ev.entity,
                 ev.waves_total
             );
             // plan-particle-system-v1 §4.4：渡劫开场一道预警雷。
-            if let Ok(pos) = positions.get(ev.entity) {
-                let p = pos.get();
-                vfx_events.send(VfxEventRequest::new(
-                    p,
-                    VfxEventPayloadV1::SpawnParticle {
-                        event_id: "bong:tribulation_lightning".to_string(),
-                        origin: [p.x, p.y, p.z],
-                        direction: None,
-                        color: Some("#D0C8FF".to_string()),
-                        strength: Some(1.0),
-                        count: Some(3),
-                        duration_ticks: Some(14),
-                    },
-                ));
+            vfx_events.send(VfxEventRequest::new(
+                p,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: "bong:tribulation_lightning".to_string(),
+                    origin: [p.x, p.y, p.z],
+                    direction: None,
+                    color: Some("#D0C8FF".to_string()),
+                    strength: Some(1.0),
+                    count: Some(3),
+                    duration_ticks: Some(14),
+                },
+            ));
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn tribulation_phase_tick_system(
+    clock: Res<CombatClock>,
+    mut query: Query<(Entity, &mut TribulationState)>,
+    mut cleared: EventWriter<TribulationWaveCleared>,
+) {
+    for (entity, mut state) in &mut query {
+        match state.phase {
+            TribulationPhase::Omen
+                if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_OMEN_TICKS =>
+            {
+                state.phase = TribulationPhase::Lock;
+                state.phase_started_tick = clock.tick;
+            }
+            TribulationPhase::Lock
+                if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_LOCK_TICKS =>
+            {
+                state.phase = TribulationPhase::Wave(state.wave_current.saturating_add(1));
+                state.phase_started_tick = clock.tick;
+                state.next_wave_tick = clock.tick;
+            }
+            TribulationPhase::Wave(_) if clock.tick >= state.next_wave_tick && !state.failed => {
+                let next_wave = state.wave_current.saturating_add(1);
+                if next_wave <= state.waves_total {
+                    cleared.send(TribulationWaveCleared {
+                        entity,
+                        wave: next_wave,
+                    });
+                }
+                state.next_wave_tick = clock.tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn tribulation_aoe_system(
+    clock: Res<CombatClock>,
+    tribulations: Query<&TribulationState>,
+    mut targets: Query<(
+        Entity,
+        &Position,
+        &mut Cultivation,
+        &mut Wounds,
+        Option<&Lifecycle>,
+    )>,
+    mut failed: EventWriter<TribulationFailed>,
+    mut deaths: EventWriter<DeathEvent>,
+) {
+    if !clock.tick.is_multiple_of(DUXU_WAVE_COOLDOWN_TICKS.max(1)) {
+        return;
+    }
+    for state in &tribulations {
+        let TribulationPhase::Wave(wave) = state.phase else {
+            continue;
+        };
+        let center =
+            valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
+        let damage = DUXU_AOE_DAMAGE_BASE * wave as f32;
+        let qi_drain = DUXU_QI_DRAIN_BASE * f64::from(wave);
+        for (entity, pos, mut cultivation, mut wounds, lifecycle) in &mut targets {
+            if pos.get().distance(center) > TRIBULATION_DANGER_RADIUS {
+                continue;
+            }
+            cultivation.qi_current = (cultivation.qi_current - qi_drain).max(0.0);
+            if wave == 3 {
+                let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
+                cultivation.qi_max_frozen =
+                    Some((frozen + cultivation.qi_max * 0.20).min(cultivation.qi_max));
+            }
+            let was_alive = wounds.health_current > 0.0;
+            wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+            wounds.entries.push(Wound {
+                location: BodyPart::Chest,
+                kind: WoundKind::Burn,
+                severity: damage,
+                bleeding_per_sec: 0.0,
+                created_at_tick: clock.tick,
+                inflicted_by: Some("du_xu_tribulation".to_string()),
+            });
+            if !was_alive || wounds.health_current > 0.0 {
+                continue;
+            }
+            let is_tribulator = lifecycle
+                .map(|lifecycle| {
+                    state
+                        .participants
+                        .iter()
+                        .any(|id| id == &lifecycle.character_id)
+                })
+                .unwrap_or(false);
+            if is_tribulator {
+                failed.send(TribulationFailed { entity, wave });
+            } else {
+                deaths.send(DeathEvent {
+                    target: entity,
+                    cause: "观劫而亡".to_string(),
+                    attacker: None,
+                    attacker_player_id: None,
+                    at_tick: clock.tick,
+                });
             }
         }
     }
 }
 
 pub fn tribulation_wave_system(
-    settings: valence::prelude::Res<PersistenceSettings>,
+    settings: Res<PersistenceSettings>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut players: Query<(
         &mut Cultivation,
         &mut TribulationState,
         &MeridianSystem,
-        &crate::combat::components::Lifecycle,
+        &Lifecycle,
+        Option<&mut LifespanComponent>,
     )>,
-    mut commands: valence::prelude::Commands,
+    mut commands: Commands,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
+    mut settled: EventWriter<TribulationSettled>,
 ) {
     for ev in cleared.read() {
-        if let Ok((mut c, mut state, _, lifecycle)) = players.get_mut(ev.entity) {
+        if let Ok((mut c, mut state, _, lifecycle, lifespan)) = players.get_mut(ev.entity) {
+            if state.failed {
+                continue;
+            }
             state.wave_current = state.wave_current.max(ev.wave);
             if state.wave_current >= state.waves_total {
                 // 渡劫成功
-                c.realm = Realm::Void;
-                c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
-                if let Err(error) =
-                    complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
-                {
-                    tracing::warn!(
-                        "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
-                        ev.entity,
-                    );
-                }
-                // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
-                let new_cap = skill_cap_for_realm(Realm::Void);
-                for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
-                    skill_cap_events.send(SkillCapChanged {
-                        char_entity: ev.entity,
-                        skill,
-                        new_cap,
-                    });
-                }
+                let outcome = if state.half_step_on_success {
+                    c.realm = Realm::Spirit;
+                    c.qi_max *= HALF_STEP_QI_MAX_MULTIPLIER;
+                    if let Some(mut lifespan) = lifespan {
+                        lifespan.cap_by_realm = lifespan
+                            .cap_by_realm
+                            .max(LifespanCapTable::SPIRIT.saturating_add(HALF_STEP_LIFESPAN_YEARS));
+                    }
+                    if let Err(error) =
+                        delete_active_tribulation(&settings, lifecycle.character_id.as_str())
+                    {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to clear half-step tribulation for {:?}: {error}",
+                            ev.entity,
+                        );
+                    }
+                    DuXuOutcomeV1::HalfStep
+                } else {
+                    c.realm = Realm::Void;
+                    c.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                    if let Some(mut lifespan) = lifespan {
+                        lifespan.apply_cap(LifespanCapTable::VOID);
+                    }
+                    if let Err(error) =
+                        complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
+                    {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
+                            ev.entity,
+                        );
+                    }
+                    // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
+                    let new_cap = skill_cap_for_realm(Realm::Void);
+                    for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                        skill_cap_events.send(SkillCapChanged {
+                            char_entity: ev.entity,
+                            skill,
+                            new_cap,
+                        });
+                    }
+                    DuXuOutcomeV1::Ascended
+                };
+                settled.send(TribulationSettled {
+                    entity: ev.entity,
+                    result: DuXuResultV1 {
+                        char_id: lifecycle.character_id.clone(),
+                        outcome,
+                        killer: None,
+                        waves_survived: state.waves_total,
+                    },
+                });
+                state.phase = TribulationPhase::Settle;
                 commands.entity(ev.entity).remove::<TribulationState>();
                 tracing::info!(
-                    "[bong][cultivation] {:?} ASCENDED to Void realm after {} waves",
+                    "[bong][cultivation] {:?} settled DuXu as {:?} after {} waves",
                     ev.entity,
+                    outcome,
                     state.waves_total
                 );
             } else if let Err(error) = persist_active_tribulation(
@@ -185,19 +486,28 @@ pub fn tribulation_wave_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn tribulation_failure_system(
-    settings: valence::prelude::Res<PersistenceSettings>,
+    settings: Res<PersistenceSettings>,
     mut failed: EventReader<TribulationFailed>,
     mut players: Query<(
         &mut Cultivation,
         Option<&mut MeridianSystem>,
-        &crate::combat::components::Lifecycle,
+        &Lifecycle,
         Option<&mut Wounds>,
+        Option<&mut TribulationState>,
     )>,
-    mut commands: valence::prelude::Commands,
+    mut commands: Commands,
+    mut settled: EventWriter<TribulationSettled>,
 ) {
     for ev in failed.read() {
-        if let Ok((mut cultivation, meridians, lifecycle, wounds)) = players.get_mut(ev.entity) {
+        if let Ok((mut cultivation, meridians, lifecycle, wounds, state)) =
+            players.get_mut(ev.entity)
+        {
+            if let Some(mut state) = state {
+                state.failed = true;
+                state.phase = TribulationPhase::Settle;
+            }
             apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
             if let Err(error) =
                 delete_active_tribulation(&settings, lifecycle.character_id.as_str())
@@ -212,9 +522,117 @@ pub fn tribulation_failure_system(
                 ev.entity,
                 ev.wave,
             );
+            settled.send(TribulationSettled {
+                entity: ev.entity,
+                result: DuXuResultV1 {
+                    char_id: lifecycle.character_id.clone(),
+                    outcome: DuXuOutcomeV1::Failed,
+                    killer: None,
+                    waves_survived: ev.wave.saturating_sub(1),
+                },
+            });
         }
         commands.entity(ev.entity).remove::<TribulationState>();
     }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn tribulation_intercept_death_system(
+    mut deaths: EventReader<DeathEvent>,
+    mut commands: Commands,
+    settings: Res<PersistenceSettings>,
+    mut q: Query<(&TribulationState, &Lifecycle)>,
+    mut settled: EventWriter<TribulationSettled>,
+) {
+    for death in deaths.read() {
+        let Ok((state, lifecycle)) = q.get_mut(death.target) else {
+            continue;
+        };
+        if death.attacker_player_id.is_none() {
+            continue;
+        }
+        if let Err(error) = delete_active_tribulation(&settings, lifecycle.character_id.as_str()) {
+            tracing::warn!(
+                "[bong][cultivation] failed to clear intercepted tribulation for {:?}: {error}",
+                death.target,
+            );
+        }
+        settled.send(TribulationSettled {
+            entity: death.target,
+            result: DuXuResultV1 {
+                char_id: lifecycle.character_id.clone(),
+                outcome: DuXuOutcomeV1::Killed,
+                killer: death.attacker_player_id.clone(),
+                waves_survived: state.wave_current,
+            },
+        });
+        commands.entity(death.target).remove::<TribulationState>();
+    }
+}
+
+pub fn publish_tribulation_events(
+    redis: Res<RedisBridgeResource>,
+    mut announce: EventReader<TribulationAnnounce>,
+    mut cleared: EventReader<TribulationWaveCleared>,
+    mut settled: EventReader<TribulationSettled>,
+    states: Query<&TribulationState>,
+) {
+    for ev in announce.read() {
+        let payload = TribulationEventV1::du_xu(
+            TribulationPhaseV1::Omen,
+            Some(ev.char_id.clone()),
+            Some(ev.actor_name.clone()),
+            Some(ev.epicenter),
+            Some(0),
+            Some(ev.waves_total),
+            None,
+        );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+    for ev in cleared.read() {
+        let Ok(state) = states.get(ev.entity) else {
+            continue;
+        };
+        let payload = TribulationEventV1::du_xu(
+            TribulationPhaseV1::Wave { wave: ev.wave },
+            None,
+            None,
+            Some(state.epicenter),
+            Some(ev.wave),
+            Some(state.waves_total),
+            None,
+        );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+    for ev in settled.read() {
+        let payload = TribulationEventV1::du_xu(
+            TribulationPhaseV1::Settle,
+            Some(ev.result.char_id.clone()),
+            None,
+            None,
+            Some(ev.result.waves_survived),
+            None,
+            Some(ev.result.clone()),
+        );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+}
+
+pub fn du_xu_prereqs_met(cultivation: &Cultivation, meridians: &MeridianSystem) -> bool {
+    cultivation.realm == Realm::Spirit
+        && meridians.iter().all(|meridian| meridian.opened)
+        && meridians.opened_count() >= Realm::Void.required_meridians()
+}
+
+pub fn ascension_quota_limit(player_count: usize) -> u32 {
+    let scaled = (player_count / 50).max(1) as u32;
+    scaled.min(3)
 }
 
 fn apply_tribulation_failure_penalty(
@@ -331,6 +749,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 300 });
         app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
@@ -385,11 +804,7 @@ mod tests {
                 },
                 LifeRecord::new(char_id),
                 Position::new([8.0, 66.0, 8.0]),
-                TribulationState {
-                    wave_current: 2,
-                    waves_total: 5,
-                    started_tick: 120,
-                },
+                TribulationState::restored(2, 5, 120),
             ))
             .id();
 
