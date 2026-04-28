@@ -127,17 +127,23 @@ public final class PreviewSession {
         if (client.getToastManager() != null) {
             client.getToastManager().clear();
         }
-        // 走 server-side authoritative tp（!preview-tp 命令）—— 避免 multi-player
-        // anti-cheat 把 client.setPos 远距离 force-sync 回原位。server 收到 chat
-        // 命令后 chat_collector 解析 → emit PreviewTeleportRequested → preview
-        // module system 改写 Position/Look/HeadYaw → server 主动下发
-        // PlayerPosLook 同步 client。
-        // 需要 server 端 BONG_PREVIEW_MODE=1 + plan-worldgen-snapshot-v1 §2.4
-        // 的 server preview module 已注册（commit df31793b 起）。
+        // 走 server-side authoritative tp（/preview_tp 原生命令）—— 避免
+        // multi-player anti-cheat 把 client.setPos 远距离 force-sync 回原位。
+        // server 收到 brigadier 命令后 cmd::dev::preview_tp::handle_preview_tp
+        // 解析 → emit PreviewTeleportRequested → preview module system 改写
+        // Position/Look/HeadYaw → server 主动下发 PlayerPosLook 同步 client。
+        //
+        // 历史：首版用 `!preview-tp` chat 命令走 chat_collector 解析；main 上
+        // commit 162bc974 把所有 `!`-prefix dev 命令迁到原生 `/` 命令树
+        // (valence_command brigadier)，本 client 跟随迁移。命令名用下划线
+        // `preview_tp` 而非短横（valence brigadier literal 不允许 `-`）。
+        //
+        // 需要 server 启动设 BONG_PREVIEW_MODE=1，未设的话 preview module 不
+        // 注册 handle_preview_teleport system，event 没人消费 player 不动。
         String cmd = String.format(
-                "!preview-tp %.3f %.3f %.3f %.1f %.1f",
+                "preview_tp %.3f %.3f %.3f %.1f %.1f",
                 shot.tp()[0], shot.tp()[1], shot.tp()[2], shot.yaw(), shot.pitch());
-        client.player.networkHandler.sendChatMessage(cmd);
+        client.player.networkHandler.sendCommand(cmd);
         LOGGER.info("[preview] shot[{}/{}] '{}' sent {}",
                 currentShotIdx + 1, config.screenshots().size(),
                 shot.name(), cmd);
