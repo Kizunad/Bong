@@ -15,7 +15,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Wounds;
-use crate::combat::events::AttackIntent;
+use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
@@ -651,6 +651,7 @@ fn hunt_action_system(
                         reach: profile.reach,
                         qi_invest: 8.0,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                     hunt.last_attack_tick = Some(tick);

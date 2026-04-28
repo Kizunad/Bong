@@ -38,7 +38,16 @@ pub struct AttackIntent {
     pub reach: AttackReach,
     pub qi_invest: f32,
     pub wound_kind: WoundKind,
+    #[serde(default)]
+    pub source: AttackSource,
     pub debug_command: Option<CombatAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AttackSource {
+    #[default]
+    Melee,
+    BurstMeridian,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]

@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "burst_meridian_event",
+  "skill": "beng_quan",
+  "caster": "offline:Azure",
+  "target": "entity:42",
+  "tick": 12345,
+  "overload_ratio": 1.5,
+  "integrity_snapshot": 1.0
+}

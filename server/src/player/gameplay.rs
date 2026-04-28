@@ -15,7 +15,7 @@ use crate::botany::registry::canonicalize_herb_id;
 use crate::combat::{
     components::WoundKind,
     debug::enqueue_debug_attack_intent,
-    events::{AttackIntent, FIST_REACH},
+    events::{AttackIntent, AttackSource, FIST_REACH},
 };
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
@@ -237,6 +237,7 @@ fn bridge_debug_combat_action(
             reach: FIST_REACH,
             qi_invest: action.qi_invest.max(0.0) as f32,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(action),
         },
     );

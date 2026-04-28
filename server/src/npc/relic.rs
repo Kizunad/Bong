@@ -13,7 +13,7 @@ use valence::prelude::{
     Position, PreUpdate, Query, With, Without,
 };
 
-use crate::combat::events::AttackIntent;
+use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::movement::GameTick;
@@ -341,6 +341,7 @@ fn guard_action_system(
                         reach: profile.reach,
                         qi_invest: 12.0,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                     guard.last_attack_tick = Some(tick);

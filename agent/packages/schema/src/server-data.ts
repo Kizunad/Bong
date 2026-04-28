@@ -133,6 +133,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("burst_meridian_event"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
   Type.Literal("weapon_equipped"),
@@ -565,6 +566,21 @@ export const ServerDataSkillSnapshotV1 = Type.Object(
 );
 export type ServerDataSkillSnapshotV1 = Static<typeof ServerDataSkillSnapshotV1>;
 
+export const BurstMeridianEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("burst_meridian_event"),
+    skill: Type.String({ minLength: 1 }),
+    caster: Type.String({ minLength: 1 }),
+    target: Type.Optional(Type.String({ minLength: 1 })),
+    tick: Type.Integer({ minimum: 0 }),
+    overload_ratio: Type.Number({ minimum: 0 }),
+    integrity_snapshot: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BurstMeridianEventV1 = Static<typeof BurstMeridianEventV1>;
+
 export const ServerDataSkillBarConfigV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -824,6 +840,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  BurstMeridianEventV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataWeaponEquippedV1,

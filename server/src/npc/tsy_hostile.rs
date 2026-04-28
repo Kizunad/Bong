@@ -19,7 +19,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Wounds;
-use crate::combat::events::AttackIntent;
+use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::components::Cultivation;
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
@@ -1042,6 +1042,7 @@ fn daoxiang_instinct_action_system(
                         reach: profile.reach,
                         qi_invest: 25.0,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                 }
@@ -1155,6 +1156,7 @@ fn zhinian_combo_step_action_system(
                         reach: profile.reach,
                         qi_invest,
                         wound_kind: profile.wound_kind,
+                        source: AttackSource::Melee,
                         debug_command: None,
                     });
                 }
@@ -1276,6 +1278,7 @@ fn sentinel_phase_action_system(
                                 _ => 30.0,
                             },
                             wound_kind: profile.wound_kind,
+                            source: AttackSource::Melee,
                             debug_command: None,
                         });
                     }

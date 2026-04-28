@@ -225,6 +225,10 @@ public class ClientRequestProtocolTest {
             ClientRequestProtocol.encodeSkillBarCast(0)
         );
         assertEquals(
+            "{\"type\":\"skill_bar_cast\",\"v\":1,\"slot\":0,\"target\":\"entity:42\"}",
+            ClientRequestProtocol.encodeSkillBarCast(0, "entity:42")
+        );
+        assertEquals(
             "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"skill\",\"skill_id\":\"burst_meridian.beng_quan\"}}",
             ClientRequestProtocol.encodeSkillBarBindSkill(1, "burst_meridian.beng_quan")
         );

@@ -17,8 +17,8 @@ use crate::combat::{
         JIEMAI_DEFENSE_WINDOW_MS, LEG_SLOWED_DURATION_TICKS, LEG_SLOWED_SEVERITY_THRESHOLD,
     },
     events::{
-        ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DefenseIntent,
-        StatusEffectKind,
+        ApplyStatusEffectIntent, AttackIntent, AttackSource, CombatEvent, DeathEvent,
+        DefenseIntent, StatusEffectKind,
     },
     raycast::raycast_humanoid,
 };
@@ -183,7 +183,9 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            if attacker_cultivation.qi_current + f64::EPSILON < qi_invest {
+            if intent.source != AttackSource::BurstMeridian
+                && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
+            {
                 continue;
             }
         }
@@ -205,8 +207,10 @@ pub fn resolve_attack_intents(
                 continue;
             };
 
-            attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
-                .clamp(0.0, attacker_cultivation.qi_max);
+            if intent.source != AttackSource::BurstMeridian {
+                attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
+                    .clamp(0.0, attacker_cultivation.qi_max);
+            }
             if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut attacker_meridians)
             {
                 primary_meridian.throughput_current += qi_invest * ATTACK_QI_THROUGHPUT_FACTOR;
@@ -846,7 +850,7 @@ mod tests {
         Wounds, JIEMAI_CONTAM_MULTIPLIER, JIEMAI_DEFENSE_QI_COST,
     };
     use crate::combat::events::{
-        ApplyStatusEffectIntent, AttackIntent, StatusEffectKind, FIST_REACH,
+        ApplyStatusEffectIntent, AttackIntent, AttackSource, StatusEffectKind, FIST_REACH,
     };
     use crate::cultivation::components::{
         Contamination, CrackCause, Cultivation, MeridianId, MeridianSystem,
@@ -1100,6 +1104,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1202,6 +1207,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 40.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Crimson".to_string(),
                 qi_invest: 40.0,
@@ -1334,6 +1340,7 @@ mod tests {
                 reach: FIST_REACH,
                 qi_invest: action.qi_invest as f32,
                 wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
                 debug_command: Some(action),
             });
             app.update();
@@ -1414,6 +1421,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1490,6 +1498,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 12.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -1499,6 +1508,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1592,6 +1602,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1663,6 +1674,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1674,6 +1686,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 10.0,
             wound_kind: NpcMeleeProfile::spear().wound_kind,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.update();
@@ -1724,6 +1737,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 40.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: npc_id.clone(),
                 qi_invest: 40.0,
@@ -1795,6 +1809,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1850,6 +1865,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -1912,6 +1928,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 18.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Crimson".to_string(),
                 qi_invest: 18.0,
@@ -1942,6 +1959,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 18.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: Some(crate::player::gameplay::CombatAction {
                 target: "Sable".to_string(),
                 qi_invest: 999.0,
@@ -2011,6 +2029,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2089,6 +2108,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2166,6 +2186,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 20.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2230,6 +2251,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2318,6 +2340,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2401,6 +2424,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2410,6 +2434,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2500,6 +2525,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2509,6 +2535,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2643,6 +2670,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2652,6 +2680,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2782,6 +2811,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -2791,6 +2821,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -2914,6 +2945,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3067,6 +3099,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3146,6 +3179,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3155,6 +3189,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3245,6 +3280,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Pierce,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3254,6 +3290,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 10.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 
@@ -3279,6 +3316,66 @@ mod tests {
             .amount;
 
         assert!(pierce_contam > blunt_contam);
+    }
+
+    #[test]
+    fn burst_meridian_attack_source_uses_prepaid_qi_without_second_spend() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1550 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "BurstUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(Cultivation {
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        });
+        let target = spawn_player(
+            &mut app,
+            "BurstTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1549,
+            reach: FIST_REACH,
+            qi_invest: 80.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::BurstMeridian,
+            debug_command: None,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(attacker)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            60.0,
+            "BurstMeridian source is already paid by skill resolver and must not spend qi again"
+        );
+        assert!(
+            !app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "prepaid burst attack should still resolve even when qi_invest exceeds remaining qi"
+        );
     }
 
     /// 端到端验证 NPC↔NPC 互殴走 shared resolver：使用 `npc_runtime_bundle`
@@ -3332,6 +3429,7 @@ mod tests {
             reach: FIST_REACH,
             qi_invest: 8.0,
             wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
             debug_command: None,
         });
         app.world_mut().send_event(AttackIntent {
@@ -3341,6 +3439,7 @@ mod tests {
             reach: NpcMeleeProfile::spear().reach,
             qi_invest: 12.0,
             wound_kind: WoundKind::Pierce,
+            source: AttackSource::Melee,
             debug_command: None,
         });
 

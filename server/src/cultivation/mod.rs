@@ -27,6 +27,7 @@
 //!   * 战斗 plan：消费 CultivationDeathTrigger / throughput 写入，并在渡劫波次失败时发送 TribulationFailed
 
 pub mod breakthrough;
+pub mod burst_meridian;
 pub mod color;
 pub mod components;
 pub mod composure;
@@ -47,6 +48,7 @@ pub mod negative_zone;
 pub mod overload;
 pub mod possession;
 pub mod qi_zero_decay;
+pub mod skill_registry;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
@@ -111,6 +113,7 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
+    app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
 
@@ -138,6 +141,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
     app.add_event::<MeridianOverloadEvent>();
+    app.add_event::<burst_meridian::BurstMeridianEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(

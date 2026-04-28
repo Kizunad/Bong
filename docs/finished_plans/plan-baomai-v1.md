@@ -555,3 +555,13 @@ Client：
   - §11 实施节点：重排为 P0 崩拳单招 / P1 4 招 + 完整虚脱期 / P2 燃命（复用 qi_zero_decay）+ 染色 / P3 死亡对齐。每段标 fn 签名 / 文件清单 / 测试。
   - §12 开放问题：关闭 3 项（QuickSlot 扩展方案 / F-key 映射 / event channel）；新增 3 项 P0 必决（攻击臂选择 / 准入境界 / target 必填）；P1/P2/P3 各分组。
   - 新增 §13 测试策略：饱和化清单（resolve_beng_quan 12+ 条 case / schema 双端对拍 / 集成 e2e / 替换 mock 回归 = P0 必填模板）；P1+ 4 招按同款模板。
+
+## Finish Evidence
+
+- 2026-04-29：P0 `burst_meridian.beng_quan` 已落地为真实 SkillBar fn pointer 链路。
+- 提交：`9d6100bf feat(schema): 增加爆脉崩拳事件契约`
+- 提交：`9a3b4472 feat(server): 接通爆脉崩拳真实结算`
+- 提交：`2cc83134 feat(client): 支持崩拳目标与表现`
+- Server gate：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，1692 passed。
+- Agent schema gate：`npm test && npm run generate:check && npm run build`，194 passed，161 generated schemas fresh。
+- Client gate：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`，BUILD SUCCESSFUL。

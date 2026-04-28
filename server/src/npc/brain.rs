@@ -8,7 +8,7 @@ use valence::prelude::{
     Position, PreUpdate, Query, Res, ResMut, Resource, With, Without,
 };
 
-use crate::combat::events::AttackIntent;
+use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::breakthrough::{
     breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, XorshiftRoll,
 };
@@ -952,6 +952,7 @@ fn melee_attack_action_system(
                                 reach: profile.reach,
                                 qi_invest: 10.0,
                                 wound_kind: profile.wound_kind,
+                                source: AttackSource::Melee,
                                 debug_command: None,
                             });
                         }
