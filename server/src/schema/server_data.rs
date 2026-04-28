@@ -1,4 +1,5 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
@@ -110,6 +111,7 @@ pub enum ServerDataType {
     ForgeSession,
     ForgeOutcome,
     ForgeBlueprintBook,
+    TribulationBroadcast,
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +249,66 @@ pub enum ServerDataPayloadV1 {
     ForgeSession(Box<ForgeSessionDataV1>),
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
+    TribulationBroadcast(TribulationBroadcastV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TribulationBroadcastV1 {
+    pub active: bool,
+    pub actor_name: String,
+    pub stage: String,
+    pub world_x: f64,
+    pub world_z: f64,
+    pub expires_at_ms: u64,
+    pub spectate_invite: bool,
+    pub spectate_distance: f64,
+}
+
+impl TribulationBroadcastV1 {
+    pub fn active(
+        actor_name: impl Into<String>,
+        stage: impl Into<String>,
+        world_x: f64,
+        world_z: f64,
+        ttl_ms: u64,
+    ) -> Self {
+        Self {
+            active: true,
+            actor_name: actor_name.into(),
+            stage: stage.into(),
+            world_x,
+            world_z,
+            expires_at_ms: tribulation_broadcast_expires_at_ms(ttl_ms),
+            spectate_invite: false,
+            spectate_distance: 0.0,
+        }
+    }
+
+    pub fn clear() -> Self {
+        Self {
+            active: false,
+            actor_name: String::new(),
+            stage: "done".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            expires_at_ms: 0,
+            spectate_invite: false,
+            spectate_distance: 0.0,
+        }
+    }
+
+    pub fn refresh(&mut self, ttl_ms: u64) {
+        self.expires_at_ms = tribulation_broadcast_expires_at_ms(ttl_ms);
+    }
+}
+
+fn tribulation_broadcast_expires_at_ms(ttl_ms: u64) -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+        .saturating_add(ttl_ms)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -517,6 +579,10 @@ enum ServerDataPayloadWireV1 {
     ForgeBlueprintBook {
         #[serde(flatten)]
         data: Box<ForgeBlueprintBookDataV1>,
+    },
+    TribulationBroadcast {
+        #[serde(flatten)]
+        data: TribulationBroadcastV1,
     },
 }
 
@@ -999,6 +1065,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
                 Ok(Self::ForgeBlueprintBook(data))
             }
+            ServerDataPayloadWireV1::TribulationBroadcast { data } => {
+                Ok(Self::TribulationBroadcast(data))
+            }
         }
     }
 }
@@ -1271,6 +1340,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ForgeBlueprintBook(data) => {
                 Self::ForgeBlueprintBook { data: data.clone() }
             }
+            ServerDataPayloadV1::TribulationBroadcast(data) => {
+                Self::TribulationBroadcast { data: data.clone() }
+            }
         }
     }
 }
@@ -1407,6 +1479,7 @@ impl ServerDataPayloadV1 {
             Self::ForgeSession(..) => ServerDataType::ForgeSession,
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
+            Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
         }
     }
 }
@@ -1504,6 +1577,9 @@ mod tests {
                 remaining_ticks: 600,
                 collapse_tear_entity_ids: vec![2, 3, 4],
             }),
+            ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
+                "Kiz", "warn", 12.0, -34.0, 60_000,
+            )),
         ];
 
         for payload in cases {

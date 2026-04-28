@@ -94,6 +94,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::ForgeSession => "forge_session",
         ServerDataType::ForgeOutcome => "forge_outcome",
         ServerDataType::ForgeBlueprintBook => "forge_blueprint_book",
+        ServerDataType::TribulationBroadcast => "tribulation_broadcast",
     }
 }
 
