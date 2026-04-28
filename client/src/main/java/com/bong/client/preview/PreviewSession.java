@@ -8,7 +8,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
 
 /**
  * Preview 截图状态机，由 {@link PreviewHarnessClient#install()} 注册到
@@ -118,22 +117,30 @@ public final class PreviewSession {
             return;
         }
         PreviewShot shot = config.screenshots().get(currentShotIdx);
-        if (client.player == null) {
-            LOGGER.error("[preview] client.player == null in SETUP_SHOT — 异常退出");
+        if (client.player == null || client.player.networkHandler == null) {
+            LOGGER.error("[preview] client.player / networkHandler == null in SETUP_SHOT");
             requestStop(client);
             return;
         }
-        // 关 HUD 避免聊天/toast 字遮挡。FP 视角 + 关 HUD 对俯视/等角都合适
+        // 关 HUD 避免聊天/toast 字遮挡
         client.options.hudHidden = true;
         if (client.getToastManager() != null) {
             client.getToastManager().clear();
         }
-        client.player.setPosition(shot.tp()[0], shot.tp()[1], shot.tp()[2]);
-        client.player.setYaw(shot.yaw());
-        client.player.setPitch(shot.pitch());
-        LOGGER.info("[preview] shot[{}/{}] '{}' setup tp={} yaw={} pitch={}",
+        // 走 server-side authoritative tp（!preview-tp 命令）—— 避免 multi-player
+        // anti-cheat 把 client.setPos 远距离 force-sync 回原位。server 收到 chat
+        // 命令后 chat_collector 解析 → emit PreviewTeleportRequested → preview
+        // module system 改写 Position/Look/HeadYaw → server 主动下发
+        // PlayerPosLook 同步 client。
+        // 需要 server 端 BONG_PREVIEW_MODE=1 + plan-worldgen-snapshot-v1 §2.4
+        // 的 server preview module 已注册（commit df31793b 起）。
+        String cmd = String.format(
+                "!preview-tp %.3f %.3f %.3f %.1f %.1f",
+                shot.tp()[0], shot.tp()[1], shot.tp()[2], shot.yaw(), shot.pitch());
+        client.player.networkHandler.sendChatMessage(cmd);
+        LOGGER.info("[preview] shot[{}/{}] '{}' sent {}",
                 currentShotIdx + 1, config.screenshots().size(),
-                shot.name(), Arrays.toString(shot.tp()), shot.yaw(), shot.pitch());
+                shot.name(), cmd);
         advance(Phase.SETTLE);
     }
 
