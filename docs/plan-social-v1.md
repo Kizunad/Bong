@@ -272,7 +272,7 @@ pub struct ExposureEvent {
 
 **⚠️ plan-persistence §1 表清单目前未列这 4 张，落地时需同步补入 plan-persistence**：
 
-- [ ] `relationships` 表（多态 payload，relationship_type + peer_char_id + since_tick + metadata JSON）
+- [x] `relationships` 表骨架已建（`server/src/persistence/mod.rs`:`RelationshipRecord` + DDL，`3ad73f90`；social 写入路径待接入）
 - [ ] `exposures` 表（append-only，char_id / kind / witnesses JSON / tick）
 - [ ] `renown` 表（char_id 主键，fame / notoriety / tags JSON）
 - [ ] `spirit_niches` 表（owner 主键，pos / revealed / placed_at / defense_mode）
