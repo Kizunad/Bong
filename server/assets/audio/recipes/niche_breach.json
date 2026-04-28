@@ -1,0 +1,10 @@
+{
+  "id": "niche_breach",
+  "layers": [
+    { "sound": "minecraft:block.bell.resonate", "volume": 0.35, "pitch": 0.55, "delay_ticks": 0 },
+    { "sound": "minecraft:block.soul_sand.hit", "volume": 0.25, "pitch": 0.7, "delay_ticks": 5 }
+  ],
+  "priority": 80,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

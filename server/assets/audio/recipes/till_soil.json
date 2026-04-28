@@ -1,0 +1,10 @@
+{
+  "id": "till_soil",
+  "layers": [
+    { "sound": "minecraft:block.rooted_dirt.hit", "volume": 0.35, "pitch": 0.9, "delay_ticks": 0 },
+    { "sound": "minecraft:block.gravel.place", "volume": 0.22, "pitch": 0.8, "delay_ticks": 2 }
+  ],
+  "priority": 30,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

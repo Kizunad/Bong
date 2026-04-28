@@ -1,0 +1,10 @@
+{
+  "id": "hammer_strike_fold",
+  "layers": [
+    { "sound": "minecraft:block.anvil.place", "volume": 0.35, "pitch": 1.1, "delay_ticks": 0 },
+    { "sound": "minecraft:block.fire.ambient", "volume": 0.14, "pitch": 1.5, "delay_ticks": 2 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

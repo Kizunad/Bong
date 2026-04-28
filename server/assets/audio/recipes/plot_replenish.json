@@ -1,0 +1,10 @@
+{
+  "id": "plot_replenish",
+  "layers": [
+    { "sound": "minecraft:block.water.ambient", "volume": 0.28, "pitch": 1.1, "delay_ticks": 0 },
+    { "sound": "minecraft:block.amethyst_block.chime", "volume": 0.2, "pitch": 1.5, "delay_ticks": 6 }
+  ],
+  "priority": 40,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

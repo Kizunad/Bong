@@ -1,0 +1,10 @@
+{
+  "id": "phase_shift_in",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.35, "pitch": 0.9, "delay_ticks": 0 },
+    { "sound": "minecraft:block.portal.ambient", "volume": 0.18, "pitch": 1.4, "delay_ticks": 2 }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "HOSTILE"
+}

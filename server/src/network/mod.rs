@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod audio_event_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -291,6 +292,10 @@ pub fn register(app: &mut App) {
             cultivation_bridge::publish_aging_events
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            audio_event_emit::handle_audio_debug_commands,
+            audio_event_emit::emit_audio_play_payloads
+                .after(audio_event_emit::handle_audio_debug_commands),
+            audio_event_emit::emit_audio_stop_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
@@ -380,6 +385,9 @@ pub fn register(app: &mut App) {
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
+    app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
+    app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
+    app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
