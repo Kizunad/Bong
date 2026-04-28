@@ -146,7 +146,6 @@ fn is_command_like(message: &str) -> bool {
 
 fn is_legacy_bang_command(message: &str) -> bool {
     message
-        .trim_start()
         .split_whitespace()
         .next()
         .is_some_and(|command| LEGACY_BANG_COMMANDS.contains(&command))
