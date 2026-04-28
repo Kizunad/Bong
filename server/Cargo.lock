@@ -554,6 +554,8 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "valence",
+ "valence_command",
+ "valence_command_macros",
  "zstd",
 ]
 
