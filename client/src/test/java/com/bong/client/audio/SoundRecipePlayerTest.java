@@ -113,6 +113,22 @@ public class SoundRecipePlayerTest {
         player.tick();
 
         assertEquals(2, sink.played.size());
+        assertEquals(0.393f, sink.played.get(0).volume(), 0.001f);
+    }
+
+    @Test
+    void ambientDuckingReachesCombatTargetOverTwoSeconds() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> false);
+        CombatHudStateStore.replace(CombatHudState.create(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+
+        for (int i = 0; i < 40; i++) {
+            player.tick();
+        }
+        player.play(playPayload(ambientRecipe(), 1.0f, 0.0f));
+        player.tick();
+
+        assertEquals(2, sink.played.size());
         assertEquals(0.12f, sink.played.get(0).volume(), 0.0001f);
     }
 

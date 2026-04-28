@@ -17,6 +17,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private static final int MAX_PLAYS_PER_TICK = 4;
     private static final int MAX_ONE_SHOTS_PER_TICK = 3;
     private static final int PREEMPT_PRIORITY = 85;
+    private static final int DUCK_TRANSITION_TICKS = 40;
+    private static final float COMBAT_AMBIENT_VOLUME = 0.3f;
 
     private static final SoundRecipePlayer INSTANCE =
         new SoundRecipePlayer(new MinecraftSoundSink(), SoundRecipePlayer::defaultFlagActive);
@@ -25,6 +27,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     private final Predicate<String> flagProvider;
     private final Map<Long, ActiveLoop> loops = new LinkedHashMap<>();
     private final List<AudioEventPayload.PlaySoundRecipe> pending = new ArrayList<>();
+    private float ambientVolumeFactor = 1.0f;
     private long tick;
 
     public SoundRecipePlayer(SoundSink sink, Predicate<String> flagProvider) {
@@ -59,6 +62,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public void tick() {
         tick++;
+        updateAmbientDucking();
         Iterator<Map.Entry<Long, ActiveLoop>> iterator = loops.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Long, ActiveLoop> entry = iterator.next();
@@ -134,8 +138,8 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         boolean anyPlayed = false;
         for (AudioLayer layer : payload.recipe().layers()) {
             float volume = layer.volume() * payload.volumeMul();
-            if (payload.recipe().category() == AudioCategory.AMBIENT && CombatHudStateStore.snapshot().active()) {
-                volume *= 0.3f;
+            if (payload.recipe().category() == AudioCategory.AMBIENT) {
+                volume *= ambientVolumeFactor;
             }
             float pitch = (float) clamp(layer.pitch() * Math.pow(2.0, payload.pitchShift()), 0.5, 2.0);
             anyPlayed |= sink.play(new AudioScheduledSound(
@@ -157,6 +161,16 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             case "hp_below_30" -> CombatHudStateStore.snapshot().hpPercent() < 0.3f;
             default -> false;
         };
+    }
+
+    private void updateAmbientDucking() {
+        float target = CombatHudStateStore.snapshot().active() ? COMBAT_AMBIENT_VOLUME : 1.0f;
+        float step = (1.0f - COMBAT_AMBIENT_VOLUME) / DUCK_TRANSITION_TICKS;
+        if (ambientVolumeFactor < target) {
+            ambientVolumeFactor = Math.min(target, ambientVolumeFactor + step);
+        } else if (ambientVolumeFactor > target) {
+            ambientVolumeFactor = Math.max(target, ambientVolumeFactor - step);
+        }
     }
 
     private static double clamp(double value, double min, double max) {
