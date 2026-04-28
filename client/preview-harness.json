@@ -3,8 +3,10 @@
   "server": "127.0.0.1:25565",
   "username": "PreviewBot",
   "wait_world_ticks": 1200,
-  "wait_chunks_ticks": 100,
-  "settle_ticks": 20,
+  "_wait_chunks_doc": "30 秒。Bong 自定义地形 chunk gen + xvfb mesa 软渲染较慢，5 秒（首版）实测拍到原版天空（chunks 未渲染完）。30 秒在 ubuntu-24.04 GitHub Actions 实测够；本地快机可调小。",
+  "wait_chunks_ticks": 600,
+  "_settle_doc": "5 秒。给 client setPos + setYaw/Pitch 后的 camera 切换 + render flush 充分时间。",
+  "settle_ticks": 100,
   "output_dir": "screenshots",
   "exit_on_complete": true,
   "screenshots": [
