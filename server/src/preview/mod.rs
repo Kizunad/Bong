@@ -16,6 +16,8 @@ use valence::prelude::{
     ViewDistance, With,
 };
 
+pub mod decorations;
+
 /// Client → Server 远距离 teleport 请求。由 chat_collector 解析 `!preview-tp` 命令
 /// 后 emit；preview module 的 system 消费。
 ///
@@ -41,10 +43,15 @@ pub fn register(app: &mut App) {
     if preview_mode_enabled() {
         app.add_systems(
             Update,
-            (handle_preview_teleport, boost_view_distance_for_preview),
+            (
+                handle_preview_teleport,
+                boost_view_distance_for_preview,
+                decorations::spawn_decorations_once_system,
+            ),
         );
         tracing::info!(
-            "[bong][preview] BONG_PREVIEW_MODE=1 — !preview-tp + ViewDistance(32) 已激活"
+            "[bong][preview] BONG_PREVIEW_MODE=1 — !preview-tp + ViewDistance(32) + \
+             decorations 已激活"
         );
     }
 }
