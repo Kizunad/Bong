@@ -13,6 +13,7 @@ use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::overload::MeridianOverloadEvent;
+use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::cultivation::qi_zero_decay::RealmRegressed;
 use crate::cultivation::tribulation::{
     TribulationAnnounce, TribulationFailed, TribulationWaveCleared,
@@ -419,6 +420,30 @@ pub fn emit_skill_audio_triggers(
     }
 }
 
+pub fn emit_social_audio_triggers(
+    mut duo_she_warnings: EventReader<DuoSheWarningEvent>,
+    positions: Query<&Position>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+) {
+    for warning in duo_she_warnings.read() {
+        let Some(entity) = entity_from_char_target(warning.target_id.as_str()) else {
+            continue;
+        };
+        let Ok(position) = positions.get(entity) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            "exposure_name",
+            entity,
+            position.get(),
+            None,
+            1.0,
+            0.0,
+        );
+    }
+}
+
 pub fn emit_player_local_audio(
     audio: &mut EventWriter<PlaySoundRecipeRequest>,
     recipe_id: impl Into<String>,
@@ -489,6 +514,7 @@ fn attenuation_for_recipe(recipe_id: &str) -> AudioAttenuation {
         | "pill_consume"
         | "niche_breach"
         | "exposure_name"
+        | "narration_cue"
         | "skill_lv_up"
         | "stance_switch" => AudioAttenuation::PlayerLocal,
         "tribulation_thunder_distant" => AudioAttenuation::GlobalHint,
@@ -507,6 +533,13 @@ fn block_pos(origin: DVec3) -> [i32; 3] {
 
 fn severity_volume(severity: f64) -> f32 {
     (0.6 + severity as f32).clamp(0.6, 1.5)
+}
+
+fn entity_from_char_target(target: &str) -> Option<Entity> {
+    target
+        .strip_prefix("char:")
+        .and_then(|bits| bits.parse::<u64>().ok())
+        .map(Entity::from_bits)
 }
 
 #[allow(dead_code)]

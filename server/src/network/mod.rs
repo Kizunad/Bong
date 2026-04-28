@@ -295,7 +295,9 @@ pub fn register(app: &mut App) {
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             audio_event_emit::handle_audio_debug_commands,
             audio_event_emit::emit_audio_play_payloads
-                .after(audio_event_emit::handle_audio_debug_commands),
+                .after(audio_event_emit::handle_audio_debug_commands)
+                .after(process_redis_inbound)
+                .after(emit_gameplay_narrations),
             audio_event_emit::emit_audio_stop_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
@@ -324,6 +326,8 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_botany_audio_triggers,
             audio_trigger::emit_lingtian_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
+            audio_trigger::emit_social_audio_triggers
+                .after(crate::cultivation::possession::process_duo_she_requests),
             audio_trigger::emit_player_state_audio_triggers,
         )
             .before(audio_event_emit::emit_audio_play_payloads),
@@ -672,6 +676,7 @@ fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut audio_events: EventWriter<audio_event_emit::PlaySoundRecipeRequest>,
 ) {
     let Some(mut gameplay_narrations) = gameplay_narrations else {
         return;
@@ -685,6 +690,7 @@ fn emit_gameplay_narrations(
     process_agent_narrations(
         &mut clients,
         zone_registry.as_deref(),
+        &mut audio_events,
         narrations.as_slice(),
     );
 }
@@ -1205,6 +1211,7 @@ fn process_redis_inbound(
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
     mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    mut audio_events: EventWriter<audio_event_emit::PlaySoundRecipeRequest>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
@@ -1251,6 +1258,7 @@ fn process_redis_inbound(
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
                     &mut life_records,
+                    &mut audio_events,
                     persistence_settings.as_deref(),
                     narr.narrations.as_slice(),
                 );
@@ -1575,10 +1583,11 @@ fn write_world_model_runtime_mirror(
 fn process_agent_narrations(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    audio_events: &mut EventWriter<audio_event_emit::PlaySoundRecipeRequest>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(clients, zone_registry, audio_events, narration);
     }
 }
 
@@ -1587,6 +1596,7 @@ fn process_agent_narrations_with_dedupe(
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
     life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    audio_events: &mut EventWriter<audio_event_emit::PlaySoundRecipeRequest>,
     persistence_settings: Option<&PersistenceSettings>,
     narrations: &[crate::schema::narration::Narration],
 ) {
@@ -1602,7 +1612,7 @@ fn process_agent_narrations_with_dedupe(
         }
 
         archive_death_insight_narration(life_records, persistence_settings, narration);
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(clients, zone_registry, audio_events, narration);
     }
 }
 
@@ -1763,6 +1773,7 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
 fn process_single_narration(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    audio_events: &mut EventWriter<audio_event_emit::PlaySoundRecipeRequest>,
     narration: &crate::schema::narration::Narration,
 ) {
     let selector = match narration_selector(narration) {
@@ -1800,6 +1811,15 @@ fn process_single_narration(
 
     for entity in routed_targets.iter().copied() {
         if let Ok((_, mut client, _, _)) = clients.get_mut(entity) {
+            audio_events.send(audio_event_emit::PlaySoundRecipeRequest {
+                recipe_id: "narration_cue".to_string(),
+                instance_id: 0,
+                pos: None,
+                flag: None,
+                volume_mul: 1.0,
+                pitch_shift: 0.0,
+                recipient: audio_event_emit::AudioRecipient::Single(entity),
+            });
             send_server_data_payload(&mut client, payload_bytes.as_slice());
         }
     }
