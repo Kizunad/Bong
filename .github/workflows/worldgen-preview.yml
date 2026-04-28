@@ -45,8 +45,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install worldgen Python deps
+        run: pip install numpy
+
+      - name: Run worldgen pipeline (raster + PNG previews)
+        # focus-{layout,surface,height}-preview.png + zone-*-preview.png
+        # 这些是 matplotlib 无关的纯 stdlib + numpy 出图（exporters.py 用 zlib
+        # 手写 PNG），看到的是大尺度 raster 顶视，跟 client 截图互补：
+        # - raster PNG 看几千 blocks 整张图（worldgen 全貌、山脉、zone 布局）
+        # - client 截图看 spawn 周围 ~512 blocks 的真游戏画面
+        working-directory: worldgen
+        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot raster
 
       - name: Cache Rust target
         uses: actions/cache@v4
@@ -100,19 +117,30 @@ jobs:
             rm -f /tmp/bong-preview-server.pid
           fi
 
-      - name: List screenshot output
+      - name: List screenshot + raster output
         if: always()
         run: |
+          echo "=== client 截图 (近景 / 真游戏画面) ==="
           ls -la client/run/screenshots/ 2>/dev/null || echo "screenshots/ 不存在"
           find client/run -name "preview-*.png" -ls 2>/dev/null || true
+          echo ""
+          echo "=== worldgen raster PNG (顶视全图 / 大尺度) ==="
+          find worldgen/generated -name "*-preview.png" -ls 2>/dev/null | head -30 || true
 
-      - name: Upload screenshot artifact
+      - name: Upload screenshot + raster artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: worldgen-snapshot-${{ github.event.pull_request.number || github.run_id }}
+          # 双轨：client 真游戏画面 + worldgen raster 顶视大全图
+          # raster PNG 包含：
+          #   focus-{layout,surface,height}-preview.png  — 蓝图全图聚焦视
+          #   {layout,surface,height}-preview.png        — 整张地图大全景
+          #   zone-<name>-{layout,surface,height}-preview.png  — 每个 zone 顶视
+          # 一次跑产 30+ 张 PNG，看 zone 布局 / 山脉 / 灵气分布等大尺度信息
           path: |
             client/run/screenshots/preview-*.png
+            worldgen/generated/**/*-preview.png
           if-no-files-found: warn
 
       - name: Upload server log on failure
