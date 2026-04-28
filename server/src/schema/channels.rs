@@ -18,6 +18,15 @@ pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
 pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
 
+// 天劫（plan-tribulation-v1 §6）：所有天劫事件统一进主 channel；子 channel 常量
+// 仅作前端/agent 分流语义标注，当前 Redis bridge 发布到 CH_TRIBULATION。
+pub const CH_TRIBULATION: &str = "bong:tribulation";
+pub const CH_TRIBULATION_OMEN: &str = "bong:tribulation/omen";
+pub const CH_TRIBULATION_LOCK: &str = "bong:tribulation/lock";
+pub const CH_TRIBULATION_WAVE: &str = "bong:tribulation/wave";
+pub const CH_TRIBULATION_SETTLE: &str = "bong:tribulation/settle";
+pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
+
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
@@ -61,6 +70,12 @@ mod tests {
         assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
         assert_eq!(CH_AGING, "bong:aging");
         assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
+        assert_eq!(CH_TRIBULATION, "bong:tribulation");
+        assert_eq!(CH_TRIBULATION_OMEN, "bong:tribulation/omen");
+        assert_eq!(CH_TRIBULATION_LOCK, "bong:tribulation/lock");
+        assert_eq!(CH_TRIBULATION_WAVE, "bong:tribulation/wave");
+        assert_eq!(CH_TRIBULATION_SETTLE, "bong:tribulation/settle");
+        assert_eq!(CH_TRIBULATION_COLLAPSE, "bong:tribulation/collapse");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");

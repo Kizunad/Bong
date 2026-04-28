@@ -12,7 +12,7 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
     CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_PLAYER_CHAT, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_PLAYER_CHAT, CH_TRIBULATION, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -24,6 +24,7 @@ use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
+use crate::schema::tribulation::TribulationEventV1;
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::world_state::WorldStateV1;
@@ -61,6 +62,7 @@ pub enum RedisOutbound {
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
+    TribulationEvent(TribulationEventV1),
     BotanyEcology(BotanyEcologySnapshotV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
@@ -409,6 +411,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_DUO_SHE_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TribulationEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TribulationEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TRIBULATION,
                 payload,
             })
         }

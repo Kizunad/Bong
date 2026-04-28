@@ -24,6 +24,7 @@ pub mod lingtian;
 pub mod narration;
 pub mod server_data;
 pub mod skill;
+pub mod tribulation;
 pub mod tsy;
 pub mod tsy_hostile;
 pub mod vfx_event;
