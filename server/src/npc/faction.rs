@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
-use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
+use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, Position, Query, Res, Resource,
-    Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, IntoSystemConfigs, Position,
+    PreUpdate, Query, Res, Resource, Update, With,
 };
 
+use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::{DuelTarget, NpcMarker};
 
@@ -405,26 +406,39 @@ impl ActionBuilder for MissionExecuteAction {
 pub fn register(app: &mut App) {
     app.insert_resource(FactionStore::default())
         .add_event::<FactionEventNotice>();
-    app.add_systems(Update, assign_hostile_encounters);
-    // Disciple Scorer/Action 注册临时撤回；等 spawn_disciple 真实铺开
-    // FactionMembership NPC 后单独 PR 再接入。测试走局部 add_systems。
+    app.add_systems(Update, assign_hostile_encounters)
+        .add_systems(
+            PreUpdate,
+            (loyalty_scorer_system, mission_queue_scorer_system).in_set(BigBrainSet::Scorers),
+        )
+        .add_systems(
+            PreUpdate,
+            mission_execute_action_system.in_set(BigBrainSet::Actions),
+        );
 }
 
 fn loyalty_scorer_system(
     store: Res<FactionStore>,
-    members: Query<&FactionMembership, With<NpcMarker>>,
+    members: Query<(&FactionMembership, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<LoyaltyScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match members.get(*actor) {
-            Ok(membership) => {
+            Ok((membership, tier)) => match lod_gated_score(tier, tick, &cfg, || {
                 let bias = store
                     .iter()
                     .find(|f| f.id == membership.faction_id)
                     .map(|f| f.loyalty_bias)
                     .unwrap_or(0.5);
                 ((membership.reputation.loyalty() + bias) * 0.5).clamp(0.0, 1.0) as f32
-            }
+            }) {
+                Some(value) => value,
+                None => continue,
+            },
             Err(_) => 0.0,
         };
         score.set(value);
@@ -432,18 +446,25 @@ fn loyalty_scorer_system(
 }
 
 fn mission_queue_scorer_system(
-    members: Query<&FactionMembership, With<NpcMarker>>,
+    members: Query<(&FactionMembership, Option<&NpcLodTier>), With<NpcMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<MissionQueueScorer>>,
+    lod_config: Option<Res<NpcLodConfig>>,
+    lod_tick: Option<Res<NpcLodTick>>,
 ) {
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = match members.get(*actor) {
-            Ok(m) => {
+            Ok((m, tier)) => match lod_gated_score(tier, tick, &cfg, || {
                 let pending = m
                     .mission_queue
                     .pending_count()
                     .min(MISSION_QUEUE_SCORER_CAP);
                 (pending as f32 / MISSION_QUEUE_SCORER_CAP as f32).clamp(0.0, 1.0)
-            }
+            }) {
+                Some(value) => value,
+                None => continue,
+            },
             Err(_) => 0.0,
         };
         score.set(value);

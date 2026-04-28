@@ -21,8 +21,8 @@ use crate::npc::brain::{
     WanderState,
 };
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteState, MissionQueue,
-    Reputation,
+    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
+    MissionQueue, MissionQueueScorer, Reputation,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{
@@ -32,12 +32,15 @@ use crate::npc::lifecycle::{
 use crate::npc::movement::{MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
-// Scorer/Action symbols (TerritoryIntruderScorer / LoyaltyScorer / GuardianDutyScorer / ...)
-// 暂不 import —— thinker 已降级到 core scorers，直到 ccfbb458 撤回的 ECS
-// 注册恢复后再接回。状态组件 (HuntState / GuardState / TrialState / MissionExecuteState)
-// 仍保留，等后续 PR 挂新 Scorer/Action 时不用重写 spawn 流程。
-use crate::npc::relic::{GuardState, GuardianDuty, GuardianRelicTag, TrialEval, TrialState};
-use crate::npc::territory::{HuntState, ProtectYoungState, Territory, TerritoryPatrolState};
+use crate::npc::relic::{
+    GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
+    TrialEval, TrialEvalScorer, TrialState,
+};
+use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
+use crate::npc::territory::{
+    HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
+    TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
+};
 use crate::skin::{npc_uuid, NpcPlayerSkin, NpcSkinFallbackPolicy, SignedSkin, SkinPool};
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -565,31 +568,18 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(WanderScorer, WanderAction)
 }
 
-/// Beast thinker（plan §2）：
-/// 完整行为链是 ProtectYoung → Hunt（入侵者）→ 近战 → Chase → 领地巡逻
-/// → Wander。但 Phase 4 的 `TerritoryIntruder` / `ProtectYoung` Scorer
-/// 与 `Hunt` / `TerritoryPatrol` / `ProtectYoung` Action 的 ECS 注册在
-/// `ccfbb458` 因 e2e TPS 回归被撤回，尚未接入。
-///
-/// 当前降级到已注册的 core scorers / actions —— 幼崽繁衍真的 spawn
-/// 后仍能走"老化退休 / 近战 / 追击 / 游荡"的基础链，不会卡在
-/// `TerritoryPatrolAction::Requested`。下一 PR 恢复 Scorer/Action
-/// 注册时把 territory 行为接回来。
 fn beast_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
+        .when(ProtectYoungScorer, ProtectYoungAction)
+        .when(TerritoryIntruderScorer, HuntAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
+        .when(WanderScorer, TerritoryPatrolAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// Disciple thinker（plan §2）：完整设计是 Rogue 基线 + `MissionQueue` /
-/// `Loyalty` 的派系任务链；`MissionExecuteAction` / `LoyaltyScorer` /
-/// `MissionQueueScorer` 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到
-/// Rogue 行为链，行为和 `rogue_npc_thinker` 等价（保留独立 fn 是为了
-/// 让 spawn_disciple_npc_at 的 FactionMembership 组件仍有唯一入口，
-/// 等任务行为接入时从此处扩展）。
 #[allow(dead_code)]
 fn disciple_npc_thinker() -> ThinkerBuilder {
     Thinker::build()
@@ -597,23 +587,22 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(FactionDuelScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
+        .when(MissionQueueScorer, MissionExecuteAction)
         .when(CultivationDriveScorer, CultivateAction)
+        .when(SocializeScorer, SocializeAction)
         .when(CuriosityScorer, WanderAction)
         .when(WanderScorer, WanderAction)
 }
 
-/// GuardianRelic thinker（plan §2）：完整行为包括 `GuardianDuty` 追入侵者
-/// 和 `TrialEval` 开考验。两个 Scorer + `GuardAction` / `TrialAction`
-/// 的 ECS 注册在 `ccfbb458` 因 TPS 回归撤回，当前降级到 Wander。
-///
-/// 兜底 —— 守护者 spawn 后会停在遗迹中心附近，不会卡 `GuardAction::Requested`。
-///
-/// 不走 AgeingScorer —— GuardianRelic 不老。
 #[allow(dead_code)]
 fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
+        .when(GuardianDutyScorer, GuardAction)
+        .when(TrialEvalScorer, TrialAction)
         .when(WanderScorer, WanderAction)
 }
 
@@ -920,6 +909,7 @@ pub fn spawn_disciple_npc_at(
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),
+        SocializeState::default(),
         MissionExecuteState::default(),
         FactionMembership {
             faction_id,
@@ -1436,6 +1426,121 @@ mod tests {
             DVec3::new(18.0, 66.0, 18.0),
             DVec3::new(18.0, 66.0, 18.0),
             0.0,
+        );
+    }
+
+    #[test]
+    fn spawn_beast_npc_at_attaches_live_territory_brain_components() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (setup_test_layer, spawn_test_beast.after(setup_test_layer)),
+        );
+        app.update();
+        app.update();
+
+        let beast = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<TerritoryPatrolState>(beast).is_some());
+        assert!(app.world().get::<HuntState>(beast).is_some());
+        assert!(app.world().get::<ProtectYoungState>(beast).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(beast)
+            .expect("beast should carry the live territory thinker");
+    }
+
+    #[test]
+    fn spawn_disciple_npc_at_attaches_mission_and_social_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<MissionExecuteState>(disciple).is_some());
+        assert!(app.world().get::<SocializeState>(disciple).is_some());
+        assert!(app.world().get::<FactionMembership>(disciple).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(disciple)
+            .expect("disciple should carry the live faction/social thinker");
+    }
+
+    #[test]
+    fn spawn_relic_guard_npc_at_attaches_guardian_trial_state() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+
+        assert!(app.world().get::<GuardState>(guard).is_some());
+        assert!(app.world().get::<TrialState>(guard).is_some());
+        assert!(app.world().get::<GuardianDuty>(guard).is_some());
+        assert!(app.world().get::<TrialEval>(guard).is_some());
+        let _thinker = app
+            .world()
+            .get::<ThinkerBuilder>(guard)
+            .expect("relic guard should carry the live guardian thinker");
+    }
+
+    fn only_spawned_npc(app: &mut App) -> Entity {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+        let npcs = query.iter(world).collect::<Vec<_>>();
+        assert_eq!(npcs.len(), 1);
+        npcs[0]
+    }
+
+    fn spawn_test_beast(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_beast_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(40.0, 66.0, 40.0),
+            Territory::new(DVec3::new(40.0, 66.0, 40.0), 30.0),
+            0.0,
+        );
+    }
+
+    fn spawn_test_disciple(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_disciple_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(42.0, 66.0, 42.0),
+            DVec3::new(42.0, 66.0, 42.0),
+            FactionId::Attack,
+            FactionRank::Disciple,
+            None,
+            0.0,
+        );
+    }
+
+    fn spawn_test_relic_guard(mut commands: Commands, layer: Res<TestLayer>) {
+        spawn_relic_guard_npc_at(
+            &mut commands,
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(44.0, 66.0, 44.0),
+            24.0,
+            "relic:test",
+            "trial:test",
         );
     }
 
