@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "recipe_id": "pill_consume",
+  "instance_id": 42,
+  "pos": [1, 64, -2],
+  "volume_mul": 1,
+  "pitch_shift": 0,
+  "recipe": {
+    "id": "pill_consume",
+    "layers": [
+      { "sound": "minecraft:entity.generic.drink", "volume": 0.4, "pitch": 1, "delay_ticks": 0 },
+      { "sound": "minecraft:block.brewing_stand.brew", "volume": 0.3, "pitch": 1.2, "delay_ticks": 5 }
+    ],
+    "priority": 40,
+    "attenuation": "player_local",
+    "category": "VOICE"
+  }
+}

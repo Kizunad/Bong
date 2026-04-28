@@ -1,0 +1,10 @@
+{
+  "id": "realm_regression",
+  "layers": [
+    { "sound": "minecraft:block.bell.resonate", "volume": 0.35, "pitch": 0.6, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.zombie_villager.converted", "volume": 0.18, "pitch": 0.7, "delay_ticks": 8 }
+  ],
+  "priority": 75,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

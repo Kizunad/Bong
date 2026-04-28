@@ -84,7 +84,7 @@ use self::lifespan::{
 };
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
-use self::overload::overload_detection_tick;
+use self::overload::{overload_detection_tick, MeridianOverloadEvent};
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
     DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
@@ -137,6 +137,7 @@ pub fn register(app: &mut App) {
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
+    app.add_event::<MeridianOverloadEvent>();
 
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(

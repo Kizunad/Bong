@@ -1,0 +1,10 @@
+{
+  "id": "pill_consume",
+  "layers": [
+    { "sound": "minecraft:entity.generic.drink", "volume": 0.4, "pitch": 1.0, "delay_ticks": 0 },
+    { "sound": "minecraft:block.brewing_stand.brew", "volume": 0.3, "pitch": 1.2, "delay_ticks": 5 }
+  ],
+  "priority": 40,
+  "attenuation": "player_local",
+  "category": "VOICE"
+}

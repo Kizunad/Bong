@@ -1,5 +1,7 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod audio_event_emit;
+pub mod audio_trigger;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -47,7 +49,8 @@ use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
     ident, Added, App, Changed, Client, Commands, Entity, EntityKind, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
+    Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup, Update,
+    Username, With,
 };
 
 use crate::combat::components::Lifecycle;
@@ -291,6 +294,12 @@ pub fn register(app: &mut App) {
             cultivation_bridge::publish_aging_events
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            audio_event_emit::handle_audio_debug_commands,
+            audio_event_emit::emit_audio_play_payloads
+                .after(audio_event_emit::handle_audio_debug_commands)
+                .after(process_redis_inbound)
+                .after(emit_gameplay_narrations),
+            audio_event_emit::emit_audio_stop_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads
                 .after(vfx_event_emit::handle_vfx_debug_commands),
@@ -305,6 +314,24 @@ pub fn register(app: &mut App) {
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
+    );
+    app.add_systems(
+        Update,
+        (
+            audio_trigger::emit_combat_audio_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            audio_trigger::emit_cultivation_audio_triggers,
+            audio_trigger::emit_tribulation_audio_triggers,
+            audio_trigger::emit_alchemy_audio_triggers,
+            audio_trigger::emit_forge_audio_triggers,
+            audio_trigger::emit_botany_audio_triggers,
+            audio_trigger::emit_lingtian_audio_triggers,
+            audio_trigger::emit_skill_audio_triggers,
+            audio_trigger::emit_social_audio_triggers
+                .after(crate::cultivation::possession::process_duo_she_requests),
+            audio_trigger::emit_player_state_audio_triggers,
+        )
+            .before(audio_event_emit::emit_audio_play_payloads),
     );
     app.add_systems(
         Update,
@@ -380,6 +407,10 @@ pub fn register(app: &mut App) {
     );
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
+    app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
+    app.init_resource::<audio_trigger::AudioTriggerState>();
+    app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
+    app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
@@ -646,6 +677,7 @@ fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(mut gameplay_narrations) = gameplay_narrations else {
         return;
@@ -656,9 +688,11 @@ fn emit_gameplay_narrations(
         return;
     }
 
+    let mut audio_events = audio_events;
     process_agent_narrations(
         &mut clients,
         zone_registry.as_deref(),
+        audio_events.as_deref_mut(),
         narrations.as_slice(),
     );
 }
@@ -1179,9 +1213,11 @@ fn process_redis_inbound(
     mut commands: Commands,
     mut insight_offers: EventWriter<crate::cultivation::insight::InsightOffer>,
     mut life_records: Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
 ) {
+    let mut audio_events = audio_events;
     let mut drained_messages = 0;
 
     while drained_messages < REDIS_INBOUND_DRAIN_BUDGET {
@@ -1225,6 +1261,7 @@ fn process_redis_inbound(
                     zone_registry.as_deref(),
                     &mut narration_dedupe,
                     &mut life_records,
+                    audio_events.as_deref_mut(),
                     persistence_settings.as_deref(),
                     narr.narrations.as_slice(),
                 );
@@ -1549,10 +1586,16 @@ fn write_world_model_runtime_mirror(
 fn process_agent_narrations(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(
+            clients,
+            zone_registry,
+            audio_events.as_deref_mut(),
+            narration,
+        );
     }
 }
 
@@ -1561,6 +1604,7 @@ fn process_agent_narrations_with_dedupe(
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
     life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     persistence_settings: Option<&PersistenceSettings>,
     narrations: &[crate::schema::narration::Narration],
 ) {
@@ -1576,7 +1620,12 @@ fn process_agent_narrations_with_dedupe(
         }
 
         archive_death_insight_narration(life_records, persistence_settings, narration);
-        process_single_narration(clients, zone_registry, narration);
+        process_single_narration(
+            clients,
+            zone_registry,
+            audio_events.as_deref_mut(),
+            narration,
+        );
     }
 }
 
@@ -1737,6 +1786,7 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
 fn process_single_narration(
     clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
     zone_registry: Option<&ZoneRegistry>,
+    mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narration: &crate::schema::narration::Narration,
 ) {
     let selector = match narration_selector(narration) {
@@ -1774,6 +1824,17 @@ fn process_single_narration(
 
     for entity in routed_targets.iter().copied() {
         if let Ok((_, mut client, _, _)) = clients.get_mut(entity) {
+            if let Some(audio_events) = audio_events.as_deref_mut() {
+                audio_events.send(audio_event_emit::PlaySoundRecipeRequest {
+                    recipe_id: "narration_cue".to_string(),
+                    instance_id: 0,
+                    pos: None,
+                    flag: None,
+                    volume_mul: 1.0,
+                    pitch_shift: 0.0,
+                    recipient: audio_event_emit::AudioRecipient::Single(entity),
+                });
+            }
             send_server_data_payload(&mut client, payload_bytes.as_slice());
         }
     }

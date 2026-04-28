@@ -1,0 +1,10 @@
+{
+  "id": "furnace_boom",
+  "layers": [
+    { "sound": "minecraft:entity.generic.explode", "volume": 0.5, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:block.anvil.destroy", "volume": 0.25, "pitch": 0.7, "delay_ticks": 5 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "BLOCKS"
+}

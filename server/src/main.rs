@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod alchemy;
+mod audio;
 mod botany;
 mod cmd;
 mod combat;
@@ -82,6 +83,7 @@ fn run_server() {
     skill::register(&mut app);
     cultivation::register(&mut app);
     alchemy::register(&mut app);
+    audio::register(&mut app);
     combat::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);
