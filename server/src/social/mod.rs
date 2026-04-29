@@ -52,6 +52,7 @@ const DEATH_EXPOSURE_RADIUS: f64 = 50.0;
 const COMPANION_RADIUS: f64 = 50.0;
 const COMPANION_SCAN_INTERVAL_TICKS: u64 = 20;
 const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
+const COMPANION_EXPIRE_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
 const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
@@ -130,6 +131,7 @@ pub fn register(app: &mut App) {
                 .after(handle_death_social_effects)
                 .after(update_companion_relationships)
                 .after(handle_social_pacts),
+            expire_companion_relationships.after(apply_social_relationships),
             apply_social_renown_deltas
                 .after(handle_death_social_effects)
                 .after(handle_social_pacts),
@@ -1078,9 +1080,70 @@ fn update_companion_relationships(
                     metadata: serde_json::json!({
                         "source": "co_presence",
                         "accumulated_seconds": seconds,
+                        "last_interaction_tick": clock.tick,
                     }),
                 });
             }
+        }
+    }
+}
+
+fn expire_companion_relationships(
+    clock: Res<CombatClock>,
+    persistence: Option<Res<PersistenceSettings>>,
+    mut players: Query<(&Lifecycle, &mut Relationships), With<Client>>,
+) {
+    if clock.tick == 0 {
+        return;
+    }
+
+    let mut expired_pairs = HashSet::new();
+    for (lifecycle, mut relationships) in &mut players {
+        if lifecycle.state == LifecycleState::Terminated {
+            continue;
+        }
+        let char_id = lifecycle.character_id.clone();
+        relationships.edges.retain(|relationship| {
+            if relationship.kind != RelationshipKindV1::Companion {
+                return true;
+            }
+            let last_interaction_tick = companion_last_interaction_tick(relationship);
+            let expired =
+                clock.tick.saturating_sub(last_interaction_tick) >= COMPANION_EXPIRE_TICKS;
+            if expired {
+                expired_pairs.insert(companion_pair_key(&char_id, &relationship.peer));
+            }
+            !expired
+        });
+    }
+
+    let Some(persistence) = persistence.as_deref() else {
+        return;
+    };
+    for (left, right) in expired_pairs {
+        if let Err(error) = delete_social_relationship(
+            persistence,
+            left.as_str(),
+            right.as_str(),
+            RelationshipKindV1::Companion,
+        ) {
+            tracing::warn!(
+                "[bong][social] failed to delete expired companion `{}` -> `{}`: {error}",
+                left,
+                right
+            );
+        }
+        if let Err(error) = delete_social_relationship(
+            persistence,
+            right.as_str(),
+            left.as_str(),
+            RelationshipKindV1::Companion,
+        ) {
+            tracing::warn!(
+                "[bong][social] failed to delete expired companion `{}` -> `{}`: {error}",
+                right,
+                left
+            );
         }
     }
 }
@@ -1427,6 +1490,26 @@ fn persist_social_relationship(
     Ok(())
 }
 
+fn delete_social_relationship(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    peer_char_id: &str,
+    kind: RelationshipKindV1,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let kind = enum_label(kind)?;
+    connection
+        .execute(
+            "
+            DELETE FROM social_relationships
+            WHERE char_id = ?1 AND peer_char_id = ?2 AND relationship_type = ?3
+            ",
+            params![char_id, peer_char_id, kind],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn persist_social_exposure(
     persistence: &PersistenceSettings,
     exposure: &SocialExposureEvent,
@@ -1692,6 +1775,14 @@ fn pact_exposure_witnesses(actor: &str, peer: &str, witnesses: &[String]) -> Vec
         }
     }
     sorted_witnesses(all)
+}
+
+fn companion_last_interaction_tick(relationship: &Relationship) -> u64 {
+    relationship
+        .metadata
+        .get("last_interaction_tick")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(relationship.since_tick)
 }
 
 fn companion_pair_key(left: &str, right: &str) -> CompanionPairKey {
@@ -2102,6 +2193,70 @@ mod tests {
         assert_eq!(collected[0].left_kind, RelationshipKindV1::Companion);
         assert_eq!(collected[0].right_kind, RelationshipKindV1::Companion);
         assert_eq!(collected[0].metadata["source"], "co_presence");
+        assert_eq!(collected[0].metadata["last_interaction_tick"], 20);
+    }
+
+    #[test]
+    fn stale_companion_relationships_expire_and_delete_persisted_edges() {
+        let (persistence, data_dir) = social_persistence("companion-expire");
+        persist_social_relationship(
+            &persistence,
+            "char:alice",
+            &Relationship {
+                kind: RelationshipKindV1::Companion,
+                peer: "char:bob".to_string(),
+                since_tick: 10,
+                metadata: serde_json::json!({ "last_interaction_tick": 10 }),
+            },
+        )
+        .expect("left companion edge should persist");
+        persist_social_relationship(
+            &persistence,
+            "char:bob",
+            &Relationship {
+                kind: RelationshipKindV1::Companion,
+                peer: "char:alice".to_string(),
+                since_tick: 10,
+                metadata: serde_json::json!({ "last_interaction_tick": 10 }),
+            },
+        )
+        .expect("right companion edge should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.insert_resource(CombatClock {
+            tick: 10 + COMPANION_EXPIRE_TICKS,
+        });
+        app.add_systems(Update, expire_companion_relationships);
+        let (alice_bundle, _alice_helper) = create_mock_client("Alice");
+        let alice = app.world_mut().spawn(alice_bundle).id();
+        app.world_mut().entity_mut(alice).insert((
+            Lifecycle {
+                character_id: "char:alice".to_string(),
+                ..Default::default()
+            },
+            Relationships {
+                edges: vec![Relationship {
+                    kind: RelationshipKindV1::Companion,
+                    peer: "char:bob".to_string(),
+                    since_tick: 10,
+                    metadata: serde_json::json!({ "last_interaction_tick": 10 }),
+                }],
+            },
+        ));
+
+        app.update();
+
+        let relationships = app.world().get::<Relationships>(alice).unwrap();
+        assert!(relationships.edges.is_empty());
+        let alice = load_social_components(&persistence, "char:alice")
+            .expect("alice relationship state should reload");
+        assert!(alice.relationships.edges.is_empty());
+        let bob = load_social_components(&persistence, "char:bob")
+            .expect("bob relationship state should reload");
+        assert!(bob.relationships.edges.is_empty());
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]
