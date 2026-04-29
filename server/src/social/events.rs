@@ -43,6 +43,18 @@ pub struct SocialRelationshipEvent {
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SocialPactEvent {
+    pub left: String,
+    pub right: String,
+    pub terms: String,
+    pub tick: u64,
+    pub broken: bool,
+    pub breaker: Option<String>,
+    #[serde(default)]
+    pub witnesses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct SpiritNichePlaceRequest {
     pub player: Entity,
     pub pos: [i32; 3],

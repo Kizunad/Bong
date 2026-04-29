@@ -20,9 +20,9 @@ use self::components::{
     Anonymity, ExposureEvent, ExposureLog, Relationship, Relationships, Renown, SpiritNiche,
 };
 use self::events::{
-    PlayerChatCollected, SocialExposureEvent, SocialRelationshipEvent, SocialRenownDeltaEvent,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
-    SpiritNicheRevealSource,
+    PlayerChatCollected, SocialExposureEvent, SocialPactEvent, SocialRelationshipEvent,
+    SocialRenownDeltaEvent, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
+    SpiritNicheRevealRequest, SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
@@ -96,6 +96,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<SpiritNicheRegistry>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
+    app.add_event::<SocialPactEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
@@ -121,14 +122,21 @@ pub fn register(app: &mut App) {
                 .after(detect_spirit_niche_break_attempts)
                 .after(handle_spirit_niche_coordinate_reveals),
             update_companion_relationships.after(attach_social_bundle_to_joined_clients),
-            apply_social_exposures.after(expose_chat_speakers),
+            handle_social_pacts,
+            apply_social_exposures
+                .after(expose_chat_speakers)
+                .after(handle_social_pacts),
             apply_social_relationships
                 .after(handle_death_social_effects)
-                .after(update_companion_relationships),
-            apply_social_renown_deltas.after(handle_death_social_effects),
+                .after(update_companion_relationships)
+                .after(handle_social_pacts),
+            apply_social_renown_deltas
+                .after(handle_death_social_effects)
+                .after(handle_social_pacts),
             publish_social_events
                 .after(apply_social_exposures)
-                .after(update_companion_relationships),
+                .after(apply_social_relationships)
+                .after(apply_social_renown_deltas),
         ),
     );
 }
@@ -371,10 +379,12 @@ fn apply_social_exposures(
     mut clients: Query<(&Lifecycle, &mut Client), With<Client>>,
 ) {
     for exposure in exposures.read() {
+        let mut actor_was_online = false;
         if let Some((_, mut anonymity, mut log)) = players
             .iter_mut()
             .find(|(lifecycle, _, _)| lifecycle.character_id == exposure.actor)
         {
+            actor_was_online = true;
             anonymity.expose_to(exposure.witnesses.clone());
             log.0.push(ExposureEvent {
                 tick: exposure.tick,
@@ -393,6 +403,38 @@ fn apply_social_exposures(
                 if let Err(error) = persist_social_exposure(persistence, exposure) {
                     tracing::warn!(
                         "[bong][social] failed to persist exposure for `{}`: {error}",
+                        exposure.actor
+                    );
+                }
+            }
+        }
+
+        if !actor_was_online {
+            if let Some(persistence) = persistence.as_deref() {
+                match load_social_anonymity_from_persistence(persistence, exposure.actor.as_str()) {
+                    Ok(mut anonymity) => {
+                        anonymity.expose_to(exposure.witnesses.clone());
+                        if let Err(error) = persist_social_anonymity(
+                            persistence,
+                            exposure.actor.as_str(),
+                            &anonymity,
+                        ) {
+                            tracing::warn!(
+                                "[bong][social] failed to persist offline anonymity for `{}`: {error}",
+                                exposure.actor
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][social] failed to load anonymity for `{}` before exposure: {error}",
+                            exposure.actor
+                        );
+                    }
+                }
+                if let Err(error) = persist_social_exposure(persistence, exposure) {
+                    tracing::warn!(
+                        "[bong][social] failed to persist offline exposure for `{}`: {error}",
                         exposure.actor
                     );
                 }
@@ -422,6 +464,84 @@ fn apply_social_exposures(
                 send_server_data_payload(&mut client, bytes.as_slice());
             }
         }
+    }
+}
+
+fn handle_social_pacts(
+    mut pacts: EventReader<SocialPactEvent>,
+    mut exposures: EventWriter<SocialExposureEvent>,
+    mut relationships: EventWriter<SocialRelationshipEvent>,
+    mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
+) {
+    for pact in pacts.read() {
+        if pact.left == pact.right {
+            continue;
+        }
+        relationships.send(SocialRelationshipEvent {
+            left: pact.left.clone(),
+            right: pact.right.clone(),
+            left_kind: RelationshipKindV1::Pact,
+            right_kind: RelationshipKindV1::Pact,
+            tick: pact.tick,
+            metadata: serde_json::json!({
+                "source": "pact",
+                "terms": pact.terms.clone(),
+                "broken": pact.broken,
+                "breaker": pact.breaker.clone(),
+            }),
+        });
+
+        let left_witnesses = pact_exposure_witnesses(
+            pact.left.as_str(),
+            pact.right.as_str(),
+            pact.witnesses.as_slice(),
+        );
+        if !left_witnesses.is_empty() {
+            exposures.send(SocialExposureEvent {
+                actor: pact.left.clone(),
+                kind: ExposureKindV1::Trade,
+                witnesses: left_witnesses,
+                tick: pact.tick,
+                zone: None,
+            });
+        }
+        let right_witnesses = pact_exposure_witnesses(
+            pact.right.as_str(),
+            pact.left.as_str(),
+            pact.witnesses.as_slice(),
+        );
+        if !right_witnesses.is_empty() {
+            exposures.send(SocialExposureEvent {
+                actor: pact.right.clone(),
+                kind: ExposureKindV1::Trade,
+                witnesses: right_witnesses,
+                tick: pact.tick,
+                zone: None,
+            });
+        }
+
+        if !pact.broken {
+            continue;
+        }
+        let Some(breaker) = pact.breaker.as_ref() else {
+            continue;
+        };
+        if breaker != &pact.left && breaker != &pact.right {
+            continue;
+        }
+        renown_deltas.send(SocialRenownDeltaEvent {
+            char_id: breaker.clone(),
+            fame_delta: 0,
+            notoriety_delta: 50,
+            tags_added: vec![RenownTagV1 {
+                tag: "背盟者".to_string(),
+                weight: 50.0,
+                last_seen_tick: pact.tick,
+                permanent: true,
+            }],
+            tick: pact.tick,
+            reason: "pact_broken".to_string(),
+        });
     }
 }
 
@@ -1042,6 +1162,14 @@ fn load_social_renown(connection: &Connection, char_id: &str) -> io::Result<Reno
     })
 }
 
+fn load_social_anonymity_from_persistence(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<Anonymity> {
+    let connection = open_social_connection(persistence)?;
+    load_social_anonymity(&connection, char_id)
+}
+
 fn load_social_renown_from_persistence(
     persistence: &PersistenceSettings,
     char_id: &str,
@@ -1556,6 +1684,16 @@ fn sorted_witnesses(witnesses: HashSet<String>) -> Vec<String> {
     witnesses
 }
 
+fn pact_exposure_witnesses(actor: &str, peer: &str, witnesses: &[String]) -> Vec<String> {
+    let mut all = HashSet::from([peer.to_string()]);
+    for witness in witnesses {
+        if witness != actor {
+            all.insert(witness.clone());
+        }
+    }
+    sorted_witnesses(all)
+}
+
 fn companion_pair_key(left: &str, right: &str) -> CompanionPairKey {
     if left <= right {
         (left.to_string(), right.to_string())
@@ -1804,6 +1942,80 @@ mod tests {
         assert_eq!(loaded.renown.fame, 3);
         assert_eq!(loaded.renown.notoriety, 5);
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn pact_events_create_relationship_exposure_and_betrayer_renown() {
+        let (persistence, data_dir) = social_persistence("pact-event");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialPactEvent>();
+        app.add_event::<SocialExposureEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(
+            Update,
+            (
+                handle_social_pacts,
+                apply_social_exposures.after(handle_social_pacts),
+                apply_social_relationships.after(handle_social_pacts),
+                apply_social_renown_deltas.after(handle_social_pacts),
+            ),
+        );
+
+        app.world_mut().send_event(SocialPactEvent {
+            left: "char:alice".to_string(),
+            right: "char:bob".to_string(),
+            terms: "同渡此劫".to_string(),
+            tick: 81,
+            broken: false,
+            breaker: None,
+            witnesses: vec!["char:witness".to_string()],
+        });
+
+        app.update();
+
+        let alice = load_social_components(&persistence, "char:alice")
+            .expect("alice pact state should persist");
+        assert!(alice.anonymity.is_exposed_to("char:bob"));
+        assert!(alice.anonymity.is_exposed_to("char:witness"));
+        assert_eq!(alice.relationships.edges.len(), 1);
+        assert_eq!(alice.relationships.edges[0].kind, RelationshipKindV1::Pact);
+        assert_eq!(alice.relationships.edges[0].peer, "char:bob");
+        assert_eq!(alice.relationships.edges[0].metadata["terms"], "同渡此劫");
+        assert_eq!(alice.relationships.edges[0].metadata["broken"], false);
+        let bob = load_social_components(&persistence, "char:bob")
+            .expect("bob pact state should persist");
+        assert!(bob.anonymity.is_exposed_to("char:alice"));
+        assert!(bob.anonymity.is_exposed_to("char:witness"));
+        assert_eq!(bob.relationships.edges[0].peer, "char:alice");
+
+        app.world_mut().send_event(SocialPactEvent {
+            left: "char:alice".to_string(),
+            right: "char:bob".to_string(),
+            terms: "同渡此劫".to_string(),
+            tick: 99,
+            broken: true,
+            breaker: Some("char:bob".to_string()),
+            witnesses: Vec::new(),
+        });
+
+        app.update();
+
+        let alice = load_social_components(&persistence, "char:alice")
+            .expect("alice broken pact state should persist");
+        assert_eq!(alice.relationships.edges.len(), 1);
+        assert_eq!(alice.relationships.edges[0].since_tick, 99);
+        assert_eq!(alice.relationships.edges[0].metadata["broken"], true);
+        assert_eq!(alice.relationships.edges[0].metadata["breaker"], "char:bob");
+        let bob = load_social_components(&persistence, "char:bob")
+            .expect("bob broken pact state should persist");
+        assert_eq!(bob.renown.notoriety, 50);
+        assert_eq!(bob.renown.tags.len(), 1);
+        assert_eq!(bob.renown.tags[0].tag, "背盟者");
+        assert!(bob.renown.tags[0].permanent);
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
