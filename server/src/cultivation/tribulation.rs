@@ -1191,6 +1191,7 @@ pub fn publish_tribulation_events(
     mut settled: EventReader<TribulationSettled>,
     mut quota_opened: EventReader<AscensionQuotaOpened>,
     states: Query<(&TribulationState, Option<&Lifecycle>, Option<&Username>)>,
+    actors: Query<(Option<&Lifecycle>, Option<&Username>)>,
 ) {
     for ev in announce.read() {
         let payload = TribulationEventV1::du_xu(
@@ -1249,10 +1250,18 @@ pub fn publish_tribulation_events(
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
     }
     for ev in settled.read() {
+        let actor_name = actors
+            .get(ev.entity)
+            .ok()
+            .and_then(|(lifecycle, username)| {
+                username
+                    .map(|name| name.0.clone())
+                    .or_else(|| lifecycle.map(|lifecycle| lifecycle.character_id.clone()))
+            });
         let payload = TribulationEventV1::du_xu(
             TribulationPhaseV1::Settle,
             Some(ev.result.char_id.clone()),
-            None,
+            actor_name,
             None,
             Some(ev.result.waves_survived),
             None,
@@ -2229,6 +2238,63 @@ mod tests {
                 assert_eq!(payload.epicenter, Some([12.0, 66.0, -8.0]));
                 assert_eq!(payload.wave_current, Some(2));
                 assert_eq!(payload.wave_total, Some(5));
+            }
+            other => panic!("unexpected outbound payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publish_settle_event_uses_actor_name() {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_systems(Update, publish_tribulation_events);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(TribulationSettled {
+                entity,
+                result: DuXuResultV1 {
+                    char_id: "offline:Azure".to_string(),
+                    outcome: DuXuOutcomeV1::Ascended,
+                    killer: None,
+                    waves_survived: 5,
+                },
+            });
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("settle event should publish to redis bridge");
+        match outbound {
+            RedisOutbound::TribulationEvent(payload) => {
+                assert_eq!(payload.phase, TribulationPhaseV1::Settle);
+                assert_eq!(payload.char_id.as_deref(), Some("offline:Azure"));
+                assert_eq!(payload.actor_name.as_deref(), Some("Azure"));
+                assert_eq!(
+                    payload.result.expect("settle should carry result").outcome,
+                    DuXuOutcomeV1::Ascended
+                );
             }
             other => panic!("unexpected outbound payload: {other:?}"),
         }
