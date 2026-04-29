@@ -35,7 +35,12 @@ public final class TribulationBroadcastHudPlanner {
             case "done" -> "\u5929\u52ab\u5df2\u8fc7";
             default -> "\u5929\u52ab\u5f02\u52a8";
         };
-        String line = "\u26a1 " + stageLabel + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName());
+        String line = "\u26a1 " + stageLabel
+            + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName())
+            + " \u00b7 \u5750\u6807 (" + Math.round(state.worldX()) + ", " + Math.round(state.worldZ()) + ")";
+        if (state.spectateDistance() >= 0d) {
+            line += " \u00b7 \u8ddd\u79bb " + Math.round(state.spectateDistance()) + " \u683c";
+        }
 
         // Background bar
         out.add(HudRenderCommand.rect(HudRenderLayer.TRIBULATION, 0, TOP_MARGIN, screenWidth, BAR_HEIGHT, BG_COLOR));
@@ -45,9 +50,9 @@ public final class TribulationBroadcastHudPlanner {
         out.add(HudRenderCommand.text(HudRenderLayer.TRIBULATION, line, x, TOP_MARGIN + 5, TEXT_COLOR));
 
         // Spectate hint
-        if (state.spectateInvite() && state.spectateDistance() > 0d
+        if (state.spectateInvite() && state.spectateDistance() >= 0d
             && state.spectateDistance() <= SPECTATE_HINT_DISTANCE) {
-            String hint = "(" + Math.round(state.spectateDistance()) + " \u683c\u5185\uff0c\u53ef\u524d\u5f80\u89c2\u6218)";
+            String hint = "(" + Math.round(state.spectateDistance()) + " \u683c\u5185\uff0c\u53ef\u524d\u5f80\u89c2\u6218\uff0c100 \u683c\u5185\u4f1a\u627f\u96f7)";
             out.add(HudRenderCommand.text(
                 HudRenderLayer.TRIBULATION, hint, x, TOP_MARGIN + BAR_HEIGHT + 2, SPECTATE_COLOR
             ));

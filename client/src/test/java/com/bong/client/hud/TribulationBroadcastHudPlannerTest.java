@@ -17,12 +17,16 @@ class TribulationBroadcastHudPlannerTest {
 
     @Test void drawsStageAndActor() {
         TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
-            true, "甲", "warn", 0, 0, 10_000L, false, 0
+            true, "甲", "warn", 12, -34, 10_000L, false, 120
         ));
         List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
         assertFalse(cmds.isEmpty());
         boolean hasWarn = cmds.stream().anyMatch(c -> c.isText() && c.text().contains("甲"));
         assertTrue(hasWarn);
+        boolean hasPositionAndDistance = cmds.stream().anyMatch(c -> c.isText()
+            && c.text().contains("坐标 (12, -34)")
+            && c.text().contains("距离 120 格"));
+        assertTrue(hasPositionAndDistance);
     }
 
     @Test void drawsLockedStage() {
@@ -46,7 +50,9 @@ class TribulationBroadcastHudPlannerTest {
             true, "甲", "warn", 0, 0, 10_000L, true, 30.0
         ));
         List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
-        boolean hasSpectate = cmds.stream().anyMatch(c -> c.isText() && c.text().contains("观"));
+        boolean hasSpectate = cmds.stream().anyMatch(c -> c.isText()
+            && c.text().contains("观战")
+            && c.text().contains("100 格内会承雷"));
         assertTrue(hasSpectate);
     }
 }
