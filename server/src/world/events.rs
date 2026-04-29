@@ -26,6 +26,9 @@ use crate::schema::common::GameEventType;
 use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
+use crate::world::karma::{
+    targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap, TARGETED_CALAMITY_BASE_PROBABILITY,
+};
 use crate::world::zone::Zone;
 
 pub const EVENT_THUNDER_TRIBULATION: &str = "thunder_tribulation";
@@ -150,10 +153,21 @@ pub struct ZoneCollapsedEvent {
 impl Resource for ActiveEventsResource {}
 
 impl ActiveEventsResource {
+    #[cfg(test)]
     pub fn enqueue_from_spawn_command(
         &mut self,
         command: &Command,
         zone_registry: Option<&mut ZoneRegistry>,
+    ) -> bool {
+        self.enqueue_from_spawn_command_with_karma(command, zone_registry, None, None)
+    }
+
+    pub fn enqueue_from_spawn_command_with_karma(
+        &mut self,
+        command: &Command,
+        zone_registry: Option<&mut ZoneRegistry>,
+        karma_weights: Option<&KarmaWeightStore>,
+        qi_heatmap: Option<&QiDensityHeatmap>,
     ) -> bool {
         let Some(event) = ActiveEvent::from_spawn_command(command) else {
             let event_name = command
@@ -206,6 +220,22 @@ impl ActiveEventsResource {
                 .unwrap_or(KARMA_BACKLASH_EVENT_DURATION_TICKS)
                 .max(MIN_EVENT_DURATION_TICKS);
             let center = zone.center();
+            let center_block = valence::prelude::BlockPos::new(
+                center.x.floor() as i32,
+                center.y.floor() as i32,
+                center.z.floor() as i32,
+            );
+            let karma_weight = karma_weights
+                .map(|weights| weights.weight_for_zone(event.zone_name.as_str()))
+                .unwrap_or_default();
+            let qi_density_heat = qi_heatmap
+                .map(|heatmap| heatmap.heat_at(zone.dimension, center_block))
+                .unwrap_or_default();
+            let roll = targeted_calamity_roll(
+                TARGETED_CALAMITY_BASE_PROBABILITY,
+                karma_weight,
+                qi_density_heat,
+            );
 
             self.record_recent_event(GameEvent {
                 event_type: GameEventType::EventTriggered,
@@ -219,7 +249,15 @@ impl ActiveEventsResource {
                         "duration_ticks".to_string(),
                         Value::Number(duration_ticks.into()),
                     ),
-                    ("karma_weight".to_string(), json!(event.intensity)),
+                    ("command_intensity".to_string(), json!(event.intensity)),
+                    ("karma_weight".to_string(), json!(roll.karma_weight)),
+                    ("base_probability".to_string(), json!(roll.base_probability)),
+                    (
+                        "effective_probability".to_string(),
+                        json!(roll.effective_probability),
+                    ),
+                    ("zone_karma_weight".to_string(), json!(roll.karma_weight)),
+                    ("qi_density_heat".to_string(), json!(roll.qi_density_heat)),
                 ])),
             });
             self.pending_tribulation_events

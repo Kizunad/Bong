@@ -16,6 +16,16 @@ pub const KARMA_WEIGHT_MAX: f32 = 1.0;
 pub const KARMA_WEIGHT_DECAY_PER_TICK: f32 = 1.0 / (30.0 * 24.0 * 60.0 * 60.0 * 20.0);
 pub const QI_DENSITY_HEAT_MAX: f32 = 1.0;
 pub const QI_DENSITY_CELL_SIZE: i32 = 16;
+pub const TARGETED_CALAMITY_BASE_PROBABILITY: f32 = 0.05;
+pub const TARGETED_CALAMITY_MAX_PROBABILITY: f32 = 0.30;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetedCalamityRoll {
+    pub base_probability: f32,
+    pub karma_weight: f32,
+    pub qi_density_heat: f32,
+    pub effective_probability: f32,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct KarmaWeightEntry {
@@ -58,12 +68,20 @@ impl KarmaWeightStore {
         entry.weight = (entry.weight + normalized_delta).clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
     }
 
-    #[allow(dead_code)] // 后续概率操控系统读取；当前仅测试覆盖。
-    pub fn weight_for_player(&self, player_id: &str) -> f32 {
+    #[cfg(test)]
+    fn weight_for_player(&self, player_id: &str) -> f32 {
         self.by_player
             .get(player_id)
             .map(|entry| entry.weight)
             .unwrap_or(KARMA_WEIGHT_MIN)
+    }
+
+    pub fn weight_for_zone(&self, zone: &str) -> f32 {
+        self.by_player
+            .values()
+            .filter(|entry| entry.zone.as_deref() == Some(zone))
+            .map(|entry| entry.weight)
+            .fold(KARMA_WEIGHT_MIN, f32::max)
     }
 
     #[allow(dead_code)] // 后续概率操控系统读取；当前仅测试覆盖。
@@ -103,7 +121,6 @@ impl QiDensityHeatmap {
         *entry = (*entry + heat_delta.max(0.0)).min(QI_DENSITY_HEAT_MAX);
     }
 
-    #[allow(dead_code)] // 后续区域负面事件 roll 读取；当前仅测试覆盖。
     pub fn heat_at(&self, dimension: DimensionKind, position: BlockPos) -> f32 {
         self.by_cell
             .get(&QiDensityCell::from_position(dimension, position))
@@ -119,6 +136,27 @@ impl QiDensityCell {
             x: position.x.div_euclid(QI_DENSITY_CELL_SIZE),
             z: position.z.div_euclid(QI_DENSITY_CELL_SIZE),
         }
+    }
+}
+
+pub fn targeted_calamity_roll(
+    base_probability: f32,
+    karma_weight: f32,
+    qi_density_heat: f32,
+) -> TargetedCalamityRoll {
+    let base_probability = base_probability.clamp(0.0, TARGETED_CALAMITY_MAX_PROBABILITY);
+    let karma_weight = karma_weight.clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
+    let qi_density_heat = qi_density_heat.clamp(0.0, QI_DENSITY_HEAT_MAX);
+    let pressure = karma_weight.max(qi_density_heat);
+    let effective_probability = (base_probability
+        + (TARGETED_CALAMITY_MAX_PROBABILITY - base_probability) * pressure)
+        .clamp(0.0, TARGETED_CALAMITY_MAX_PROBABILITY);
+
+    TargetedCalamityRoll {
+        base_probability,
+        karma_weight,
+        qi_density_heat,
+        effective_probability,
     }
 }
 
@@ -139,6 +177,7 @@ mod tests {
         assert_eq!(entry.zone.as_deref(), Some("spawn"));
         assert_eq!(entry.last_position, [1, 64, 2]);
         assert_eq!(entry.last_tick, 11);
+        assert_eq!(store.weight_for_zone("spawn"), KARMA_WEIGHT_MAX);
     }
 
     #[test]
@@ -168,5 +207,24 @@ mod tests {
             heatmap.heat_at(DimensionKind::Tsy, BlockPos::new(20, 64, -8)),
             0.40
         );
+    }
+
+    #[test]
+    fn targeted_calamity_roll_scales_base_probability_to_hidden_max() {
+        let low = targeted_calamity_roll(TARGETED_CALAMITY_BASE_PROBABILITY, 0.0, 0.0);
+        assert_eq!(
+            low.effective_probability,
+            TARGETED_CALAMITY_BASE_PROBABILITY
+        );
+
+        let high = targeted_calamity_roll(TARGETED_CALAMITY_BASE_PROBABILITY, 1.0, 0.2);
+        assert_eq!(
+            high.effective_probability,
+            TARGETED_CALAMITY_MAX_PROBABILITY
+        );
+
+        let heat_driven = targeted_calamity_roll(TARGETED_CALAMITY_BASE_PROBABILITY, 0.1, 0.6);
+        assert!(heat_driven.effective_probability > TARGETED_CALAMITY_BASE_PROBABILITY);
+        assert!(heat_driven.effective_probability < TARGETED_CALAMITY_MAX_PROBABILITY);
     }
 }
