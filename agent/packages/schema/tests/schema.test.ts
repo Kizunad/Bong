@@ -271,6 +271,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.heart-demon-offer.sample.json", () => {
+    const data = loadSample("server-data.heart-demon-offer.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   for (const sample of [
     "server-data.forge-station.sample.json",
     "server-data.forge-session.sample.json",

@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "type": "heart_demon_offer",
+  "offer_id": "heart_demon:1:1000",
+  "trigger_id": "heart_demon:1:1000",
+  "trigger_label": "心魔劫临身",
+  "realm_label": "渡虚劫 · 心魔",
+  "composure": 0.5,
+  "quota_remaining": 1,
+  "quota_total": 1,
+  "expires_at_ms": 1700000000000,
+  "choices": [
+    {
+      "choice_id": "heart_demon_choice_0",
+      "category": "Composure",
+      "title": "守本心",
+      "effect_summary": "稳住心神，回复少量当前真元",
+      "flavor": "你不逐影，不辩幻象，只把呼吸压回丹田。",
+      "style_hint": "稳妥"
+    },
+    {
+      "choice_id": "heart_demon_choice_1",
+      "category": "Breakthrough",
+      "title": "斩执念",
+      "effect_summary": "若斩错心魔，将损当前真元并强化下一道开天雷",
+      "flavor": "你提起一念作刀，刀锋却照见自己的影。",
+      "style_hint": "冒险"
+    },
+    {
+      "choice_id": "heart_demon_choice_2",
+      "category": "Perception",
+      "title": "无解",
+      "effect_summary": "承认无解，不得增益也不受真元惩罚",
+      "flavor": "你看清此问无门，便不再替天道补题。",
+      "style_hint": "止损"
+    }
+  ]
+}

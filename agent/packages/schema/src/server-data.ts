@@ -12,7 +12,7 @@ import {
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
 import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
-import { ColorKind, SkillMilestoneSnapshotV1 } from "./cultivation.js";
+import { ColorKind, InsightCategory, SkillMilestoneSnapshotV1 } from "./cultivation.js";
 import {
   InventoryEventDroppedV1,
   InventoryEventDurabilityChangedV1,
@@ -150,6 +150,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("forge_session"),
   Type.Literal("forge_outcome"),
   Type.Literal("forge_blueprint_book"),
+  Type.Literal("heart_demon_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -516,6 +517,37 @@ export const ServerDataTerminateScreenV1 = Type.Object(
 );
 export type ServerDataTerminateScreenV1 = Static<typeof ServerDataTerminateScreenV1>;
 
+export const HeartDemonOfferChoiceV1 = Type.Object(
+  {
+    choice_id: Type.String({ minLength: 1, maxLength: 128 }),
+    category: InsightCategory,
+    title: Type.String({ minLength: 1, maxLength: 64 }),
+    effect_summary: Type.String({ minLength: 1, maxLength: 256 }),
+    flavor: Type.String({ minLength: 1, maxLength: 500 }),
+    style_hint: Type.String({ maxLength: 64 }),
+  },
+  { additionalProperties: false },
+);
+export type HeartDemonOfferChoiceV1 = Static<typeof HeartDemonOfferChoiceV1>;
+
+export const ServerDataHeartDemonOfferV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("heart_demon_offer"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    trigger_id: Type.String({ minLength: 1, maxLength: 128 }),
+    trigger_label: Type.String({ minLength: 1, maxLength: 128 }),
+    realm_label: Type.String({ minLength: 1, maxLength: 128 }),
+    composure: Type.Number({ minimum: 0, maximum: 1 }),
+    quota_remaining: Type.Integer({ minimum: 0 }),
+    quota_total: Type.Integer({ minimum: 1 }),
+    expires_at_ms: Type.Integer({ minimum: 0 }),
+    choices: Type.Array(HeartDemonOfferChoiceV1, { minItems: 1, maxItems: 4 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataHeartDemonOfferV1 = Static<typeof ServerDataHeartDemonOfferV1>;
+
 export const ServerDataSkillXpGainV1 = Type.Object(
   {
     type: Type.Literal("skill_xp_gain"),
@@ -819,6 +851,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataAlchemyContaminationV1,
   ServerDataDeathScreenV1,
   ServerDataTerminateScreenV1,
+  ServerDataHeartDemonOfferV1,
   ServerDataSkillXpGainV1,
   ServerDataSkillLvUpV1,
   ServerDataSkillCapChangedV1,

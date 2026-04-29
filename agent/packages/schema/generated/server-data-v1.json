@@ -6273,6 +6273,146 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "v",
+        "type",
+        "offer_id",
+        "trigger_id",
+        "trigger_label",
+        "realm_label",
+        "composure",
+        "quota_remaining",
+        "quota_total",
+        "expires_at_ms",
+        "choices"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "heart_demon_offer",
+          "type": "string"
+        },
+        "offer_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trigger_label": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "realm_label": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "composure": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "quota_remaining": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quota_total": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expires_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "choices": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "choice_id",
+              "category",
+              "title",
+              "effect_summary",
+              "flavor",
+              "style_hint"
+            ],
+            "properties": {
+              "choice_id": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "category": {
+                "description": "A–G 七类白名单",
+                "anyOf": [
+                  {
+                    "const": "Meridian",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Qi",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Composure",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Coloring",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Breakthrough",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Style",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Perception",
+                    "type": "string"
+                  }
+                ]
+              },
+              "title": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "effect_summary": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+              },
+              "flavor": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              },
+              "style_hint": {
+                "maxLength": 64,
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "type",
         "v",
         "char_id",

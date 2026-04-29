@@ -155,6 +155,8 @@ import {
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  HeartDemonOfferChoiceV1,
+  ServerDataHeartDemonOfferV1,
   TreasureEquippedV1,
   TreasureViewV1,
   WeaponBrokenV1,
@@ -257,6 +259,8 @@ export const SCHEMA_REGISTRY = {
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataDeathScreenV1: ServerDataDeathScreenV1,
   serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
+  heartDemonOfferChoiceV1: HeartDemonOfferChoiceV1,
+  serverDataHeartDemonOfferV1: ServerDataHeartDemonOfferV1,
   serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
   serverDataSkillLvUpV1: ServerDataSkillLvUpV1,
   serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
@@ -450,6 +454,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
   "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
   "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
+  "heart-demon-offer-choice-v1.json": SCHEMA_REGISTRY.heartDemonOfferChoiceV1,
+  "server-data-heart-demon-offer-v1.json": SCHEMA_REGISTRY.serverDataHeartDemonOfferV1,
   "server-data-skill-xp-gain-v1.json":
     SCHEMA_REGISTRY.serverDataSkillXpGainV1,
   "server-data-skill-lv-up-v1.json":
