@@ -147,6 +147,7 @@ import {
   ServerDataSkillXpGainV1,
   ServerDataAscensionQuotaV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
   ServerDataTsyCollapseStartedIpcV1,
@@ -261,6 +262,7 @@ export const SCHEMA_REGISTRY = {
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataDeathScreenV1: ServerDataDeathScreenV1,
   serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
+  serverDataTribulationStateV1: ServerDataTribulationStateV1,
   serverDataTribulationBroadcastV1: ServerDataTribulationBroadcastV1,
   serverDataAscensionQuotaV1: ServerDataAscensionQuotaV1,
   heartDemonOfferChoiceV1: HeartDemonOfferChoiceV1,
@@ -458,6 +460,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
   "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
   "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
+  "server-data-tribulation-state-v1.json":
+    SCHEMA_REGISTRY.serverDataTribulationStateV1,
   "server-data-tribulation-broadcast-v1.json":
     SCHEMA_REGISTRY.serverDataTribulationBroadcastV1,
   "server-data-ascension-quota-v1.json": SCHEMA_REGISTRY.serverDataAscensionQuotaV1,

@@ -111,6 +111,7 @@ pub enum ServerDataType {
     ForgeSession,
     ForgeOutcome,
     ForgeBlueprintBook,
+    TribulationState,
     TribulationBroadcast,
     AscensionQuota,
     HeartDemonOffer,
@@ -252,6 +253,7 @@ pub enum ServerDataPayloadV1 {
     ForgeSession(Box<ForgeSessionDataV1>),
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
+    TribulationState(TribulationStateV1),
     TribulationBroadcast(TribulationBroadcastV1),
     AscensionQuota(AscensionQuotaV1),
     HeartDemonOffer(HeartDemonOfferV1),
@@ -339,6 +341,50 @@ fn tribulation_broadcast_expires_at_ms(ttl_ms: u64) -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
         .saturating_add(ttl_ms)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TribulationStateV1 {
+    pub active: bool,
+    pub char_id: String,
+    pub actor_name: String,
+    pub kind: String,
+    pub phase: String,
+    pub world_x: f64,
+    pub world_z: f64,
+    pub wave_current: u32,
+    pub wave_total: u32,
+    pub started_tick: u64,
+    pub phase_started_tick: u64,
+    pub next_wave_tick: u64,
+    pub failed: bool,
+    pub half_step_on_success: bool,
+    pub participants: Vec<String>,
+    pub result: Option<String>,
+}
+
+impl TribulationStateV1 {
+    pub fn clear() -> Self {
+        Self {
+            active: false,
+            char_id: String::new(),
+            actor_name: String::new(),
+            kind: "du_xu".to_string(),
+            phase: "settle".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            wave_current: 0,
+            wave_total: 0,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: 0,
+            failed: false,
+            half_step_on_success: false,
+            participants: Vec::new(),
+            result: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -629,6 +675,10 @@ enum ServerDataPayloadWireV1 {
     ForgeBlueprintBook {
         #[serde(flatten)]
         data: Box<ForgeBlueprintBookDataV1>,
+    },
+    TribulationState {
+        #[serde(flatten)]
+        data: TribulationStateV1,
     },
     TribulationBroadcast {
         #[serde(flatten)]
@@ -1125,6 +1175,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
                 Ok(Self::ForgeBlueprintBook(data))
             }
+            ServerDataPayloadWireV1::TribulationState { data } => Ok(Self::TribulationState(data)),
             ServerDataPayloadWireV1::TribulationBroadcast { data } => {
                 Ok(Self::TribulationBroadcast(data))
             }
@@ -1404,6 +1455,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ForgeBlueprintBook(data) => {
                 Self::ForgeBlueprintBook { data: data.clone() }
             }
+            ServerDataPayloadV1::TribulationState(data) => {
+                Self::TribulationState { data: data.clone() }
+            }
             ServerDataPayloadV1::TribulationBroadcast(data) => {
                 Self::TribulationBroadcast { data: data.clone() }
             }
@@ -1547,6 +1601,7 @@ impl ServerDataPayloadV1 {
             Self::ForgeSession(..) => ServerDataType::ForgeSession,
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
+            Self::TribulationState(..) => ServerDataType::TribulationState,
             Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
             Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
             Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
@@ -1650,6 +1705,24 @@ mod tests {
             ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
                 "Kiz", "warn", 12.0, -34.0, 60_000,
             )),
+            ServerDataPayloadV1::TribulationState(TribulationStateV1 {
+                active: true,
+                char_id: "offline:Kiz".to_string(),
+                actor_name: "Kiz".to_string(),
+                kind: "du_xu".to_string(),
+                phase: "wave".to_string(),
+                world_x: 12.0,
+                world_z: -34.0,
+                wave_current: 2,
+                wave_total: 5,
+                started_tick: 120,
+                phase_started_tick: 2_400,
+                next_wave_tick: 2_700,
+                failed: false,
+                half_step_on_success: false,
+                participants: vec!["offline:Kiz".to_string()],
+                result: None,
+            }),
             ServerDataPayloadV1::AscensionQuota(AscensionQuotaV1::new(1, 3)),
             ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
                 offer_id: "heart_demon:1:100".to_string(),
@@ -1866,6 +1939,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.tribulation-broadcast.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.tribulation-state.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.ascension-quota.sample.json"

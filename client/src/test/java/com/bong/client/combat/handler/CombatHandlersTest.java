@@ -7,6 +7,7 @@ import com.bong.client.combat.store.DerivedAttrsStore;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.TerminateStateStore;
 import com.bong.client.combat.store.TribulationBroadcastStore;
+import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.WoundsStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
@@ -28,6 +29,7 @@ class CombatHandlersTest {
         DeathStateStore.resetForTests();
         TerminateStateStore.resetForTests();
         WoundsStore.resetForTests();
+        TribulationStateStore.resetForTests();
         TribulationBroadcastStore.resetForTests();
         AscensionQuotaStore.resetForTests();
     }
@@ -146,6 +148,42 @@ class CombatHandlersTest {
         new TribulationBroadcastHandler().handle(parse(json));
         assertTrue(TribulationBroadcastStore.snapshot().active());
         assertEquals("locked", TribulationBroadcastStore.snapshot().stage());
+    }
+
+    @Test
+    void tribulationStatePopulatesStoreAndKeepsResultOnClear() {
+        String activeJson = """
+            {"v":1,"type":"tribulation_state","active":true,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"wave",
+             "world_x":12.0,"world_z":-34.0,"wave_current":2,"wave_total":5,
+             "started_tick":120,"phase_started_tick":2400,"next_wave_tick":2700,
+             "failed":false,"half_step_on_success":true,
+             "participants":["offline:Azure","offline:Beryl"],"result":null} """;
+        ServerDataDispatch dispatch = new TribulationStateHandler().handle(parse(activeJson));
+        assertTrue(dispatch.handled());
+        TribulationStateStore.State active = TribulationStateStore.snapshot();
+        assertTrue(active.active());
+        assertEquals("offline:Azure", active.charId());
+        assertEquals("Azure", active.actorName());
+        assertEquals("wave", active.phase());
+        assertEquals(2, active.waveCurrent());
+        assertEquals(5, active.waveTotal());
+        assertTrue(active.halfStepOnSuccess());
+        assertEquals(2, active.participants().size());
+
+        String clearJson = """
+            {"v":1,"type":"tribulation_state","active":false,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"settle",
+             "world_x":0,"world_z":0,"wave_current":5,"wave_total":0,
+             "started_tick":0,"phase_started_tick":0,"next_wave_tick":0,
+             "failed":false,"half_step_on_success":false,
+             "participants":[],"result":"ascended"} """;
+        new TribulationStateHandler().handle(parse(clearJson));
+        TribulationStateStore.State cleared = TribulationStateStore.snapshot();
+        assertFalse(cleared.active());
+        assertEquals("settle", cleared.phase());
+        assertEquals("ascended", cleared.result());
+        assertEquals(5, cleared.waveCurrent());
     }
 
     @Test

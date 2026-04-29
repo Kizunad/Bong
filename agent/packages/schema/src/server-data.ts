@@ -150,6 +150,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("forge_session"),
   Type.Literal("forge_outcome"),
   Type.Literal("forge_blueprint_book"),
+  Type.Literal("tribulation_state"),
   Type.Literal("tribulation_broadcast"),
   Type.Literal("ascension_quota"),
   Type.Literal("heart_demon_offer"),
@@ -539,6 +540,50 @@ export type ServerDataTribulationBroadcastV1 = Static<
   typeof ServerDataTribulationBroadcastV1
 >;
 
+export const ServerDataTribulationStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("tribulation_state"),
+    active: Type.Boolean(),
+    char_id: Type.String(),
+    actor_name: Type.String(),
+    kind: Type.Union([
+      Type.Literal("du_xu"),
+      Type.Literal("zone_collapse"),
+      Type.Literal("targeted"),
+    ]),
+    phase: Type.Union([
+      Type.Literal("omen"),
+      Type.Literal("lock"),
+      Type.Literal("wave"),
+      Type.Literal("heart_demon"),
+      Type.Literal("settle"),
+    ]),
+    world_x: Type.Number(),
+    world_z: Type.Number(),
+    wave_current: Type.Integer({ minimum: 0 }),
+    wave_total: Type.Integer({ minimum: 0 }),
+    started_tick: Type.Integer({ minimum: 0 }),
+    phase_started_tick: Type.Integer({ minimum: 0 }),
+    next_wave_tick: Type.Integer({ minimum: 0 }),
+    failed: Type.Boolean(),
+    half_step_on_success: Type.Boolean(),
+    participants: Type.Array(Type.String()),
+    result: Type.Optional(Type.Union([
+      Type.Literal("ascended"),
+      Type.Literal("half_step"),
+      Type.Literal("failed"),
+      Type.Literal("killed"),
+      Type.Literal("fled"),
+      Type.Null(),
+    ])),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTribulationStateV1 = Static<
+  typeof ServerDataTribulationStateV1
+>;
+
 export const ServerDataAscensionQuotaV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -910,6 +955,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  ServerDataTribulationStateV1,
   ServerDataTribulationBroadcastV1,
   ServerDataAscensionQuotaV1,
 ]);

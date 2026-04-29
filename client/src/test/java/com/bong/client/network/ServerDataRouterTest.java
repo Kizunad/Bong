@@ -38,6 +38,7 @@ public class ServerDataRouterTest {
             "death_screen",
             "terminate_screen",
             "wounds_snapshot",
+            "tribulation_state",
             "tribulation_broadcast",
             "ascension_quota",
             "heart_demon_offer",

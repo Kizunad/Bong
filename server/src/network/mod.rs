@@ -28,6 +28,7 @@ pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tribulation_broadcast_emit;
 pub mod tribulation_heart_demon_offer_emit;
+pub mod tribulation_state_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
@@ -313,6 +314,11 @@ pub fn register(app: &mut App) {
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
+    );
+    app.add_systems(
+        Update,
+        tribulation_state_emit::emit_tribulation_state_payloads
+            .after(crate::cultivation::tribulation::tribulation_wave_system),
     );
     app.add_systems(
         Update,

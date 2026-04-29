@@ -1,0 +1,147 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "active",
+    "char_id",
+    "actor_name",
+    "kind",
+    "phase",
+    "world_x",
+    "world_z",
+    "wave_current",
+    "wave_total",
+    "started_tick",
+    "phase_started_tick",
+    "next_wave_tick",
+    "failed",
+    "half_step_on_success",
+    "participants"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "tribulation_state",
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "char_id": {
+      "type": "string"
+    },
+    "actor_name": {
+      "type": "string"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "du_xu",
+          "type": "string"
+        },
+        {
+          "const": "zone_collapse",
+          "type": "string"
+        },
+        {
+          "const": "targeted",
+          "type": "string"
+        }
+      ]
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "const": "omen",
+          "type": "string"
+        },
+        {
+          "const": "lock",
+          "type": "string"
+        },
+        {
+          "const": "wave",
+          "type": "string"
+        },
+        {
+          "const": "heart_demon",
+          "type": "string"
+        },
+        {
+          "const": "settle",
+          "type": "string"
+        }
+      ]
+    },
+    "world_x": {
+      "type": "number"
+    },
+    "world_z": {
+      "type": "number"
+    },
+    "wave_current": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "wave_total": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "phase_started_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "next_wave_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "failed": {
+      "type": "boolean"
+    },
+    "half_step_on_success": {
+      "type": "boolean"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "result": {
+      "anyOf": [
+        {
+          "const": "ascended",
+          "type": "string"
+        },
+        {
+          "const": "half_step",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        },
+        {
+          "const": "killed",
+          "type": "string"
+        },
+        {
+          "const": "fled",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

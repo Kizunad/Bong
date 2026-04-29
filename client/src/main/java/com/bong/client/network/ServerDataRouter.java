@@ -52,6 +52,8 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.WoundsSnapshotHandler();
         com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
             new com.bong.client.combat.handler.TribulationBroadcastHandler();
+        com.bong.client.combat.handler.TribulationStateHandler tribulationStateHandler =
+            new com.bong.client.combat.handler.TribulationStateHandler();
         com.bong.client.combat.handler.AscensionQuotaHandler ascensionQuotaHandler =
             new com.bong.client.combat.handler.AscensionQuotaHandler();
         CombatHudStateHandler combatHudStateHandler = new CombatHudStateHandler();
@@ -95,6 +97,7 @@ public final class ServerDataRouter {
         handlers.put("death_screen", deathScreenHandler);
         handlers.put("terminate_screen", terminateScreenHandler);
         handlers.put("wounds_snapshot", woundsSnapshotHandler);
+        handlers.put("tribulation_state", tribulationStateHandler);
         handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
         handlers.put("ascension_quota", ascensionQuotaHandler);
         handlers.put("heart_demon_offer", heartDemonOfferHandler);
