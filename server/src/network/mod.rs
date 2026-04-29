@@ -80,11 +80,11 @@ use crate::schema::cultivation::{
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
-    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
+    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot, ZoneStatusV1,
 };
 use crate::skill::components::SkillId;
-use crate::world::events::ActiveEventsResource;
-use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
+use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
 use crate::cultivation::components::Realm;
@@ -918,6 +918,7 @@ fn collect_zone_snapshots(
             name: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
             danger_level: zone.danger_level,
+            status: zone_status(zone),
             active_events: zone.active_events.clone(),
             player_count: player_counts_by_zone
                 .get(&zone.name)
@@ -929,6 +930,18 @@ fn collect_zone_snapshots(
     zones.sort_by(|left, right| left.name.cmp(&right.name));
 
     zones
+}
+
+fn zone_status(zone: &Zone) -> ZoneStatusV1 {
+    if zone
+        .active_events
+        .iter()
+        .any(|event| event == EVENT_REALM_COLLAPSE)
+    {
+        ZoneStatusV1::Collapsed
+    } else {
+        ZoneStatusV1::Normal
+    }
 }
 
 fn collect_npc_action_states(
@@ -1088,6 +1101,7 @@ fn emit_zone_info_on_zone_transition(
             zone: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
             danger_level: zone.danger_level,
+            status: zone_status(zone),
             active_events: (!zone.active_events.is_empty()).then(|| zone.active_events.clone()),
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -2098,10 +2112,35 @@ mod tests {
 
             assert!(state.players.is_empty());
             assert_eq!(spawn_zone.player_count, 0);
+            assert_eq!(spawn_zone.status, ZoneStatusV1::Normal);
             assert!(
                 state.recent_events.is_empty(),
                 "recent_events should be an explicit empty array when no event buffer exists"
             );
+        }
+
+        #[test]
+        fn world_state_marks_realm_collapse_zone_collapsed() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .active_events
+                .push(EVENT_REALM_COLLAPSE.to_string());
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let spawn_zone = state
+                .zones
+                .iter()
+                .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn fallback zone should still be emitted");
+
+            assert_eq!(spawn_zone.status, ZoneStatusV1::Collapsed);
+            assert!(spawn_zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE));
         }
 
         #[test]
@@ -2829,11 +2868,13 @@ mod tests {
                     zone,
                     spirit_qi,
                     danger_level,
+                    status,
                     active_events,
                 } => {
                     assert_eq!(zone, "spawn");
                     assert_eq!(*spirit_qi, 0.9);
                     assert_eq!(*danger_level, 0);
+                    assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &None);
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
@@ -2862,11 +2903,13 @@ mod tests {
                     zone,
                     spirit_qi,
                     danger_level,
+                    status,
                     active_events,
                 } => {
                     assert_eq!(zone, "blood_valley");
                     assert_eq!(*spirit_qi, 0.42);
                     assert_eq!(*danger_level, 4);
+                    assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &Some(vec!["beast_tide".to_string()]));
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
@@ -2879,6 +2922,44 @@ mod tests {
                 third_payloads.is_empty(),
                 "no additional payload should be emitted without a new transition"
             );
+        }
+
+        #[test]
+        fn zone_info_marks_realm_collapse_zone_collapsed() {
+            let collapsed_zone = Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
+                spirit_qi: 0.0,
+                danger_level: 5,
+                active_events: vec![EVENT_REALM_COLLAPSE.to_string()],
+                patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                blocked_tiles: vec![],
+            };
+            let mut app = setup_zone_transition_app(ZoneRegistry {
+                zones: vec![collapsed_zone],
+            });
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(payloads.len(), 1);
+            match &payloads[0].payload {
+                ServerDataPayloadV1::ZoneInfo {
+                    zone,
+                    status,
+                    active_events,
+                    ..
+                } => {
+                    assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert_eq!(*status, ZoneStatusV1::Collapsed);
+                    assert_eq!(active_events, &Some(vec![EVENT_REALM_COLLAPSE.to_string()]));
+                }
+                other => panic!("expected zone_info payload, got {other:?}"),
+            }
         }
     }
 

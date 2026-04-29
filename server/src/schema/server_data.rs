@@ -22,7 +22,7 @@ use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
 };
-use super::world_state::PlayerPowerBreakdown;
+use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -130,6 +130,7 @@ pub enum ServerDataPayloadV1 {
         zone: String,
         spirit_qi: f64,
         danger_level: u8,
+        status: ZoneStatusV1,
         active_events: Option<Vec<String>>,
     },
     EventAlert {
@@ -354,6 +355,8 @@ enum ServerDataPayloadWireV1 {
         zone: String,
         spirit_qi: f64,
         danger_level: u8,
+        #[serde(default)]
+        status: ZoneStatusV1,
         #[serde(skip_serializing_if = "Option::is_none")]
         active_events: Option<Vec<String>>,
     },
@@ -855,11 +858,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             } => Ok(Self::ZoneInfo {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             }),
             ServerDataPayloadWireV1::EventAlert {
@@ -1120,11 +1125,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             } => Self::ZoneInfo {
                 zone: zone.clone(),
                 spirit_qi: *spirit_qi,
                 danger_level: *danger_level,
+                status: *status,
                 active_events: active_events.clone(),
             },
             ServerDataPayloadV1::EventAlert {
@@ -1853,6 +1860,46 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    #[test]
+    fn deserialize_zone_info_defaults_missing_status() {
+        let value = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "zone_info",
+            "zone": "blood_valley",
+            "spirit_qi": -0.42,
+            "danger_level": 3,
+            "active_events": ["beast_tide"]
+        });
+
+        let payload: ServerDataV1 = serde_json::from_value(value).expect("deserialize zone_info");
+        match payload.payload {
+            ServerDataPayloadV1::ZoneInfo { status, .. } => {
+                assert_eq!(status, ZoneStatusV1::Normal);
+            }
+            other => panic!("expected ZoneInfo, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serialize_zone_info_includes_status() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
+            zone: "blood_valley".to_string(),
+            spirit_qi: -0.42,
+            danger_level: 3,
+            status: ZoneStatusV1::Collapsed,
+            active_events: Some(vec!["realm_collapse".to_string()]),
+        });
+
+        let value: serde_json::Value = serde_json::from_slice(
+            &payload
+                .to_json_bytes_checked()
+                .expect("zone_info should serialize"),
+        )
+        .expect("zone_info JSON should decode");
+
+        assert_eq!(value["status"], "collapsed");
     }
 
     #[test]

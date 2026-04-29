@@ -76,6 +76,12 @@ export const PlayerPowerBreakdown = Type.Object(
 );
 export type PlayerPowerBreakdown = Static<typeof PlayerPowerBreakdown>;
 
+export const ZoneStatusV1 = Type.Union([
+  Type.Literal("normal"),
+  Type.Literal("collapsed"),
+]);
+export type ZoneStatusV1 = Static<typeof ZoneStatusV1>;
+
 export const PlayerProfile = Type.Object(
   {
     uuid: Type.String(),
@@ -124,6 +130,7 @@ export const ZoneSnapshot = Type.Object(
     name: Type.String(),
     spirit_qi: Type.Number({ minimum: -1, maximum: 1 }),
     danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
+    status: Type.Optional(ZoneStatusV1),
     active_events: Type.Array(Type.String()),
     player_count: Type.Integer({ minimum: 0 }),
   },

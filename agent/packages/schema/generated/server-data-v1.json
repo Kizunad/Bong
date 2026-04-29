@@ -159,6 +159,18 @@
           "maximum": 5,
           "type": "integer"
         },
+        "status": {
+          "anyOf": [
+            {
+              "const": "normal",
+              "type": "string"
+            },
+            {
+              "const": "collapsed",
+              "type": "string"
+            }
+          ]
+        },
         "active_events": {
           "type": "array",
           "items": {

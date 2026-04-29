@@ -45,7 +45,7 @@ import {
   SkillSnapshotPayloadV1,
   SkillXpGainPayloadV1,
 } from "./skill.js";
-import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
+import { PlayerPowerBreakdown, Vec3, ZoneStatusV1 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -191,6 +191,7 @@ export const ServerDataZoneInfoV1 = Type.Object(
     zone: Type.String(),
     spirit_qi: Type.Number({ minimum: -1, maximum: 1 }),
     danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
+    status: Type.Optional(ZoneStatusV1),
     active_events: Type.Optional(Type.Array(Type.String())),
   },
   { additionalProperties: false },
