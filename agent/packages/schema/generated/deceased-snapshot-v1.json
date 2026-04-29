@@ -1165,6 +1165,32 @@
                     }
                   }
                 }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "TribulationFled"
+                ],
+                "properties": {
+                  "TribulationFled": {
+                    "type": "object",
+                    "required": [
+                      "wave",
+                      "tick"
+                    ],
+                    "properties": {
+                      "wave": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
               }
             ]
           }

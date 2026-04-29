@@ -11,7 +11,7 @@
 
 use valence::prelude::{
     bevy_ecs, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Position,
-    Query, Res, Username, With,
+    Query, RemovedComponents, Res, Username, With,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
@@ -170,6 +170,12 @@ pub struct TribulationWaveCleared {
 pub struct TribulationFailed {
     pub entity: Entity,
     pub wave: u32,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct TribulationFled {
+    pub entity: Entity,
+    pub tick: u64,
 }
 
 #[allow(clippy::type_complexity)]
@@ -573,6 +579,66 @@ pub fn tribulation_failure_system(
 }
 
 #[allow(clippy::type_complexity)]
+pub fn abort_du_xu_on_client_removed(
+    clock: Res<CombatClock>,
+    settings: Res<PersistenceSettings>,
+    mut removed_clients: RemovedComponents<Client>,
+    mut players: Query<(
+        &mut Cultivation,
+        Option<&mut MeridianSystem>,
+        &Lifecycle,
+        Option<&mut Wounds>,
+        &mut TribulationState,
+        Option<&mut LifeRecord>,
+    )>,
+    mut commands: Commands,
+    mut settled: EventWriter<TribulationSettled>,
+    mut fled: EventWriter<TribulationFled>,
+) {
+    for entity in removed_clients.read() {
+        let Ok((mut cultivation, meridians, lifecycle, wounds, mut state, life_record)) =
+            players.get_mut(entity)
+        else {
+            continue;
+        };
+        if state.kind != TribulationKind::DuXu {
+            continue;
+        }
+        state.failed = true;
+        state.phase = TribulationPhase::Settle;
+        let waves_survived = state.wave_current;
+        let fled_tick = clock.tick;
+        if let Some(mut life_record) = life_record {
+            life_record.push(BiographyEntry::TribulationFled {
+                wave: waves_survived.saturating_add(1),
+                tick: fled_tick,
+            });
+        }
+        apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
+        if let Err(error) = delete_active_tribulation(&settings, lifecycle.character_id.as_str()) {
+            tracing::warn!(
+                "[bong][cultivation] failed to delete fled active tribulation for {:?}: {error}",
+                entity,
+            );
+        }
+        settled.send(TribulationSettled {
+            entity,
+            result: DuXuResultV1 {
+                char_id: lifecycle.character_id.clone(),
+                outcome: DuXuOutcomeV1::Fled,
+                killer: None,
+                waves_survived,
+            },
+        });
+        fled.send(TribulationFled {
+            entity,
+            tick: fled_tick,
+        });
+        commands.entity(entity).remove::<TribulationState>();
+    }
+}
+
+#[allow(clippy::type_complexity)]
 pub fn tribulation_intercept_death_system(
     mut deaths: EventReader<DeathEvent>,
     mut commands: Commands,
@@ -776,6 +842,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Entity, Events, IntoSystemConfigs, Position, Update, Username};
+    use valence::testing::create_mock_client;
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -1018,6 +1085,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 300 });
         app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationFled>();
         app.add_event::<TribulationSettled>();
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
@@ -1233,6 +1301,113 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::Killed);
         assert_eq!(emitted[0].result.killer.as_deref(), Some("offline:Killer"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn disconnecting_during_tribulation_flees_and_regresses_without_death() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("disconnect-fled");
+        let char_id = "offline:Azure";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 80,
+            },
+        )
+        .expect("active tribulation should persist before disconnect");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 320 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 120.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 1,
+                    waves_total: 3,
+                    started_tick: 80,
+                    phase_started_tick: 280,
+                    next_wave_tick: 320,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert!(app.world().get::<TribulationState>(entity).is_none());
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.realm, Realm::Spirit);
+        assert_eq!(cultivation.qi_current, 0.0);
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::TribulationFled { wave: 2, tick: 320 })
+        ));
+
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].result.outcome, DuXuOutcomeV1::Fled);
+        assert_eq!(settled[0].result.waves_survived, 1);
+        let fled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationFled>>()
+            .drain()
+            .collect();
+        assert_eq!(fled.len(), 1);
+        assert_eq!(fled[0].entity, entity);
+        assert_eq!(fled[0].tick, 320);
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "fled tribulation should clear active row"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

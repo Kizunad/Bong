@@ -135,6 +135,11 @@ pub enum BiographyEntry {
         victim_id: String,
         tick: u64,
     },
+    /// plan-tribulation-v1 §2.6 — 下线/逃离劫场，按首波失败处理并公开记档。
+    TribulationFled {
+        wave: u32,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +377,9 @@ fn format_entry(entry: &BiographyEntry) -> String {
         ),
         BiographyEntry::TribulationIntercepted { victim_id, tick } => {
             format!("t{tick}:tribulation_intercepted:{victim_id}:戮道者·截劫")
+        }
+        BiographyEntry::TribulationFled { wave, tick } => {
+            format!("t{tick}:tribulation_fled:wave{wave}:畏劫而逃")
         }
     }
 }

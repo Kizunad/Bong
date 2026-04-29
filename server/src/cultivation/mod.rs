@@ -93,11 +93,12 @@ use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
-    tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
-    tribulation_wave_system, AscensionQuotaOpened, InitiateXuhuaTribulation, StartDuXuRequest,
-    TribulationAnnounce, TribulationFailed, TribulationLocked, TribulationSettled,
-    TribulationState, TribulationWaveCleared,
+    abort_du_xu_on_client_removed, start_du_xu_request_system, start_tribulation_system,
+    tribulation_aoe_system, tribulation_failure_system, tribulation_intercept_death_system,
+    tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOpened,
+    InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce, TribulationFailed,
+    TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -139,6 +140,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TribulationLocked>();
     app.add_event::<TribulationWaveCleared>();
     app.add_event::<TribulationFailed>();
+    app.add_event::<TribulationFled>();
     app.add_event::<TribulationSettled>();
     app.add_event::<AscensionQuotaOpened>();
     app.add_event::<InsightRequest>();
@@ -183,6 +185,9 @@ pub fn register(app: &mut App) {
             tribulation_phase_tick_system.after(start_tribulation_system),
             tribulation_aoe_system.after(tribulation_phase_tick_system),
             tribulation_failure_system.after(tribulation_aoe_system),
+            abort_du_xu_on_client_removed
+                .after(tribulation_failure_system)
+                .before(crate::player::despawn_disconnected_clients),
             tribulation_wave_system.after(tribulation_failure_system),
             tribulation_intercept_death_system
                 .after(crate::combat::lifecycle::death_arbiter_tick)

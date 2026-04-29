@@ -141,6 +141,15 @@ const PossessedBy = Type.Object(
   },
   { additionalProperties: false },
 );
+const TribulationFled = Type.Object(
+  {
+    TribulationFled: Type.Object({
+      wave: Type.Integer({ minimum: 0 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
 
 export const BiographyEntryV1 = Type.Union([
   BreakthroughStarted,
@@ -158,6 +167,7 @@ export const BiographyEntryV1 = Type.Union([
   LifespanExtended,
   DuoShePerformed,
   PossessedBy,
+  TribulationFled,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;
 
