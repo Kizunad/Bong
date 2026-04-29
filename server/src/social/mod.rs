@@ -1,7 +1,7 @@
 pub mod components;
 pub mod events;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Position,
-    Query, Res, Update, With, Without,
+    bevy_ecs, Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs,
+    Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use self::components::{
@@ -21,6 +21,7 @@ use self::events::{
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
+use crate::combat::CombatClock;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{send_server_data_payload, RedisBridgeResource};
@@ -35,9 +36,20 @@ use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
 const DEATH_EXPOSURE_RADIUS: f64 = 50.0;
+const COMPANION_RADIUS: f64 = 50.0;
+const COMPANION_SCAN_INTERVAL_TICKS: u64 = 20;
+const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
 const NAMELESS_LABEL: &str = "无名修士";
 
+type CompanionPairKey = (String, String);
+
+#[derive(Debug, Default, Resource)]
+struct CompanionProgress {
+    pair_seconds: HashMap<CompanionPairKey, u64>,
+}
+
 pub fn register(app: &mut App) {
+    app.init_resource::<CompanionProgress>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
@@ -52,10 +64,15 @@ pub fn register(app: &mut App) {
                 .after(attach_social_bundle_to_joined_clients),
             expose_chat_speakers.after(crate::network::chat_collector::collect_player_chat),
             handle_death_social_effects.after(crate::combat::CombatSystemSet::Resolve),
+            update_companion_relationships.after(attach_social_bundle_to_joined_clients),
             apply_social_exposures.after(expose_chat_speakers),
-            apply_social_relationships.after(handle_death_social_effects),
+            apply_social_relationships
+                .after(handle_death_social_effects)
+                .after(update_companion_relationships),
             apply_social_renown_deltas.after(handle_death_social_effects),
-            publish_social_events.after(apply_social_exposures),
+            publish_social_events
+                .after(apply_social_exposures)
+                .after(update_companion_relationships),
         ),
     );
 }
@@ -385,6 +402,77 @@ fn apply_social_renown_deltas(
                         event.char_id
                     );
                 }
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_companion_relationships(
+    clock: Res<CombatClock>,
+    mut progress: ResMut<CompanionProgress>,
+    players: Query<(Entity, &Lifecycle, &Position, &Relationships), With<Client>>,
+    mut relationships: EventWriter<SocialRelationshipEvent>,
+) {
+    if clock.tick == 0 || !clock.tick.is_multiple_of(COMPANION_SCAN_INTERVAL_TICKS) {
+        return;
+    }
+
+    let rows = players
+        .iter()
+        .filter_map(|(entity, lifecycle, position, relationships)| {
+            if lifecycle.state == LifecycleState::Terminated {
+                return None;
+            }
+            let companions = relationships
+                .edges
+                .iter()
+                .filter(|relationship| relationship.kind == RelationshipKindV1::Companion)
+                .map(|relationship| relationship.peer.clone())
+                .collect::<HashSet<_>>();
+            Some((
+                entity,
+                lifecycle.character_id.clone(),
+                position.get(),
+                companions,
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    for (left_index, (_, left_char, left_pos, left_companions)) in rows.iter().enumerate() {
+        for (_, right_char, right_pos, right_companions) in rows.iter().skip(left_index + 1) {
+            if left_companions.contains(right_char) || right_companions.contains(left_char) {
+                progress
+                    .pair_seconds
+                    .remove(&companion_pair_key(left_char, right_char));
+                continue;
+            }
+            let delta = *left_pos - *right_pos;
+            if delta.length_squared() > COMPANION_RADIUS * COMPANION_RADIUS {
+                continue;
+            }
+
+            let pair_key = companion_pair_key(left_char, right_char);
+            let seconds = progress
+                .pair_seconds
+                .entry(pair_key.clone())
+                .or_default()
+                .saturating_add(COMPANION_SCAN_INTERVAL_TICKS / 20);
+            progress.pair_seconds.insert(pair_key.clone(), seconds);
+
+            if seconds >= COMPANION_REQUIRED_SECONDS {
+                progress.pair_seconds.remove(&pair_key);
+                relationships.send(SocialRelationshipEvent {
+                    left: left_char.clone(),
+                    right: right_char.clone(),
+                    left_kind: RelationshipKindV1::Companion,
+                    right_kind: RelationshipKindV1::Companion,
+                    tick: clock.tick,
+                    metadata: serde_json::json!({
+                        "source": "co_presence",
+                        "accumulated_seconds": seconds,
+                    }),
+                });
             }
         }
     }
@@ -862,6 +950,14 @@ fn sorted_witnesses(witnesses: HashSet<String>) -> Vec<String> {
     witnesses
 }
 
+fn companion_pair_key(left: &str, right: &str) -> CompanionPairKey {
+    if left <= right {
+        (left.to_string(), right.to_string())
+    } else {
+        (right.to_string(), left.to_string())
+    }
+}
+
 fn zone_name_for_position(zone_registry: &ZoneRegistry, position: &Position) -> String {
     zone_registry
         .find_zone(
@@ -876,6 +972,7 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: &Position) -> 
 mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
+    use crate::combat::CombatClock;
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::social::RenownTagV1;
     use crate::social::events::PlayerChatCollected;
@@ -1049,5 +1146,54 @@ mod tests {
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn companion_relationship_emits_after_five_hours_nearby() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: COMPANION_SCAN_INTERVAL_TICKS,
+        });
+        let mut progress = CompanionProgress::default();
+        progress.pair_seconds.insert(
+            companion_pair_key("char:alice", "char:bob"),
+            COMPANION_REQUIRED_SECONDS - 1,
+        );
+        app.insert_resource(progress);
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_systems(Update, update_companion_relationships);
+
+        let (mut alice_bundle, _alice_helper) = create_mock_client("Alice");
+        alice_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let alice = app.world_mut().spawn(alice_bundle).id();
+        let (mut bob_bundle, _bob_helper) = create_mock_client("Bob");
+        bob_bundle.player.position = Position::new([30.0, 64.0, 0.0]);
+        let bob = app.world_mut().spawn(bob_bundle).id();
+        app.world_mut().entity_mut(alice).insert((
+            Lifecycle {
+                character_id: "char:alice".to_string(),
+                ..Default::default()
+            },
+            Relationships::default(),
+        ));
+        app.world_mut().entity_mut(bob).insert((
+            Lifecycle {
+                character_id: "char:bob".to_string(),
+                ..Default::default()
+            },
+            Relationships::default(),
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<SocialRelationshipEvent>>();
+        let mut reader = events.get_reader();
+        let collected = reader.read(events).cloned().collect::<Vec<_>>();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].left, "char:alice");
+        assert_eq!(collected[0].right, "char:bob");
+        assert_eq!(collected[0].left_kind, RelationshipKindV1::Companion);
+        assert_eq!(collected[0].right_kind, RelationshipKindV1::Companion);
+        assert_eq!(collected[0].metadata["source"], "co_presence");
     }
 }
