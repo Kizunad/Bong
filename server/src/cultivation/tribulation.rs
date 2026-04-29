@@ -30,7 +30,7 @@ use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 
 use super::breakthrough::skill_cap_for_realm;
-use super::components::{Cultivation, MeridianSystem, Realm};
+use super::components::{Cultivation, MeridianId, MeridianSystem, Realm};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
     complete_tribulation_ascension, delete_active_tribulation, load_ascension_quota,
@@ -41,6 +41,7 @@ pub const DUXU_OMEN_TICKS: u64 = 60 * 20;
 pub const DUXU_LOCK_TICKS: u64 = 30 * 20;
 pub const DUXU_WAVE_COOLDOWN_TICKS: u64 = 15 * 20;
 pub const DUXU_MAX_WAVES: u32 = 5;
+const DUXU_FULL_PROGRESS_MIN_TICKS: u64 = 30 * 60 * 20;
 pub const TRIBULATION_DANGER_RADIUS: f64 = 100.0;
 pub const DUXU_LOCK_RADIUS_SOFT: f64 = 50.0;
 pub const DUXU_LOCK_RADIUS_HARD: f64 = 20.0;
@@ -51,6 +52,7 @@ const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
 const DUXU_QI_DRAIN_BASE: f64 = 35.0;
 const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
 const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
+const DUXU_HEART_DEMON_WAVE: u32 = 4;
 const DUXU_KAITIAN_WAVE: u32 = 5;
 const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;
 const DUXU_FULL_QI_EPSILON: f64 = 0.001;
@@ -220,10 +222,15 @@ pub struct TribulationFled {
 pub fn start_du_xu_request_system(
     mut requests: EventReader<StartDuXuRequest>,
     mut initiate: EventWriter<InitiateXuhuaTribulation>,
-    players: Query<(&Cultivation, &MeridianSystem, Option<&TribulationState>)>,
+    players: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        Option<&TribulationState>,
+        Option<&LifeRecord>,
+    )>,
 ) {
     for request in requests.read() {
-        let Ok((cultivation, meridians, active)) = players.get(request.entity) else {
+        let Ok((cultivation, meridians, active, life_record)) = players.get(request.entity) else {
             continue;
         };
         if active.is_some() || !du_xu_prereqs_met(cultivation, meridians) {
@@ -237,7 +244,7 @@ pub fn start_du_xu_request_system(
         }
         initiate.send(InitiateXuhuaTribulation {
             entity: request.entity,
-            waves_total: DUXU_DEFAULT_WAVES,
+            waves_total: du_xu_waves_total(request.requested_at_tick, life_record),
             started_tick: request.requested_at_tick,
         });
     }
@@ -384,6 +391,13 @@ pub fn tribulation_phase_tick_system(
                 let next_wave = state.wave_current.saturating_add(1);
                 begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
+            TribulationPhase::HeartDemon
+                if clock.tick.saturating_sub(state.phase_started_tick)
+                    >= DUXU_WAVE_COOLDOWN_TICKS =>
+            {
+                let next_wave = state.wave_current.saturating_add(1);
+                begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
+            }
             _ => {}
         }
     }
@@ -399,7 +413,11 @@ fn begin_tribulation_wave(
     if wave == 0 || wave > state.waves_total {
         return;
     }
-    state.phase = TribulationPhase::Wave(wave);
+    state.phase = if wave == DUXU_HEART_DEMON_WAVE {
+        TribulationPhase::HeartDemon
+    } else {
+        TribulationPhase::Wave(wave)
+    };
     state.phase_started_tick = tick;
     state.next_wave_tick = tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
     cleared.send(TribulationWaveCleared { entity, wave });
@@ -945,8 +963,13 @@ pub fn publish_tribulation_events(
         let Ok(state) = states.get(ev.entity) else {
             continue;
         };
+        let phase = if ev.wave == DUXU_HEART_DEMON_WAVE {
+            TribulationPhaseV1::HeartDemon
+        } else {
+            TribulationPhaseV1::Wave { wave: ev.wave }
+        };
         let payload = TribulationEventV1::du_xu(
-            TribulationPhaseV1::Wave { wave: ev.wave },
+            phase,
             None,
             None,
             Some(state.epicenter),
@@ -984,6 +1007,66 @@ pub fn du_xu_prereqs_met(cultivation: &Cultivation, meridians: &MeridianSystem) 
     cultivation.realm == Realm::Spirit
         && meridians.iter().all(|meridian| meridian.opened)
         && meridians.opened_count() >= Realm::Void.required_meridians()
+}
+
+fn du_xu_waves_total(requested_at_tick: u64, life_record: Option<&LifeRecord>) -> u32 {
+    if life_record.is_some_and(|record| {
+        du_xu_full_progress_ticks(record, requested_at_tick) >= DUXU_FULL_PROGRESS_MIN_TICKS
+    }) {
+        DUXU_MAX_WAVES
+    } else {
+        DUXU_DEFAULT_WAVES
+    }
+}
+
+fn du_xu_full_progress_ticks(record: &LifeRecord, requested_at_tick: u64) -> u64 {
+    let Some(spirit_tick) = latest_spirit_breakthrough_tick(record) else {
+        return 0;
+    };
+    let Some(full_meridians_tick) = full_meridians_opened_tick(record) else {
+        return 0;
+    };
+    requested_at_tick.saturating_sub(spirit_tick.max(full_meridians_tick))
+}
+
+fn latest_spirit_breakthrough_tick(record: &LifeRecord) -> Option<u64> {
+    record.biography.iter().rev().find_map(|entry| match entry {
+        BiographyEntry::BreakthroughSucceeded { realm, tick } if *realm == Realm::Spirit => {
+            Some(*tick)
+        }
+        _ => None,
+    })
+}
+
+fn full_meridians_opened_tick(record: &LifeRecord) -> Option<u64> {
+    let mut opened: Vec<(MeridianId, u64)> = Vec::new();
+    let mut full_tick = None;
+    for entry in &record.biography {
+        match entry {
+            BiographyEntry::MeridianOpened { id, tick } => {
+                if let Some((_, opened_tick)) =
+                    opened.iter_mut().find(|(opened_id, _)| opened_id == id)
+                {
+                    *opened_tick = *tick;
+                } else {
+                    opened.push((*id, *tick));
+                }
+            }
+            BiographyEntry::MeridianClosed { id, .. } => {
+                opened.retain(|(opened_id, _)| opened_id != id);
+                full_tick = None;
+            }
+            _ => {}
+        }
+        if opened.len() >= Realm::Void.required_meridians() {
+            full_tick = opened.iter().map(|(_, tick)| *tick).max();
+        }
+    }
+    if opened.len() >= Realm::Void.required_meridians() {
+        full_tick
+    } else {
+        None
+    }
 }
 
 pub fn ascension_quota_limit(player_count: usize) -> u32 {
@@ -1141,6 +1224,27 @@ mod tests {
         }
     }
 
+    fn full_progress_life_record(spirit_tick: u64, final_meridian_tick: u64) -> LifeRecord {
+        let mut record = LifeRecord::new("offline:Azure");
+        record.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Spirit,
+            tick: spirit_tick,
+        });
+        let meridians: Vec<_> = MeridianId::REGULAR
+            .iter()
+            .chain(MeridianId::EXTRAORDINARY.iter())
+            .copied()
+            .collect();
+        let count = meridians.len().saturating_sub(1) as u64;
+        for (idx, id) in meridians.into_iter().enumerate() {
+            record.push(BiographyEntry::MeridianOpened {
+                id,
+                tick: final_meridian_tick.saturating_sub(count.saturating_sub(idx as u64)),
+            });
+        }
+        record
+    }
+
     #[test]
     fn omen_to_lock_emits_lock_event() {
         let mut app = App::new();
@@ -1190,6 +1294,183 @@ mod tests {
         assert_eq!(emitted[0].actor_name, "Azure");
         assert_eq!(emitted[0].epicenter, [12.0, 66.0, -8.0]);
         assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    #[test]
+    fn long_full_progress_du_xu_request_adds_heart_demon_and_kaitian_waves() {
+        let mut app = App::new();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let requested_at_tick = DUXU_FULL_PROGRESS_MIN_TICKS + 500;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                full_progress_life_record(100, 500),
+            ))
+            .id();
+
+        app.world_mut().send_event(StartDuXuRequest {
+            entity,
+            requested_at_tick,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].waves_total, 5);
+        assert_eq!(emitted[0].started_tick, requested_at_tick);
+    }
+
+    #[test]
+    fn recent_full_progress_du_xu_request_keeps_default_three_waves() {
+        let mut app = App::new();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let requested_at_tick = DUXU_FULL_PROGRESS_MIN_TICKS + 500;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                full_progress_life_record(100, requested_at_tick - 1),
+            ))
+            .id();
+
+        app.world_mut().send_event(StartDuXuRequest {
+            entity,
+            requested_at_tick,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    #[test]
+    fn fourth_wave_enters_heart_demon_without_aoe() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2100 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(
+            Update,
+            (
+                tribulation_phase_tick_system,
+                tribulation_aoe_system.after(tribulation_phase_tick_system),
+            ),
+        );
+
+        let tribulator = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 200.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 100.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(3),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 3,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 1800,
+                    next_wave_tick: 2100,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(tribulator)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::HeartDemon);
+        assert_eq!(state.wave_current, 3);
+        let wounds = app
+            .world()
+            .get::<Wounds>(tribulator)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 100.0);
+        assert!(wounds.entries.is_empty());
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 4);
+    }
+
+    #[test]
+    fn heart_demon_cooldown_advances_to_kaitian_wave() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2400 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::HeartDemon,
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 4,
+                waves_total: 5,
+                started_tick: 0,
+                phase_started_tick: 2100,
+                next_wave_tick: 2400,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Wave(5));
+        assert_eq!(state.phase_started_tick, 2400);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 5);
     }
 
     #[test]
