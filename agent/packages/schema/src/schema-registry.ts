@@ -63,6 +63,8 @@ import {
   SkillBarCastRequestV1,
   SparringInviteResponseRequestV1,
   StartExtractRequestV1,
+  TradeOfferRequestV1,
+  TradeOfferResponseRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
 } from "./client-request.js";
@@ -168,6 +170,7 @@ import {
   ServerDataSocialFeudV1,
   ServerDataSocialRenownDeltaV1,
   ServerDataSparringInviteV1,
+  ServerDataTradeOfferV1,
   BurstMeridianEventV1,
   TreasureEquippedV1,
   TreasureViewV1,
@@ -176,6 +179,9 @@ import {
   WeaponViewV1,
 } from "./server-data.js";
 import {
+  DeceasedExposureSnapshotV1,
+  DeceasedRenownSnapshotV1,
+  DeceasedSocialSnapshotV1,
   ExposureKindV1,
   FactionMembershipSnapshotV1,
   PlayerSocialSnapshotV1,
@@ -190,6 +196,8 @@ import {
   SocialRemoteIdentityV1,
   SocialRenownDeltaV1,
   SparringInvitePayloadV1,
+  TradeItemSummaryV1,
+  TradeOfferPayloadV1,
 } from "./social.js";
 import {
   DaoxiangSpawnedV1,
@@ -285,6 +293,8 @@ export const SCHEMA_REGISTRY = {
   clientRequestSkillBarCastV1: SkillBarCastRequestV1,
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
+  clientRequestTradeOfferV1: TradeOfferRequestV1,
+  clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
@@ -320,6 +330,9 @@ export const SCHEMA_REGISTRY = {
   renownSnapshotV1: RenownSnapshotV1,
   factionMembershipSnapshotV1: FactionMembershipSnapshotV1,
   playerSocialSnapshotV1: PlayerSocialSnapshotV1,
+  deceasedRenownSnapshotV1: DeceasedRenownSnapshotV1,
+  deceasedExposureSnapshotV1: DeceasedExposureSnapshotV1,
+  deceasedSocialSnapshotV1: DeceasedSocialSnapshotV1,
   socialRemoteIdentityV1: SocialRemoteIdentityV1,
   socialAnonymityPayloadV1: SocialAnonymityPayloadV1,
   socialExposureEventV1: SocialExposureEventV1,
@@ -327,12 +340,15 @@ export const SCHEMA_REGISTRY = {
   socialFeudEventV1: SocialFeudEventV1,
   socialRenownDeltaV1: SocialRenownDeltaV1,
   sparringInvitePayloadV1: SparringInvitePayloadV1,
+  tradeItemSummaryV1: TradeItemSummaryV1,
+  tradeOfferPayloadV1: TradeOfferPayloadV1,
   serverDataSocialAnonymityV1: ServerDataSocialAnonymityV1,
   serverDataSocialExposureV1: ServerDataSocialExposureV1,
   serverDataSocialPactV1: ServerDataSocialPactV1,
   serverDataSocialFeudV1: ServerDataSocialFeudV1,
   serverDataSocialRenownDeltaV1: ServerDataSocialRenownDeltaV1,
   serverDataSparringInviteV1: ServerDataSparringInviteV1,
+  serverDataTradeOfferV1: ServerDataTradeOfferV1,
   // 炼丹 (plan-alchemy-v1 §4)
   alchemyOutcomeBucket: AlchemyOutcomeBucket,
   alchemyInterventionV1: AlchemyInterventionV1,
@@ -493,6 +509,9 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestSkillBarCastV1,
   "client-request-skill-bar-bind-v1.json":
     SCHEMA_REGISTRY.clientRequestSkillBarBindV1,
+  "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
+  "client-request-trade-offer-response-v1.json":
+    SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
   "client-request-start-extract-v1.json":
     SCHEMA_REGISTRY.clientRequestStartExtractV1,
   "client-request-cancel-extract-v1.json":
@@ -543,6 +562,12 @@ export const GENERATED_SCHEMA_FILES = {
   "faction-membership-snapshot-v1.json":
     SCHEMA_REGISTRY.factionMembershipSnapshotV1,
   "player-social-snapshot-v1.json": SCHEMA_REGISTRY.playerSocialSnapshotV1,
+  "deceased-renown-snapshot-v1.json":
+    SCHEMA_REGISTRY.deceasedRenownSnapshotV1,
+  "deceased-exposure-snapshot-v1.json":
+    SCHEMA_REGISTRY.deceasedExposureSnapshotV1,
+  "deceased-social-snapshot-v1.json":
+    SCHEMA_REGISTRY.deceasedSocialSnapshotV1,
   "social-remote-identity-v1.json": SCHEMA_REGISTRY.socialRemoteIdentityV1,
   "social-anonymity-payload-v1.json": SCHEMA_REGISTRY.socialAnonymityPayloadV1,
   "social-exposure-event-v1.json": SCHEMA_REGISTRY.socialExposureEventV1,
@@ -550,6 +575,8 @@ export const GENERATED_SCHEMA_FILES = {
   "social-feud-event-v1.json": SCHEMA_REGISTRY.socialFeudEventV1,
   "social-renown-delta-v1.json": SCHEMA_REGISTRY.socialRenownDeltaV1,
   "sparring-invite-payload-v1.json": SCHEMA_REGISTRY.sparringInvitePayloadV1,
+  "trade-item-summary-v1.json": SCHEMA_REGISTRY.tradeItemSummaryV1,
+  "trade-offer-payload-v1.json": SCHEMA_REGISTRY.tradeOfferPayloadV1,
   "server-data-social-anonymity-v1.json":
     SCHEMA_REGISTRY.serverDataSocialAnonymityV1,
   "server-data-social-exposure-v1.json":
@@ -560,6 +587,7 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataSocialRenownDeltaV1,
   "server-data-sparring-invite-v1.json":
     SCHEMA_REGISTRY.serverDataSparringInviteV1,
+  "server-data-trade-offer-v1.json": SCHEMA_REGISTRY.serverDataTradeOfferV1,
   "client-request-sparring-invite-response-v1.json":
     SCHEMA_REGISTRY.clientRequestSparringInviteResponseV1,
   "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,

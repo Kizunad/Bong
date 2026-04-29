@@ -355,6 +355,7 @@ describe("sample files pass schema validation", () => {
     "server-data.social-feud.sample.json",
     "server-data.social-renown-delta.sample.json",
     "server-data.sparring-invite.sample.json",
+    "server-data.trade-offer.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);

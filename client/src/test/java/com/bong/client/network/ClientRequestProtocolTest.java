@@ -195,6 +195,22 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesTradeOfferRequests() {
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            ClientRequestProtocol.encodeTradeOfferRequest("entity:42", 1001L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", true, 2002L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":false,\"requested_instance_id\":null}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", false, null)
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(

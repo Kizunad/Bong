@@ -14,6 +14,7 @@ public final class SocialStateStore {
     private static volatile List<SocialRelationshipSignal> relationships = List.of();
     private static volatile List<SocialRenownDelta> renownDeltas = List.of();
     private static volatile SparringInvite sparringInvite = null;
+    private static volatile TradeOffer tradeOffer = null;
 
     private SocialStateStore() {
     }
@@ -36,6 +37,10 @@ public final class SocialStateStore {
 
     public static SparringInvite sparringInvite() {
         return sparringInvite;
+    }
+
+    public static TradeOffer tradeOffer() {
+        return tradeOffer;
     }
 
     public static boolean shouldShowRemoteNameTag(String playerUuid, String playerName) {
@@ -76,12 +81,25 @@ public final class SocialStateStore {
         }
     }
 
+    public static void replaceTradeOffer(TradeOffer offer) {
+        tradeOffer = offer;
+    }
+
+    public static void clearTradeOffer(String offerId) {
+        TradeOffer current = tradeOffer;
+        if (current == null) return;
+        if (offerId == null || offerId.isBlank() || current.offerId().equals(offerId)) {
+            tradeOffer = null;
+        }
+    }
+
     public static void clearOnDisconnect() {
         anonymity = SocialAnonymitySnapshot.empty();
         exposures = List.of();
         relationships = List.of();
         renownDeltas = List.of();
         sparringInvite = null;
+        tradeOffer = null;
     }
 
     public static void resetForTests() {
@@ -235,6 +253,38 @@ public final class SocialStateStore {
             realmBand = normalize(realmBand);
             breathHint = normalize(breathHint);
             terms = normalize(terms);
+            expiresAtMs = Math.max(0L, expiresAtMs);
+        }
+    }
+
+    public record TradeItemSummary(
+        long instanceId,
+        String itemId,
+        String displayName,
+        int stackCount
+    ) {
+        public TradeItemSummary {
+            instanceId = Math.max(0L, instanceId);
+            itemId = normalize(itemId);
+            displayName = normalize(displayName);
+            stackCount = Math.max(1, stackCount);
+        }
+    }
+
+    public record TradeOffer(
+        String offerId,
+        String initiator,
+        String target,
+        TradeItemSummary offeredItem,
+        List<TradeItemSummary> requestedItems,
+        long expiresAtMs
+    ) {
+        public TradeOffer {
+            offerId = normalize(offerId);
+            initiator = normalize(initiator);
+            target = normalize(target);
+            offeredItem = offeredItem == null ? new TradeItemSummary(0L, "", "", 1) : offeredItem;
+            requestedItems = List.copyOf(safeList(requestedItems));
             expiresAtMs = Math.max(0L, expiresAtMs);
         }
     }

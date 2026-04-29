@@ -115,6 +115,24 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void tradeOfferUpdatesStoreAndPublishesHudSignal() {
+        ServerDataDispatch dispatch = handler().handle(parseEnvelope("""
+            {"v":1,"type":"trade_offer","offer_id":"trade:char:steve:char:new:1001:42",
+             "initiator":"char:steve","target":"char:new",
+             "offered_item":{"instance_id":1001,"item_id":"spirit_grass","display_name":"Spirit Grass","stack_count":1},
+             "requested_items":[{"instance_id":2002,"item_id":"bone_coin","display_name":"Bone Coin","stack_count":3}],
+             "expires_at_ms":1712346000000}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertNotNull(SocialStateStore.tradeOffer());
+        assertEquals("trade:char:steve:char:new:1001:42", SocialStateStore.tradeOffer().offerId());
+        assertEquals("Spirit Grass", SocialStateStore.tradeOffer().offeredItem().displayName());
+        assertEquals(2002L, SocialStateStore.tradeOffer().requestedItems().get(0).instanceId());
+        assertEquals(1, UnifiedEventStore.stream().size());
+    }
+
+    @Test
     void invalidSocialPayloadBecomesSafeNoOp() {
         ServerDataDispatch dispatch = handler().handle(parseEnvelope(
             "{\"v\":1,\"type\":\"social_exposure\",\"actor\":\"char:steve\",\"kind\":\"unknown\",\"witnesses\":[],\"tick\":1}"

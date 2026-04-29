@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { BiographyEntryV1 } from "./biography.js";
 import { Realm } from "./cultivation.js";
+import { DeceasedSocialSnapshotV1 } from "./social.js";
 import { validate, type ValidationResult } from "./validate.js";
 
 export const ZoneDeathKind = Type.Union(
@@ -182,6 +183,7 @@ export const DeceasedSnapshotV1 = Type.Object(
     termination_category: TerminationCategoryV1,
     lifecycle: LifecycleV1,
     life_record: LifeRecordV1,
+    social: Type.Optional(DeceasedSocialSnapshotV1),
   },
   { additionalProperties: false },
 );

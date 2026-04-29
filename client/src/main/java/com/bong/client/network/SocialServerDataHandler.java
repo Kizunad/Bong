@@ -28,6 +28,7 @@ public final class SocialServerDataHandler implements ServerDataHandler {
             case "social_feud" -> handleFeud(envelope);
             case "social_renown_delta" -> handleRenownDelta(envelope);
             case "sparring_invite" -> handleSparringInvite(envelope);
+            case "trade_offer" -> handleTradeOffer(envelope);
             default -> ServerDataDispatch.noOp(envelope.type(), "Ignoring unsupported social payload type");
         };
     }
@@ -202,6 +203,41 @@ public final class SocialServerDataHandler implements ServerDataHandler {
         return ServerDataDispatch.handled(envelope.type(), "Recorded sparring_invite " + inviteId);
     }
 
+    private ServerDataDispatch handleTradeOffer(ServerDataEnvelope envelope) {
+        JsonObject p = envelope.payload();
+        String offerId = readString(p, "offer_id");
+        String initiator = readString(p, "initiator");
+        String target = readString(p, "target");
+        Long expiresAtMs = readLong(p, "expires_at_ms");
+        SocialStateStore.TradeItemSummary offeredItem = parseTradeItem(p.get("offered_item"));
+        JsonArray requestedArray = readArray(p, "requested_items");
+        if (offerId == null || initiator == null || target == null || expiresAtMs == null || offeredItem == null || requestedArray == null) {
+            return ServerDataDispatch.noOp(envelope.type(), "Ignoring trade_offer: missing offer_id/initiator/target/offered_item/requested_items/expires_at_ms");
+        }
+
+        List<SocialStateStore.TradeItemSummary> requestedItems = new ArrayList<>();
+        for (JsonElement element : requestedArray) {
+            SocialStateStore.TradeItemSummary item = parseTradeItem(element);
+            if (item != null) requestedItems.add(item);
+        }
+        SocialStateStore.TradeOffer offer = new SocialStateStore.TradeOffer(
+            offerId,
+            initiator,
+            target,
+            offeredItem,
+            requestedItems,
+            expiresAtMs
+        );
+        SocialStateStore.replaceTradeOffer(offer);
+        publishSocialEvent(
+            UnifiedEvent.Priority.P1_IMPORTANT,
+            "trade_offer:" + offerId,
+            "交易邀请：" + initiator + " 提供 " + offeredItem.displayName(),
+            SOCIAL_COLOR
+        );
+        return ServerDataDispatch.handled(envelope.type(), "Recorded trade_offer " + offerId);
+    }
+
     private static SocialStateStore.SocialRemoteIdentity parseRemote(JsonElement element) {
         if (element == null || element.isJsonNull() || !element.isJsonObject()) return null;
         JsonObject remote = element.getAsJsonObject();
@@ -232,6 +268,17 @@ public final class SocialServerDataHandler implements ServerDataHandler {
             tags.add(new SocialStateStore.RenownTag(tag, weight, lastSeenTick, permanent));
         }
         return tags;
+    }
+
+    private static SocialStateStore.TradeItemSummary parseTradeItem(JsonElement element) {
+        if (element == null || element.isJsonNull() || !element.isJsonObject()) return null;
+        JsonObject object = element.getAsJsonObject();
+        Long instanceId = readLong(object, "instance_id");
+        String itemId = readString(object, "item_id");
+        String displayName = readString(object, "display_name");
+        Integer stackCount = readInt(object, "stack_count");
+        if (instanceId == null || itemId == null || displayName == null || stackCount == null) return null;
+        return new SocialStateStore.TradeItemSummary(instanceId, itemId, displayName, stackCount);
     }
 
     private static List<String> readStringArray(JsonArray array) {

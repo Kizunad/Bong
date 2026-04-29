@@ -53,6 +53,7 @@ import {
   PlayerSocialSnapshotV1,
   SocialRenownDeltaV1,
   SparringInvitePayloadV1,
+  TradeOfferPayloadV1,
 } from "./social.js";
 import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
@@ -166,6 +167,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("social_feud"),
   Type.Literal("social_renown_delta"),
   Type.Literal("sparring_invite"),
+  Type.Literal("trade_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -914,6 +916,16 @@ export type ServerDataSparringInviteV1 = Static<
   typeof ServerDataSparringInviteV1
 >;
 
+export const ServerDataTradeOfferV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer"),
+    ...TradeOfferPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTradeOfferV1 = Static<typeof ServerDataTradeOfferV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -965,5 +977,6 @@ export const ServerDataV1 = Type.Union([
   ServerDataSocialFeudV1,
   ServerDataSocialRenownDeltaV1,
   ServerDataSparringInviteV1,
+  ServerDataTradeOfferV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

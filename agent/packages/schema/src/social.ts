@@ -75,6 +75,37 @@ export const PlayerSocialSnapshotV1 = Type.Object(
 );
 export type PlayerSocialSnapshotV1 = Static<typeof PlayerSocialSnapshotV1>;
 
+export const DeceasedRenownSnapshotV1 = Type.Object(
+  {
+    fame: Type.Integer(),
+    notoriety: Type.Integer(),
+    tags: Type.Array(RenownTagV1),
+  },
+  { additionalProperties: false },
+);
+export type DeceasedRenownSnapshotV1 = Static<typeof DeceasedRenownSnapshotV1>;
+
+export const DeceasedExposureSnapshotV1 = Type.Object(
+  {
+    tick: Type.Integer({ minimum: 0 }),
+    kind: ExposureKindV1,
+    witnesses: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type DeceasedExposureSnapshotV1 = Static<typeof DeceasedExposureSnapshotV1>;
+
+export const DeceasedSocialSnapshotV1 = Type.Object(
+  {
+    renown: DeceasedRenownSnapshotV1,
+    relationships: Type.Array(RelationshipSnapshotV1),
+    exposure_log: Type.Array(DeceasedExposureSnapshotV1),
+    faction_membership: Type.Optional(FactionMembershipSnapshotV1),
+  },
+  { additionalProperties: false },
+);
+export type DeceasedSocialSnapshotV1 = Static<typeof DeceasedSocialSnapshotV1>;
+
 export const SocialRemoteIdentityV1 = Type.Object(
   {
     player_uuid: Type.String(),
@@ -162,6 +193,30 @@ export const SparringInvitePayloadV1 = Type.Object(
   { additionalProperties: false },
 );
 export type SparringInvitePayloadV1 = Static<typeof SparringInvitePayloadV1>;
+
+export const TradeItemSummaryV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    item_id: Type.String(),
+    display_name: Type.String(),
+    stack_count: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type TradeItemSummaryV1 = Static<typeof TradeItemSummaryV1>;
+
+export const TradeOfferPayloadV1 = Type.Object(
+  {
+    offer_id: Type.String(),
+    initiator: Type.String(),
+    target: Type.String(),
+    offered_item: TradeItemSummaryV1,
+    requested_items: Type.Array(TradeItemSummaryV1),
+    expires_at_ms: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferPayloadV1 = Static<typeof TradeOfferPayloadV1>;
 
 export function validateSocialExposureEventV1Contract(data: unknown): ValidationResult {
   return validate(SocialExposureEventV1, data);

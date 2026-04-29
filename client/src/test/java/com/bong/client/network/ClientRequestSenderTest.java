@@ -211,6 +211,25 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendTradeOfferRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendTradeOfferRequest("entity:42", 1001L);
+        ClientRequestSender.sendTradeOfferResponse("trade:a:b:1001:20", true, 2002L);
+
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

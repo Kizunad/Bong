@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "tick",
+    "kind",
+    "witnesses"
+  ],
+  "properties": {
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "chat",
+          "type": "string"
+        },
+        {
+          "const": "trade",
+          "type": "string"
+        },
+        {
+          "const": "divine",
+          "type": "string"
+        },
+        {
+          "const": "death",
+          "type": "string"
+        }
+      ]
+    },
+    "witnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

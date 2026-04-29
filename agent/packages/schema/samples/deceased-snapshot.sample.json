@@ -21,5 +21,37 @@
     "death_insights": [
       { "tick": 84000, "text": "寿火已尽，生平至此合卷。", "style": "perception" }
     ]
+  },
+  "social": {
+    "renown": {
+      "fame": 12,
+      "notoriety": 80,
+      "tags": [
+        { "tag": "三叛之人", "weight": 20, "last_seen_tick": 82000, "permanent": true }
+      ]
+    },
+    "relationships": [
+      {
+        "kind": "feud",
+        "peer": "char:rival",
+        "since_tick": 33000,
+        "metadata": { "cause": "ambush" }
+      }
+    ],
+    "exposure_log": [
+      {
+        "tick": 84000,
+        "kind": "death",
+        "witnesses": ["char:killer", "char:witness"]
+      }
+    ],
+    "faction_membership": {
+      "faction": "attack",
+      "rank": 2,
+      "loyalty": -10,
+      "betrayal_count": 3,
+      "invite_block_until_tick": 90000,
+      "permanently_refused": true
+    }
   }
 }

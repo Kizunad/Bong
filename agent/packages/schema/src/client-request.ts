@@ -456,6 +456,29 @@ export const SparringInviteResponseRequestV1 = Type.Object(
 );
 export type SparringInviteResponseRequestV1 = Static<typeof SparringInviteResponseRequestV1>;
 
+export const TradeOfferRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_request"),
+    target: Type.String({ minLength: 1, maxLength: 64 }),
+    offered_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferRequestV1 = Static<typeof TradeOfferRequestV1>;
+
+export const TradeOfferResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_response"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    accepted: Type.Boolean(),
+    requested_instance_id: Type.Optional(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -613,6 +636,8 @@ export const ClientRequestV1 = Type.Union([
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
   SparringInviteResponseRequestV1,
+  TradeOfferRequestV1,
+  TradeOfferResponseRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,

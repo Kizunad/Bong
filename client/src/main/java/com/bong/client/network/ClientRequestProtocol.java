@@ -369,6 +369,37 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeTradeOfferRequest(String target, long offeredInstanceId) {
+        if (target == null || target.isBlank()) {
+            throw new IllegalArgumentException("target must not be blank");
+        }
+        if (offeredInstanceId < 0) {
+            throw new IllegalArgumentException("offeredInstanceId must be >= 0, got " + offeredInstanceId);
+        }
+        JsonObject obj = envelope("trade_offer_request");
+        obj.addProperty("target", target.trim());
+        obj.addProperty("offered_instance_id", offeredInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeTradeOfferResponse(String offerId, boolean accepted, Long requestedInstanceId) {
+        if (offerId == null || offerId.isBlank()) {
+            throw new IllegalArgumentException("offerId must not be blank");
+        }
+        JsonObject obj = envelope("trade_offer_response");
+        obj.addProperty("offer_id", offerId);
+        obj.addProperty("accepted", accepted);
+        if (requestedInstanceId == null) {
+            obj.add("requested_instance_id", com.google.gson.JsonNull.INSTANCE);
+        } else {
+            if (requestedInstanceId < 0) {
+                throw new IllegalArgumentException("requestedInstanceId must be >= 0, got " + requestedInstanceId);
+            }
+            obj.addProperty("requested_instance_id", requestedInstanceId.longValue());
+        }
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
