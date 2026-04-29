@@ -1,0 +1,172 @@
+//! 定向天罚内部权重（plan-tribulation-v1 §5）。
+//!
+//! 本模块只维护 server 内部数据契约：`KarmaWeightStore` 记录玩家/区域劫气，
+//! `QiDensityHeatmap` 记录区域灵物密度热度。它们不注册任何查询接口，避免把
+//! 定向天罚明牌化；后续负面事件 roll 只需读取这些 resource 叠权重。
+
+use std::collections::HashMap;
+
+use valence::prelude::{bevy_ecs, BlockPos, Resource};
+
+use crate::world::dimension::DimensionKind;
+
+pub const KARMA_WEIGHT_MIN: f32 = 0.0;
+pub const KARMA_WEIGHT_MAX: f32 = 1.0;
+#[allow(dead_code)] // 后续负面事件 roll 接入前，仅作为内部契约锚点。
+pub const KARMA_WEIGHT_DECAY_PER_TICK: f32 = 1.0 / (30.0 * 24.0 * 60.0 * 60.0 * 20.0);
+pub const QI_DENSITY_HEAT_MAX: f32 = 1.0;
+pub const QI_DENSITY_CELL_SIZE: i32 = 16;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KarmaWeightEntry {
+    pub player_id: String,
+    pub zone: Option<String>,
+    pub weight: f32,
+    pub last_position: [i32; 3],
+    pub last_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct KarmaWeightStore {
+    by_player: HashMap<String, KarmaWeightEntry>,
+}
+
+impl KarmaWeightStore {
+    pub fn mark_player(
+        &mut self,
+        player_id: impl Into<String>,
+        zone: Option<String>,
+        position: BlockPos,
+        weight_delta: f32,
+        tick: u64,
+    ) {
+        let player_id = player_id.into();
+        let normalized_delta = weight_delta.clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
+        let entry = self
+            .by_player
+            .entry(player_id.clone())
+            .or_insert_with(|| KarmaWeightEntry {
+                player_id,
+                zone: zone.clone(),
+                weight: KARMA_WEIGHT_MIN,
+                last_position: [position.x, position.y, position.z],
+                last_tick: tick,
+            });
+        entry.zone = zone;
+        entry.last_position = [position.x, position.y, position.z];
+        entry.last_tick = tick;
+        entry.weight = (entry.weight + normalized_delta).clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
+    }
+
+    #[allow(dead_code)] // 后续概率操控系统读取；当前仅测试覆盖。
+    pub fn weight_for_player(&self, player_id: &str) -> f32 {
+        self.by_player
+            .get(player_id)
+            .map(|entry| entry.weight)
+            .unwrap_or(KARMA_WEIGHT_MIN)
+    }
+
+    #[allow(dead_code)] // 后续概率操控系统读取；当前仅测试覆盖。
+    pub fn entry_for_player(&self, player_id: &str) -> Option<&KarmaWeightEntry> {
+        self.by_player.get(player_id)
+    }
+
+    #[allow(dead_code)] // 后续统一 world tick 接入衰减；当前仅测试覆盖。
+    pub fn decay(&mut self, ticks: u64) {
+        if ticks == 0 {
+            return;
+        }
+        let amount = KARMA_WEIGHT_DECAY_PER_TICK * ticks as f32;
+        self.by_player.retain(|_, entry| {
+            entry.weight = (entry.weight - amount).max(KARMA_WEIGHT_MIN);
+            entry.weight > KARMA_WEIGHT_MIN
+        });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QiDensityCell {
+    pub dimension: DimensionKind,
+    pub x: i32,
+    pub z: i32,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct QiDensityHeatmap {
+    by_cell: HashMap<QiDensityCell, f32>,
+}
+
+impl QiDensityHeatmap {
+    pub fn add_heat(&mut self, dimension: DimensionKind, position: BlockPos, heat_delta: f32) {
+        let cell = QiDensityCell::from_position(dimension, position);
+        let entry = self.by_cell.entry(cell).or_insert(0.0);
+        *entry = (*entry + heat_delta.max(0.0)).min(QI_DENSITY_HEAT_MAX);
+    }
+
+    #[allow(dead_code)] // 后续区域负面事件 roll 读取；当前仅测试覆盖。
+    pub fn heat_at(&self, dimension: DimensionKind, position: BlockPos) -> f32 {
+        self.by_cell
+            .get(&QiDensityCell::from_position(dimension, position))
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
+impl QiDensityCell {
+    pub fn from_position(dimension: DimensionKind, position: BlockPos) -> Self {
+        Self {
+            dimension,
+            x: position.x.div_euclid(QI_DENSITY_CELL_SIZE),
+            z: position.z.div_euclid(QI_DENSITY_CELL_SIZE),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn karma_weight_accumulates_and_clamps_per_player() {
+        let mut store = KarmaWeightStore::default();
+        let pos = BlockPos::new(1, 64, 2);
+
+        store.mark_player("Azure", Some("spawn".to_string()), pos, 0.30, 10);
+        store.mark_player("Azure", Some("spawn".to_string()), pos, 0.80, 11);
+
+        let entry = store.entry_for_player("Azure").expect("entry should exist");
+        assert_eq!(entry.weight, KARMA_WEIGHT_MAX);
+        assert_eq!(entry.zone.as_deref(), Some("spawn"));
+        assert_eq!(entry.last_position, [1, 64, 2]);
+        assert_eq!(entry.last_tick, 11);
+    }
+
+    #[test]
+    fn karma_weight_decays_to_zero_and_expires() {
+        let mut store = KarmaWeightStore::default();
+        store.mark_player("Azure", None, BlockPos::new(0, 64, 0), 0.01, 1);
+
+        store.decay(30 * 24 * 60 * 60 * 20);
+
+        assert_eq!(store.weight_for_player("Azure"), 0.0);
+        assert!(store.entry_for_player("Azure").is_none());
+    }
+
+    #[test]
+    fn qi_density_heatmap_buckets_by_dimension_and_chunk_cell() {
+        let mut heatmap = QiDensityHeatmap::default();
+
+        heatmap.add_heat(DimensionKind::Overworld, BlockPos::new(31, 64, -1), 0.25);
+        heatmap.add_heat(DimensionKind::Overworld, BlockPos::new(16, 70, -16), 0.85);
+        heatmap.add_heat(DimensionKind::Tsy, BlockPos::new(31, 64, -1), 0.40);
+
+        assert_eq!(
+            heatmap.heat_at(DimensionKind::Overworld, BlockPos::new(20, 64, -8)),
+            QI_DENSITY_HEAT_MAX
+        );
+        assert_eq!(
+            heatmap.heat_at(DimensionKind::Tsy, BlockPos::new(20, 64, -8)),
+            0.40
+        );
+    }
+}
