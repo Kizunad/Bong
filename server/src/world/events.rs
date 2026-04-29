@@ -58,6 +58,7 @@ pub(crate) const REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS: u64 = 60 * 60 * 20;
 pub(crate) const REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS: u64 =
     REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS;
 pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
+pub(crate) const REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS: u64 = 60 * 20;
 pub(crate) const REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID: &str = "bong:realm_collapse_boundary";
 const REALM_COLLAPSE_BOUNDARY_VFX_COLOR: &str = "#2B2B31";
 const REALM_COLLAPSE_BOUNDARY_VFX_COUNT: u16 = 64;
@@ -94,6 +95,7 @@ struct BeastTideRuntimeState {
 struct RealmCollapseRuntimeState {
     completed: bool,
     evacuation_warning_emitted: bool,
+    last_evacuation_reminder_bucket: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -721,33 +723,41 @@ impl ActiveEventsResource {
                 }
                 EVENT_REALM_COLLAPSE => {
                     let next_elapsed = event.elapsed_ticks.saturating_add(1);
-                    if !event.collapse.evacuation_warning_emitted
-                        && !event.collapse.completed
-                        && next_elapsed < event.duration_ticks
-                    {
+                    if !event.collapse.completed && next_elapsed < event.duration_ticks {
                         let remaining_ticks = event.duration_ticks.saturating_sub(next_elapsed);
                         if remaining_ticks <= REALM_COLLAPSE_EVACUATION_WINDOW_TICKS {
-                            event.collapse.evacuation_warning_emitted = true;
-                            self.pending_major_alerts.push(MajorEventAlert {
-                                event_name: event.event_name.clone(),
-                                zone_name: event.zone_name.clone(),
-                                duration_ticks: remaining_ticks,
-                                message: Some(realm_collapse_evacuation_alert_message(
-                                    event.zone_name.as_str(),
+                            if !event.collapse.evacuation_warning_emitted {
+                                event.collapse.evacuation_warning_emitted = true;
+                                event.collapse.last_evacuation_reminder_bucket = Some(
+                                    realm_collapse_evacuation_reminder_bucket(remaining_ticks),
+                                );
+                                self.pending_major_alerts.push(MajorEventAlert {
+                                    event_name: event.event_name.clone(),
+                                    zone_name: event.zone_name.clone(),
+                                    duration_ticks: remaining_ticks,
+                                    message: Some(realm_collapse_evacuation_alert_message(
+                                        event.zone_name.as_str(),
+                                        remaining_ticks,
+                                    )),
+                                });
+                                self.pending_tribulation_events.push(
+                                    TribulationEventV1::zone_collapse(
+                                        TribulationPhaseV1::Lock,
+                                        Some(event.zone_name.clone()),
+                                        Some([zone.center().x, zone.center().y, zone.center().z]),
+                                    ),
+                                );
+                                self.pending_vfx_events.push(realm_collapse_boundary_vfx(
+                                    &zone,
+                                    REALM_COLLAPSE_BOUNDARY_VFX_LOCK_STRENGTH,
+                                ));
+                            } else {
+                                maybe_emit_realm_collapse_evacuation_reminder(
+                                    event,
                                     remaining_ticks,
-                                )),
-                            });
-                            self.pending_tribulation_events.push(
-                                TribulationEventV1::zone_collapse(
-                                    TribulationPhaseV1::Lock,
-                                    Some(event.zone_name.clone()),
-                                    Some([zone.center().x, zone.center().y, zone.center().z]),
-                                ),
-                            );
-                            self.pending_vfx_events.push(realm_collapse_boundary_vfx(
-                                &zone,
-                                REALM_COLLAPSE_BOUNDARY_VFX_LOCK_STRENGTH,
-                            ));
+                                    &mut self.pending_major_alerts,
+                                );
+                            }
                         }
                     }
 
@@ -1208,6 +1218,37 @@ fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64
     format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
 }
 
+fn realm_collapse_evacuation_reminder_bucket(remaining_ticks: u64) -> u64 {
+    remaining_ticks.div_ceil(REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS)
+}
+
+fn maybe_emit_realm_collapse_evacuation_reminder(
+    event: &mut ActiveEvent,
+    remaining_ticks: u64,
+    pending_alerts: &mut Vec<MajorEventAlert>,
+) {
+    let bucket = realm_collapse_evacuation_reminder_bucket(remaining_ticks);
+    if event.collapse.last_evacuation_reminder_bucket == Some(bucket) {
+        return;
+    }
+
+    event.collapse.last_evacuation_reminder_bucket = Some(bucket);
+    pending_alerts.push(MajorEventAlert {
+        event_name: event.event_name.clone(),
+        zone_name: event.zone_name.clone(),
+        duration_ticks: remaining_ticks,
+        message: Some(realm_collapse_evacuation_reminder_message(
+            event.zone_name.as_str(),
+            remaining_ticks,
+        )),
+    });
+}
+
+fn realm_collapse_evacuation_reminder_message(zone_name: &str, remaining_ticks: u64) -> String {
+    let remaining_minutes = remaining_ticks.div_ceil(60 * 20);
+    format!("区域 {zone_name} 域崩撤离倒计时：约 {remaining_minutes} 分钟；请立即离开边界。")
+}
+
 fn realm_collapse_boundary_vfx(zone: &Zone, strength: f32) -> VfxEventRequest {
     let (min, max) = zone.bounds;
     let center = zone.center();
@@ -1548,9 +1589,9 @@ mod events_tests {
         RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
         COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
         EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
-        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
-        REALM_COLLAPSE_LOW_QI_THRESHOLD, REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS,
-        TARGETED_LIGHTNING_VFX_EVENT_ID,
+        REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
+        REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
+        REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS, TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
@@ -2160,6 +2201,66 @@ mod events_tests {
         assert!(events.drain_major_event_alerts().is_empty());
         assert!(events.drain_tribulation_events().is_empty());
         assert!(events.drain_vfx_events().is_empty());
+    }
+
+    #[test]
+    fn realm_collapse_emits_minute_evacuation_reminders() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut events = ActiveEventsResource::default();
+        let duration_ticks = REALM_COLLAPSE_EVACUATION_WINDOW_TICKS + 1;
+        let command = spawn_event_command(
+            DEFAULT_SPAWN_ZONE_NAME,
+            EVENT_REALM_COLLAPSE,
+            duration_ticks,
+        );
+
+        assert!(events.enqueue_from_spawn_command(&command, Some(&mut zones)));
+        let _ = events.drain_major_event_alerts();
+        let _ = events.drain_tribulation_events();
+        let _ = events.drain_vfx_events();
+
+        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let evacuation_alerts = events.drain_major_event_alerts();
+        assert_eq!(evacuation_alerts.len(), 1);
+        assert!(evacuation_alerts[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("撤离窗口") && message.contains("横死")));
+        assert_eq!(
+            evacuation_alerts[0].duration_ticks,
+            REALM_COLLAPSE_EVACUATION_WINDOW_TICKS
+        );
+        let _ = events.drain_tribulation_events();
+        let _ = events.drain_vfx_events();
+
+        for _ in 0..REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS - 1 {
+            let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+            assert!(
+                events.drain_major_event_alerts().is_empty(),
+                "same minute bucket should not spam evacuation reminders"
+            );
+        }
+
+        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let reminders = events.drain_major_event_alerts();
+        assert_eq!(reminders.len(), 1);
+        assert_eq!(
+            reminders[0].duration_ticks,
+            REALM_COLLAPSE_EVACUATION_WINDOW_TICKS
+                - REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS
+        );
+        assert!(reminders[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("倒计时") && message.contains("约 9 分钟")));
+        assert!(
+            events.drain_tribulation_events().is_empty(),
+            "periodic reminders should not re-emit tribulation lock events"
+        );
+        assert!(
+            events.drain_vfx_events().is_empty(),
+            "periodic reminders should not replay boundary VFX"
+        );
     }
 
     #[test]
