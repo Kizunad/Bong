@@ -10,6 +10,7 @@
 use valence::prelude::{bevy_ecs, Position, Query, ResMut, Resource};
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{Cultivation, MeridianSystem};
@@ -78,6 +79,14 @@ pub fn qi_regen_and_zone_drain_tick(
         let Some(zone) = zones.find_zone_mut(&zone_name) else {
             continue;
         };
+        if zone
+            .active_events
+            .iter()
+            .any(|event| event == EVENT_REALM_COLLAPSE)
+        {
+            zone.spirit_qi = 0.0;
+            continue;
+        }
         if zone.spirit_qi <= 0.0 {
             continue;
         }
@@ -236,5 +245,47 @@ mod tests {
 
         assert!(normal_qi > 0.0);
         assert!((wind_candle_qi - normal_qi * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn collapsed_zone_blocks_qi_regen_even_with_stale_qi() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        let mut zones = ZoneRegistry::fallback();
+        let zone = zones.find_zone_mut("spawn").unwrap();
+        zone.spirit_qi = 0.9;
+        zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi,
+            0.0
+        );
     }
 }
