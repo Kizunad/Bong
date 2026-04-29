@@ -65,3 +65,11 @@ pub struct SpiritNicheRevealRequest {
     pub source: SpiritNicheRevealSource,
     pub tick: u64,
 }
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SpiritNicheCoordinateRevealRequest {
+    pub observer: Entity,
+    pub pos: [i32; 3],
+    pub source: SpiritNicheRevealSource,
+    pub tick: u64,
+}

@@ -101,6 +101,20 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-social-v1 §2.3 — 客户端准星凝视同一方块满 3 秒后的揭露请求。
+    SpiritNicheGaze {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// plan-social-v1 §2.3 — 主动标记坐标以揭露命中的灵龛。
+    SpiritNicheMarkCoordinate {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -842,6 +856,32 @@ mod tests {
                 assert_eq!(item_instance_id, 4242);
             }
             other => panic!("expected SpiritNichePlace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_gaze_roundtrip() {
+        let json = r#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNicheGaze { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+            }
+            other => panic!("expected SpiritNicheGaze, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_mark_coordinate_roundtrip() {
+        let json = r#"{"type":"spirit_niche_mark_coordinate","v":1,"x":11,"y":64,"z":10}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNicheMarkCoordinate { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+            }
+            other => panic!("expected SpiritNicheMarkCoordinate, got {other:?}"),
         }
     }
 

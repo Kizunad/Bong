@@ -21,7 +21,8 @@ use self::components::{
 };
 use self::events::{
     PlayerChatCollected, SocialExposureEvent, SocialRelationshipEvent, SocialRenownDeltaEvent,
-    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
+    SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
@@ -98,6 +99,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
+    app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
     app.add_systems(
         Update,
@@ -112,8 +114,12 @@ pub fn register(app: &mut App) {
             handle_death_social_effects.after(crate::combat::CombatSystemSet::Resolve),
             handle_spirit_niche_place_requests
                 .after(crate::network::client_request_handler::handle_client_request_payloads),
+            handle_spirit_niche_coordinate_reveals
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
             detect_spirit_niche_break_attempts,
-            apply_spirit_niche_reveals.after(detect_spirit_niche_break_attempts),
+            apply_spirit_niche_reveals
+                .after(detect_spirit_niche_break_attempts)
+                .after(handle_spirit_niche_coordinate_reveals),
             update_companion_relationships.after(attach_social_bundle_to_joined_clients),
             apply_social_exposures.after(expose_chat_speakers),
             apply_social_relationships
@@ -693,6 +699,34 @@ fn detect_spirit_niche_break_attempts(
             owner: niche.owner.clone(),
             source: SpiritNicheRevealSource::BreakAttempt,
             tick,
+        });
+    }
+}
+
+fn handle_spirit_niche_coordinate_reveals(
+    mut events: EventReader<SpiritNicheCoordinateRevealRequest>,
+    observers: Query<&Lifecycle, With<Client>>,
+    registry: Option<Res<SpiritNicheRegistry>>,
+    mut reveals: EventWriter<SpiritNicheRevealRequest>,
+) {
+    let Some(registry) = registry.as_deref() else {
+        return;
+    };
+    for event in events.read() {
+        let Ok(observer) = observers.get(event.observer) else {
+            continue;
+        };
+        let Some(niche) = registry
+            .active_niches()
+            .find(|niche| niche.pos == event.pos && niche.owner != observer.character_id)
+        else {
+            continue;
+        };
+        reveals.send(SpiritNicheRevealRequest {
+            observer: Some(event.observer),
+            owner: niche.owner.clone(),
+            source: event.source,
+            tick: event.tick,
         });
     }
 }
@@ -1994,5 +2028,56 @@ mod tests {
         assert_eq!(loaded.revealed_by.as_deref(), Some("char:observer"));
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn spirit_niche_coordinate_reveal_emits_owner_reveal_only_for_exact_active_hit() {
+        let mut app = App::new();
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(SpiritNiche {
+            owner: "char:owner".to_string(),
+            pos: [20, 64, 20],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            defense_mode: None,
+        });
+        app.insert_resource(registry);
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<SpiritNicheRevealRequest>();
+        app.add_systems(Update, handle_spirit_niche_coordinate_reveals);
+
+        let (observer_bundle, _observer_helper) = create_mock_client("Observer");
+        let observer = app.world_mut().spawn(observer_bundle).id();
+        app.world_mut().entity_mut(observer).insert(Lifecycle {
+            character_id: "char:observer".to_string(),
+            ..Default::default()
+        });
+        app.world_mut()
+            .send_event(SpiritNicheCoordinateRevealRequest {
+                observer,
+                pos: [20, 64, 20],
+                source: SpiritNicheRevealSource::Gaze,
+                tick: 99,
+            });
+        app.world_mut()
+            .send_event(SpiritNicheCoordinateRevealRequest {
+                observer,
+                pos: [21, 64, 20],
+                source: SpiritNicheRevealSource::MarkCoordinate,
+                tick: 100,
+            });
+
+        app.update();
+
+        let mut events = app
+            .world_mut()
+            .resource_mut::<Events<SpiritNicheRevealRequest>>();
+        let collected = events.drain().collect::<Vec<_>>();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].observer, Some(observer));
+        assert_eq!(collected[0].owner, "char:owner");
+        assert_eq!(collected[0].source, SpiritNicheRevealSource::Gaze);
+        assert_eq!(collected[0].tick, 99);
     }
 }
