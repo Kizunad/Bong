@@ -1376,6 +1376,28 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn publishes_targeted_calamity_only_to_phase_and_main_channels() {
+        let event = TribulationEventV1::targeted(
+            TribulationPhaseV1::Omen,
+            Some("spawn".to_string()),
+            Some([8.0, 66.0, 8.0]),
+        );
+        let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+            .expect("targeted calamity event should serialize");
+
+        match command {
+            RedisIoCommand::PublishFanout { channels, payload } => {
+                assert_eq!(channels, vec![CH_TRIBULATION_OMEN, CH_TRIBULATION]);
+                let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(value["kind"], "targeted");
+                assert_eq!(value["phase"]["kind"], "omen");
+                assert_eq!(value["zone"], "spawn");
+            }
+            other => panic!("expected fanout publish, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_forge_start_on_correct_channel() {
         let payload = ForgeStartPayloadV1 {
             v: 1,
