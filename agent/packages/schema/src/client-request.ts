@@ -406,6 +406,20 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const SpiritNichePlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    /** 龛石 inventory instance_id — server 校验并消耗一个。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -559,6 +573,7 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  SpiritNichePlaceRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
