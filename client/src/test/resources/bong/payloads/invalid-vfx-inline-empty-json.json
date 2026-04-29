@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "play_anim_inline",
+  "target_player": "550e8400-e29b-41d4-a716-446655440000",
+  "anim_id": "bong:inline_test_pose",
+  "anim_json": "",
+  "priority": 3000
+}

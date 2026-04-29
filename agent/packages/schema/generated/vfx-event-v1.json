@@ -47,6 +47,52 @@
         "v",
         "type",
         "target_player",
+        "anim_id",
+        "anim_json",
+        "priority"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "play_anim_inline",
+          "type": "string"
+        },
+        "target_player": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "anim_id": {
+          "pattern": "^[a-z0-9_]+:[a-z0-9_]+$",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "anim_json": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "priority": {
+          "minimum": 100,
+          "maximum": 3999,
+          "type": "integer"
+        },
+        "fade_in_ticks": {
+          "minimum": 0,
+          "maximum": 40,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "target_player",
         "anim_id"
       ],
       "properties": {

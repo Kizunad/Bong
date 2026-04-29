@@ -2,6 +2,7 @@
 //!
 //! 与 `agent/packages/schema/src/vfx-event.ts` 1:1 对应，当前支持：
 //!   * `play_anim`：服务端广播一次性动作
+//!   * `play_anim_inline`：携带 Emotecraft v3 JSON，客户端临时注册后立即播放
 //!   * `stop_anim`：终止持续动画
 //!   * `spawn_particle`：触发一次自定义粒子（`plan-particle-system-v1 §2.2`）
 //!
@@ -26,6 +27,9 @@ pub const VFX_PARTICLE_COUNT_MAX: u16 = 64;
 
 /// 粒子持续时间上限（tick）。20 tick/s → 10s 足够一次性事件。
 pub const VFX_PARTICLE_DURATION_TICKS_MAX: u16 = 200;
+
+/// inline 动画 JSON 字符串上限。最终 payload 仍受 `MAX_PAYLOAD_BYTES` 兜底。
+pub const VFX_INLINE_ANIM_JSON_MAX_CHARS: usize = 4096;
 
 #[derive(Debug)]
 pub enum VfxEventBuildError {
@@ -56,11 +60,16 @@ pub enum VfxEventBuildError {
     ParticleVectorNotFinite,
     /// 粒子 `color` 不是 `#RRGGBB` 6-hex 形态。
     ParticleColorMalformed,
+    /// inline 动画 JSON 为空或超过上限。
+    InlineAnimJsonLengthOutOfRange {
+        len: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VfxEventType {
     PlayAnim,
+    PlayAnimInline,
     StopAnim,
     SpawnParticle,
 }
@@ -75,6 +84,18 @@ pub enum VfxEventPayloadV1 {
         target_player: String,
         /// MC Identifier `namespace:path`。客户端查 `BongAnimationRegistry`。
         anim_id: String,
+        /// 动画分层 priority（§3.3 区间）。
+        priority: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fade_in_ticks: Option<u8>,
+    },
+    PlayAnimInline {
+        /// 玩家 UUID，RFC 4122 canonical `8-4-4-4-12` 格式。
+        target_player: String,
+        /// 客户端临时注册用 Identifier。重复 id 会覆盖旧 inline 动画。
+        anim_id: String,
+        /// 完整 Emotecraft v3 / PlayerAnimator JSON 字符串。
+        anim_json: String,
         /// 动画分层 priority（§3.3 区间）。
         priority: u16,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,6 +134,7 @@ impl VfxEventPayloadV1 {
     pub fn payload_type(&self) -> VfxEventType {
         match self {
             Self::PlayAnim { .. } => VfxEventType::PlayAnim,
+            Self::PlayAnimInline { .. } => VfxEventType::PlayAnimInline,
             Self::StopAnim { .. } => VfxEventType::StopAnim,
             Self::SpawnParticle { .. } => VfxEventType::SpawnParticle,
         }
@@ -128,15 +150,18 @@ impl VfxEventPayloadV1 {
                 fade_in_ticks,
                 ..
             } => {
-                if *priority < VFX_ANIM_PRIORITY_MIN || *priority > VFX_ANIM_PRIORITY_MAX {
-                    return Err(VfxEventBuildError::PriorityOutOfRange {
-                        priority: *priority,
-                    });
-                }
-                if let Some(ticks) = fade_in_ticks {
-                    if *ticks > VFX_FADE_TICKS_MAX {
-                        return Err(VfxEventBuildError::FadeTicksOutOfRange { ticks: *ticks });
-                    }
+                validate_anim_timing(*priority, *fade_in_ticks)?;
+            }
+            Self::PlayAnimInline {
+                priority,
+                fade_in_ticks,
+                anim_json,
+                ..
+            } => {
+                validate_anim_timing(*priority, *fade_in_ticks)?;
+                let len = anim_json.chars().count();
+                if len == 0 || len > VFX_INLINE_ANIM_JSON_MAX_CHARS {
+                    return Err(VfxEventBuildError::InlineAnimJsonLengthOutOfRange { len });
                 }
             }
             Self::StopAnim { fade_out_ticks, .. } => {
@@ -191,6 +216,21 @@ impl VfxEventPayloadV1 {
     }
 }
 
+fn validate_anim_timing(
+    priority: u16,
+    fade_in_ticks: Option<u8>,
+) -> Result<(), VfxEventBuildError> {
+    if !(VFX_ANIM_PRIORITY_MIN..=VFX_ANIM_PRIORITY_MAX).contains(&priority) {
+        return Err(VfxEventBuildError::PriorityOutOfRange { priority });
+    }
+    if let Some(ticks) = fade_in_ticks {
+        if ticks > VFX_FADE_TICKS_MAX {
+            return Err(VfxEventBuildError::FadeTicksOutOfRange { ticks });
+        }
+    }
+    Ok(())
+}
+
 /// `#RRGGBB` 形态校验：7 字符，`#` 前缀 + 6 位 hex。
 fn is_valid_color_hex(hex: &str) -> bool {
     if hex.len() != 7 {
@@ -227,6 +267,22 @@ impl VfxEventV1 {
         Self::new(VfxEventPayloadV1::PlayAnim {
             target_player: target_player.into(),
             anim_id: anim_id.into(),
+            priority,
+            fade_in_ticks,
+        })
+    }
+
+    pub fn play_anim_inline(
+        target_player: impl Into<String>,
+        anim_id: impl Into<String>,
+        anim_json: impl Into<String>,
+        priority: u16,
+        fade_in_ticks: Option<u8>,
+    ) -> Self {
+        Self::new(VfxEventPayloadV1::PlayAnimInline {
+            target_player: target_player.into(),
+            anim_id: anim_id.into(),
+            anim_json: anim_json.into(),
             priority,
             fade_in_ticks,
         })
@@ -292,6 +348,10 @@ mod tests {
 
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
+    fn inline_anim_json() -> &'static str {
+        r#"{"version":3,"name":"inline_test_pose","emote":{"beginTick":0,"endTick":4,"isLoop":false,"moves":[{"tick":0,"rightArm":{"pitch":-0.6},"easing":"LINEAR"},{"tick":4,"rightArm":{"pitch":0.4},"easing":"INOUTSINE"}]}}"#
+    }
+
     #[test]
     fn play_anim_roundtrip() {
         let payload = VfxEventV1::play_anim(TEST_UUID, "bong:sword_swing_horiz", 1000, Some(3));
@@ -310,6 +370,36 @@ mod tests {
                 assert_eq!(fade_in_ticks, Some(3));
             }
             other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn play_anim_inline_roundtrip() {
+        let payload = VfxEventV1::play_anim_inline(
+            TEST_UUID,
+            "bong:inline_test_pose",
+            inline_anim_json(),
+            3000,
+            Some(3),
+        );
+        let bytes = payload.to_json_bytes_checked().expect("serialize");
+        let back: VfxEventV1 = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(payload, back);
+        match back.payload {
+            VfxEventPayloadV1::PlayAnimInline {
+                target_player,
+                anim_id,
+                anim_json,
+                priority,
+                fade_in_ticks,
+            } => {
+                assert_eq!(target_player, TEST_UUID);
+                assert_eq!(anim_id, "bong:inline_test_pose");
+                assert!(anim_json.contains("inline_test_pose"));
+                assert_eq!(priority, 3000);
+                assert_eq!(fade_in_ticks, Some(3));
+            }
+            other => panic!("expected PlayAnimInline, got {other:?}"),
         }
     }
 
@@ -349,9 +439,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_inline_anim_json_length_out_of_range() {
+        let payload = VfxEventV1::play_anim_inline(TEST_UUID, "bong:inline", "", 1000, None);
+        match payload.to_json_bytes_checked() {
+            Err(VfxEventBuildError::InlineAnimJsonLengthOutOfRange { len }) => assert_eq!(len, 0),
+            other => panic!("expected InlineAnimJsonLengthOutOfRange, got {other:?}"),
+        }
+
+        let payload = VfxEventV1::play_anim_inline(
+            TEST_UUID,
+            "bong:inline",
+            "x".repeat(VFX_INLINE_ANIM_JSON_MAX_CHARS + 1),
+            1000,
+            None,
+        );
+        match payload.to_json_bytes_checked() {
+            Err(VfxEventBuildError::InlineAnimJsonLengthOutOfRange { len }) => {
+                assert_eq!(len, VFX_INLINE_ANIM_JSON_MAX_CHARS + 1)
+            }
+            other => panic!("expected InlineAnimJsonLengthOutOfRange, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn deserialize_vfx_event_samples() {
         let samples = [
             include_str!("../../../agent/packages/schema/samples/vfx-event.play-anim.sample.json"),
+            include_str!(
+                "../../../agent/packages/schema/samples/vfx-event.play-anim-inline.sample.json"
+            ),
             include_str!("../../../agent/packages/schema/samples/vfx-event.stop-anim.sample.json"),
             include_str!(
                 "../../../agent/packages/schema/samples/vfx-event.spawn-particle.sample.json"
@@ -391,6 +507,31 @@ mod tests {
                 assert_eq!(fade_in_ticks, Some(3));
             }
             other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sample_play_anim_inline_tag_alignment() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/vfx-event.play-anim-inline.sample.json"
+        );
+        let payload: VfxEventV1 = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(payload.v, VFX_EVENT_VERSION);
+        match payload.payload {
+            VfxEventPayloadV1::PlayAnimInline {
+                target_player,
+                anim_id,
+                anim_json,
+                priority,
+                fade_in_ticks,
+            } => {
+                assert_eq!(target_player, TEST_UUID);
+                assert_eq!(anim_id, "bong:inline_test_pose");
+                assert!(anim_json.contains("inline_test_pose"));
+                assert_eq!(priority, 3000);
+                assert_eq!(fade_in_ticks, Some(3));
+            }
+            other => panic!("expected PlayAnimInline, got {other:?}"),
         }
     }
 

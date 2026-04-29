@@ -1,9 +1,13 @@
 package com.bong.client.animation;
 
 import dev.kosmx.playerAnim.core.data.KeyframeAnimation;
+import dev.kosmx.playerAnim.core.data.gson.AnimationSerializing;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationRegistry;
 import net.minecraft.util.Identifier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.StringReader;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -14,8 +18,9 @@ import java.util.Set;
 /**
  * 全局 KeyframeAnimation 注册表。
  *
- * <p><b>查询顺序</b>：JSON（资源包） → Java（硬编码 fallback）。
+ * <p><b>查询顺序</b>：inline（运行时注入） → JSON（资源包） → Java（硬编码 fallback）。
  * <ul>
+ *   <li>inline 源：{@link #registerInlineJson}——plan §4.4 动态 JSON 注入路径，重复 id 覆盖</li>
  *   <li>JSON 源：{@link PlayerAnimationRegistry}——PlayerAnimator 自带的资源 reload listener
  *       扫描 {@code assets/{namespace}/player_animation/*.json}，启动时 + F3+T 时自动填充</li>
  *   <li>Java 源：{@link #register} 可注入备用动画；Phase 2 之后 19 个 Phase 1 动画已全部
@@ -34,11 +39,16 @@ import java.util.Set;
  * <p>线程模型：仅客户端主线程访问，不加锁；调用方自觉。
  */
 public final class BongAnimationRegistry {
+    private static final Logger LOGGER = LoggerFactory.getLogger("bong-anim-registry");
+
     /** Java 硬编码源。Phase 2 起 19 个 Phase 1 动画全部走 JSON，此 map 默认为空。 */
     private static final Map<Identifier, KeyframeAnimation> ANIMATIONS = new LinkedHashMap<>();
 
+    /** 运行时 inline JSON 源。用于 plan §4.4 天道/LLM 动态注入，优先级高于资源包 JSON。 */
+    private static final Map<Identifier, KeyframeAnimation> INLINE_ANIMATIONS = new LinkedHashMap<>();
+
     /** 标识动画来源，用于 {@code /anim list} 诊断。 */
-    public enum Source { JSON, JAVA, NONE }
+    public enum Source { INLINE, JSON, JAVA, NONE }
 
     private BongAnimationRegistry() {
     }
@@ -52,28 +62,53 @@ public final class BongAnimationRegistry {
     }
 
     /**
-     * 按 id 取动画：JSON 优先，未命中回落到 Java fallback；都没有返回 null。
+     * 解析并注册运行时 inline JSON 动画。重复 id 会覆盖旧 inline 动画。
+     *
+     * @return true=解析成功并注册；false=JSON 无效或未产出动画
+     */
+    public static boolean registerInlineJson(Identifier id, String animJson) {
+        if (id == null || animJson == null || animJson.isBlank()) {
+            return false;
+        }
+        try (StringReader reader = new StringReader(animJson)) {
+            var animations = AnimationSerializing.deserializeAnimation(reader);
+            if (animations == null || animations.isEmpty() || animations.get(0) == null) {
+                return false;
+            }
+            INLINE_ANIMATIONS.put(id, animations.get(0));
+            return true;
+        } catch (RuntimeException exception) {
+            LOGGER.warn("[bong/anim] inline animation {} parse failed: {}", id, exception.toString());
+            return false;
+        }
+    }
+
+    /**
+     * 按 id 取动画：inline → JSON → Java fallback；都没有返回 null。
      */
     public static KeyframeAnimation get(Identifier id) {
         if (id == null) return null;
+        KeyframeAnimation fromInline = INLINE_ANIMATIONS.get(id);
+        if (fromInline != null) return fromInline;
         KeyframeAnimation fromJson = lookupJson(id);
         if (fromJson != null) return fromJson;
         return ANIMATIONS.get(id);
     }
 
-    /** JSON ∪ Java 任一源命中即视为存在。 */
+    /** inline ∪ JSON ∪ Java 任一源命中即视为存在。 */
     public static boolean contains(Identifier id) {
         if (id == null) return false;
-        return lookupJson(id) != null || ANIMATIONS.containsKey(id);
+        return INLINE_ANIMATIONS.containsKey(id) || lookupJson(id) != null || ANIMATIONS.containsKey(id);
     }
 
     /**
-     * JSON ∪ Java 的 id 并集。用于 {@code /anim list} 和 tab 补全。
+     * inline ∪ JSON ∪ Java 的 id 并集。用于 {@code /anim list} 和 tab 补全。
      *
-     * <p>顺序：先 Java（保持老 LinkedHashMap 注册顺序），后 JSON 追加的新 id。
+     * <p>顺序：inline → Java（保持老 LinkedHashMap 注册顺序）→ JSON 追加的新 id。
      */
     public static Collection<Identifier> ids() {
-        Set<Identifier> merged = new LinkedHashSet<>(ANIMATIONS.keySet());
+        Set<Identifier> merged = new LinkedHashSet<>(INLINE_ANIMATIONS.keySet());
+        merged.addAll(ANIMATIONS.keySet());
         // 只纳入 Bong 自己 namespace 下的 JSON 动画；资源包可能添加其它 namespace 的，
         // 那些不应当出现在 Bong 的命令行补全里（否则 /anim play seriousplayeranimations:eating
         // 会乱成一锅粥）。
@@ -85,9 +120,10 @@ public final class BongAnimationRegistry {
         return Collections.unmodifiableCollection(merged);
     }
 
-    /** 诊断：某个 id 当前是从哪里取到的（JSON / JAVA / NONE）。 */
+    /** 诊断：某个 id 当前是从哪里取到的（INLINE / JSON / JAVA / NONE）。 */
     public static Source sourceOf(Identifier id) {
         if (id == null) return Source.NONE;
+        if (INLINE_ANIMATIONS.containsKey(id)) return Source.INLINE;
         if (lookupJson(id) != null) return Source.JSON;
         if (ANIMATIONS.containsKey(id)) return Source.JAVA;
         return Source.NONE;
@@ -100,5 +136,10 @@ public final class BongAnimationRegistry {
      */
     private static KeyframeAnimation lookupJson(Identifier id) {
         return PlayerAnimationRegistry.getAnimation(id);
+    }
+
+    /** 测试钩子：清掉 inline 源，避免跨测试污染。 */
+    static void clearInlineForTest() {
+        INLINE_ANIMATIONS.clear();
     }
 }

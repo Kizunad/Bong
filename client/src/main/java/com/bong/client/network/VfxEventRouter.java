@@ -61,6 +61,15 @@ public final class VfxEventRouter {
                     play.fadeInTicks()
                 );
                 missContext = "bridge declined play_anim " + play.animId() + " on " + play.targetPlayer();
+            } else if (payload instanceof VfxEventPayload.PlayAnimInline inline) {
+                ok = animationBridge.playAnimInline(
+                    inline.targetPlayer(),
+                    inline.animId(),
+                    inline.animJson(),
+                    inline.priority(),
+                    inline.fadeInTicks()
+                );
+                missContext = "bridge declined play_anim_inline " + inline.animId() + " on " + inline.targetPlayer();
             } else if (payload instanceof VfxEventPayload.StopAnim stop) {
                 ok = animationBridge.stopAnim(
                     stop.targetPlayer(),

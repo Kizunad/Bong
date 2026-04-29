@@ -558,6 +558,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("vfx-event.play-anim-inline.sample.json", () => {
+    const data = loadSample("vfx-event.play-anim-inline.sample.json");
+    const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("vfx-event.stop-anim.sample.json", () => {
     const data = loadSample("vfx-event.stop-anim.sample.json");
     const result = validate(VfxEventV1, data);

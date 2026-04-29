@@ -40,6 +40,20 @@ public final class ClientAnimationBridge implements VfxEventAnimationBridge {
     }
 
     @Override
+    public boolean playAnimInline(
+        UUID targetPlayer,
+        Identifier animId,
+        String animJson,
+        int priority,
+        OptionalInt fadeInTicks
+    ) {
+        if (!BongAnimationRegistry.registerInlineJson(animId, animJson)) {
+            return false;
+        }
+        return playAnim(targetPlayer, animId, priority, fadeInTicks);
+    }
+
+    @Override
     public boolean stopAnim(
         UUID targetPlayer,
         Identifier animId,
