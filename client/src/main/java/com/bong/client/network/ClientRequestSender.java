@@ -118,6 +118,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
     }
 
+    public static void sendSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        dispatch(ClientRequestProtocol.encodeSparringInviteResponse(inviteId, accepted, timedOut));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,

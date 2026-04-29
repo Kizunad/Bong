@@ -68,6 +68,14 @@ public final class SocialStateStore {
         sparringInvite = invite;
     }
 
+    public static void clearSparringInvite(String inviteId) {
+        SparringInvite current = sparringInvite;
+        if (current == null) return;
+        if (inviteId == null || inviteId.isBlank() || current.inviteId().equals(inviteId)) {
+            sparringInvite = null;
+        }
+    }
+
     public static void clearOnDisconnect() {
         anonymity = SocialAnonymitySnapshot.empty();
         exposures = List.of();

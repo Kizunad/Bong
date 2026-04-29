@@ -358,6 +358,17 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        if (inviteId == null || inviteId.isBlank()) {
+            throw new IllegalArgumentException("inviteId must not be blank");
+        }
+        JsonObject obj = envelope("sparring_invite_response");
+        obj.addProperty("invite_id", inviteId);
+        obj.addProperty("accepted", accepted);
+        obj.addProperty("timed_out", timedOut);
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);

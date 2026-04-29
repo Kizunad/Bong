@@ -19,6 +19,7 @@ import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.preview.PreviewHarnessClient;
 import com.bong.client.social.SpiritNicheRevealBootstrap;
+import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.visual.particle.BongParticles;
@@ -65,6 +66,7 @@ public class BongClient implements ClientModInitializer {
         CombatHudBootstrap.register();
         BotanyHudBootstrap.register();
         SpiritNicheRevealBootstrap.register();
+        SparringInviteScreenBootstrap.register();
         ExtractInteractionBootstrap.register();
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();

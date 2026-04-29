@@ -186,6 +186,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSparringInviteResponse() {
+        String json = ClientRequestProtocol.encodeSparringInviteResponse("sparring:1:a:b", true, false);
+        assertEquals(
+            "{\"type\":\"sparring_invite_response\",\"v\":1,\"invite_id\":\"sparring:1:a:b\",\"accepted\":true,\"timed_out\":false}",
+            json
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(
