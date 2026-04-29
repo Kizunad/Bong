@@ -11,47 +11,78 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, TribulationB
 
 const BROADCAST_LIFETIME_MS: u64 = 60_000;
 const SPECTATE_INVITE_RADIUS: f64 = 50.0;
+const PUBLIC_COORDINATE_GRID_BLOCKS: f64 = 200.0;
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActiveTribulationBroadcast {
+    data: TribulationBroadcastV1,
+    exact_x: f64,
+    exact_z: f64,
+}
+
+impl ActiveTribulationBroadcast {
+    fn active(
+        actor_name: impl Into<String>,
+        stage: impl Into<String>,
+        exact_x: f64,
+        exact_z: f64,
+    ) -> Self {
+        Self {
+            data: TribulationBroadcastV1::active(
+                actor_name,
+                stage,
+                public_tribulation_coordinate(exact_x),
+                public_tribulation_coordinate(exact_z),
+                BROADCAST_LIFETIME_MS,
+            ),
+            exact_x,
+            exact_z,
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.data.refresh(BROADCAST_LIFETIME_MS);
+    }
+}
 
 pub fn emit_tribulation_broadcast_payloads(
     mut clients: Query<(&mut Client, Option<&Position>), With<Client>>,
-    mut active_broadcasts: Local<HashMap<Entity, TribulationBroadcastV1>>,
+    mut active_broadcasts: Local<HashMap<Entity, ActiveTribulationBroadcast>>,
     mut announce: EventReader<TribulationAnnounce>,
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
 ) {
     for ev in announce.read() {
-        let data = TribulationBroadcastV1::active(
+        let data = ActiveTribulationBroadcast::active(
             ev.actor_name.clone(),
             "warn",
             ev.epicenter[0],
             ev.epicenter[2],
-            BROADCAST_LIFETIME_MS,
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
     }
     for ev in locked.read() {
         let data = active_broadcasts.entry(ev.entity).or_insert_with(|| {
-            TribulationBroadcastV1::active(
+            ActiveTribulationBroadcast::active(
                 ev.actor_name.clone(),
                 "locked",
                 ev.epicenter[0],
                 ev.epicenter[2],
-                BROADCAST_LIFETIME_MS,
             )
         });
-        data.stage = "locked".to_string();
-        data.refresh(BROADCAST_LIFETIME_MS);
+        data.data.stage = "locked".to_string();
+        data.refresh();
         broadcast(&mut clients, data.clone());
     }
     for ev in cleared.read() {
         let stage = if ev.wave == 0 { "warn" } else { "striking" };
-        let data = active_broadcasts.entry(ev.entity).or_insert_with(|| {
-            TribulationBroadcastV1::active("", stage, 0.0, 0.0, BROADCAST_LIFETIME_MS)
-        });
-        data.stage = stage.to_string();
-        data.refresh(BROADCAST_LIFETIME_MS);
+        let data = active_broadcasts
+            .entry(ev.entity)
+            .or_insert_with(|| ActiveTribulationBroadcast::active("", stage, 0.0, 0.0));
+        data.data.stage = stage.to_string();
+        data.refresh();
         broadcast(&mut clients, data.clone());
     }
     for ev in settled.read() {
@@ -62,7 +93,7 @@ pub fn emit_tribulation_broadcast_payloads(
 
 fn broadcast(
     clients: &mut Query<(&mut Client, Option<&Position>), With<Client>>,
-    data: TribulationBroadcastV1,
+    data: impl TribulationBroadcastClientView,
 ) {
     for (mut client, position) in clients.iter_mut() {
         let payload = ServerDataV1::new(ServerDataPayloadV1::TribulationBroadcast(
@@ -84,9 +115,9 @@ trait TribulationBroadcastClientView {
     fn for_client(&self, position: Option<&Position>) -> TribulationBroadcastV1;
 }
 
-impl TribulationBroadcastClientView for TribulationBroadcastV1 {
+impl TribulationBroadcastClientView for ActiveTribulationBroadcast {
     fn for_client(&self, position: Option<&Position>) -> TribulationBroadcastV1 {
-        let mut data = self.clone();
+        let mut data = self.data.clone();
         if !data.active {
             return data;
         }
@@ -96,13 +127,23 @@ impl TribulationBroadcastClientView for TribulationBroadcastV1 {
             return data;
         };
         let pos = position.get();
-        let dx = pos.x - data.world_x;
-        let dz = pos.z - data.world_z;
+        let dx = pos.x - self.exact_x;
+        let dz = pos.z - self.exact_z;
         let distance = (dx * dx + dz * dz).sqrt();
         data.spectate_distance = distance;
         data.spectate_invite = distance <= SPECTATE_INVITE_RADIUS;
         data
     }
+}
+
+impl TribulationBroadcastClientView for TribulationBroadcastV1 {
+    fn for_client(&self, _position: Option<&Position>) -> TribulationBroadcastV1 {
+        self.clone()
+    }
+}
+
+fn public_tribulation_coordinate(value: f64) -> f64 {
+    (value / PUBLIC_COORDINATE_GRID_BLOCKS).round() * PUBLIC_COORDINATE_GRID_BLOCKS
 }
 
 #[cfg(test)]
@@ -185,5 +226,32 @@ mod tests {
         assert_eq!(near_payloads[0].world_x, 0.0);
         assert_eq!(near_payloads[0].world_z, 0.0);
         assert_eq!(near_payloads[0].actor_name, "Azure");
+    }
+
+    #[test]
+    fn broadcast_public_coordinates_are_rounded_to_poi_grid() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut helper = spawn_mock_client_at(&mut app, "Near", [120.0, 66.0, -80.0]);
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: Entity::PLACEHOLDER,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [301.0, 66.0, -301.0],
+            waves_total: 3,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_tribulation_broadcasts(&mut helper);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].world_x, 400.0);
+        assert_eq!(payloads[0].world_z, -400.0);
     }
 }
