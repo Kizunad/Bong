@@ -64,17 +64,7 @@ impl DecayProfileRegistry {
 pub fn build_default_registry() -> DecayProfileRegistry {
     let mut registry = DecayProfileRegistry::new();
 
-    // plan-mineral-v1 §1.4: 四档灵石 Exponential Decay
-    for profile in [
-        ling_shi_profile("ling_shi_fan_v1", 3),
-        ling_shi_profile("ling_shi_zhong_v1", 5),
-        ling_shi_profile("ling_shi_shang_v1", 7),
-        ling_shi_profile("ling_shi_yi_v1", 14),
-    ] {
-        registry
-            .insert(profile)
-            .expect("built-in ling_shi profile should validate");
-    }
+    register_production_profiles(&mut registry);
 
     // plan-shelflife-v1 M6: 骨币 Linear Decay（~1y 完全衰减）
     registry
@@ -112,6 +102,20 @@ pub fn build_default_registry() -> DecayProfileRegistry {
         .expect("built-in chen_jiu profile should validate");
 
     registry
+}
+
+pub fn register_production_profiles(registry: &mut DecayProfileRegistry) {
+    // plan-mineral-v1 §1.4: 四档灵石 Exponential Decay
+    for profile in [
+        ling_shi_profile("ling_shi_fan_v1", 3),
+        ling_shi_profile("ling_shi_zhong_v1", 5),
+        ling_shi_profile("ling_shi_shang_v1", 7),
+        ling_shi_profile("ling_shi_yi_v1", 14),
+    ] {
+        registry
+            .insert(profile)
+            .expect("built-in ling_shi profile should validate");
+    }
 }
 
 fn ling_shi_profile(id: &'static str, half_life_days: u64) -> DecayProfile {
@@ -232,6 +236,15 @@ mod tests {
         }
         // M6 新增 bone_coin_v1 + chen_cu_v1 + chen_jiu_v1
         assert_eq!(r.len(), 7);
+    }
+
+    #[test]
+    fn register_production_profiles_registers_only_ling_shi_ladder() {
+        let mut r = DecayProfileRegistry::new();
+        register_production_profiles(&mut r);
+        assert_eq!(r.len(), 4);
+        assert!(r.contains(&DecayProfileId::new("ling_shi_fan_v1")));
+        assert!(r.contains(&DecayProfileId::new("ling_shi_yi_v1")));
     }
 
     #[test]

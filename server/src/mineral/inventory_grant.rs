@@ -21,7 +21,8 @@ use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
-use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
+use crate::shelflife::DecayProfileRegistry;
+use crate::shelflife::{DecayProfileId, Freshness};
 
 /// Mineral ore drop 的默认堆数 —— 一次挖方块产一枚（与 vanilla 一致）。
 const DEFAULT_DROP_STACK_COUNT: u32 = 1;
@@ -30,6 +31,7 @@ const DEFAULT_DROP_STACK_COUNT: u32 = 1;
 pub fn consume_mineral_drops_into_inventory(
     mut events: EventReader<MineralDropEvent>,
     registry: Res<MineralRegistry>,
+    profile_registry: Option<Res<DecayProfileRegistry>>,
     clock: Res<MineralTickClock>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
@@ -70,6 +72,7 @@ pub fn consume_mineral_drops_into_inventory(
             DEFAULT_DROP_STACK_COUNT,
             clock.tick,
             event.position,
+            profile_registry.as_deref(),
         );
 
         let Some(main_pack) = inventory
@@ -101,8 +104,15 @@ fn build_mineral_item_instance(
     stack_count: u32,
     created_at_tick: u64,
     position: BlockPos,
+    profile_registry: Option<&DecayProfileRegistry>,
 ) -> ItemInstance {
-    let freshness = build_mineral_freshness(entry, created_at_tick, position, instance_id);
+    let freshness = build_mineral_freshness(
+        entry,
+        created_at_tick,
+        position,
+        instance_id,
+        profile_registry,
+    );
     ItemInstance {
         instance_id,
         template_id: format!("mineral_{}", entry.canonical_name),
@@ -130,19 +140,31 @@ fn build_mineral_freshness(
     created_at_tick: u64,
     position: BlockPos,
     instance_id: u64,
+    profile_registry: Option<&DecayProfileRegistry>,
 ) -> Option<Freshness> {
     let profile = entry.decay_profile?;
     let qi_range = entry.ling_shi_qi_range?;
+    let Some(profile_registry) = profile_registry else {
+        tracing::warn!(
+            target: "bong::mineral",
+            "shelflife DecayProfileRegistry missing while building freshness for {}",
+            entry.canonical_name
+        );
+        return None;
+    };
+    let profile_id = DecayProfileId::new(profile);
+    let Some(profile) = profile_registry.get(&profile_id) else {
+        tracing::warn!(
+            target: "bong::mineral",
+            "missing shelflife profile {} for mineral {}",
+            profile_id.as_str(),
+            entry.canonical_name
+        );
+        return None;
+    };
     let initial_qi =
         qi_range.min + (qi_range.max - qi_range.min) * mineral_qi_roll(position, instance_id);
-    Some(Freshness {
-        created_at_tick,
-        initial_qi,
-        track: DecayTrack::Decay,
-        profile: DecayProfileId::new(profile),
-        frozen_accumulated: 0,
-        frozen_since_tick: None,
-    })
+    Some(Freshness::new(created_at_tick, initial_qi, profile))
 }
 
 fn mineral_qi_roll(position: BlockPos, instance_id: u64) -> f32 {
@@ -173,6 +195,7 @@ mod tests {
     use crate::inventory::{
         ContainerState, InventoryRevision, PlayerInventory as Inv, MAIN_PACK_CONTAINER_ID as MAIN,
     };
+    use crate::shelflife::DecayTrack;
     use std::collections::HashMap;
     use valence::prelude::{App, BlockPos, Events, Update};
 
@@ -211,7 +234,7 @@ mod tests {
     fn build_mineral_item_instance_carries_canonical_mineral_id() {
         let reg = build_default_registry();
         let entry = reg.get(MineralId::SuiTie).unwrap();
-        let item = build_mineral_item_instance(99, entry, 1, 123, BlockPos::new(1, 2, 3));
+        let item = build_mineral_item_instance(99, entry, 1, 123, BlockPos::new(1, 2, 3), None);
         assert_eq!(item.mineral_id.as_deref(), Some("sui_tie"));
         assert_eq!(item.template_id, "mineral_sui_tie");
         assert_eq!(item.display_name, "髓铁");
@@ -222,10 +245,19 @@ mod tests {
     #[test]
     fn build_ling_shi_item_instance_carries_freshness_profile() {
         let reg = build_default_registry();
+        let profile_reg = crate::shelflife::build_default_registry();
         let entry = reg.get(MineralId::LingShiZhong).unwrap();
-        let item = build_mineral_item_instance(100, entry, 1, 123, BlockPos::new(1, 2, 3));
+        let item = build_mineral_item_instance(
+            100,
+            entry,
+            1,
+            123,
+            BlockPos::new(1, 2, 3),
+            Some(&profile_reg),
+        );
         let freshness = item.freshness.expect("ling_shi should carry freshness");
         assert_eq!(freshness.profile.as_str(), "ling_shi_zhong_v1");
+        assert_eq!(freshness.track, DecayTrack::Decay);
         assert!(
             (30.0..=60.0).contains(&freshness.initial_qi),
             "initial_qi should stay inside registry range: {}",
@@ -249,6 +281,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
         app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
         app.insert_resource(MineralTickClock::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
 
@@ -279,10 +312,19 @@ mod tests {
     }
 
     #[test]
+    fn ling_shi_freshness_requires_registered_profile_lookup() {
+        let reg = build_default_registry();
+        let entry = reg.get(MineralId::LingShiFan).unwrap();
+        let item = build_mineral_item_instance(1, entry, 1, 0, BlockPos::new(0, 0, 0), None);
+        assert!(item.freshness.is_none());
+    }
+
+    #[test]
     fn drop_event_without_inventory_is_silently_skipped() {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
         app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
         app.insert_resource(MineralTickClock::default());
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.add_systems(Update, consume_mineral_drops_into_inventory);
