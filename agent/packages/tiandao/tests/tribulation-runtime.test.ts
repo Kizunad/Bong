@@ -123,6 +123,42 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
 
+  it("loads the worldview tone guide into the default tribulation prompt", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    let systemPrompt = "";
+    const promptLlm: LlmClient = {
+      async chat(_model, messages) {
+        systemPrompt = String(messages[0]?.content ?? "");
+        return JSON.stringify({
+          text: "血谷灵脉又枯了三分。仍有蠢人在那里打坐。",
+          style: "narration",
+        });
+      },
+    };
+    const runtime = new TribulationNarrationRuntime({
+      llm: promptLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "du_xu",
+        phase: { kind: "omen" },
+        char_id: "offline:Azure",
+      }),
+    );
+
+    expect(systemPrompt).toContain("天道不是帮你的，也不是害你的");
+    expect(systemPrompt).toContain("不要把事件写成奖励或惩罚");
+    expect(systemPrompt).toContain("不好的叙事");
+    expect(pub.published).toHaveLength(1);
+  });
+
   it("falls back to cold sarcasm when DuXu is intercepted and killed", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
