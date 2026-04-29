@@ -47,6 +47,46 @@ const failingLlm: LlmClient = {
 const silent = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
 describe("TribulationNarrationRuntime", () => {
+  it("falls back to cold narration when DuXu ascends", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "du_xu",
+        phase: { kind: "settle" },
+        char_id: "offline:Azure",
+        actor_name: "Azure",
+        result: {
+          char_id: "offline:Azure",
+          outcome: "ascended",
+          waves_survived: 3,
+        },
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:du_xu|char:offline:Azure|settle",
+      text: "Azure 历尽 3 道劫雷，终入化虚，天地并不称贺。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
   it("falls back to cold sarcasm when DuXu is intercepted and killed", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
@@ -84,6 +124,74 @@ describe("TribulationNarrationRuntime", () => {
       scope: "broadcast",
       target: "tribulation:du_xu|char:offline:Victim|settle",
       text: "Victim 死于劫中截胡，杀者 offline:Killer 得其遗物；天雷不辨勇怯，只记损益。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back to evacuation warning when zone collapse is not settled", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "zone_collapse",
+        phase: { kind: "lock" },
+        zone: "spawn",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:zone_collapse|zone:spawn|lock",
+      text: "spawn 灵气低伏，灰风先起，此地将崩，尚有片刻可退。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back to final lament when zone collapse settles", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "zone_collapse",
+        phase: { kind: "settle" },
+        zone: "spawn",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:zone_collapse|zone:spawn|settle",
+      text: "spawn 灵机断绝，域崩已成，未退者皆归死寂。",
       style: "narration",
     });
     expect(runtime.stats.llmFailures).toBe(1);
