@@ -18,9 +18,10 @@
 - `issue_comment` 含 `@preview-worldgen` 在 PR 评论触发（权限：collaborator+，§10 待最终确认）
 
 **阶段总览**：
-- P0 ⬜ 截图 harness 单角度通链（俯视一张，CI 链路骨架）
-- P1 ⬜ 多角度（5 张：俯视 + 等角 NE/NW/SE/SW）+ 装饰方块层（JSON 驱动）
-- P2 ⬜ PR 投递（artifact + comment）+ 与 base ref 视觉 diff
+- P0 ⚠️ 2026-04-28 链路通但产物近空：top 19.8% terrain，能证 server↔client 通路
+- P1 ⚠️ 2026-04-28 5 角度 + 装饰代码到位，但 4 张 iso 截图 100%~71% 天空/虚空
+- P2 ⚠️ 2026-04-28 PR 投递管道通但投出去的图等同"什么都没拍到"
+- P3 ⬜ 内容验收闸 + chunk-ready barrier（修 P0/P1/P2 的运行时缺陷）
 
 ---
 
@@ -222,7 +223,53 @@
 
 ---
 
-## §4 数据契约（按 P 汇总，下游 grep 抓手）
+## §4 P3 — Snapshot 内容验收闸 + chunk-ready barrier
+
+> 目标：CI 不再只看"截图文件存在"就 pass，必须实地核验图像内容。截图全空 → CI 红。
+> 同时修底层 chunk 加载 race（`PreviewSession` SETTLE 盲等 100 ticks 不够远距离传送后的 chunk 流式）。
+> 反例 fixture：PR #71 artifact run `25051736013`，5 张截图 3 张 100% sky / 1 张 71% void / top 仅 19.8% terrain；`iso_nw` 与 `iso_sw` byte-identical（同纯 sky color PNG，编码后字节相同；与 yaw 推导无关）。
+
+### 4.1 验收脚本
+
+- [ ] **新增** `scripts/preview/validate_snapshots.py`
+  - 输入：`client/run/screenshots/preview-*.png`
+  - 对每张图做色彩分类：
+    - **void**：R<20 且 G<20 且 B<20（未加载 chunk 黑块）
+    - **sky**：B>150 且 B>R+20 且 B>G+5
+    - **cloud**：R>200 且 G>200 且 B>200
+    - **terrain**：以上之外
+  - 验收规则：
+    - **R1 内容下限**：每张截图 terrain% ≥ 30%（top 俯视单独阈值，可放宽到 ≥ 15%）
+    - **R2 hash 唯一**：5 张 PNG 两两 MD5 不同（防同帧复用 / 同纯色 PNG）
+    - **R3 大小 sanity**：每张 ≥ 30KB（纯单色 PNG 编码后 ≈ 16KB，做地板）
+  - 任一失败 → exit 1，打印每张 `name | size | md5 | sky% | void% | terrain%` 六栏对照
+- [ ] **workflow 接入**：CI 在 upload-artifact **之前**跑 validator；fail 时 artifact 仍上传（留排错样本），但 step 红、PR comment 改成"snapshot 失败 — 见 artifact"
+
+### 4.2 修 chunk 加载 race
+
+- [ ] **client `PreviewSession`**：SETTLE 阶段从盲等改为「等 chunk 就位」
+  - 检查 `client.world.getChunkManager()` 在传送目标 (x, z) 周围 N×N chunks 是否已加载（N 与 server view_distance 对齐，默认 32）
+  - timeout 兜底：≥ 30s 仍未就位 → log warn 后继续拍，让 validator 把它打红（不在 client 侧 hard fail，让"截图能不能拍"和"内容合不合格"分离）
+- [ ] **server `boost_view_distance_for_preview`**：保留 32（再大对 mesa llvmpipe 软渲染性能负担过重）
+- [ ] **HACK 备选**（若 chunk-ready 监听难做）：`config.settle_ticks` 从 100 暴力提到 600（30s）—— 不优雅但便宜先让 CI 绿，validator 仍是必备
+
+### 4.3 P3 验收
+
+- [ ] **反向 fixture**：PR #71 artifact run `25051736013` 跑 validator 必须红，报告 R1 失败 4 张 + R2 失败（`iso_nw` == `iso_sw` MD5 相同）
+- [ ] **正向**：修后 CI run 5 张 PNG 全部 terrain ≥ 30% + 5 张 hash 互不相同 + 每张 ≥ 30KB
+- [ ] **回归保护**：手动把 `settle_ticks` 调回 100 重跑 → CI 必须红（防 SETTLE 时间被偷偷调小）
+
+### 4.4 数据契约
+
+| 契约 | 位置 |
+|------|------|
+| `scripts/preview/validate_snapshots.py` | 仓库根 `scripts/preview/` |
+| validator step 在 `worldgen-preview.yml` upload-artifact **之前** | `.github/workflows/worldgen-preview.yml` |
+| `PreviewSession.stepSettle` chunk-ready 检查 | `client/src/main/java/com/bong/client/preview/PreviewSession.java` |
+
+---
+
+## §5 数据契约（按 P 汇总，下游 grep 抓手）
 
 | P | 契约 | 位置 |
 |---|------|------|
@@ -241,15 +288,16 @@
 
 ---
 
-## §5 实施节点
+## §6 实施节点
 
-- [ ] **P0** 单角度通链 — workflow 文件 + headless server 脚本 + Fabric 截图 mod + `runClientHeadless` task + 一张俯视 artifact
-- [ ] **P1** 多角度 + 装饰 — 5 角度相机预设 + decorations JSON + generator + server `--preview-mode` 加载装饰 + 5 张 artifact
-- [ ] **P2** PR 投递 + diff — grid 拼图 + comment + base ref SSIM diff + `@preview-worldgen` 触发器
+- [x] **P0** 单角度通链 — workflow 文件 + headless server 脚本 + Fabric 截图 mod + `runClientHeadless` task + 一张俯视 artifact（⚠️ 链路通但产物近空）
+- [x] **P1** 多角度 + 装饰 — 5 角度相机预设 + decorations JSON + generator + server `--preview-mode` 加载装饰 + 5 张 artifact（⚠️ 4 张 iso 截图全空 / 同帧重复）
+- [x] **P2** PR 投递 + diff — grid 拼图 + comment + base ref SSIM diff + `@preview-worldgen` 触发器（⚠️ SSIM 留 v2；当前管道通但内容废）
+- [ ] **P3** 内容验收闸 + chunk-ready barrier — `validate_snapshots.py` + `PreviewSession` chunk 等待 + 反向 fixture 锁回归
 
 ---
 
-## §6 开放问题
+## §7 开放问题
 
 ### 已敲定（2026-04-28 调研后）
 
@@ -271,7 +319,7 @@
 
 ---
 
-## §7 进度日志
+## §8 进度日志
 
 - **2026-04-28**：骨架立项 — 承接"GitHub Actions 还能玩什么"讨论；用户确认 B 方案（真 Fabric client 渲染）+ JSON 装饰 + paths 自动 / `@preview-worldgen` 手动触发 + 5 角度（俯视 + 等角四方位）。
 - **2026-04-28（同日，调研后修订）**：技术可行性核实通过，go signal：
@@ -289,10 +337,18 @@
   - bug 3: **plan §1.5 + §2.1 cameras 表里 pitch=-90 写反**（MC 约定 -90 仰天 / +90 朝地） → 修正为 pitch=+90 / +30
   - bug 4: workflow `Start headless Bong server` step 漏设 `BONG_PREVIEW_MODE=1` → 补上
   - bug 5: P1 5 角度远距离 client setPos 必被 server anti-cheat reject → 改 server-side authoritative tp（!preview-tp 命令 + PreviewTeleportRequested event）
+- **2026-04-29（复审：归档失误，回退 active）**：用户排查 PR #71 artifact run `25051736013`，发现 5 张截图 3 张 100% 天空、1 张 71% 虚空、`top` 仅 19.8% terrain；`preview-iso_nw.png` 与 `preview-iso_sw.png` byte-identical。双 explore agent（B: PreviewSession 静态分析 / C: GH workflow 日志）调查结论：
+  - **现象根因**：`PreviewSession` SETUP_SHOT → SETTLE(100t/5s) → SHOOT 缺 chunk-ready barrier；远距离传送（每张 ±400 blocks）后 chunk 仍在流式时即拍照
+  - **byte-identical 解释**：高空 pitch=30 看远方时若 chunk 未流到，MC 渲染纯 sky clear color；纯单色 PNG 编码后字节相同，**与 yaw 推导/精度无关**（iso_nw yaw=-45 vs iso_sw yaw=-135 字面值也不同）
+  - **`top` 还能拍到 terrain 的原因**：是首张，spawn chunks 已被 WAIT_CHUNKS=600 ticks 预热；之后传送到远点 settle=100t 不够
+  - **server `/preview_tp` 命令路径已 OK**（main 命令树迁移后 client 改用 `sendCommand`，feature branch 7c87ac9d 已对齐）
+  - **处置**：plan 从 `finished_plans/` 退回 `docs/`，加 P3「内容验收闸 + chunk-ready barrier」修运行时缺陷 + 防类似"绿 CI 假阳"
 
 ---
 
 ## Finish Evidence
+
+> **2026-04-29 复审注**：本节中 14 个 commit hash 均为 PR #71 squash 前的 feature branch 内部 hash，主分支保留的 squash 仅 `c7d37c1e plan-worldgen-snapshot-v1 P0 (#71)`（含 P0+P1+P2+归档全部内容）。阶段状态在 §0 头部已降级为 ⚠️——本节落地清单仍可作为代码定位索引使用，但"P0/P1/P2 已完成"的语义已撤销，详见 §8 2026-04-29 复审条目。
 
 ### 落地清单
 
