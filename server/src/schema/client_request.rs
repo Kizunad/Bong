@@ -93,6 +93,14 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
+    SpiritNichePlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -813,6 +821,27 @@ mod tests {
                 assert_eq!(item_instance_id, 4242);
             }
             other => panic!("expected AlchemyFurnacePlace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_place_roundtrip() {
+        let json =
+            r#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNichePlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+                assert_eq!(item_instance_id, 4242);
+            }
+            other => panic!("expected SpiritNichePlace, got {other:?}"),
         }
     }
 

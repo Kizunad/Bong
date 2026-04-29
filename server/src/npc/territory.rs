@@ -26,6 +26,7 @@ use crate::npc::movement::GameTick;
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcMarker, NpcMeleeProfile};
+use crate::social::{position_is_within_registered_active_spirit_niche, SpiritNicheRegistry};
 
 /// 满员后幼崽迁出 200 格外开新领地（plan §8 决议）。
 pub const YOUNG_EMIGRATE_DISTANCE: f64 = 200.0;
@@ -419,13 +420,22 @@ fn territory_intruder_scorer_system(
     mut scorers: Query<(&Actor, &mut Score), With<TerritoryIntruderScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
+    spirit_niches: Option<Res<SpiritNicheRegistry>>,
 ) {
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
             match lod_gated_score(tier, tick, &cfg, || {
-                if pick_hunt_target(pos.get(), territory, &candidates, &npc_arch, *actor).is_some()
+                if pick_hunt_target(
+                    pos.get(),
+                    territory,
+                    &candidates,
+                    &npc_arch,
+                    spirit_niches.as_deref(),
+                    *actor,
+                )
+                .is_some()
                 {
                     1.0
                 } else {
@@ -594,6 +604,7 @@ fn hunt_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<HuntAction>>,
     mut attack_intents: EventWriter<AttackIntent>,
     game_tick: Option<Res<GameTick>>,
+    spirit_niches: Option<Res<SpiritNicheRegistry>>,
 ) {
     let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut state) in &mut actions {
@@ -603,7 +614,14 @@ fn hunt_action_system(
         };
         match *state {
             ActionState::Requested => {
-                let picked = pick_hunt_target(pos.get(), territory, &candidates, &npc_arch, *actor);
+                let picked = pick_hunt_target(
+                    pos.get(),
+                    territory,
+                    &candidates,
+                    &npc_arch,
+                    spirit_niches.as_deref(),
+                    *actor,
+                );
                 match picked {
                     Some((ent, tpos)) => {
                         navigator.set_goal(tpos, HUNT_SPEED_FACTOR);
@@ -674,6 +692,7 @@ pub(crate) fn pick_hunt_target(
     territory: &Territory,
     candidates: &HuntCandidateQuery<'_, '_>,
     npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
+    spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
 ) -> Option<(Entity, DVec3)> {
     let mut best: Option<(Entity, DVec3, f64)> = None;
@@ -686,6 +705,11 @@ pub(crate) fn pick_hunt_target(
             continue;
         }
         if (cult.realm as u32) > (HUNT_MAX_TARGET_REALM as u32) {
+            continue;
+        }
+        if spirit_niches.is_some_and(|registry| {
+            position_is_within_registered_active_spirit_niche(tposv, registry)
+        }) {
             continue;
         }
         // NPC 侧过滤：Beast 不猎 Beast。Client（玩家）无 NpcMarker，arch 查询会返回 Err 视为"非 Beast"。

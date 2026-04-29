@@ -41,3 +41,27 @@ pub struct SocialRelationshipEvent {
     pub tick: u64,
     pub metadata: serde_json::Value,
 }
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SpiritNichePlaceRequest {
+    pub player: Entity,
+    pub pos: [i32; 3],
+    pub item_instance_id: Option<u64>,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpiritNicheRevealSource {
+    Gaze,
+    BreakAttempt,
+    MarkCoordinate,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SpiritNicheRevealRequest {
+    pub observer: Option<Entity>,
+    pub owner: String,
+    pub source: SpiritNicheRevealSource,
+    pub tick: u64,
+}

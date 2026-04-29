@@ -84,6 +84,7 @@ use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::social::events::SpiritNichePlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
@@ -160,6 +161,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
+    pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
 }
 
 #[derive(SystemParam)]
@@ -245,6 +247,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -441,6 +444,31 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos,
                     item_instance_id,
+                });
+            }
+            ClientRequestV1::SpiritNichePlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(spirit_niche_place_tx) = dispatch.spirit_niche_place_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_place because SpiritNichePlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                spirit_niche_place_tx.send(SpiritNichePlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    item_instance_id: Some(item_instance_id),
+                    tick: combat_clock.tick,
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
@@ -1481,6 +1509,11 @@ mod tests {
     impl valence::prelude::Resource for CapturedMineralProbes {}
 
     #[derive(Default)]
+    struct CapturedSpiritNichePlaces(Vec<SpiritNichePlaceRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNichePlaces {}
+
+    #[derive(Default)]
     struct CapturedInscriptionScrolls(Vec<InscriptionScrollSubmit>);
 
     impl valence::prelude::Resource for CapturedInscriptionScrolls {}
@@ -1524,6 +1557,13 @@ mod tests {
     fn capture_mineral_probes(
         mut events: EventReader<MineralProbeIntent>,
         mut captured: ResMut<CapturedMineralProbes>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_places(
+        mut events: EventReader<SpiritNichePlaceRequest>,
+        mut captured: ResMut<CapturedSpiritNichePlaces>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1736,6 +1776,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -1888,6 +1929,62 @@ mod tests {
             valence::prelude::BlockPos::new(8, 32, 8)
         );
         assert_eq!(captured.0[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn spirit_niche_place_request_emits_place_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNichePlaces::default());
+        app.insert_resource(CombatClock { tick: 88 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_spirit_niche_places).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedSpiritNichePlaces>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].item_instance_id, Some(4242));
+        assert_eq!(captured.0[0].tick, 88);
     }
 
     #[test]

@@ -18,6 +18,8 @@ use valence::prelude::{
 use super::components::{MineralOreIndex, MineralOreNode};
 use super::events::{KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent};
 use super::types::MineralRarity;
+use crate::combat::components::Lifecycle;
+use crate::social::{block_break_is_protected_by_registered_spirit_niche, SpiritNicheRegistry};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// plan-mineral-v1 §3 — 极品矿脉劫气概率（worldview §七）。
@@ -48,11 +50,32 @@ pub fn handle_block_break_for_mineral(
     mut drop_events: EventWriter<MineralDropEvent>,
     mut exhausted_events: EventWriter<MineralExhaustedEvent>,
     mut karma_events: EventWriter<KarmaFlagIntent>,
+    lifecycles: Query<&Lifecycle>,
+    spirit_niches: Option<valence::prelude::Res<SpiritNicheRegistry>>,
 ) {
     for event in digs.read() {
         // Survival 模式 Stop = 挖掘动画走完；plan §2.2 重写 drop 必须等 Stop 才触发，
         // 避免 Start/Abort 误判。Creative 模式（Start）的特例由 worldview 暂不支持。
         if event.state != DiggingState::Stop {
+            continue;
+        }
+
+        let actor_char_id = lifecycles
+            .get(event.client)
+            .ok()
+            .map(|lifecycle| lifecycle.character_id.as_str());
+        if spirit_niches.as_deref().is_some_and(|registry| {
+            block_break_is_protected_by_registered_spirit_niche(
+                actor_char_id,
+                [event.position.x, event.position.y, event.position.z],
+                registry,
+            )
+        }) {
+            tracing::info!(
+                target: "bong::mineral",
+                "block break protected by active spirit niche at {:?}",
+                event.position
+            );
             continue;
         }
 

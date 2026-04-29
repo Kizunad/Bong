@@ -8,24 +8,36 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
+use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs,
-    Position, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, DiggingEvent,
+    DiggingState, Entity, EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res,
+    ResMut, Resource, Update, Username, With, Without,
 };
 
 use self::components::{
-    Anonymity, ExposureEvent, ExposureLog, Relationship, Relationships, Renown,
+    Anonymity, ExposureEvent, ExposureLog, Relationship, Relationships, Renown, SpiritNiche,
 };
 use self::events::{
     PlayerChatCollected, SocialExposureEvent, SocialRelationshipEvent, SocialRenownDeltaEvent,
+    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::lifespan::LifespanComponent;
+use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{send_server_data_payload, RedisBridgeResource};
 use crate::persistence::PersistenceSettings;
+use crate::player::state::{
+    player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
+    PlayerStatePersistence,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
     ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
@@ -39,21 +51,54 @@ const DEATH_EXPOSURE_RADIUS: f64 = 50.0;
 const COMPANION_RADIUS: f64 = 50.0;
 const COMPANION_SCAN_INTERVAL_TICKS: u64 = 20;
 const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
+const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
+const SPIRIT_NICHE_RADIUS: f64 = 5.0;
+const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
 const NAMELESS_LABEL: &str = "无名修士";
 
 type CompanionPairKey = (String, String);
+type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, Option<String>);
 
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
     pair_seconds: HashMap<CompanionPairKey, u64>,
 }
 
+#[derive(Debug, Default, Resource)]
+pub(crate) struct SpiritNicheRegistry {
+    niches: HashMap<String, SpiritNiche>,
+    hydrated: bool,
+}
+
+impl SpiritNicheRegistry {
+    fn upsert(&mut self, niche: SpiritNiche) {
+        self.niches.insert(niche.owner.clone(), niche);
+    }
+
+    fn reveal(&mut self, owner: &str, revealed_by: Option<String>) -> Option<SpiritNiche> {
+        let niche = self.niches.get_mut(owner)?;
+        if niche.revealed {
+            return None;
+        }
+        niche.revealed = true;
+        niche.revealed_by = revealed_by;
+        Some(niche.clone())
+    }
+
+    fn active_niches(&self) -> impl Iterator<Item = &SpiritNiche> {
+        self.niches.values().filter(|niche| !niche.revealed)
+    }
+}
+
 pub fn register(app: &mut App) {
     app.init_resource::<CompanionProgress>();
+    app.init_resource::<SpiritNicheRegistry>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
+    app.add_event::<SpiritNichePlaceRequest>();
+    app.add_event::<SpiritNicheRevealRequest>();
     app.add_systems(
         Update,
         (
@@ -62,8 +107,13 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::CombatSystemSet::Intent),
             emit_anonymity_payloads_for_joined_clients
                 .after(attach_social_bundle_to_joined_clients),
+            hydrate_spirit_niche_registry,
             expose_chat_speakers.after(crate::network::chat_collector::collect_player_chat),
             handle_death_social_effects.after(crate::combat::CombatSystemSet::Resolve),
+            handle_spirit_niche_place_requests
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
+            detect_spirit_niche_break_attempts,
+            apply_spirit_niche_reveals.after(detect_spirit_niche_break_attempts),
             update_companion_relationships.after(attach_social_bundle_to_joined_clients),
             apply_social_exposures.after(expose_chat_speakers),
             apply_social_relationships
@@ -107,7 +157,18 @@ fn attach_social_bundle_to_joined_clients(
             })
             .unwrap_or_default();
 
-        commands.entity(entity).insert(social_state.into_bundle());
+        let SocialComponentsSnapshot {
+            anonymity,
+            renown,
+            relationships,
+            exposure_log,
+            spirit_niche,
+        } = social_state;
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert((anonymity, renown, relationships, exposure_log));
+        if let Some(spirit_niche) = spirit_niche {
+            entity_commands.insert(spirit_niche);
+        }
     }
 }
 
@@ -168,6 +229,29 @@ fn build_remote_identity_payloads(
         .collect::<Vec<_>>();
     remotes.sort_by(|left, right| left.player_uuid.cmp(&right.player_uuid));
     remotes
+}
+
+fn hydrate_spirit_niche_registry(
+    persistence: Option<Res<PersistenceSettings>>,
+    mut registry: ResMut<SpiritNicheRegistry>,
+) {
+    if registry.hydrated {
+        return;
+    }
+    registry.hydrated = true;
+    let Some(persistence) = persistence.as_deref() else {
+        return;
+    };
+    match load_all_social_spirit_niches(persistence) {
+        Ok(niches) => {
+            for niche in niches {
+                registry.upsert(niche);
+            }
+        }
+        Err(error) => {
+            tracing::warn!("[bong][social] failed to hydrate spirit niche registry: {error}");
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -416,6 +500,349 @@ fn apply_social_renown_deltas(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn handle_spirit_niche_place_requests(
+    persistence: Option<Res<PersistenceSettings>>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    mut events: EventReader<SpiritNichePlaceRequest>,
+    mut commands: Commands,
+    mut players: Query<(
+        Entity,
+        &mut Lifecycle,
+        &Position,
+        Option<&mut PlayerInventory>,
+        Option<&mut Cultivation>,
+        Option<&mut LifespanComponent>,
+        Option<&Username>,
+        Option<&mut Client>,
+        Option<&PlayerState>,
+    )>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+    mut registry: ResMut<SpiritNicheRegistry>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+) {
+    let zone_registry = zone_registry
+        .as_deref()
+        .cloned()
+        .unwrap_or_else(ZoneRegistry::fallback);
+    for event in events.read() {
+        let Ok((
+            entity,
+            mut lifecycle,
+            position,
+            inventory,
+            mut cultivation,
+            lifespan,
+            username,
+            client,
+            player_state,
+        )) = players.get_mut(event.player)
+        else {
+            continue;
+        };
+
+        if entity != event.player || lifecycle.state == LifecycleState::Terminated {
+            continue;
+        }
+        if !niche_place_target_is_close(position, event.pos) {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: target {:?} too far from player",
+                lifecycle.character_id,
+                event.pos
+            );
+            continue;
+        }
+
+        let Some(mut inventory) = inventory else {
+            continue;
+        };
+        let Some(item_instance_id) = event.item_instance_id else {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: missing item instance",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        let Some(instance) = inventory_item_by_instance(&inventory, item_instance_id) else {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: missing instance {item_instance_id}",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        if instance.template_id != SPIRIT_NICHE_ITEM_TEMPLATE_ID {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche stone",
+                lifecycle.character_id,
+                instance.template_id
+            );
+            continue;
+        }
+        if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: consume failed: {error}",
+                lifecycle.character_id
+            );
+            continue;
+        }
+
+        let zone = zone_registry.find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            position.get(),
+        );
+        if let Some(cultivation) = cultivation.as_deref_mut() {
+            apply_spirit_niche_negative_qi_cost(zone.map(|zone| zone.spirit_qi), cultivation);
+        }
+        if let Some(mut lifespan) = lifespan {
+            apply_spirit_niche_negative_lifespan_cost(
+                zone.map(|zone| zone.spirit_qi),
+                &mut lifespan,
+            );
+        }
+
+        let niche = SpiritNiche {
+            owner: lifecycle.character_id.clone(),
+            pos: event.pos,
+            placed_at_tick: event.tick,
+            revealed: false,
+            revealed_by: None,
+            defense_mode: None,
+        };
+        lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
+        let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
+        registry.upsert(niche.clone());
+        commands.entity(event.player).insert(niche.clone());
+        if let Ok(mut layer) = layers.get_single_mut() {
+            if let Some(old_niche) = old_niche {
+                if !old_niche.revealed && old_niche.pos != event.pos {
+                    layer.set_block(block_pos_from_array(old_niche.pos), BlockState::AIR);
+                }
+            }
+            layer.set_block(block_pos_from_array(event.pos), BlockState::LODESTONE);
+        }
+        if let Some(persistence) = persistence.as_deref() {
+            if let Err(error) = persist_social_spirit_niche(persistence, &niche) {
+                tracing::warn!(
+                    "[bong][social] failed to persist spirit niche for `{}`: {error}",
+                    lifecycle.character_id
+                );
+            }
+        }
+        if let (Some(player_persistence), Some(username)) =
+            (player_persistence.as_deref(), username)
+        {
+            if let Err(error) = save_player_shrine_anchor_slice(
+                player_persistence,
+                username.0.as_str(),
+                Some(spirit_niche_spawn_anchor(event.pos)),
+            ) {
+                tracing::warn!(
+                    "[bong][social] failed to persist shrine anchor for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
+        if let (Some(mut client), Some(username), Some(player_state), Some(cultivation)) =
+            (client, username, player_state, cultivation.as_deref())
+        {
+            send_inventory_snapshot_to_client(
+                event.player,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "spirit_niche_stone_consumed",
+            );
+        }
+    }
+}
+
+fn detect_spirit_niche_break_attempts(
+    mut digs: EventReader<DiggingEvent>,
+    clients: Query<&Lifecycle, With<Client>>,
+    registry: Option<Res<SpiritNicheRegistry>>,
+    mut reveals: EventWriter<SpiritNicheRevealRequest>,
+    clock: Option<Res<CombatClock>>,
+) {
+    let Some(registry) = registry.as_deref() else {
+        return;
+    };
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    for event in digs.read() {
+        if !matches!(event.state, DiggingState::Start | DiggingState::Stop) {
+            continue;
+        }
+        let attempted = array_from_block_pos(event.position);
+        let Some(niche) = registry
+            .active_niches()
+            .find(|niche| !niche.revealed && niche.pos == attempted)
+        else {
+            continue;
+        };
+        let observer = clients
+            .get(event.client)
+            .ok()
+            .is_some_and(|lifecycle| lifecycle.character_id != niche.owner)
+            .then_some(event.client);
+        if observer.is_none() {
+            continue;
+        }
+        reveals.send(SpiritNicheRevealRequest {
+            observer,
+            owner: niche.owner.clone(),
+            source: SpiritNicheRevealSource::BreakAttempt,
+            tick,
+        });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn apply_spirit_niche_reveals(
+    persistence: Option<Res<PersistenceSettings>>,
+    player_persistence: Option<Res<PlayerStatePersistence>>,
+    mut events: EventReader<SpiritNicheRevealRequest>,
+    mut registry: ResMut<SpiritNicheRegistry>,
+    mut players: ParamSet<(
+        Query<&Lifecycle, With<Client>>,
+        Query<(&mut Lifecycle, &mut SpiritNiche, Option<&mut Client>), With<Client>>,
+    )>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+) {
+    for event in events.read() {
+        let observer_char = {
+            let observers = players.p0();
+            event
+                .observer
+                .and_then(|observer| observers.get(observer).ok())
+                .map(|lifecycle| lifecycle.character_id.clone())
+        };
+        let Some(revealed_niche) = registry.reveal(&event.owner, observer_char.clone()) else {
+            continue;
+        };
+        if let Some(persistence) = persistence.as_deref() {
+            if let Err(error) = persist_social_spirit_niche(persistence, &revealed_niche) {
+                tracing::warn!(
+                    "[bong][social] failed to persist revealed spirit niche for `{}`: {error}",
+                    event.owner
+                );
+            }
+        }
+        if let Some(player_persistence) = player_persistence.as_deref() {
+            if let Some(username) = player_username_from_character_id(&event.owner) {
+                if let Err(error) =
+                    save_player_shrine_anchor_slice(player_persistence, username, None)
+                {
+                    tracing::warn!(
+                        "[bong][social] failed to clear revealed shrine anchor for `{}`: {error}",
+                        event.owner
+                    );
+                }
+            }
+        }
+        if let Ok(mut layer) = layers.get_single_mut() {
+            layer.set_block(block_pos_from_array(revealed_niche.pos), BlockState::AIR);
+        }
+        for (mut lifecycle, mut niche, client) in &mut players.p1() {
+            if lifecycle.character_id != event.owner {
+                continue;
+            }
+            *niche = revealed_niche.clone();
+            lifecycle.spawn_anchor = None;
+            if let Some(mut client) = client {
+                client.send_chat_message("灵龛再无庇佑");
+            }
+        }
+    }
+}
+
+fn niche_place_target_is_close(position: &Position, target: [i32; 3]) -> bool {
+    distance_squared_to_niche(position.get(), target) <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
+}
+
+fn apply_spirit_niche_negative_qi_cost(zone_qi: Option<f64>, cultivation: &mut Cultivation) {
+    if !zone_qi.is_some_and(|qi| qi < 0.0) {
+        return;
+    }
+    let realm_factor = match cultivation.realm {
+        Realm::Awaken => 1.0,
+        Realm::Induce => 1.25,
+        Realm::Condense => 1.5,
+        Realm::Solidify => 1.75,
+        Realm::Spirit => 2.0,
+        Realm::Void => 2.5,
+    };
+    let damage = cultivation.qi_max * SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO * realm_factor;
+    cultivation.qi_current = (cultivation.qi_current - damage).max(0.0);
+}
+
+fn apply_spirit_niche_negative_lifespan_cost(
+    zone_qi: Option<f64>,
+    lifespan: &mut LifespanComponent,
+) {
+    let Some(zone_qi) = zone_qi else {
+        return;
+    };
+    if zone_qi >= 0.0 {
+        return;
+    }
+    lifespan.years_lived =
+        (lifespan.years_lived + zone_qi.abs() * 0.1).min(lifespan.cap_by_realm as f64);
+}
+
+fn spirit_niche_spawn_anchor(pos: [i32; 3]) -> [f64; 3] {
+    [
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 1.0,
+        pos[2] as f64 + 0.5,
+    ]
+}
+
+fn block_pos_from_array(pos: [i32; 3]) -> BlockPos {
+    BlockPos::new(pos[0], pos[1], pos[2])
+}
+
+fn array_from_block_pos(pos: BlockPos) -> [i32; 3] {
+    [pos.x, pos.y, pos.z]
+}
+
+fn distance_squared_to_niche(pos: DVec3, niche_pos: [i32; 3]) -> f64 {
+    let center = DVec3::new(
+        niche_pos[0] as f64 + 0.5,
+        niche_pos[1] as f64 + 0.5,
+        niche_pos[2] as f64 + 0.5,
+    );
+    (pos - center).length_squared()
+}
+
+fn block_distance_squared(left: [i32; 3], right: [i32; 3]) -> f64 {
+    let dx = f64::from(left[0] - right[0]);
+    let dy = f64::from(left[1] - right[1]);
+    let dz = f64::from(left[2] - right[2]);
+    dx * dx + dy * dy + dz * dz
+}
+
+pub(crate) fn position_is_within_registered_active_spirit_niche(
+    pos: DVec3,
+    registry: &SpiritNicheRegistry,
+) -> bool {
+    registry.active_niches().any(|niche| {
+        distance_squared_to_niche(pos, niche.pos) <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
+    })
+}
+
+pub(crate) fn block_break_is_protected_by_registered_spirit_niche(
+    actor_char_id: Option<&str>,
+    block_pos: [i32; 3],
+    registry: &SpiritNicheRegistry,
+) -> bool {
+    registry.active_niches().any(|niche| {
+        Some(niche.owner.as_str()) != actor_char_id
+            && block_distance_squared(block_pos, niche.pos)
+                <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
+    })
+}
+
 #[allow(clippy::type_complexity)]
 fn update_companion_relationships(
     clock: Res<CombatClock>,
@@ -493,17 +920,7 @@ struct SocialComponentsSnapshot {
     renown: Renown,
     relationships: Relationships,
     exposure_log: ExposureLog,
-}
-
-impl SocialComponentsSnapshot {
-    fn into_bundle(self) -> (Anonymity, Renown, Relationships, ExposureLog) {
-        (
-            self.anonymity,
-            self.renown,
-            self.relationships,
-            self.exposure_log,
-        )
-    }
+    spirit_niche: Option<SpiritNiche>,
 }
 
 fn load_social_components(
@@ -516,6 +933,7 @@ fn load_social_components(
         renown: load_social_renown(&connection, char_id)?,
         relationships: load_social_relationships(&connection, char_id)?,
         exposure_log: load_social_exposure_log(&connection, char_id)?,
+        spirit_niche: load_social_spirit_niche(&connection, char_id)?,
     })
 }
 
@@ -672,6 +1090,86 @@ fn load_social_exposure_log(connection: &Connection, char_id: &str) -> io::Resul
     Ok(exposure_log)
 }
 
+fn load_social_spirit_niche(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Option<SpiritNiche>> {
+    let row: Option<SpiritNicheSqlRow> = connection
+        .query_row(
+            "
+            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            FROM social_spirit_niches
+            WHERE owner = ?1
+            ",
+            params![char_id],
+            |row| {
+                Ok((
+                    [row.get(0)?, row.get(1)?, row.get(2)?],
+                    sql_to_tick(row.get::<_, i64>(3)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Integer,
+                            Box::new(error),
+                        )
+                    })?,
+                    row.get::<_, i64>(4)? != 0,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(row.map(
+        |(pos, placed_at_tick, revealed, revealed_by, defense_mode)| SpiritNiche {
+            owner: char_id.to_string(),
+            pos,
+            placed_at_tick,
+            revealed,
+            revealed_by,
+            defense_mode,
+        },
+    ))
+}
+
+fn load_all_social_spirit_niches(
+    persistence: &PersistenceSettings,
+) -> io::Result<Vec<SpiritNiche>> {
+    let connection = open_social_connection(persistence)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, defense_mode
+            FROM social_spirit_niches
+            ORDER BY owner ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(SpiritNiche {
+                owner: row.get(0)?,
+                pos: [row.get(1)?, row.get(2)?, row.get(3)?],
+                placed_at_tick: sql_to_tick(row.get::<_, i64>(4)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })?,
+                revealed: row.get::<_, i64>(5)? != 0,
+                revealed_by: row.get(6)?,
+                defense_mode: row.get(7)?,
+            })
+        })
+        .map_err(io::Error::other)?;
+    let mut niches = Vec::new();
+    for row in rows {
+        niches.push(row.map_err(io::Error::other)?);
+    }
+    Ok(niches)
+}
+
 fn persist_social_anonymity(
     persistence: &PersistenceSettings,
     char_id: &str,
@@ -800,6 +1298,46 @@ fn persist_social_renown(
                 renown.notoriety,
                 tags_json,
                 wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_social_spirit_niche(
+    persistence: &PersistenceSettings,
+    niche: &SpiritNiche,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO social_spirit_niches (
+                owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
+                defense_mode, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+            ON CONFLICT(owner) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                placed_at_tick = excluded.placed_at_tick,
+                revealed = excluded.revealed,
+                revealed_by = excluded.revealed_by,
+                defense_mode = excluded.defense_mode,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                niche.owner,
+                niche.pos[0],
+                niche.pos[1],
+                niche.pos[2],
+                tick_to_sql(niche.placed_at_tick)?,
+                if niche.revealed { 1_i64 } else { 0_i64 },
+                niche.revealed_by.as_deref(),
+                niche.defense_mode.as_deref(),
+                wall_clock,
             ],
         )
         .map_err(io::Error::other)?;
@@ -982,14 +1520,60 @@ mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
     use crate::combat::CombatClock;
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+    };
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::social::RenownTagV1;
     use crate::social::events::PlayerChatCollected;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use valence::prelude::{App, Update};
-    use valence::prelude::{Events, Position};
+    use valence::prelude::{App, Events, Position, Update};
     use valence::testing::create_mock_client;
+
+    fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: SPIRIT_NICHE_ITEM_TEMPLATE_ID.to_string(),
+            display_name: "龛石".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.4,
+            rarity: ItemRarity::Rare,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
+    fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        }
+    }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -1280,5 +1864,135 @@ mod tests {
         assert_eq!(collected[0].notoriety_delta, 10);
         assert_eq!(collected[0].tick, 11);
         assert_eq!(collected[0].reason, "pk_death_higher_fame_victim");
+    }
+
+    #[test]
+    fn spirit_niche_place_consumes_stone_sets_anchor_and_persists() {
+        let (persistence, data_dir) = social_persistence("spirit-niche-place");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(4242)),
+            Cultivation {
+                qi_current: 10.0,
+                ..Default::default()
+            },
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, Some([11.5, 65.0, 10.5]));
+        assert!(app.world().get::<SpiritNiche>(entity).is_some());
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(inventory_item_by_instance(inventory, 4242).is_none());
+        let loaded = load_social_components(&persistence, "char:azure")
+            .expect("spirit niche should persist")
+            .spirit_niche
+            .expect("persisted niche should load");
+        assert_eq!(loaded.pos, [11, 64, 10]);
+        assert!(!loaded.revealed);
+        let registry = app.world().resource::<SpiritNicheRegistry>();
+        assert!(block_break_is_protected_by_registered_spirit_niche(
+            Some("char:other"),
+            [11, 64, 10],
+            registry
+        ));
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn spirit_niche_break_attempt_reveals_and_disables_anchor() {
+        let (persistence, data_dir) = social_persistence("spirit-niche-reveal");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(SpiritNiche {
+            owner: "char:owner".to_string(),
+            pos: [20, 64, 20],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            defense_mode: None,
+        });
+        app.insert_resource(registry);
+        app.add_event::<DiggingEvent>();
+        app.add_event::<SpiritNicheRevealRequest>();
+        app.add_systems(
+            Update,
+            (
+                detect_spirit_niche_break_attempts,
+                apply_spirit_niche_reveals.after(detect_spirit_niche_break_attempts),
+            ),
+        );
+
+        let (owner_bundle, _owner_helper) = create_mock_client("Owner");
+        let owner = app.world_mut().spawn(owner_bundle).id();
+        app.world_mut().entity_mut(owner).insert((
+            Lifecycle {
+                character_id: "char:owner".to_string(),
+                spawn_anchor: Some([20.5, 65.0, 20.5]),
+                ..Default::default()
+            },
+            SpiritNiche {
+                owner: "char:owner".to_string(),
+                pos: [20, 64, 20],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                defense_mode: None,
+            },
+        ));
+        let (observer_bundle, _observer_helper) = create_mock_client("Observer");
+        let observer = app.world_mut().spawn(observer_bundle).id();
+        app.world_mut().entity_mut(observer).insert(Lifecycle {
+            character_id: "char:observer".to_string(),
+            ..Default::default()
+        });
+        app.world_mut().send_event(DiggingEvent {
+            client: observer,
+            position: BlockPos::new(20, 64, 20),
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Start,
+        });
+
+        app.update();
+
+        let lifecycle = app.world().get::<Lifecycle>(owner).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let niche = app.world().get::<SpiritNiche>(owner).unwrap();
+        assert!(niche.revealed);
+        assert_eq!(niche.revealed_by.as_deref(), Some("char:observer"));
+        assert!(!block_break_is_protected_by_registered_spirit_niche(
+            Some("char:other"),
+            [20, 64, 20],
+            app.world().resource::<SpiritNicheRegistry>()
+        ));
+        let loaded = load_social_components(&persistence, "char:owner")
+            .expect("revealed spirit niche should persist")
+            .spirit_niche
+            .expect("persisted niche should load");
+        assert!(loaded.revealed);
+        assert_eq!(loaded.revealed_by.as_deref(), Some("char:observer"));
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 }
