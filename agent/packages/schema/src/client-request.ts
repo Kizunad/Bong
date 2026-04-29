@@ -420,6 +420,30 @@ export const SpiritNichePlaceRequestV1 = Type.Object(
 );
 export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
 
+export const SpiritNicheGazeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_gaze"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheGazeRequestV1 = Static<typeof SpiritNicheGazeRequestV1>;
+
+export const SpiritNicheMarkCoordinateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_mark_coordinate"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheMarkCoordinateRequestV1 = Static<typeof SpiritNicheMarkCoordinateRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -574,6 +598,8 @@ export const ClientRequestV1 = Type.Union([
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
   SpiritNichePlaceRequestV1,
+  SpiritNicheGazeRequestV1,
+  SpiritNicheMarkCoordinateRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
