@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Events, Query, Res,
-    ResMut, Resource, Username, With,
+    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, Query,
+    Res, ResMut, Resource, Username, With,
 };
 
 use crate::alchemy::{
@@ -86,11 +86,13 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
     StartExtractRequest as StartExtractRequestEvent,
 };
 use crate::world::karma::KarmaWeightStore;
+use crate::world::zone::ZoneRegistry;
 
 const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
 const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
@@ -147,6 +149,7 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
     pub recipe_registry: Res<'w, RecipeRegistry>,
     pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
+    pub zone_registry: Option<Res<'w, ZoneRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -437,6 +440,7 @@ pub fn handle_client_request_payloads(
                     intervention.into(),
                     &mut clients,
                     &mut alchemy_params.furnaces,
+                    alchemy_params.zone_registry.as_deref(),
                 );
             }
             ClientRequestV1::AlchemyOpenFurnace { furnace_id, .. } => {
@@ -1841,6 +1845,43 @@ mod tests {
             )
                 .chain(),
         );
+    }
+
+    #[test]
+    fn alchemy_inject_qi_ignored_for_furnace_in_collapsed_zone() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut("spawn")
+            .unwrap()
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(AlchemyFurnace::placed(
+                valence::prelude::BlockPos::new(8, 66, 8),
+                1,
+            ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data:
+                    br#"{"type":"alchemy_intervention","v":1,"intervention":{"kind":"inject_qi","qi":5.0}}"#
+                        .to_vec()
+                        .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let furnace = app.world().entity(entity).get::<AlchemyFurnace>().unwrap();
+        assert!(furnace.session.is_none());
     }
 
     #[test]
@@ -4057,6 +4098,7 @@ fn handle_alchemy_intervention(
     intervention: Intervention,
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<&mut AlchemyFurnace>,
+    zone_registry: Option<&ZoneRegistry>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -4065,6 +4107,14 @@ fn handle_alchemy_intervention(
     let Ok(mut furnace) = furnaces.get_mut(entity) else {
         return;
     };
+    if matches!(intervention, Intervention::InjectQi(_))
+        && furnace_zone_is_collapsed(&furnace, zone_registry)
+    {
+        tracing::debug!(
+            "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
+        );
+        return;
+    }
     let session = match furnace.session.as_mut() {
         Some(s) => s,
         None => {
@@ -4080,6 +4130,26 @@ fn handle_alchemy_intervention(
         session.temp_current, session.qi_injected
     );
     alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, &furnace);
+}
+
+fn furnace_zone_is_collapsed(
+    furnace: &AlchemyFurnace,
+    zone_registry: Option<&ZoneRegistry>,
+) -> bool {
+    let Some(zone_registry) = zone_registry else {
+        return false;
+    };
+    let Some((x, y, z)) = furnace.pos else {
+        return false;
+    };
+    let furnace_pos = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
+    zone_registry
+        .find_zone(DimensionKind::Overworld, furnace_pos)
+        .is_some_and(|zone| {
+            zone.active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE)
+        })
 }
 
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
