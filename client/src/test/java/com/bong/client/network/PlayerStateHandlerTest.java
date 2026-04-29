@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,6 +33,10 @@ public class PlayerStateHandlerTest {
         assertEquals(0.40, playerState.breakdown().wealth(), 0.0001);
         assertEquals(0.65, playerState.breakdown().social(), 0.0001);
         assertEquals(0.10, playerState.breakdown().territory(), 0.0001);
+        assertEquals(0, playerState.social().fame());
+        assertEquals(0, playerState.social().notoriety());
+        assertTrue(playerState.social().topTags().isEmpty());
+        assertFalse(playerState.social().hasFaction());
         assertEquals("green_cloud_peak", playerState.zoneId());
         assertEquals("青云峰", playerState.zoneLabel());
         assertEquals(0.78, playerState.zoneSpiritQiNormalized(), 0.0001);
@@ -81,6 +86,34 @@ public class PlayerStateHandlerTest {
         assertEquals("blood_valley", playerState.zoneId());
         assertEquals("blood_valley", playerState.zoneLabel());
         assertEquals(0.0, playerState.zoneSpiritQiNormalized(), 0.0001);
+    }
+
+    @Test
+    void mapsOptionalSocialSnapshotIntoViewModel() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"Induce","spirit_qi":78.0,
+             "karma":0.2,"composite_power":0.35,
+              "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
+              "zone":"blood_valley",
+              "social":{
+                "renown":{"fame":7,"notoriety":12,"top_tags":[
+                  {"tag":"背盟者","weight":50.0,"last_seen_tick":123,"permanent":true}
+                ]},
+                "relationships":[],"exposed_to_count":2,
+                "faction_membership":{"faction":"defend","rank":0,"loyalty":10,"betrayal_count":1,"permanently_refused":false}
+              }}
+            """));
+
+        PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
+
+        assertTrue(dispatch.handled());
+        assertEquals(7, playerState.social().fame());
+        assertEquals(12, playerState.social().notoriety());
+        assertEquals(List.of("背盟者"), playerState.social().topTags());
+        assertEquals("defend", playerState.social().faction());
+        assertEquals(0, playerState.social().factionRank());
+        assertEquals(10, playerState.social().factionLoyalty());
+        assertEquals(1, playerState.social().factionBetrayalCount());
     }
 
     @Test

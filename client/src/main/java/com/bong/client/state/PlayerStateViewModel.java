@@ -1,5 +1,6 @@
 package com.bong.client.state;
 
+import java.util.List;
 import java.util.Objects;
 
 public final class PlayerStateViewModel {
@@ -12,6 +13,7 @@ public final class PlayerStateViewModel {
     private final double karma;
     private final double compositePower;
     private final PowerBreakdown breakdown;
+    private final SocialSnapshot social;
     private final String zoneId;
     private final String zoneLabel;
     private final double zoneSpiritQiNormalized;
@@ -24,6 +26,7 @@ public final class PlayerStateViewModel {
         double karma,
         double compositePower,
         PowerBreakdown breakdown,
+        SocialSnapshot social,
         String zoneId,
         String zoneLabel,
         double zoneSpiritQiNormalized
@@ -35,6 +38,7 @@ public final class PlayerStateViewModel {
         this.karma = karma;
         this.compositePower = compositePower;
         this.breakdown = Objects.requireNonNull(breakdown, "breakdown");
+        this.social = Objects.requireNonNull(social, "social");
         this.zoneId = Objects.requireNonNull(zoneId, "zoneId");
         this.zoneLabel = Objects.requireNonNull(zoneLabel, "zoneLabel");
         this.zoneSpiritQiNormalized = zoneSpiritQiNormalized;
@@ -49,6 +53,7 @@ public final class PlayerStateViewModel {
             0.0,
             0.0,
             PowerBreakdown.empty(),
+            SocialSnapshot.empty(),
             "",
             "",
             0.0
@@ -62,6 +67,7 @@ public final class PlayerStateViewModel {
         double karma,
         double compositePower,
         PowerBreakdown breakdown,
+        SocialSnapshot social,
         String zoneId,
         String zoneLabel,
         double zoneSpiritQiNormalized
@@ -91,6 +97,7 @@ public final class PlayerStateViewModel {
             clamp(karma, -1.0, 1.0),
             clamp(compositePower, 0.0, 1.0),
             breakdown == null ? PowerBreakdown.empty() : breakdown,
+            social == null ? SocialSnapshot.empty() : social,
             normalizedZoneId,
             normalizedZoneLabel,
             clamp(zoneSpiritQiNormalized, 0.0, 1.0)
@@ -150,6 +157,10 @@ public final class PlayerStateViewModel {
         return breakdown;
     }
 
+    public SocialSnapshot social() {
+        return social;
+    }
+
     public String zoneId() {
         return zoneId;
     }
@@ -206,6 +217,90 @@ public final class PlayerStateViewModel {
 
         public double territory() {
             return territory;
+        }
+    }
+
+    public static final class SocialSnapshot {
+        private final int fame;
+        private final int notoriety;
+        private final List<String> topTags;
+        private final String faction;
+        private final int factionRank;
+        private final int factionLoyalty;
+        private final int factionBetrayalCount;
+
+        private SocialSnapshot(
+            int fame,
+            int notoriety,
+            List<String> topTags,
+            String faction,
+            int factionRank,
+            int factionLoyalty,
+            int factionBetrayalCount
+        ) {
+            this.fame = fame;
+            this.notoriety = notoriety;
+            this.topTags = List.copyOf(topTags == null ? List.of() : topTags);
+            this.faction = normalizeText(faction);
+            this.factionRank = Math.max(0, factionRank);
+            this.factionLoyalty = factionLoyalty;
+            this.factionBetrayalCount = Math.max(0, factionBetrayalCount);
+        }
+
+        public static SocialSnapshot empty() {
+            return new SocialSnapshot(0, 0, List.of(), "", 0, 0, 0);
+        }
+
+        public static SocialSnapshot create(
+            int fame,
+            int notoriety,
+            List<String> topTags,
+            String faction,
+            int factionRank,
+            int factionLoyalty,
+            int factionBetrayalCount
+        ) {
+            return new SocialSnapshot(
+                fame,
+                notoriety,
+                topTags,
+                faction,
+                factionRank,
+                factionLoyalty,
+                factionBetrayalCount
+            );
+        }
+
+        public int fame() {
+            return fame;
+        }
+
+        public int notoriety() {
+            return notoriety;
+        }
+
+        public List<String> topTags() {
+            return topTags;
+        }
+
+        public String faction() {
+            return faction;
+        }
+
+        public int factionRank() {
+            return factionRank;
+        }
+
+        public int factionLoyalty() {
+            return factionLoyalty;
+        }
+
+        public int factionBetrayalCount() {
+            return factionBetrayalCount;
+        }
+
+        public boolean hasFaction() {
+            return !faction.isEmpty();
         }
     }
 }
