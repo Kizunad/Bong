@@ -161,12 +161,12 @@
   - P5：Valence `Client::set_resource_pack` join hook、拒绝/失败降级记录、pack zip 与 sha1 构建脚本落地。
   - P6：`whale_fossil.py` 独立 structure generator、`fossil_bbox` uint8 raster channel、manifest `fossil_bboxes`、Rust raster 读取与 `spawn_mineral_anchor_nodes` 富集物化落地。
 - 关键 commit：
-  - `11883857` 矿物 v2：补齐挖矿反馈与镐阶门槛
-  - `9d1a93bd` 矿物 v2：校验锻造主材炉阶
-  - `397714f4` 矿物 v2：接入炼丹矿物辅料
-  - `d52f3a7a` 矿物 v2：注册灵石鲜度曲线
-  - `ccd1e976` 矿物 v2：接入资源包推送
-  - `6133da98` 矿物 v2：接入鲸落化石矿脉
+  - `0c11d469` 矿物 v2：补齐挖矿反馈与镐阶门槛
+  - `76f1a9bf` 矿物 v2：校验锻造主材炉阶
+  - `36001478` 矿物 v2：接入炼丹矿物辅料
+  - `db100fdf` 矿物 v2：注册灵石鲜度曲线
+  - `6b39e905` 矿物 v2：接入资源包推送
+  - `2f5e2ba5` 矿物 v2：接入鲸落化石矿脉
 - 测试结果：
   - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过（最终 `1786 passed; 0 failed`）。
   - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` 通过。
