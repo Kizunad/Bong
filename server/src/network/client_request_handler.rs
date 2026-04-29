@@ -1522,6 +1522,11 @@ mod tests {
     impl valence::prelude::Resource for CapturedForgeRequests {}
 
     #[derive(Default)]
+    struct CapturedStartDuXuRequests(Vec<StartDuXuRequest>);
+
+    impl valence::prelude::Resource for CapturedStartDuXuRequests {}
+
+    #[derive(Default)]
     struct CapturedInsightChoices(Vec<InsightChosen>);
 
     impl valence::prelude::Resource for CapturedInsightChoices {}
@@ -1561,6 +1566,13 @@ mod tests {
     fn capture_forge_requests(
         mut events: EventReader<ForgeRequest>,
         mut captured: ResMut<CapturedForgeRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_start_du_xu_requests(
+        mut events: EventReader<StartDuXuRequest>,
+        mut captured: ResMut<CapturedStartDuXuRequests>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1963,6 +1975,52 @@ mod tests {
                 .0
                 .is_empty(),
             "unsupported request version should not emit InsightChosen"
+        );
+    }
+
+    #[test]
+    fn abort_tribulation_request_is_ignored_after_start_confirmation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(CapturedStartDuXuRequests::default());
+        app.add_event::<StartDuXuRequest>();
+        app.add_systems(
+            Update,
+            capture_start_du_xu_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"start_du_xu","v":1}"#.to_vec().into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<CapturedStartDuXuRequests>().0.len(),
+            1,
+            "control start_du_xu request should emit StartDuXuRequest"
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"abort_tribulation","v":1}"#.to_vec().into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<CapturedStartDuXuRequests>().0.len(),
+            1,
+            "abort_tribulation must not emit another StartDuXuRequest or cancellation side effect"
         );
     }
 
