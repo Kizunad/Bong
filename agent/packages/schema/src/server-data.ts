@@ -150,6 +150,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("forge_session"),
   Type.Literal("forge_outcome"),
   Type.Literal("forge_blueprint_book"),
+  Type.Literal("tribulation_broadcast"),
   Type.Literal("heart_demon_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
@@ -518,6 +519,25 @@ export const ServerDataTerminateScreenV1 = Type.Object(
 );
 export type ServerDataTerminateScreenV1 = Static<typeof ServerDataTerminateScreenV1>;
 
+export const ServerDataTribulationBroadcastV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("tribulation_broadcast"),
+    active: Type.Boolean(),
+    actor_name: Type.String(),
+    stage: Type.String(),
+    world_x: Type.Number(),
+    world_z: Type.Number(),
+    expires_at_ms: Type.Integer({ minimum: 0 }),
+    spectate_invite: Type.Boolean(),
+    spectate_distance: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTribulationBroadcastV1 = Static<
+  typeof ServerDataTribulationBroadcastV1
+>;
+
 export const HeartDemonOfferChoiceV1 = Type.Object(
   {
     choice_id: Type.String({ minLength: 1, maxLength: 128 }),
@@ -875,5 +895,6 @@ export const ServerDataV1 = Type.Union([
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  ServerDataTribulationBroadcastV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

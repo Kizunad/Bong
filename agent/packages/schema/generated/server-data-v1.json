@@ -8063,6 +8063,58 @@
           "type": "integer"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "active",
+        "actor_name",
+        "stage",
+        "world_x",
+        "world_z",
+        "expires_at_ms",
+        "spectate_invite",
+        "spectate_distance"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "tribulation_broadcast",
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "actor_name": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "world_x": {
+          "type": "number"
+        },
+        "world_z": {
+          "type": "number"
+        },
+        "expires_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spectate_invite": {
+          "type": "boolean"
+        },
+        "spectate_distance": {
+          "minimum": 0,
+          "type": "number"
+        }
+      }
     }
   ]
 }

@@ -278,6 +278,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.tribulation-broadcast.sample.json", () => {
+    const data = loadSample("server-data.tribulation-broadcast.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   for (const sample of [
     "server-data.forge-station.sample.json",
     "server-data.forge-session.sample.json",
@@ -580,6 +586,14 @@ describe("negative sample files fail schema validation", () => {
   it("rejects extra weapon payload fields", () => {
     const data = loadObjectSample("server-data.weapon-equipped.sample.json");
     data.unexpected = true;
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects tribulation broadcast payload drift", () => {
+    const data = loadObjectSample("server-data.tribulation-broadcast.sample.json");
+    delete data.spectate_distance;
+    data.actor_id = "offline:YanWujiu";
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });
