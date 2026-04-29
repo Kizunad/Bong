@@ -1,7 +1,7 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
@@ -96,6 +96,7 @@ struct RealmCollapseRuntimeState {
     completed: bool,
     evacuation_warning_emitted: bool,
     last_evacuation_reminder_bucket: Option<u64>,
+    evacuee_entities: HashSet<Entity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -731,6 +732,10 @@ impl ActiveEventsResource {
                                 event.collapse.last_evacuation_reminder_bucket = Some(
                                     realm_collapse_evacuation_reminder_bucket(remaining_ticks),
                                 );
+                                event.collapse.evacuee_entities = realm_collapse_entities_in_zone(
+                                    &zone,
+                                    collapse_targets.unwrap_or(&[]),
+                                );
                                 self.pending_major_alerts.push(MajorEventAlert {
                                     event_name: event.event_name.clone(),
                                     zone_name: event.zone_name.clone(),
@@ -758,6 +763,14 @@ impl ActiveEventsResource {
                                     &mut self.pending_major_alerts,
                                 );
                             }
+                            maybe_kill_new_realm_collapse_intruders(
+                                event,
+                                &zone,
+                                next_elapsed,
+                                collapse_targets.unwrap_or(&[]),
+                                death_events.as_deref_mut(),
+                                &mut recent_events,
+                            );
                         }
                     }
 
@@ -1247,6 +1260,71 @@ fn maybe_emit_realm_collapse_evacuation_reminder(
 fn realm_collapse_evacuation_reminder_message(zone_name: &str, remaining_ticks: u64) -> String {
     let remaining_minutes = remaining_ticks.div_ceil(60 * 20);
     format!("区域 {zone_name} 域崩撤离倒计时：约 {remaining_minutes} 分钟；请立即离开边界。")
+}
+
+fn realm_collapse_entities_in_zone(
+    zone: &Zone,
+    collapse_targets: &[(Entity, DVec3)],
+) -> HashSet<Entity> {
+    collapse_targets
+        .iter()
+        .filter_map(|(entity, position)| zone.contains(*position).then_some(*entity))
+        .collect()
+}
+
+fn maybe_kill_new_realm_collapse_intruders(
+    event: &mut ActiveEvent,
+    zone: &Zone,
+    tick: u64,
+    collapse_targets: &[(Entity, DVec3)],
+    death_events: Option<&mut EventWriter<DeathEvent>>,
+    recent_events: &mut Vec<GameEvent>,
+) {
+    let intruders = collapse_targets
+        .iter()
+        .copied()
+        .filter(|(entity, position)| {
+            zone.contains(*position) && !event.collapse.evacuee_entities.contains(entity)
+        })
+        .collect::<Vec<_>>();
+
+    if intruders.is_empty() {
+        return;
+    }
+
+    let Some(death_events) = death_events else {
+        tracing::warn!(
+            "[bong][world] realm_collapse lock for zone `{}` could not reject {} new entrant(s): missing DeathEvent writer",
+            event.zone_name,
+            intruders.len()
+        );
+        return;
+    };
+
+    for (entity, position) in intruders {
+        death_events.send(DeathEvent {
+            target: entity,
+            cause: "realm_collapse_entry_lock".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: tick,
+        });
+        event.collapse.evacuee_entities.insert(entity);
+        recent_events.push(GameEvent {
+            event_type: GameEventType::EventTriggered,
+            tick,
+            player: None,
+            target: Some("realm_collapse_entry_lock".to_string()),
+            zone: Some(event.zone_name.clone()),
+            details: Some(HashMap::from([
+                ("entity".to_string(), json!(format!("{entity:?}"))),
+                (
+                    "position".to_string(),
+                    json!([position.x, position.y, position.z]),
+                ),
+            ])),
+        });
+    }
 }
 
 fn realm_collapse_boundary_vfx(zone: &Zone, strength: f32) -> VfxEventRequest {
@@ -2260,6 +2338,57 @@ mod events_tests {
         assert!(
             events.drain_vfx_events().is_empty(),
             "periodic reminders should not replay boundary VFX"
+        );
+    }
+
+    #[test]
+    fn realm_collapse_lock_rejects_new_entrants_after_evacuation_window_opens() {
+        let (mut app, layer) = setup_events_app();
+        let evacuee = spawn_mock_player(&mut app, layer, "Azure", [8.0, 66.0, 8.0]);
+        let command = spawn_event_command(
+            DEFAULT_SPAWN_ZONE_NAME,
+            EVENT_REALM_COLLAPSE,
+            REALM_COLLAPSE_EVACUATION_WINDOW_TICKS + 2,
+        );
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                world
+                    .resource_mut::<ActiveEventsResource>()
+                    .enqueue_from_spawn_command(&command, Some(&mut zones));
+            });
+        }
+
+        app.update();
+        app.update();
+
+        let intruder = spawn_mock_player(&mut app, layer, "Intruder", [9.0, 66.0, 9.0]);
+        app.update();
+
+        let world = app.world();
+        let deaths = world.resource::<Events<DeathEvent>>();
+        let collected: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
+        assert!(collected.iter().any(|event| {
+            event.target == intruder && event.cause == "realm_collapse_entry_lock"
+        }));
+        assert!(
+            !collected.iter().any(|event| {
+                event.target == evacuee && event.cause == "realm_collapse_entry_lock"
+            }),
+            "players already in the zone when evacuation opens are allowed to evacuate"
+        );
+
+        assert!(
+            world
+                .resource::<ActiveEventsResource>()
+                .recent_events_snapshot()
+                .iter()
+                .any(|event| {
+                    event.target.as_deref() == Some("realm_collapse_entry_lock")
+                        && event.zone.as_deref() == Some(DEFAULT_SPAWN_ZONE_NAME)
+                }),
+            "entry lock kills should be visible in internal recent events"
         );
     }
 
