@@ -92,6 +92,14 @@ struct RealmCollapseRuntimeState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+struct TargetedDaoxiangSpawn {
+    zone_name: String,
+    target_player: Option<String>,
+    position: DVec3,
+    qi_density_heat: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MajorEventAlert {
     pub event_name: String,
     pub zone_name: String,
@@ -149,6 +157,7 @@ pub struct ActiveEventsResource {
     pending_tribulation_events: Vec<TribulationEventV1>,
     pending_vfx_events: Vec<VfxEventRequest>,
     pending_lightning_strikes: Vec<DVec3>,
+    pending_daoxiang_spawns: Vec<TargetedDaoxiangSpawn>,
     recent_game_events: Vec<GameEvent>,
 }
 
@@ -280,6 +289,13 @@ impl ActiveEventsResource {
                     karma_weights,
                 );
                 let qi_nullified = maybe_nullify_targeted_zone_qi(zone, roll.qi_density_heat);
+                let daoxiang_spawn = maybe_targeted_daoxiang_spawn(
+                    zone,
+                    event.target_player.clone(),
+                    strike_position,
+                    roll.qi_density_heat,
+                    qi_nullified.is_some(),
+                );
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
                     tick: 0,
@@ -298,6 +314,10 @@ impl ActiveEventsResource {
                             json!([strike_position.x, strike_position.y, strike_position.z]),
                         ),
                         ("qi_nullified".to_string(), json!(qi_nullified.is_some())),
+                        (
+                            "daoxiang_spawn_queued".to_string(),
+                            json!(daoxiang_spawn.is_some()),
+                        ),
                     ])),
                 });
                 if let Some(previous_spirit_qi) = qi_nullified {
@@ -314,6 +334,9 @@ impl ActiveEventsResource {
                             ("qi_density_heat".to_string(), json!(roll.qi_density_heat)),
                         ])),
                     });
+                }
+                if let Some(spawn) = daoxiang_spawn {
+                    self.pending_daoxiang_spawns.push(spawn);
                 }
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
@@ -473,6 +496,49 @@ impl ActiveEventsResource {
             } else {
                 tracing::warn!(
                     "[bong][world] targeted local lightning skipped this tick: missing entity layer or Commands"
+                );
+            }
+        }
+
+        if !self.pending_daoxiang_spawns.is_empty() {
+            if let (Some(layer_entity), Some(commands)) = (layer_entity, commands.as_deref_mut()) {
+                let mut deferred_spawns = Vec::new();
+                for spawn in std::mem::take(&mut self.pending_daoxiang_spawns) {
+                    if let Some(budget) = npc_spawn_budget.as_mut() {
+                        if *budget == 0 {
+                            deferred_spawns.push(spawn);
+                            continue;
+                        }
+                        *budget = budget.saturating_sub(1);
+                    }
+
+                    let entity = spawn_targeted_daoxiang(
+                        commands,
+                        layer_entity,
+                        spawn.zone_name.as_str(),
+                        spawn.position,
+                    );
+                    self.record_recent_event(GameEvent {
+                        event_type: GameEventType::EventTriggered,
+                        tick: 0,
+                        player: spawn.target_player.clone(),
+                        target: Some("targeted_daoxiang_spawned".to_string()),
+                        zone: Some(spawn.zone_name.clone()),
+                        details: Some(HashMap::from([
+                            ("event".to_string(), Value::String("道伥刷新".to_string())),
+                            (
+                                "position".to_string(),
+                                json!([spawn.position.x, spawn.position.y, spawn.position.z]),
+                            ),
+                            ("qi_density_heat".to_string(), json!(spawn.qi_density_heat)),
+                            ("entity".to_string(), json!(format!("{entity:?}"))),
+                        ])),
+                    });
+                }
+                self.pending_daoxiang_spawns.extend(deferred_spawns);
+            } else {
+                tracing::warn!(
+                    "[bong][world] targeted daoxiang spawn skipped this tick: missing entity layer or Commands"
                 );
             }
         }
@@ -809,7 +875,8 @@ fn tick_active_events(
             .iter()
             .filter(|event| event.event_name == EVENT_BEAST_TIDE && event.elapsed_ticks == 0)
             .map(|event| beast_count_for_intensity(event.intensity))
-            .sum::<usize>();
+            .sum::<usize>()
+            .saturating_add(active_events.pending_daoxiang_spawns.len());
         let reserved = registry.reserve_spawn_batch(desired);
         if reserved < desired {
             tracing::info!(
@@ -934,6 +1001,25 @@ fn maybe_nullify_targeted_zone_qi(zone: &mut Zone, qi_density_heat: f32) -> Opti
     let previous_spirit_qi = zone.spirit_qi;
     zone.spirit_qi = 0.0;
     Some(previous_spirit_qi)
+}
+
+fn maybe_targeted_daoxiang_spawn(
+    zone: &Zone,
+    target_player: Option<String>,
+    position: DVec3,
+    qi_density_heat: f32,
+    qi_was_nullified: bool,
+) -> Option<TargetedDaoxiangSpawn> {
+    if qi_was_nullified || qi_density_heat < TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD {
+        return None;
+    }
+
+    Some(TargetedDaoxiangSpawn {
+        zone_name: zone.name.clone(),
+        target_player,
+        position: zone.clamp_position(position),
+        qi_density_heat,
+    })
 }
 
 fn targeted_calamity_strike_position(
@@ -1225,6 +1311,45 @@ fn spawn_beast_tide_zombie(
     entity
 }
 
+fn spawn_targeted_daoxiang(
+    commands: &mut Commands,
+    layer_entity: Entity,
+    zone_name: &str,
+    spawn_position: DVec3,
+) -> Entity {
+    let entity = commands
+        .spawn((
+            ZombieEntityBundle {
+                kind: EntityKind::ZOMBIE,
+                layer: EntityLayerId(layer_entity),
+                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
+                ..Default::default()
+            },
+            Transform::from_xyz(
+                spawn_position.x as f32,
+                spawn_position.y as f32,
+                spawn_position.z as f32,
+            ),
+            GlobalTransform::default(),
+            NpcMarker,
+            NpcBlackboard::default(),
+            NpcArchetype::Daoxiang,
+            NpcPatrol::new(zone_name, spawn_position),
+            Thinker::build()
+                .picker(FirstToScore {
+                    threshold: PROXIMITY_THRESHOLD,
+                })
+                .when(PlayerProximityScorer, FleeAction),
+        ))
+        .id();
+
+    commands
+        .entity(entity)
+        .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
+
+    entity
+}
+
 fn collapse_zone(
     zone_registry: &mut ZoneRegistry,
     zone: &Zone,
@@ -1294,7 +1419,7 @@ mod events_tests {
         REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
-    use crate::npc::lifecycle::NpcRegistry;
+    use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMarker;
     use crate::persistence::{bootstrap_sqlite, load_zone_overlays, PersistenceSettings};
@@ -2263,6 +2388,75 @@ mod events_tests {
                 );
             });
         }
+    }
+
+    #[test]
+    fn hidden_karma_backlash_spawns_daoxiang_after_qi_was_already_nullified() {
+        let (mut app, _layer) = setup_events_app();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = 0.0;
+
+        let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
+        let mut heatmap = QiDensityHeatmap::default();
+        heatmap.add_heat(
+            DimensionKind::Overworld,
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1.0,
+        );
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command_with_karma(
+                    &command,
+                    Some(&mut zones),
+                    None,
+                    Some(&heatmap),
+                ));
+
+                let recent = events.recent_events_snapshot();
+                let negative = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some("targeted_negative_event"))
+                    .expect("weighted hit should record negative event");
+                assert_eq!(
+                    negative
+                        .details
+                        .as_ref()
+                        .and_then(|details| details.get("qi_nullified"))
+                        .and_then(Value::as_bool),
+                    Some(false)
+                );
+                assert_eq!(
+                    negative
+                        .details
+                        .as_ref()
+                        .and_then(|details| details.get("daoxiang_spawn_queued"))
+                        .and_then(Value::as_bool),
+                    Some(true)
+                );
+            });
+        }
+
+        app.update();
+
+        let world = app.world_mut();
+        let mut archetypes = world.query_filtered::<&NpcArchetype, With<NpcMarker>>();
+        assert!(
+            archetypes
+                .iter(world)
+                .any(|archetype| *archetype == NpcArchetype::Daoxiang),
+            "high heat targeted backlash should spawn one daoxiang when qi was already nullified"
+        );
+        let events = world.resource::<ActiveEventsResource>();
+        assert!(events.recent_events_snapshot().iter().any(|event| {
+            event.target.as_deref() == Some("targeted_daoxiang_spawned")
+                && event.zone.as_deref() == Some(DEFAULT_SPAWN_ZONE_NAME)
+        }));
     }
 
     fn unique_test_db(test_name: &str) -> std::path::PathBuf {
