@@ -19,6 +19,7 @@ public final class VfxBootstrap {
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());
         registry.register(TribulationBoundaryPlayer.EVENT_ID,    new TribulationBoundaryPlayer());
+        registry.register(RealmCollapseBoundaryPlayer.EVENT_ID,  new RealmCollapseBoundaryPlayer());
         registry.register(FormationActivatePlayer.EVENT_ID,      new FormationActivatePlayer());
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
         registry.register(FlyingSwordDemoPlayer.EVENT_ID,        new FlyingSwordDemoPlayer());

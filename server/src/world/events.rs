@@ -6,11 +6,13 @@ use valence::entity::lightning::LightningEntityBundle;
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Client, Commands, DVec3, Despawned, Entity, EntityKind, EntityLayerId, Event,
-    EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, Username, With,
+    EventWriter, Events, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
+    Username, With,
 };
 
 use super::zone::ZoneRegistry;
 use crate::combat::events::DeathEvent;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{FleeAction, PlayerProximityScorer, PROXIMITY_THRESHOLD};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
 use crate::npc::patrol::NpcPatrol;
@@ -22,6 +24,7 @@ use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
 use crate::schema::common::GameEventType;
 use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::zone::Zone;
 
@@ -41,6 +44,13 @@ const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
 const KARMA_BACKLASH_EVENT_DURATION_TICKS: u64 = 1;
 const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
 pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
+pub(crate) const REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID: &str = "bong:realm_collapse_boundary";
+const REALM_COLLAPSE_BOUNDARY_VFX_COLOR: &str = "#2B2B31";
+const REALM_COLLAPSE_BOUNDARY_VFX_COUNT: u16 = 64;
+const REALM_COLLAPSE_BOUNDARY_VFX_DURATION_TICKS: u16 = 160;
+const REALM_COLLAPSE_BOUNDARY_VFX_OMEN_STRENGTH: f32 = 0.35;
+const REALM_COLLAPSE_BOUNDARY_VFX_LOCK_STRENGTH: f32 = 0.70;
+const REALM_COLLAPSE_BOUNDARY_VFX_SETTLE_STRENGTH: f32 = 1.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEvent {
@@ -128,6 +138,7 @@ pub struct ActiveEventsResource {
     active_events: Vec<ActiveEvent>,
     pending_major_alerts: Vec<MajorEventAlert>,
     pending_tribulation_events: Vec<TribulationEventV1>,
+    pending_vfx_events: Vec<VfxEventRequest>,
     recent_game_events: Vec<GameEvent>,
 }
 
@@ -251,6 +262,10 @@ impl ActiveEventsResource {
                     Some(event.zone_name.clone()),
                     Some([center.x, center.y, center.z]),
                 ));
+            self.pending_vfx_events.push(realm_collapse_boundary_vfx(
+                zone,
+                REALM_COLLAPSE_BOUNDARY_VFX_OMEN_STRENGTH,
+            ));
         }
 
         self.active_events.push(event);
@@ -263,6 +278,10 @@ impl ActiveEventsResource {
 
     pub fn drain_tribulation_events(&mut self) -> Vec<TribulationEventV1> {
         std::mem::take(&mut self.pending_tribulation_events)
+    }
+
+    pub fn drain_vfx_events(&mut self) -> Vec<VfxEventRequest> {
+        std::mem::take(&mut self.pending_vfx_events)
     }
 
     pub fn record_recent_event(&mut self, event: GameEvent) {
@@ -453,6 +472,10 @@ impl ActiveEventsResource {
                                     Some([zone.center().x, zone.center().y, zone.center().z]),
                                 ),
                             );
+                            self.pending_vfx_events.push(realm_collapse_boundary_vfx(
+                                &zone,
+                                REALM_COLLAPSE_BOUNDARY_VFX_LOCK_STRENGTH,
+                            ));
                         }
                     }
 
@@ -484,6 +507,10 @@ impl ActiveEventsResource {
                                 Some(event.zone_name.clone()),
                                 Some([zone.center().x, zone.center().y, zone.center().z]),
                             ));
+                        self.pending_vfx_events.push(realm_collapse_boundary_vfx(
+                            &zone,
+                            REALM_COLLAPSE_BOUNDARY_VFX_SETTLE_STRENGTH,
+                        ));
                         recent_events.push(GameEvent {
                             event_type: GameEventType::EventTriggered,
                             tick: next_elapsed,
@@ -628,6 +655,7 @@ fn tick_active_events(
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     redis: Option<Res<crate::network::RedisBridgeResource>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
     mut death_events: EventWriter<DeathEvent>,
     mut collapsed_events: EventWriter<ZoneCollapsedEvent>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
@@ -688,6 +716,13 @@ fn tick_active_events(
         }
     }
 
+    let pending_vfx_events = active_events.drain_vfx_events();
+    if let Some(vfx_events) = vfx_events.as_deref_mut() {
+        for event in pending_vfx_events {
+            vfx_events.send(event);
+        }
+    }
+
     // P2-5: 把 reserve 了但没消费掉（eg. beast_tide 因 missing layer/commands
     // 提前 continue）的额度归还给 registry，防止 1-tick 暂态 `spawn_paused`。
     if let (Some(registry), Some(remaining)) = (npc_registry.as_deref_mut(), leftover) {
@@ -723,6 +758,30 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
 
 fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64) -> String {
     format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
+}
+
+fn realm_collapse_boundary_vfx(zone: &Zone, strength: f32) -> VfxEventRequest {
+    let (min, max) = zone.bounds;
+    let center = zone.center();
+    let origin = [center.x, min.y + 1.0, center.z];
+    let half_extent = [
+        ((max.x - min.x) * 0.5).max(1.0),
+        0.0,
+        ((max.z - min.z) * 0.5).max(1.0),
+    ];
+
+    VfxEventRequest::new(
+        DVec3::new(origin[0], origin[1], origin[2]),
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID.to_string(),
+            origin,
+            direction: Some(half_extent),
+            color: Some(REALM_COLLAPSE_BOUNDARY_VFX_COLOR.to_string()),
+            strength: Some(strength),
+            count: Some(REALM_COLLAPSE_BOUNDARY_VFX_COUNT),
+            duration_ticks: Some(REALM_COLLAPSE_BOUNDARY_VFX_DURATION_TICKS),
+        },
+    )
 }
 
 pub(crate) fn persist_zone_collapsed_overlays(
@@ -1000,7 +1059,8 @@ mod events_tests {
     use super::{
         persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
         ZoneCollapsedEvent, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
-        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
+        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
+        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::NpcRegistry;
@@ -1010,6 +1070,7 @@ mod events_tests {
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
+    use crate::schema::vfx_event::VfxEventPayloadV1;
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
@@ -1541,10 +1602,33 @@ mod events_tests {
         assert_eq!(initial_events.len(), 1);
         assert_eq!(initial_events[0].kind, TribulationKindV1::ZoneCollapse);
         assert_eq!(initial_events[0].phase, TribulationPhaseV1::Omen);
+        let initial_vfx = events.drain_vfx_events();
+        assert_eq!(initial_vfx.len(), 1);
+        match &initial_vfx[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                origin,
+                direction,
+                color,
+                strength,
+                count,
+                duration_ticks,
+            } => {
+                assert_eq!(event_id, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID);
+                assert_eq!(*origin, [128.0, 65.0, 128.0]);
+                assert_eq!(*direction, Some([128.0, 0.0, 128.0]));
+                assert_eq!(color.as_deref(), Some("#2B2B31"));
+                assert_eq!(*strength, Some(0.35));
+                assert_eq!(*count, Some(64));
+                assert_eq!(*duration_ticks, Some(160));
+            }
+            other => panic!("unexpected realm collapse vfx payload: {other:?}"),
+        }
 
         let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
         assert!(events.drain_major_event_alerts().is_empty());
         assert!(events.drain_tribulation_events().is_empty());
+        assert!(events.drain_vfx_events().is_empty());
 
         let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
         let evacuation_alerts = events.drain_major_event_alerts();
@@ -1561,10 +1645,22 @@ mod events_tests {
         assert_eq!(lock_events.len(), 1);
         assert_eq!(lock_events[0].kind, TribulationKindV1::ZoneCollapse);
         assert_eq!(lock_events[0].phase, TribulationPhaseV1::Lock);
+        let lock_vfx = events.drain_vfx_events();
+        assert_eq!(lock_vfx.len(), 1);
+        match &lock_vfx[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id, strength, ..
+            } => {
+                assert_eq!(event_id, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID);
+                assert_eq!(*strength, Some(0.70));
+            }
+            other => panic!("unexpected realm collapse lock vfx payload: {other:?}"),
+        }
 
         let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
         assert!(events.drain_major_event_alerts().is_empty());
         assert!(events.drain_tribulation_events().is_empty());
+        assert!(events.drain_vfx_events().is_empty());
     }
 
     #[test]

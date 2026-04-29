@@ -31,6 +31,7 @@ pub const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
 /// Phase 1 默认广播半径（plan §4.2）。后续可按配置下调或按 zone 差异化。
 pub const VFX_BROADCAST_RADIUS: f64 = 64.0;
 const TRIBULATION_BOUNDARY_VFX_RADIUS: f64 = 128.0;
+const REALM_COLLAPSE_BOUNDARY_VFX_RADIUS: f64 = 512.0;
 
 /// `/bong-vfx play` 默认 priority —— 落在战斗层中段（plan §3.3: 战斗 1000~1999）。
 pub const DEFAULT_DEBUG_PRIORITY: u16 = 1000;
@@ -115,6 +116,7 @@ fn is_within_vfx_broadcast_radius_for_event(
 ) -> bool {
     let radius = match event_id {
         Some("bong:tribulation_boundary") => TRIBULATION_BOUNDARY_VFX_RADIUS,
+        Some("bong:realm_collapse_boundary") => REALM_COLLAPSE_BOUNDARY_VFX_RADIUS,
         _ => VFX_BROADCAST_RADIUS,
     };
     origin.distance_squared(target) <= radius * radius
@@ -153,6 +155,7 @@ pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
     match event_id {
         "bong:tribulation_lightning"
         | "bong:tribulation_boundary"
+        | "bong:realm_collapse_boundary"
         | "bong:breakthrough_pillar"
         | "bong:death_soul_dissipate" => VfxPriority::Critical,
         "bong:enlightenment_aura" => VfxPriority::Important,
@@ -658,6 +661,10 @@ mod tests {
             VfxPriority::Critical
         );
         assert_eq!(
+            vfx_default_priority("bong:realm_collapse_boundary"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
             vfx_default_priority("bong:breakthrough_pillar"),
             VfxPriority::Critical
         );
@@ -952,6 +959,22 @@ mod tests {
         let target = DVec3::new(100.0, 64.0, 0.0);
         assert!(is_within_vfx_broadcast_radius_for_event(
             Some("bong:tribulation_boundary"),
+            origin,
+            target,
+        ));
+        assert!(!is_within_vfx_broadcast_radius_for_event(
+            Some("bong:tribulation_lightning"),
+            origin,
+            target,
+        ));
+    }
+
+    #[test]
+    fn realm_collapse_boundary_uses_zone_scale_vfx_radius() {
+        let origin = DVec3::new(128.0, 65.0, 128.0);
+        let target = DVec3::new(384.0, 65.0, 128.0);
+        assert!(is_within_vfx_broadcast_radius_for_event(
+            Some("bong:realm_collapse_boundary"),
             origin,
             target,
         ));
