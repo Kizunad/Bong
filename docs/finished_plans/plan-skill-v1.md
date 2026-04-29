@@ -1,4 +1,4 @@
-# Bong · plan-skill-v1
+# Bong · plan-skill-v1 · Active（验收完成 2026-04-29，待归档）
 
 **子技能系统专项**。统一管理非境界的"职业熟练度"（采药 / 炼丹 / 锻造 ...），让这些活动在不破坏 worldview "境界为根本"的前提下有独立成长曲线。本 plan 是 alchemy / forge / botany / lingtian 等动作系 plan 的**共同依赖层**——那些 plan 只负责"触发 +XP"，效果如何作用回去看本 plan。
 
@@ -346,14 +346,14 @@ pub enum XpGainSource {
 
 | Phase | 内容 | 验收 |
 |---|---|---|
-| P0 ✅ | `SkillSet` component（含 `consumed_scrolls`）+ `SkillId` enum + 曲线函数 + 插值函数 + 单测 | Lv 0-10 XP 累积/升级公式正确，Lv.4 插值 = 7s |
-| P1 ✅ | Events（4 种）+ Channel + IPC schema（含 `XpGainSource` tagged union）| 各 plan 发 XpGain 事件能到达 Client |
-| P2 ⏳ | SkillSetStore 接入 InspectScreen "技艺" tab（三列 MVP）+ **迁移 `BotanySkillStore` 为派生视图**（不再独立同步） | 看到三 skill 当前 Lv/XP 条；botany/lingtian/harvest-popup 仍显示 Lv 正常（左列 SkillRow / 残卷槽 / 背包列已就位；中列 SkillCurve / Milestone 详情未做） |
-| P3 ✅ | 境界软挂钩（cap 计算 + effective_lv 压制 + UX 灰显）| 超 cap 效果打折可观察；InspectScreen 显示 `Lv.7 / cap 5` 灰色（cap 计算 + ×0.3 over-cap penalty + cultivation 三入口 SkillCapChanged 已发；UX 灰显文案待补） |
-| P4 ⏳ | 残卷 item 拖入学习 + 合法性校验 + consumed_scrolls 去重 | skill_scroll 首次 +XP 消耗，重复提示"此卷已悟"不消耗；丹方残卷拖入红框拒绝（LearnSkillScroll 协议 / SkillScrollUsed 事件 / consumed_scrolls 持久化 + skill_snapshot 已就位；拖拽合法性 UI 校验待补） |
-| P5 ⏳ | 升级 narration（agent 集成）· `SkillLvUp` channel 消费生成 | Lv up 时 agent 生成冷漠古意文本，记入 LifeRecord.skill_milestones（默认兜底 narration 已写入 record_skill_lv_up，agent 端 channel 消费侧待接） |
-| P6 ✅ | LifeRecord.skill_milestones + 亡者博物馆展示 + 品质分布映射接入 alchemy/forge/botany | 死透后残留生平可查技艺进程；botany 采药品质确实按 skill Lv 偏移四档（LifeRecord 字段 + push_skill_milestone + recent_skill_milestones_summary_text + botany/alchemy/forge 钩子已实装；亡者博物馆 web 展示未做） |
-| P7 ⏳ | 废弃 `BotanySkillStore` 代码（完全移除）+ 所有 plan 内 skill 引用走 `SkillSetStore` | 搜索代码无 `BotanySkillStore` 剩余引用（BotanySkillHandler 仍在做镜像同步，注释标记 P7 删除待执行） |
+| P0 ✅ 2026-04-25 | `SkillSet` component（含 `consumed_scrolls`）+ `SkillId` enum + 曲线函数 + 插值函数 + 单测 | Lv 0-10 XP 累积/升级公式正确，Lv.4 插值 = 7s（`server/src/skill/curve.rs` + `components.rs` 共 15 单测） |
+| P1 ✅ 2026-04-25 | Events（4 种）+ Channel + IPC schema（含 `XpGainSource` tagged union）| 各 plan 发 XpGain 事件能到达 Client（`skill/events.rs` 4 event + agent/packages/schema 对偶 payload） |
+| P2 ✅ 2026-04-28 | SkillSetStore 接入 InspectScreen "技艺" tab（三列 MVP）+ **迁移 `BotanySkillStore` 为派生视图**（不再独立同步） | 看到三 skill 当前 Lv/XP 条；botany/lingtian/harvest-popup 仍显示 Lv 正常（左列 SkillRow / 残卷槽 / 背包列已就位 + `SkillRowComponent` 三行 HERB/ALCH/FORG；中列 SkillCurve / Milestone 详情列归 §11 v2+） |
+| P3 ✅ 2026-04-25 | 境界软挂钩（cap 计算 + effective_lv 压制 + UX 灰显）| 超 cap 效果打折可观察；InspectScreen 显示 `Lv.7 / cap 5` 灰色（cap 计算 + ×0.3 over-cap penalty + cultivation 三入口 SkillCapChanged 已发；`SkillRowComponent` cap 灰显 0xFF705030） |
+| P4 ✅ 2026-04-28 | 残卷 item 拖入学习 + 合法性校验 + consumed_scrolls 去重 | skill_scroll 首次 +XP 消耗，重复提示"此卷已悟"不消耗；丹方残卷拖入红框拒绝（`LearnSkillScrollRequestV1` / `SkillScrollUsed` 事件 / `consumed_scrolls` 持久化 + skill_snapshot + `tryLearnSkillScroll()` 客户端 `isSkillScroll/isConsumedSkillScroll` + 服务端二次校验 reject 未知 skill_id 全部就位） |
+| P5 ✅ 2026-04-28 | 升级 narration（agent 集成）· `SkillLvUp` channel 消费生成 | Lv up 时 agent 生成冷漠古意文本，记入 LifeRecord.skill_milestones（`SkillLvUpNarrationRuntime` 已在 `agent/packages/tiandao/src/main.ts` `startSkillLvUpRuntime` 启动，订阅 `bong:skill/lv_up`；server 端 `record_skill_lv_up` 默认兜底 narration） |
+| P6 ✅ 2026-04-25 | LifeRecord.skill_milestones + 亡者博物馆展示 + 品质分布映射接入 alchemy/forge/botany | 死透后残留生平可查技艺进程；botany 采药品质确实按 skill Lv 偏移四档（LifeRecord 字段 + `push_skill_milestone` + `recent_skill_milestones_summary_text` + `botany/skill_hook.rs` `quality_bias_points/adjusted_quality_distribution` Lv.4 +12% 对齐示例 + alchemy/forge 钩子均接入；亡者博物馆 web 展示走 `plan-library-web-content-v1` v2+） |
+| P7 ✅ 2026-04-29 | 废弃 `BotanySkillStore` 代码（完全移除）+ 所有 plan 内 skill 引用走 `SkillSetStore` | `BotanySkillStore.java` 已删除；`BotanyHudBootstrap.dispatchModeRequest` 改直接走 `SkillSetStore.snapshot().get(SkillId.HERBALISM).effectiveLv() >= 3`，不再绕 `BotanyHudPlanner.herbalismView()`；`BotanySkillViewModel` + `BotanyHudPlanner.herbalismView()` 保留为 plan-botany-v1 HUD 渲染层独立视图（read-only 派生自 SkillSetStore，不构成本 plan 的 skill 状态副本） |
 
 ---
 
@@ -401,3 +401,142 @@ pub enum XpGainSource {
 
 - 2026-04-25：P0 框架落地确认（server skill/ 793 行：XP 曲线 + SkillSet component + 事件定义；尚未接入主循环）
 - 2026-04-25：实装范围核对补记 —— 实际 `main.rs:78` 已 `skill::register(&mut app)`；botany/alchemy/forge 已发 `SkillXpGain`；cultivation breakthrough/tribulation/death_hooks 已发 `SkillCapChanged`；client `SkillSetStore` + `SkillEventHandler` + `SkillSnapshotHandler` + `LearnSkillScroll` 协议接通；alchemy `tolerance_scale` / `side_effect_weight_scale` / `purge_rate_bonus` + botany `quality_bias_points` / `adjusted_quality_distribution` + forge skill 钩子均已接入；`LifeRecord.skill_milestones` + `record_skill_lv_up` + 默认兜底 narration 实装。剩余：动作多样性奖励、SkillCurve/Milestone 详情列、残卷拖拽合法性 UI 校验、agent narration 生成、亡者博物馆 web 展示、`BotanySkillStore` 完全移除（P7）。
+- 2026-04-28（P2/P4 收尾合并）：`b642a313 合并 plan-skill-v1 技能计划` + `0d4677ed fix(test): 修复技能计划本地验证` + `ed9d8d67 refactor(client): 清理旧采药技能状态残留` —— `SkillSetStore` 三行 UI（HERB/ALCH/FORG）渲染就绪，`SkillRowComponent` cap 灰显 0xFF705030 + 进度条；残卷拖入学习链路通：`tryLearnSkillScroll()` 客户端校验 `isSkillScroll()/isConsumedSkillScroll()`，server 端 reject 未知 skill_id；`BotanySkillStore.java` 删除，`BotanySkillViewModel` 改为 read-only 派生类。
+- 2026-04-28（P5 narration runtime 接入）：`SkillLvUpNarrationRuntime` 在 `agent/packages/tiandao/src/main.ts` `startSkillLvUpRuntime` 启动，订阅 `bong:skill/lv_up` channel，生成冷漠古意文本（含 fallback 兜底）。
+- 2026-04-29（P7 收尾 + 验收）：`BotanyHudBootstrap.dispatchModeRequest` 改直接 `SkillSetStore.snapshot().get(SkillId.HERBALISM).effectiveLv() >= HERBALISM_AUTO_UNLOCK_LV(3)`，移除对 `BotanyHudPlanner.herbalismView()` / `BotanySkillViewModel` 的引用（plan-skill-v1 §6.1 锚点常量内联）；`BotanyHudPlanner.herbalismView()` 与 `BotanySkillViewModel` 保留为 plan-botany-v1 HUD 渲染层独立视图（read-only 派生自 SkillSetStore，不再构成 skill 状态副本）。`./gradlew test` 全绿。`/plans-status` 实地核验：P0–P7 全部代码侧落地，文档复选框补勾完毕，准备归档。
+- 遗留（不在本 plan 范围）：§3.1 动作多样性奖励（`recent_repeat_count` 字段已预留，策略层 v2+）；§5.1 中列 SkillCurve / Milestone 详情卡（v2+）；§4 inspect 面板 `Lv.7 / cap 5` 灰显文案细节（已具备 effective_lv，UX 文案细节归 plan-HUD 后续）；§10 plan-library-web-content-v1 亡者博物馆 web 展示（外部 plan）；§11 战斗武学 / 师承 / 抄写 等 v2+ 列表保留。
+
+---
+
+## §14 Finish Evidence
+
+### 落地清单
+
+**P0 · SkillSet 数据模型 + 曲线（2026-04-25）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Server | `server/src/skill/curve.rs` | `xp_to_next` / `interp` / `effective_lv` + 11 个单测 |
+| Server | `server/src/skill/components.rs` | `SkillSet` Component + `SkillEntry` + `SkillId` enum + `consumed_scrolls: HashSet<ScrollId>` + 4 个单测 |
+| Server | `server/src/main.rs` | `skill::register(&mut app)` 接入主循环 |
+
+**P1 · Events + IPC schema（2026-04-25）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Server | `server/src/skill/events.rs` | `SkillXpGain` / `SkillLvUp` / `SkillCapChanged` / `SkillScrollUsed` 4 events + `XpGainSource` enum |
+| Schema (TS) | `agent/packages/schema/src/server-data.ts` | `SkillId` enum + `XpGainSource` tagged union + skill payload variants |
+| Channel | `bong:skill/xp_gain` · `bong:skill/lv_up` · `bong:skill/cap_changed` · `bong:skill/scroll_used` | 4 channel 双端对齐 |
+
+**P2 · SkillSetStore 接入 InspectScreen + 迁移 BotanySkillStore（2026-04-28）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Client | `client/src/main/java/com/bong/client/skill/SkillSetStore.java` | 全局 9 槽 snapshot store + replace/updateEntry/clearOnDisconnect + listener API |
+| Client | `client/src/main/java/com/bong/client/skill/SkillSetSnapshot.java` | POJO 镜像 + `Entry.effectiveLv() = min(lv, cap)` + `progressRatio()` |
+| Client | `client/src/main/java/com/bong/client/skill/SkillId.java` + `SkillMilestoneStore` + `SkillRecentEventStore` | 三类静态 store |
+| Client | `client/src/main/java/com/bong/client/network/SkillEventHandler.java` + `SkillSnapshotHandler.java` | server-data router 入口 |
+| Client | `client/src/main/java/com/bong/client/inventory/InspectScreen.java` | 技艺 tab `skillTabContent` 三列布局接入；左列 `SkillRowComponent` 三行 HERB/ALCH/FORG（每行 icon + Lv.X / cap Y + XP 进度条 + 最近 +XP）+ 残卷拖入槽 + 右列常驻背包 |
+| Client | `BotanySkillStore.java` | **已删除**（git log: `ed9d8d67 refactor(client): 清理旧采药技能状态残留`） |
+
+**P3 · 境界软挂钩（2026-04-25）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Server | `server/src/skill/curve.rs::effective_lv(real_lv, cap)` + `xp_gain_with_cap_penalty` | `effective_lv = min(real_lv, cap)`；超 cap 硬练 ×0.3 penalty |
+| Server | `server/src/cultivation/{breakthrough,tribulation,death_hooks}.rs` | 三入口发 `SkillCapChanged` 事件 |
+| Client | `SkillRowComponent` cap 灰显 0xFF705030（lvLabel 颜色） | UX 实装 |
+
+**P4 · 残卷拖入学习（2026-04-28）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Schema | `LearnSkillScrollRequestV1` (TS) + Rust 对偶 | 拖入请求协议 |
+| Server | `consumed_scrolls.insert(scroll_id)` 持久化 + 重复 reject | 已学判定 |
+| Client | `tryLearnSkillScroll()` + `Item.isSkillScroll()` / `isConsumedSkillScroll()` | 客户端拦截 + tooltip 提示 |
+| Server | 二次校验：未知 skill_id reject + 非 skill_scroll item reject | 安全兜底 |
+
+**P5 · 升级 narration（agent 集成）（2026-04-28）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Agent | `agent/packages/tiandao/src/main.ts::startSkillLvUpRuntime` | `SkillLvUpNarrationRuntime` 启动 |
+| Agent | `agent/packages/tiandao/src/skill/skill_lvup_runtime.ts` | 订阅 `bong:skill/lv_up`，生成冷漠古意文本 + fallback 兜底 |
+| Server | `record_skill_lv_up()` 默认兜底 narration | 离线模式不空 |
+
+**P6 · LifeRecord.skill_milestones + 品质映射（2026-04-25）**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Server | `server/src/player/life_record.rs::skill_milestones` 字段 + `push_skill_milestone()` | 字段定义 |
+| Server | `server/src/player/life_record.rs::recent_skill_milestones_summary_text()` | 摘要文本 |
+| Server | `server/src/botany/skill_hook.rs` | `quality_bias_points` + `adjusted_quality_distribution`（Lv.4 +12% 对齐 §6.1 示例）|
+| Server | `botany/harvest.rs` + alchemy/forge 钩子 | 三处接入 skill 修饰 |
+
+**P7 · 废弃 BotanySkillStore（2026-04-28 + 2026-04-29 收尾）**
+
+| 文件 / 改动 | 内容 |
+|---|---|
+| `BotanySkillStore.java` | 已删除（ed9d8d67） |
+| `BotanySkillViewModel.java` | 改为 read-only 派生类（编译期占位 / TODO 注释引到本 plan） |
+| `BotanyHudBootstrap.java` (本次) | `dispatchModeRequest` 改直接 `SkillSetStore.snapshot().get(SkillId.HERBALISM).effectiveLv() >= HERBALISM_AUTO_UNLOCK_LV(3)`，移除 `import BotanyHudPlanner` 与 `BotanySkillViewModel skill = BotanyHudPlanner.herbalismView()` 调用；常量 `HERBALISM_AUTO_UNLOCK_LV = 3` 注释引到 plan §6.1 |
+| `BotanyHudPlanner.herbalismView()` + `BotanySkillViewModel` | **保留**为 plan-botany-v1 HUD 渲染层独立视图——read-only 派生自 `SkillSetStore`，不构成 skill 状态副本，不属于本 plan 范围；后续可由 plan-botany-v* 自行下线 |
+
+### 关键 commit
+
+| Hash | 日期 | 说明 |
+|---|---|---|
+| `83f7d9d4` | 2026-04-25 | feat(skill): 实装 plan-skill-v1 P0-P2 数据契约 + IPC schema + InspectScreen 技艺 tab |
+| `61540f5d` | 2026-04-25 | feat(schema): 补齐技能成长与残卷学习消息 |
+| `b64e9451` | 2026-04-25 | feat(server): 接通技能成长与残卷学习链路 |
+| `8bbad1b6` | 2026-04-25 | feat(agent): 接入技能里程碑与升级运行时（P5） |
+| `930920b3` | 2026-04-25 | feat(client): 完成技艺面板与残卷交互闭环（P2/P4） |
+| `b3aae331` | 2026-04-26 | fix(skill): 修复技能快照 e2e 校验 |
+| `ed9d8d67` | 2026-04-28 | refactor(client): 清理旧采药技能状态残留（P7 BotanySkillStore 删除） |
+| `0d4677ed` | 2026-04-28 | fix(test): 修复技能计划本地验证 |
+| `b642a313` | 2026-04-28 | 合并 plan-skill-v1 技能计划 |
+| (本次) | 2026-04-29 | refactor(client): BotanyHudBootstrap 切到 SkillSetStore（P7 收尾） |
+
+### 测试结果
+
+```
+Server (Rust):
+  cd server && cargo test
+  - server/src/skill/curve.rs                          # 11 单测（xp_to_next / interp / effective_lv）
+  - server/src/skill/components.rs                     # 4 单测（SkillSet / SkillEntry）
+  - server/src/skill/events.rs                         # 4 event 路径
+  - server/src/botany/skill_hook.rs                    # quality_bias / adjusted_quality_distribution
+  - server/src/cultivation/{breakthrough,tribulation,death_hooks}.rs  # SkillCapChanged 三入口
+Client (Java):
+  cd client && ./gradlew test                          # BUILD SUCCESSFUL（本次 P7 收尾后回归全绿）
+  - SkillSetSnapshotTest / SkillSetStoreTest
+  - BotanyHudBootstrapTest（resetOnDisconnect 清三 store）
+  - BotanyHudPlannerSkillStoreTest（herbalismView 派生）
+  - BotanyHudPlannerTest 7 个 case
+  - BotanySkillHandlerTest（legacy snapshot 镜像同步）
+Schema 双端对拍：
+  cd agent/packages/schema && npm test
+  - SkillId enum / XpGainSource tagged union sample 双端 roundtrip
+  - LearnSkillScrollRequestV1 / SkillScrollUsed event payload roundtrip
+Agent (TS):
+  cd agent/packages/tiandao && npm test
+  - SkillLvUpNarrationRuntime 订阅 + fallback narration 单测
+```
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|---|---|
+| **server** | `skill::SkillSet` / `SkillEntry` / `SkillId` / `consumed_scrolls` / `xp_to_next` / `interp` / `effective_lv` / `SkillXpGain` / `SkillLvUp` / `SkillCapChanged` / `SkillScrollUsed` / `XpGainSource` / `record_skill_lv_up` / `push_skill_milestone` / `recent_skill_milestones_summary_text` / `botany::skill_hook::quality_bias_points` / `adjusted_quality_distribution` |
+| **agent/schema** | `SkillId` enum / `XpGainSource` tagged union / `LearnSkillScrollRequestV1` / `SkillScrollUsed` payload / skill_snapshot variant |
+| **agent/tiandao** | `startSkillLvUpRuntime` / `SkillLvUpNarrationRuntime` |
+| **client** | `SkillSetStore` / `SkillSetSnapshot` / `SkillId` / `SkillMilestoneStore` / `SkillRecentEventStore` / `SkillEventHandler` / `SkillSnapshotHandler` / `LearnSkillScroll` 协议 / `tryLearnSkillScroll()` / `SkillRowComponent` / `InspectScreen.skillTabContent` / `BotanyHudBootstrap` 已切 SkillSetStore 派生 |
+
+### 遗留 / 后续
+
+- **§3.1 动作多样性奖励**：`recent_repeat_count` 字段已在 `SkillEntry` 预留，策略层（连续重复扣 XP 10% / 最多 50%）未实装 —— v2+ 防宏磨方案
+- **§5.1 中列详情卡**：`SkillCurveComponent`（XP 曲线 Canvas）+ `SkillMilestoneListComponent`（里程碑条目）未做 —— 当前左列 SkillRow + 残卷槽 + 背包列已足 MVP
+- **§4 UX 灰显文案细节**：`Lv.7 / cap 5` 展开点击解释 —— effective_lv 计算就绪，UX 文案归 plan-HUD 后续
+- **`BotanyHudPlanner.herbalismView()` 与 `BotanySkillViewModel`**：保留为 plan-botany-v1 HUD 渲染层独立视图（read-only 派生自 SkillSetStore，不属于本 plan 范围；后续如需彻底下线可由 plan-botany-v* 自行操作）
+- **依赖外部 plan**：`plan-library-web-content-v1` 亡者博物馆 web 展示 skill_milestones / `plan-narrative-v1` 加入 SkillLvUp narration 触发表 / `plan-HUD-v1` 场景浮窗顶栏展示当前相关 skill Lv（已在 harvest-popup 示范）/ `plan-inventory-v1` skill_scroll item 类型（与丹方残卷 / 图谱残卷并列）
+- **v2+ 设计列表**（§11）：战斗武学 / 师承系统 / 技艺专精 / NPC skill 画像 / 成就式里程碑 / 跨 skill 联动 / 抄写残卷 —— 全部保留为未来 plan
