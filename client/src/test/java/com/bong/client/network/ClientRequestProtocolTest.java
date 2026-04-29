@@ -165,6 +165,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNichePlace() {
+        String json = ClientRequestProtocol.encodeSpiritNichePlace(11, 64, 10, 4242L);
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(

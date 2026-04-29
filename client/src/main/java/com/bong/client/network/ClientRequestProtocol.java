@@ -333,6 +333,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        JsonObject obj = envelope("spirit_niche_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);

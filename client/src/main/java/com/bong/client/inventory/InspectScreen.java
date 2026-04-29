@@ -112,7 +112,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -1657,6 +1657,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (forgeStationTier(item) > 0) {
             actions.add(new PillMenuAction("放置炼器砧", ActionKind.PLACE_FORGE_STATION));
         }
+        if (isSpiritNicheStone(item)) {
+            actions.add(new PillMenuAction("放置灵龛", ActionKind.PLACE_SPIRIT_NICHE));
+        }
         return actions;
     }
 
@@ -1705,11 +1708,36 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 pendingMeridianUse = null;
                 dispatchPlaceForgeStation(item);
             }
+            case PLACE_SPIRIT_NICHE -> {
+                pendingMeridianUse = null;
+                dispatchPlaceSpiritNiche(item);
+            }
         }
     }
 
+    boolean dispatchPlaceSpiritNiche(InventoryItem item) {
+        BlockPos pos = targetPlacementPos();
+        return dispatchPlaceSpiritNicheAt(item, pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    boolean dispatchPlaceSpiritNicheAt(InventoryItem item, int x, int y, int z) {
+        if (item == null || item.instanceId() == 0L || !isSpiritNicheStone(item)) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchPlaceSpiritNiche instance={} item={} pos=[{},{},{}]",
+            item.instanceId(), item.itemId(), x, y, z);
+        com.bong.client.network.ClientRequestSender.sendSpiritNichePlace(
+            x,
+            y,
+            z,
+            item.instanceId()
+        );
+        return true;
+    }
+
     boolean dispatchPlaceForgeStation(InventoryItem item) {
-        BlockPos pos = targetForgeStationPlacementPos();
+        BlockPos pos = targetPlacementPos();
         return dispatchPlaceForgeStationAt(item, pos.getX(), pos.getY(), pos.getZ());
     }
 
@@ -1747,7 +1775,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    private static BlockPos targetForgeStationPlacementPos() {
+    static boolean isSpiritNicheStone(InventoryItem item) {
+        return item != null && "spirit_niche_stone".equals(item.itemId());
+    }
+
+    private static BlockPos targetPlacementPos() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.crosshairTarget instanceof BlockHitResult hit
             && hit.getType() == HitResult.Type.BLOCK) {

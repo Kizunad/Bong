@@ -106,6 +106,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
     }
 
+    public static void sendSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,
