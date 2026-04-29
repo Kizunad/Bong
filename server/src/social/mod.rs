@@ -18,16 +18,17 @@ use valence::prelude::{
 
 use self::components::{
     Anonymity, ExposureEvent, ExposureLog, FactionMembership, Relationship, Relationships, Renown,
-    SpiritNiche,
+    SparringState, SpiritNiche,
 };
 use self::events::{
     FactionMembershipDecisionEvent, FactionMembershipDecisionKind, PlayerChatCollected,
     SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
-    SocialRenownDeltaEvent, SparringInviteRequest, SpiritNicheCoordinateRevealRequest,
-    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
+    SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
+    SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
+    SpiritNicheRevealRequest, SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
-use crate::combat::events::DeathEvent;
+use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::lifespan::LifespanComponent;
@@ -58,7 +59,10 @@ const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
 const COMPANION_EXPIRE_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
 const FACTION_BETRAYAL_BLOCK_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
 const FACTION_PERMANENT_REFUSAL_THRESHOLD: u8 = 3;
+const SPARRING_INVITE_TIMEOUT_TICKS: u64 = 10 * 20;
 const SPARRING_INVITE_TIMEOUT_MS: u64 = 10_000;
+const SPARRING_MAX_TICKS: u64 = 5 * 60 * 20;
+const SPARRING_HUMILITY_TICKS: u64 = 5 * 60 * 20;
 const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
@@ -71,6 +75,18 @@ type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, Option<String>);
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
     pair_seconds: HashMap<CompanionPairKey, u64>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingSparringInvite {
+    initiator: Entity,
+    target: Entity,
+    created_at_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+struct SparringInviteRegistry {
+    pending: HashMap<String, PendingSparringInvite>,
 }
 
 #[derive(Debug, Default, Resource)]
@@ -101,6 +117,7 @@ impl SpiritNicheRegistry {
 
 pub fn register(app: &mut App) {
     app.init_resource::<CompanionProgress>();
+    app.init_resource::<SparringInviteRegistry>();
     app.init_resource::<SpiritNicheRegistry>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
@@ -109,6 +126,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SparringInviteRequest>();
+    app.add_event::<SparringInviteResponseEvent>();
     app.add_event::<FactionMembershipDecisionEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -154,6 +172,13 @@ pub fn register(app: &mut App) {
                 .after(apply_social_exposures)
                 .after(apply_social_relationships)
                 .after(apply_social_renown_deltas),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            handle_sparring_invite_responses.after(dispatch_sparring_invites),
+            expire_sparring_sessions.after(handle_sparring_invite_responses),
         ),
     );
 }
@@ -590,6 +615,7 @@ fn handle_social_mentorships(
 
 fn dispatch_sparring_invites(
     mut invites: EventReader<SparringInviteRequest>,
+    mut registry: ResMut<SparringInviteRegistry>,
     mut players: Query<(Entity, &Lifecycle, Option<&Cultivation>, &mut Client), With<Client>>,
 ) {
     for invite in invites.read() {
@@ -612,9 +638,10 @@ fn dispatch_sparring_invites(
         let (Some((initiator, initiator_realm)), Some(target)) = (initiator_row, target_row) else {
             continue;
         };
+        let invite_id = format!("sparring:{}:{}:{}", invite.tick, initiator, target);
         let payload = ServerDataV1::new(ServerDataPayloadV1::SparringInvite(
             SparringInvitePayloadV1 {
-                invite_id: format!("sparring:{}:{}:{}", invite.tick, initiator, target),
+                invite_id: invite_id.clone(),
                 initiator,
                 target,
                 realm_band: initiator_realm
@@ -631,8 +658,152 @@ fn dispatch_sparring_invites(
         };
         if let Ok((_, _, _, mut client)) = players.get_mut(invite.target) {
             send_server_data_payload(&mut client, bytes.as_slice());
+            registry.pending.insert(
+                invite_id,
+                PendingSparringInvite {
+                    initiator: invite.initiator,
+                    target: invite.target,
+                    created_at_tick: invite.tick,
+                },
+            );
         }
     }
+}
+
+fn handle_sparring_invite_responses(
+    mut responses: EventReader<SparringInviteResponseEvent>,
+    mut registry: ResMut<SparringInviteRegistry>,
+    mut commands: Commands,
+    players: Query<(Entity, &Lifecycle, Option<&SparringState>), With<Client>>,
+    mut clients: Query<&mut Client, With<Client>>,
+) {
+    for response in responses.read() {
+        let Ok((target_entity, target_lifecycle, target_sparring)) = players.get(response.player)
+        else {
+            continue;
+        };
+        if target_lifecycle.state == LifecycleState::Terminated {
+            continue;
+        }
+        if target_sparring.is_some() {
+            continue;
+        }
+        if response.kind != SparringInviteResponseKind::Accept {
+            registry.pending.remove(response.invite_id.as_str());
+            if let Ok(mut client) = clients.get_mut(response.player) {
+                client.send_chat_message(match response.kind {
+                    SparringInviteResponseKind::Decline => "切磋已拒绝",
+                    SparringInviteResponseKind::Timeout => "切磋邀请已逾时",
+                    SparringInviteResponseKind::Accept => "",
+                });
+            }
+            continue;
+        }
+
+        let Some(pending) = registry.pending.remove(response.invite_id.as_str()) else {
+            tracing::warn!(
+                "[bong][social] rejected unknown sparring invite id `{}`",
+                response.invite_id
+            );
+            continue;
+        };
+        if pending.target != target_entity {
+            continue;
+        }
+        if response.tick.saturating_sub(pending.created_at_tick) > SPARRING_INVITE_TIMEOUT_TICKS {
+            if let Ok(mut client) = clients.get_mut(response.player) {
+                client.send_chat_message("切磋邀请已过期");
+            }
+            continue;
+        }
+
+        let Ok((_, initiator_lifecycle, initiator_sparring)) = players.get(pending.initiator)
+        else {
+            if let Ok(mut client) = clients.get_mut(response.player) {
+                client.send_chat_message("切磋发起者已离开");
+            }
+            continue;
+        };
+        if initiator_lifecycle.state == LifecycleState::Terminated || initiator_sparring.is_some() {
+            if let Ok(mut client) = clients.get_mut(response.player) {
+                client.send_chat_message("切磋发起者已不可应战");
+            }
+            continue;
+        }
+        let expires_at_tick = response.tick.saturating_add(SPARRING_MAX_TICKS);
+        let state_for_target = SparringState {
+            partner: pending.initiator,
+            invite_id: response.invite_id.clone(),
+            started_at_tick: response.tick,
+            expires_at_tick,
+        };
+        let state_for_initiator = SparringState {
+            partner: target_entity,
+            invite_id: response.invite_id.clone(),
+            started_at_tick: response.tick,
+            expires_at_tick,
+        };
+        commands.entity(target_entity).insert(state_for_target);
+        commands
+            .entity(pending.initiator)
+            .insert(state_for_initiator);
+        if let Ok(mut target_client) = clients.get_mut(response.player) {
+            target_client.send_chat_message("切磋开始：不掉装、不扣寿、不记死仇");
+        }
+        if let Ok(mut initiator_client) = clients.get_mut(pending.initiator) {
+            initiator_client.send_chat_message("切磋开始：不掉装、不扣寿、不记死仇");
+        }
+    }
+}
+
+fn expire_sparring_sessions(
+    clock: Res<CombatClock>,
+    mut registry: ResMut<SparringInviteRegistry>,
+    mut commands: Commands,
+    sessions: Query<(Entity, &SparringState)>,
+) {
+    registry.pending.retain(|_, pending| {
+        clock.tick.saturating_sub(pending.created_at_tick) <= SPARRING_INVITE_TIMEOUT_TICKS
+    });
+    for (entity, session) in &sessions {
+        if clock.tick >= session.expires_at_tick {
+            commands.entity(entity).remove::<SparringState>();
+        }
+    }
+}
+
+pub fn active_sparring_between(
+    sessions: &Query<&SparringState>,
+    left: Entity,
+    right: Entity,
+) -> Option<SparringState> {
+    let left_state = sessions.get(left).ok()?;
+    let right_state = sessions.get(right).ok()?;
+    if left_state.partner == right
+        && right_state.partner == left
+        && left_state.invite_id == right_state.invite_id
+    {
+        return Some(left_state.clone());
+    }
+    None
+}
+
+pub fn conclude_sparring_defeat(
+    commands: &mut Commands,
+    status_effect_intents: &mut EventWriter<ApplyStatusEffectIntent>,
+    loser: Entity,
+    winner: Entity,
+    tick: u64,
+) {
+    commands.entity(loser).remove::<SparringState>();
+    commands.entity(winner).remove::<SparringState>();
+    status_effect_intents.send(ApplyStatusEffectIntent {
+        target: loser,
+        kind: StatusEffectKind::Humility,
+        magnitude: 0.3,
+        duration_ticks: SPARRING_HUMILITY_TICKS,
+        issued_at_tick: tick,
+    });
 }
 
 fn apply_social_relationships(
@@ -2536,6 +2707,7 @@ mod tests {
     #[test]
     fn sparring_invite_dispatches_payload_only_to_target() {
         let mut app = App::new();
+        app.init_resource::<SparringInviteRegistry>();
         app.add_event::<SparringInviteRequest>();
         app.add_systems(Update, dispatch_sparring_invites);
         let (initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
@@ -2586,6 +2758,61 @@ mod tests {
             }
             other => panic!("expected sparring invite payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sparring_acceptance_creates_runtime_session() {
+        let mut app = App::new();
+        app.init_resource::<SparringInviteRegistry>();
+        app.add_event::<SparringInviteRequest>();
+        app.add_event::<SparringInviteResponseEvent>();
+        app.add_systems(
+            Update,
+            (
+                dispatch_sparring_invites,
+                handle_sparring_invite_responses.after(dispatch_sparring_invites),
+            ),
+        );
+        let (initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            Cultivation::default(),
+        ));
+        let (target_bundle, mut target_helper) = create_mock_client("Target");
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut().entity_mut(target).insert(Lifecycle {
+            character_id: "char:target".to_string(),
+            ..Default::default()
+        });
+
+        app.world_mut().send_event(SparringInviteRequest {
+            initiator,
+            target,
+            terms: "点到为止".to_string(),
+            tick: 100,
+        });
+        app.update();
+
+        app.world_mut().send_event(SparringInviteResponseEvent {
+            player: target,
+            invite_id: "sparring:100:char:initiator:char:target".to_string(),
+            kind: SparringInviteResponseKind::Accept,
+            tick: 110,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let _ = collect_server_data_payloads(&mut initiator_helper);
+        let _ = collect_server_data_payloads(&mut target_helper);
+
+        let initiator_state = app.world().get::<SparringState>(initiator).unwrap();
+        let target_state = app.world().get::<SparringState>(target).unwrap();
+        assert_eq!(initiator_state.partner, target);
+        assert_eq!(target_state.partner, initiator);
+        assert_eq!(initiator_state.invite_id, target_state.invite_id);
     }
 
     #[test]

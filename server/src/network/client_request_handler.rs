@@ -85,7 +85,8 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealSource,
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRevealSource,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::extract_system::{
@@ -166,6 +167,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
 }
 
 #[derive(SystemParam)]
@@ -254,6 +256,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
+            | ClientRequestV1::SparringInviteResponse { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -512,6 +515,32 @@ pub fn handle_client_request_payloads(
                     observer: ev.client,
                     pos: [x, y, z],
                     source: SpiritNicheRevealSource::MarkCoordinate,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SparringInviteResponse {
+                invite_id,
+                accepted,
+                timed_out,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.sparring_invite_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped sparring_invite_response because SparringInviteResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                let kind = if timed_out {
+                    SparringInviteResponseKind::Timeout
+                } else if accepted {
+                    SparringInviteResponseKind::Accept
+                } else {
+                    SparringInviteResponseKind::Decline
+                };
+                response_tx.send(SparringInviteResponseEvent {
+                    player: ev.client,
+                    invite_id,
+                    kind,
                     tick: combat_clock.tick,
                 });
             }

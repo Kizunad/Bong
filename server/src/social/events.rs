@@ -74,6 +74,22 @@ pub struct SparringInviteRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum SparringInviteResponseKind {
+    Accept,
+    Decline,
+    Timeout,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SparringInviteResponseEvent {
+    pub player: Entity,
+    pub invite_id: String,
+    pub kind: SparringInviteResponseKind,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FactionMembershipDecisionKind {
     AcceptInvite,
     Resign,

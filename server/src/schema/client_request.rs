@@ -115,6 +115,14 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    /// plan-social-v1 §6.1 — 切磋邀请 UI 回执。
+    SparringInviteResponse {
+        v: u8,
+        invite_id: String,
+        accepted: bool,
+        #[serde(default)]
+        timed_out: bool,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -882,6 +890,26 @@ mod tests {
                 assert_eq!((x, y, z), (11, 64, 10));
             }
             other => panic!("expected SpiritNicheMarkCoordinate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sparring_invite_response_roundtrip() {
+        let json = r#"{"type":"sparring_invite_response","v":1,"invite_id":"sparring:1:a:b","accepted":true,"timed_out":false}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SparringInviteResponse {
+                v,
+                invite_id,
+                accepted,
+                timed_out,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(invite_id, "sparring:1:a:b");
+                assert!(accepted);
+                assert!(!timed_out);
+            }
+            other => panic!("expected SparringInviteResponse, got {other:?}"),
         }
     }
 

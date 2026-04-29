@@ -135,6 +135,7 @@ pub fn resolve_attack_intents(
     npc_markers: Query<(), With<NpcMarker>>,
     npc_positions: Query<(Entity, &Position), With<NpcMarker>>,
     statuses: Query<&StatusEffects>,
+    sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
     mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
     mut out_events: EventWriter<CombatEvent>,
@@ -635,6 +636,25 @@ pub fn resolve_attack_intents(
             });
         }
 
+        let active_sparring = crate::social::active_sparring_between(
+            &sparring_sessions,
+            intent.attacker,
+            target_entity,
+        );
+        if let Some(sparring) = active_sparring.as_ref() {
+            if clock.tick <= sparring.expires_at_tick && was_alive && wounds.health_current <= 0.0 {
+                wounds.health_current = (wounds.health_max.max(1.0) * 0.05).max(1.0);
+                crate::social::conclude_sparring_defeat(
+                    &mut commands,
+                    &mut status_effect_intents,
+                    target_entity,
+                    intent.attacker,
+                    clock.tick,
+                );
+                continue;
+            }
+        }
+
         if was_alive
             && wounds.health_current <= 0.0
             && !lifecycle.is_some_and(|lifecycle| {
@@ -864,6 +884,7 @@ mod tests {
     use crate::npc::spawn::NpcMeleeProfile;
     use crate::npc::spawn::{spawn_test_npc_runtime_shape, NpcMarker};
     use crate::player::state::PlayerState;
+    use crate::social::components::SparringState;
     use valence::prelude::{
         bevy_ecs, App, Entity, Events, IntoSystemConfigs, Position, Resource, Update,
     };
@@ -1158,6 +1179,79 @@ mod tests {
             LifeRecord::new(canonical),
         ));
         entity
+    }
+
+    #[test]
+    fn sparring_lethal_hit_ends_without_death_event() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                resolve_attack_intents,
+                crate::combat::status::status_effect_apply_tick,
+            ),
+        );
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 8.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(SparringState {
+            partner: target,
+            invite_id: "sparring:1:a:b".to_string(),
+            started_at_tick: 40,
+            expires_at_tick: 6000,
+        });
+        app.world_mut().entity_mut(target).insert(SparringState {
+            partner: attacker,
+            invite_id: "sparring:1:a:b".to_string(),
+            started_at_tick: 40,
+            expires_at_tick: 6000,
+        });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 40.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+        app.update();
+
+        assert!(app.world().get::<SparringState>(attacker).is_none());
+        assert!(app.world().get::<SparringState>(target).is_none());
+        assert!(app.world().resource::<Events<DeathEvent>>().is_empty());
+        let wounds = app.world().get::<Wounds>(target).unwrap();
+        assert!(wounds.health_current > 0.0);
+        let statuses = app.world().get::<StatusEffects>(target).unwrap();
+        assert!(statuses
+            .active
+            .iter()
+            .any(|effect| effect.kind == StatusEffectKind::Humility));
     }
 
     #[test]

@@ -66,6 +66,8 @@ pub enum StatusEffectKind {
     /// plan-cultivation-v1 §3.1：服用突破辅助丹药后附加的临时 buff。
     /// `magnitude` 作 material_bonus（0.0..=0.30），突破事务聚合后一次性消费。
     BreakthroughBoost,
+    /// plan-social-v1 §6.1：切磋失败后的 5 分钟谦抑状态。
+    Humility,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]

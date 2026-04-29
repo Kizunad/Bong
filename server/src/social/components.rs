@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component};
+use valence::prelude::{bevy_ecs, Component, Entity};
 
 use crate::schema::social::RenownTagV1;
 
@@ -138,6 +138,14 @@ pub struct FactionMembership {
     pub invite_block_until_tick: Option<Tick>,
     #[serde(default)]
     pub permanently_refused: bool,
+}
+
+#[derive(Debug, Clone, Component, PartialEq, Eq)]
+pub struct SparringState {
+    pub partner: Entity,
+    pub invite_id: String,
+    pub started_at_tick: Tick,
+    pub expires_at_tick: Tick,
 }
 
 #[cfg(test)]
