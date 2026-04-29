@@ -38,6 +38,11 @@ public final class SocialStateStore {
         return sparringInvite;
     }
 
+    public static boolean shouldShowRemoteNameTag(String playerUuid, String playerName) {
+        SocialRemoteIdentity remote = findRemoteIdentity(playerUuid, playerName);
+        return remote != null && !remote.anonymous();
+    }
+
     public static void replaceAnonymity(String viewer, List<SocialRemoteIdentity> remotes) {
         LinkedHashMap<String, SocialRemoteIdentity> byUuid = new LinkedHashMap<>();
         for (SocialRemoteIdentity remote : safeList(remotes)) {
@@ -92,6 +97,32 @@ public final class SocialStateStore {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static SocialRemoteIdentity findRemoteIdentity(String playerUuid, String playerName) {
+        String normalizedUuid = normalize(playerUuid);
+        String normalizedName = normalize(playerName);
+        SocialRemoteIdentity exact = anonymity.remotesByUuid().get(normalizedUuid);
+        if (exact != null) return exact;
+
+        for (SocialRemoteIdentity remote : anonymity.remotesByUuid().values()) {
+            if (remoteMatchesPlayer(remote, normalizedUuid, normalizedName)) {
+                return remote;
+            }
+        }
+        return null;
+    }
+
+    private static boolean remoteMatchesPlayer(SocialRemoteIdentity remote, String playerUuid, String playerName) {
+        if (!playerUuid.isBlank() && remote.playerUuid().equalsIgnoreCase(playerUuid)) return true;
+        if (playerName.isBlank()) return false;
+
+        String remoteUuid = remote.playerUuid().toLowerCase(java.util.Locale.ROOT);
+        String name = playerName.toLowerCase(java.util.Locale.ROOT);
+        String offlinePrefix = "offline:" + name;
+        return remoteUuid.equals(offlinePrefix)
+            || remoteUuid.startsWith(offlinePrefix + ":")
+            || remote.displayName().equalsIgnoreCase(playerName);
     }
 
     public record SocialAnonymitySnapshot(String viewer, Map<String, SocialRemoteIdentity> remotesByUuid) {

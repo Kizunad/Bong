@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -39,6 +40,28 @@ public class SocialServerDataHandlerTest {
         assertFalse(ally.anonymous());
         assertEquals("KnownAlly", ally.displayName());
         assertEquals("kept_pact", ally.renownTags().get(0));
+        assertFalse(SocialStateStore.shouldShowRemoteNameTag("", "NewPlayer1"));
+        assertTrue(SocialStateStore.shouldShowRemoteNameTag("", "KnownAlly"));
+        assertTrue(SocialStateStore.shouldShowRemoteNameTag("offline:KnownAlly", ""));
+        assertFalse(SocialStateStore.shouldShowRemoteNameTag("", "Unknown"));
+    }
+
+    @Test
+    void nameTagPolicyMatchesCharacterScopedOfflineIds() {
+        SocialStateStore.replaceAnonymity("char:steve", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "offline:KnownAlly:char-uuid",
+                false,
+                "KnownAlly",
+                "condense_solidify",
+                "气息在你之上",
+                List.of()
+            )
+        ));
+
+        assertTrue(SocialStateStore.shouldShowRemoteNameTag("", "KnownAlly"));
+        assertTrue(SocialStateStore.shouldShowRemoteNameTag("offline:KnownAlly:char-uuid", ""));
+        assertFalse(SocialStateStore.shouldShowRemoteNameTag("", "Other"));
     }
 
     @Test
