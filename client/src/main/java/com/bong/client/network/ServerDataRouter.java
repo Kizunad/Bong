@@ -63,6 +63,7 @@ public final class ServerDataRouter {
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
         ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
+        SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
             new com.bong.client.network.lingtian.LingtianSessionHandler();
 
@@ -127,6 +128,13 @@ public final class ServerDataRouter {
         handlers.put("forge_session", forgeSessionHandler);
         handlers.put("forge_outcome", forgeOutcomeHandler);
         handlers.put("forge_blueprint_book", forgeBlueprintBookHandler);
+        // plan-social-v1 §7 — 匿名、暴露、关系、声名、切磋邀请。
+        handlers.put("social_anonymity", socialServerDataHandler);
+        handlers.put("social_exposure", socialServerDataHandler);
+        handlers.put("social_pact", socialServerDataHandler);
+        handlers.put("social_feud", socialServerDataHandler);
+        handlers.put("social_renown_delta", socialServerDataHandler);
+        handlers.put("sparring_invite", socialServerDataHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
         handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
         handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
