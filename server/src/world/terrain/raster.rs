@@ -63,6 +63,8 @@ pub struct ColumnSample {
     pub flora_density: f32,
     /// Global decoration id (0 = none; lookup via TerrainProvider::decoration).
     pub flora_variant_id: u8,
+    /// 0 none, 1 whalefall outer ribs/periphery, 2 mineral-rich core.
+    pub fossil_bbox: u8,
     // --- event / anomaly layers ---
     /// 0..1 local anomaly strength (event system threshold ≈ 0.3).
     pub anomaly_intensity: f32,
@@ -123,6 +125,7 @@ pub struct TerrainProvider {
     /// Global decoration palette: index by global id (0-slot is unused placeholder).
     decoration_palette: Vec<Option<Decoration>>,
     abyssal_tier_floor_y: HashMap<u8, f32>,
+    fossil_bboxes: Vec<FossilBbox>,
 }
 
 impl Resource for TerrainProvider {}
@@ -190,6 +193,7 @@ struct TileFields {
     cavern_floor_y: Option<Mmap>,
     flora_density: Option<Mmap>,
     flora_variant_id: Option<Mmap>,
+    fossil_bbox: Option<Mmap>,
     anomaly_intensity: Option<Mmap>,
     anomaly_kind: Option<Mmap>,
     // plan-tsy-worldgen-v1 §4.1 — TSY-only layers, all uint8 (tile_area sized).
@@ -213,6 +217,8 @@ struct RasterManifest {
     abyssal_tier_floor_y: HashMap<String, f32>,
     #[serde(default)]
     global_decoration_palette: Vec<ManifestDecoration>,
+    #[serde(default)]
+    fossil_bboxes: Vec<ManifestFossilBbox>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,6 +271,20 @@ struct ManifestDecoration {
     notes: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestFossilBbox {
+    zone: String,
+    name: String,
+    center_xz: [i32; 2],
+    center_y: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    #[serde(default)]
+    max_units: u32,
+}
+
 // --- Public read-only views of manifest data ----------------------------
 
 #[allow(dead_code)]
@@ -294,6 +314,20 @@ pub struct Decoration {
     pub notes: String,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct FossilBbox {
+    pub zone: String,
+    pub name: String,
+    pub center_xz: [i32; 2],
+    pub center_y: i32,
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub max_units: u32,
+}
+
 impl TerrainProvider {
     #[cfg(test)]
     pub(crate) fn empty_for_tests() -> Self {
@@ -315,6 +349,7 @@ impl TerrainProvider {
             anomaly_kinds: HashMap::new(),
             decoration_palette: Vec::new(),
             abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
         }
     }
 
@@ -423,6 +458,22 @@ impl TerrainProvider {
             });
         }
 
+        let fossil_bboxes = manifest
+            .fossil_bboxes
+            .into_iter()
+            .map(|raw| FossilBbox {
+                zone: raw.zone,
+                name: raw.name,
+                center_xz: raw.center_xz,
+                center_y: raw.center_y,
+                min_x: raw.min_x,
+                max_x: raw.max_x,
+                min_z: raw.min_z,
+                max_z: raw.max_z,
+                max_units: raw.max_units,
+            })
+            .collect::<Vec<_>>();
+
         Ok(Self {
             tiles,
             tile_size: manifest.tile_size,
@@ -441,6 +492,7 @@ impl TerrainProvider {
             anomaly_kinds,
             decoration_palette,
             abyssal_tier_floor_y,
+            fossil_bboxes,
         })
     }
 
@@ -465,6 +517,16 @@ impl TerrainProvider {
             .iter()
             .filter(|d| d.is_some())
             .count()
+    }
+
+    #[allow(dead_code)]
+    pub fn fossil_bboxes(&self) -> &[FossilBbox] {
+        &self.fossil_bboxes
+    }
+
+    #[allow(dead_code)]
+    pub fn sample_fossil_bbox(&self, world_x: i32, world_z: i32) -> u8 {
+        self.sample(world_x, world_z).fossil_bbox
     }
 
     /// Human-readable name for an anomaly_kind enum value.
@@ -543,6 +605,7 @@ impl TerrainProvider {
             cavern_floor_y: read_optional_f32(&tile.cavern_floor_y, index, 9999.0),
             flora_density: read_optional_f32(&tile.flora_density, index, 0.0),
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
+            fossil_bbox: read_optional_u8(&tile.fossil_bbox, index, 0),
             anomaly_intensity: read_optional_f32(&tile.anomaly_intensity, index, 0.0),
             anomaly_kind: read_optional_u8(&tile.anomaly_kind, index, 0),
             tsy_presence: read_optional_u8(&tile.tsy_presence, index, 0),
@@ -586,6 +649,7 @@ impl TileFields {
             cavern_floor_y: map_optional_layer(tile_dir, layers, "cavern_floor_y", area4)?,
             flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
             flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
+            fossil_bbox: map_optional_layer(tile_dir, layers, "fossil_bbox", tile_area)?,
             anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
             anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
             tsy_presence: map_optional_layer(tile_dir, layers, "tsy_presence", tile_area)?,
