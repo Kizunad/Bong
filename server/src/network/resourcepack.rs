@@ -11,7 +11,7 @@ pub const RESOURCE_PACK_SHA1_ENV: &str = "BONG_RESOURCE_PACK_SHA1";
 pub const RESOURCE_PACK_FORCED_ENV: &str = "BONG_RESOURCE_PACK_FORCED";
 
 pub const DEFAULT_RESOURCE_PACK_URL: &str =
-    "https://raw.githubusercontent.com/Kizunad/Bong/main/client/resourcepack/bong-mineral-v1.zip";
+    "https://raw.githubusercontent.com/Kizunad/Bong/6b39e905d97e5f2371e69ff5cf5daf5b54d1f255/client/resourcepack/bong-mineral-v1.zip";
 pub const DEFAULT_RESOURCE_PACK_SHA1: &str = "3723e0156118023c9206d7605666bb90b23bc10d";
 const DEFAULT_RESOURCE_PACK_PROMPT: &str =
     "Bong 矿物贴图资源包；拒绝后仍可游玩，但矿石显示为 vanilla 贴图。";
@@ -222,6 +222,7 @@ mod tests {
         let config = resolve_resource_pack_config(None, None, None, None);
         let prompt = config.prompt.expect("default resource pack prompt");
         assert_eq!(prompt.url, DEFAULT_RESOURCE_PACK_URL);
+        assert!(!prompt.url.contains("/main/"));
         assert_eq!(prompt.sha1, DEFAULT_RESOURCE_PACK_SHA1);
         assert!(!prompt.forced, "decline should degrade instead of kicking");
     }

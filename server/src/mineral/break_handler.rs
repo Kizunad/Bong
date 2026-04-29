@@ -22,7 +22,7 @@ use super::events::{
 use super::registry::MineralRegistry;
 use super::types::MineralRarity;
 use crate::combat::components::Lifecycle;
-use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND};
+use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND};
 use crate::social::{block_break_is_protected_by_registered_spirit_niche, SpiritNicheRegistry};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
@@ -172,8 +172,7 @@ pub fn equipped_pickaxe_tier(inventory: &PlayerInventory) -> Option<u8> {
     inventory
         .equipped
         .get(EQUIP_SLOT_MAIN_HAND)
-        .or_else(|| inventory.equipped.get("two_hand"))
-        .or_else(|| inventory.hotbar.iter().flatten().next())
+        .or_else(|| inventory.equipped.get(EQUIP_SLOT_TWO_HAND))
         .and_then(pickaxe_tier_from_item)
 }
 
@@ -295,5 +294,25 @@ mod tests {
     fn equipped_pickaxe_tier_reads_main_hand() {
         let inv = inventory_with_main_hand("minecraft:iron_pickaxe");
         assert_eq!(equipped_pickaxe_tier(&inv), Some(3));
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_reads_two_hand_when_main_hand_empty() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_sword");
+        inv.equipped.clear();
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            item("minecraft:diamond_pickaxe"),
+        );
+
+        assert_eq!(equipped_pickaxe_tier(&inv), Some(4));
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_does_not_fall_back_to_hotbar() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_sword");
+        inv.hotbar[0] = Some(item("minecraft:netherite_pickaxe"));
+
+        assert_eq!(equipped_pickaxe_tier(&inv), None);
     }
 }
