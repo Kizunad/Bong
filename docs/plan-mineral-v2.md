@@ -31,6 +31,7 @@
 - [ ] **不引入 v1 没有的概念**：所有 P 都是 v1 已声明结构的"接线 / 实装"——不新增 mineral_id 域、不改 §1 矿物分类表、不变更 §4 vanilla block 映射
 - [ ] **每个 P 独立可发**：7 个 P 之间无强依赖，可按优先级单独 PR；不强求一气呵成
 - [ ] **优先级骨架**：P0/P1/P2 直接影响玩家体验（反馈 + 挖矿 + forge）；P3/P4 是数据 / 配方层补完；P5/P6 是延伸（可滑到 v3）
+- [ ] **季节耦合**（worldview §十七）：`ling_shi_*_v1` 四档 shelflife profile 的 effective half_life 与 `Season::freshness_multiplier()` 联动（夏 ×1.5 / 冬 ×0.7 / 汐转 RNG ±30%）；本 plan P4 不重新实现修饰逻辑，仅复用 `plan-lingtian-process-v1` / `plan-shelflife-v1` 已暴露的 multiplier 通道——确保灵石的衰减节奏与作物 / 加工产物一致
 
 ---
 
@@ -140,3 +141,35 @@
 
 - **2026-04-28**：实地核验修正 — P3 `IngredientSpec.mineral_id` / P4 `ling_shi_*_v1` 四档已在 v1 先行落地，阶段状态从 ⬜ 更正为 🔄；修正 alchemy recipe 资产路径 `recipes/alchemy/` → `alchemy/recipes/`。
 - **2026-04-27**：骨架立项 — 承接 plan-mineral-v1 主链路收尾后的 7 项遗留（commit `c331850e` 之后剩余）。等优先级排序 + `/consume-plan mineral-v2` 升 active。
+- **2026-04-29**：实地核验 + 升 active 准备。
+  - 前置 plan 状态：`plan-mineral-v1` ✅（finished_plans）；`plan-forge-v1` ✅（finished_plans）；`plan-alchemy-v1` ✅（finished_plans）；`plan-shelflife-v1` active；`plan-botany-v1` ✅（finished_plans）；`plan-terrain-layer-query-v1` active（**新立**——为 P6 鲸落化石 raster fossil_bbox 通道预备共享 layer 查询接口）。
+  - 代码侧核验：P3 `IngredientSpec.mineral_id` ✅（commit `a7050089`）；P4 `ling_shi_*_v1` 四档已在 `build_default_registry()` ✅；P5 14 张 ore 贴图 ✅（commit `f537f808`）—— 三档 schema/资产层就绪，**runtime 接线全缺**。
+  - **同期升 active 的兄弟 plan**：`plan-lingtian-weather-v1` / `plan-lingtian-process-v1` —— 三者共享 worldview §十七 二季 + game-tick 驱动语义，本 plan §0 已加季节耦合一条作前置约定。
+  - **决策推迟到 §10 开放问题**：P5 ResourcePack 拒绝行为（kick vs 降级）+ P6 鲸落化石与 plan-worldgen-v3.x 的 structure registry 边界——不阻塞 P0–P4 启动。
+  - 补 `## Finish Evidence` 占位（active plan 范式）。准备 `git mv` 进 docs/ active。
+
+---
+
+## Finish Evidence
+
+<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+
+- 落地清单：
+  - P0：forge / alchemy chat emit 接入点（`forge/blueprint.rs:346` + `alchemy/recipe.rs`）+ 4 个 `message_id` pin 测试
+  - P1：`MineralRegistry::pickaxe_tier_min` + `MiningSession` Component + `bong:mining_progress` 通道 + tier 校验
+  - P2：`furnace_tier` 字段在 `core.toml` + `ForgeBlueprint::validate_with` 扩展
+  - P3：4 份 alchemy recipe JSON（jie_du_dan / zhu_sha 增强 / xiong_huang 占位 / xie_fen 占位）
+  - P4：`register_production_profiles` 注册四档 + drop → freshness 实体填充链路
+  - P5：`ResourcePackPrompt` 接入 + pack zip CI 脚本 + sha1 校验（如启用）
+  - P6：`whale_fossil.py` + raster `fossil_bbox` channel + `mineral_anchor` 接入（如启用）
+- 关键 commit：
+- 测试结果：
+- 跨仓库核验：
+  - server：`MineralRegistry.pickaxe_tier_min` / `MiningSession` / `register_production_profiles` / `ForgeBlueprint::validate_with` 扩展
+  - agent：mineral chat message_id 模板 / processing 联动 schema
+  - client：ResourcePack 接受 / 拒绝行为；HUD mining progress
+  - worldgen：`fossil_bbox` raster channel（如 P6 落地）
+- 遗留 / 后续：
+  - `xiong_huang` / `xie_fen` 配方（依负灵域 / 魔修支线 plan，可能滑 v3）
+  - CustomModelData 跨 biome 切贴图（v1 §4.3 末行延后项）
+  - 采矿 session 真元消耗（§10 开放问题）
