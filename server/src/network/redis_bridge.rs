@@ -12,7 +12,8 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
     CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_PLAYER_CHAT, CH_TRIBULATION, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_PLAYER_CHAT, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK,
+    CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -24,7 +25,7 @@ use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
-use crate::schema::tribulation::TribulationEventV1;
+use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::world_state::WorldStateV1;
@@ -74,6 +75,10 @@ pub enum RedisOutbound {
 enum RedisIoCommand {
     Publish {
         channel: &'static str,
+        payload: String,
+    },
+    PublishFanout {
+        channels: Vec<&'static str>,
         payload: String,
     },
     ListPush {
@@ -418,8 +423,8 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize TribulationEventV1: {error}"))
             })?;
-            Ok(RedisIoCommand::Publish {
-                channel: CH_TRIBULATION,
+            Ok(RedisIoCommand::PublishFanout {
+                channels: tribulation_fanout_channels(&evt),
                 payload,
             })
         }
@@ -475,6 +480,29 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
     }
 }
 
+fn tribulation_fanout_channels(event: &TribulationEventV1) -> Vec<&'static str> {
+    let mut channels = Vec::new();
+    if event.kind == TribulationKindV1::ZoneCollapse {
+        channels.push(CH_TRIBULATION_COLLAPSE);
+    }
+
+    let phase_channel = match event.phase {
+        TribulationPhaseV1::Omen => CH_TRIBULATION_OMEN,
+        TribulationPhaseV1::Lock => CH_TRIBULATION_LOCK,
+        TribulationPhaseV1::Wave { .. } | TribulationPhaseV1::HeartDemon => CH_TRIBULATION_WAVE,
+        TribulationPhaseV1::Settle => CH_TRIBULATION_SETTLE,
+    };
+    if !channels.contains(&phase_channel) {
+        channels.push(phase_channel);
+    }
+
+    // Main channel is the primary narration consumer; publish it last so a partial
+    // fanout retry is less likely to duplicate narration on the compatibility path.
+    channels.push(CH_TRIBULATION);
+
+    channels
+}
+
 fn redact_redis_url_for_log(redis_url: &str) -> String {
     let Some(scheme_index) = redis_url.find("://") else {
         return "[redacted redis endpoint]".to_string();
@@ -504,27 +532,13 @@ async fn execute_outbound_command(
 ) -> Result<(), String> {
     match command {
         RedisIoCommand::Publish { channel, payload } => {
-            match tokio::time::timeout(
-                REDIS_IO_TIMEOUT,
-                redis::cmd("PUBLISH")
-                    .arg(channel)
-                    .arg(payload)
-                    .query_async::<i64>(pub_conn),
-            )
-            .await
-            {
-                Ok(Ok(subscribers)) => {
-                    tracing::debug!(
-                        "[bong][redis] published {channel}; observed {subscribers} subscribers"
-                    );
-                    Ok(())
-                }
-                Ok(Err(error)) => Err(format!("failed to publish {channel}: {error}")),
-                Err(_) => Err(format!(
-                    "timed out publishing {channel} after {:?}",
-                    REDIS_IO_TIMEOUT
-                )),
+            execute_publish(pub_conn, channel, payload).await
+        }
+        RedisIoCommand::PublishFanout { channels, payload } => {
+            for channel in channels {
+                execute_publish(pub_conn, channel, payload).await?;
             }
+            Ok(())
         }
         RedisIoCommand::ListPush { key, payload } => {
             match tokio::time::timeout(
@@ -549,6 +563,34 @@ async fn execute_outbound_command(
                 )),
             }
         }
+    }
+}
+
+async fn execute_publish(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    channel: &'static str,
+    payload: &str,
+) -> Result<(), String> {
+    match tokio::time::timeout(
+        REDIS_IO_TIMEOUT,
+        redis::cmd("PUBLISH")
+            .arg(channel)
+            .arg(payload)
+            .query_async::<i64>(pub_conn),
+    )
+    .await
+    {
+        Ok(Ok(subscribers)) => {
+            tracing::debug!(
+                "[bong][redis] published {channel}; observed {subscribers} subscribers"
+            );
+            Ok(())
+        }
+        Ok(Err(error)) => Err(format!("failed to publish {channel}: {error}")),
+        Err(_) => Err(format!(
+            "timed out publishing {channel} after {:?}",
+            REDIS_IO_TIMEOUT
+        )),
     }
 }
 
@@ -1228,6 +1270,108 @@ mod redis_bridge_tests {
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
             other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tribulation_events_to_main_and_phase_channels() {
+        let cases = [
+            (
+                TribulationEventV1::du_xu(
+                    TribulationPhaseV1::Omen,
+                    Some("offline:Azure".to_string()),
+                    Some("Azure".to_string()),
+                    Some([8.0, 66.0, 8.0]),
+                    Some(0),
+                    Some(5),
+                    None,
+                ),
+                vec![CH_TRIBULATION_OMEN, CH_TRIBULATION],
+            ),
+            (
+                TribulationEventV1::du_xu(
+                    TribulationPhaseV1::Lock,
+                    Some("offline:Azure".to_string()),
+                    Some("Azure".to_string()),
+                    Some([8.0, 66.0, 8.0]),
+                    Some(0),
+                    Some(5),
+                    None,
+                ),
+                vec![CH_TRIBULATION_LOCK, CH_TRIBULATION],
+            ),
+            (
+                TribulationEventV1::du_xu(
+                    TribulationPhaseV1::HeartDemon,
+                    Some("offline:Azure".to_string()),
+                    Some("Azure".to_string()),
+                    Some([8.0, 66.0, 8.0]),
+                    Some(4),
+                    Some(5),
+                    None,
+                ),
+                vec![CH_TRIBULATION_WAVE, CH_TRIBULATION],
+            ),
+            (
+                TribulationEventV1::du_xu(
+                    TribulationPhaseV1::Settle,
+                    Some("offline:Azure".to_string()),
+                    None,
+                    None,
+                    Some(5),
+                    Some(5),
+                    Some(crate::schema::tribulation::DuXuResultV1 {
+                        char_id: "offline:Azure".to_string(),
+                        outcome: crate::schema::tribulation::DuXuOutcomeV1::Ascended,
+                        killer: None,
+                        waves_survived: 5,
+                    }),
+                ),
+                vec![CH_TRIBULATION_SETTLE, CH_TRIBULATION],
+            ),
+        ];
+
+        for (event, expected_channels) in cases {
+            let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+                .expect("tribulation event should serialize");
+            match command {
+                RedisIoCommand::PublishFanout { channels, payload } => {
+                    assert_eq!(channels, expected_channels);
+                    let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+                    assert_eq!(value["v"], 1);
+                    assert_eq!(value["kind"], "du_xu");
+                }
+                other => panic!("expected fanout publish, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn publishes_zone_collapse_to_main_collapse_and_phase_channels() {
+        let event = TribulationEventV1::zone_collapse(
+            TribulationPhaseV1::Settle,
+            Some("spawn".to_string()),
+            Some([8.0, 66.0, 8.0]),
+        );
+        let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+            .expect("zone collapse event should serialize");
+
+        match command {
+            RedisIoCommand::PublishFanout { channels, payload } => {
+                assert_eq!(
+                    channels,
+                    vec![
+                        CH_TRIBULATION_COLLAPSE,
+                        CH_TRIBULATION_SETTLE,
+                        CH_TRIBULATION
+                    ]
+                );
+                let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(value["kind"], "zone_collapse");
+                assert_eq!(value["phase"]["kind"], "settle");
+                assert_eq!(value["zone"], "spawn");
+            }
+            other => panic!("expected fanout publish, got {other:?}"),
         }
     }
 

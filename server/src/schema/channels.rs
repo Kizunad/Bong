@@ -18,8 +18,8 @@ pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
 pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
 
-// 天劫（plan-tribulation-v1 §6）：所有天劫事件统一进主 channel；子 channel 常量
-// 仅作前端/agent 分流语义标注，当前 Redis bridge 发布到 CH_TRIBULATION。
+// 天劫（plan-tribulation-v1 §6）：所有天劫事件统一进主 channel；Redis bridge
+// 同时 fanout 到 phase/kind 子 channel，供前端/agent 按语义分流。
 pub const CH_TRIBULATION: &str = "bong:tribulation";
 pub const CH_TRIBULATION_OMEN: &str = "bong:tribulation/omen";
 pub const CH_TRIBULATION_LOCK: &str = "bong:tribulation/lock";
