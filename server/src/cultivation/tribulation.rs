@@ -49,6 +49,7 @@ pub const DUXU_LOCK_RADIUS_SOFT: f64 = 50.0;
 pub const DUXU_LOCK_RADIUS_HARD: f64 = 20.0;
 pub const DUXU_LOCK_RADIUS_FINAL: f64 = 10.0;
 pub const DUXU_BOUNDARY_VFX_EVENT_ID: &str = "bong:tribulation_boundary";
+pub const DUXU_OMEN_CLOUD_VFX_EVENT_ID: &str = "bong:tribulation_omen_cloud";
 
 const DUXU_DEFAULT_WAVES: u32 = 3;
 const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
@@ -564,6 +565,7 @@ pub fn emit_tribulation_boundary_vfx_system(
         }
     }
     for ev in announce.read() {
+        emit_tribulation_omen_cloud_vfx(&mut vfx_events, ev.epicenter);
         emit_tribulation_boundary_vfx(
             &mut vfx_events,
             ev.epicenter,
@@ -604,6 +606,25 @@ fn emit_tribulation_boundary_vfx(
             strength: Some((radius / TRIBULATION_DANGER_RADIUS).clamp(0.0, 1.0) as f32),
             count: Some(1),
             duration_ticks: Some(duration_ticks),
+        },
+    ));
+}
+
+fn emit_tribulation_omen_cloud_vfx(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    epicenter: [f64; 3],
+) {
+    let origin = [epicenter[0], epicenter[1] + 24.0, epicenter[2]];
+    vfx_events.send(VfxEventRequest::new(
+        valence::math::DVec3::new(origin[0], origin[1], origin[2]),
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: DUXU_OMEN_CLOUD_VFX_EVENT_ID.to_string(),
+            origin,
+            direction: Some([24.0, 8.0, 24.0]),
+            color: Some("#3B3448".to_string()),
+            strength: Some(0.85),
+            count: Some(36),
+            duration_ticks: Some(200),
         },
     ));
 }
@@ -1565,8 +1586,25 @@ mod tests {
         app.update();
 
         let payloads = collect_vfx_payloads(&mut app);
-        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads.len(), 2);
         match &payloads[0] {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                origin,
+                direction,
+                count,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(event_id, DUXU_OMEN_CLOUD_VFX_EVENT_ID);
+                assert_eq!(*origin, [12.0, 90.0, -8.0]);
+                assert_eq!(*direction, Some([24.0, 8.0, 24.0]));
+                assert_eq!(*count, Some(36));
+                assert_eq!(*duration_ticks, Some(200));
+            }
+            other => panic!("unexpected omen cloud vfx payload: {other:?}"),
+        }
+        match &payloads[1] {
             VfxEventPayloadV1::SpawnParticle {
                 event_id,
                 origin,
