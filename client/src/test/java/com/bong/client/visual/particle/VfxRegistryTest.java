@@ -119,6 +119,8 @@ public class VfxRegistryTest {
             "bootstrap should register formation_core_demo");
         assertTrue(VfxRegistry.instance().contains(TribulationBoundaryPlayer.EVENT_ID),
             "bootstrap should register tribulation_boundary");
+        assertTrue(VfxRegistry.instance().contains(TribulationOmenCloudPlayer.EVENT_ID),
+            "bootstrap should register tribulation_omen_cloud");
         assertTrue(VfxRegistry.instance().contains(RealmCollapseBoundaryPlayer.EVENT_ID),
             "bootstrap should register realm_collapse_boundary");
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
