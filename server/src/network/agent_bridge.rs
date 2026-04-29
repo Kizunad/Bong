@@ -55,6 +55,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
+        ServerDataType::MiningProgress => "mining_progress",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
         ServerDataType::AlchemySession => "alchemy_session",
@@ -640,6 +641,10 @@ mod server_data_tests {
         assert_eq!(
             payload_type_label(ServerDataType::BotanyHarvestProgress),
             "botany_harvest_progress"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::MiningProgress),
+            "mining_progress"
         );
         assert_eq!(
             payload_type_label(ServerDataType::BotanySkill),

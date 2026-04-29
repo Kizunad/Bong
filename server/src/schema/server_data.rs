@@ -75,6 +75,7 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     BotanyHarvestProgress,
+    MiningProgress,
     BotanySkill,
     AlchemyFurnace,
     AlchemySession,
@@ -198,6 +199,13 @@ pub enum ServerDataPayloadV1 {
         completed: bool,
         detail: String,
         target_pos: Option<[f64; 3]>,
+    },
+    MiningProgress {
+        session_id: String,
+        ore_pos: [i32; 3],
+        progress: f64,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -367,6 +375,13 @@ enum ServerDataPayloadWireV1 {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_pos: Option<[f64; 3]>,
+    },
+    MiningProgress {
+        session_id: String,
+        ore_pos: [i32; 3],
+        progress: f64,
+        interrupted: bool,
+        completed: bool,
     },
     BotanySkill {
         level: u64,
@@ -937,6 +952,19 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 detail,
                 target_pos,
             }),
+            ServerDataPayloadWireV1::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
+            } => Ok(Self::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
+            }),
             ServerDataPayloadWireV1::BotanySkill {
                 level,
                 xp,
@@ -1270,6 +1298,19 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 detail: detail.clone(),
                 target_pos: *target_pos,
             },
+            ServerDataPayloadV1::MiningProgress {
+                session_id,
+                ore_pos,
+                progress,
+                interrupted,
+                completed,
+            } => Self::MiningProgress {
+                session_id: session_id.clone(),
+                ore_pos: *ore_pos,
+                progress: *progress,
+                interrupted: *interrupted,
+                completed: *completed,
+            },
             ServerDataPayloadV1::BotanySkill {
                 level,
                 xp,
@@ -1578,6 +1619,7 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::MiningProgress { .. } => ServerDataType::MiningProgress,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
