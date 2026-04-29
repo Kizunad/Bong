@@ -478,24 +478,46 @@ fn apply_social_renown_deltas(
     mut players: Query<(&Lifecycle, &mut Renown), With<Client>>,
 ) {
     for event in events.read() {
+        let mut persisted_renown = None;
+        if let Some(persistence) = persistence.as_deref() {
+            match load_social_renown_from_persistence(persistence, event.char_id.as_str()) {
+                Ok(mut renown) => {
+                    renown.apply_delta(
+                        event.fame_delta,
+                        event.notoriety_delta,
+                        event.tags_added.clone(),
+                    );
+                    if let Err(error) =
+                        persist_social_renown(persistence, event.char_id.as_str(), &renown)
+                    {
+                        tracing::warn!(
+                            "[bong][social] failed to persist renown for `{}`: {error}",
+                            event.char_id
+                        );
+                    }
+                    persisted_renown = Some(renown);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][social] failed to load renown for `{}` before delta: {error}",
+                        event.char_id
+                    );
+                }
+            }
+        }
+
         if let Some((_, mut renown)) = players
             .iter_mut()
             .find(|(lifecycle, _)| lifecycle.character_id == event.char_id)
         {
-            renown.apply_delta(
-                event.fame_delta,
-                event.notoriety_delta,
-                event.tags_added.clone(),
-            );
-            if let Some(persistence) = persistence.as_deref() {
-                if let Err(error) =
-                    persist_social_renown(persistence, event.char_id.as_str(), &renown)
-                {
-                    tracing::warn!(
-                        "[bong][social] failed to persist renown for `{}`: {error}",
-                        event.char_id
-                    );
-                }
+            if let Some(persisted_renown) = persisted_renown {
+                *renown = persisted_renown;
+            } else {
+                renown.apply_delta(
+                    event.fame_delta,
+                    event.notoriety_delta,
+                    event.tags_added.clone(),
+                );
             }
         }
     }
@@ -1018,6 +1040,14 @@ fn load_social_renown(connection: &Connection, char_id: &str) -> io::Result<Reno
         notoriety,
         tags,
     })
+}
+
+fn load_social_renown_from_persistence(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<Renown> {
+    let connection = open_social_connection(persistence)?;
+    load_social_renown(&connection, char_id)
 }
 
 fn load_social_relationships(connection: &Connection, char_id: &str) -> io::Result<Relationships> {
@@ -1774,6 +1804,41 @@ mod tests {
         assert_eq!(loaded.renown.fame, 3);
         assert_eq!(loaded.renown.notoriety, 5);
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn renown_delta_persists_for_offline_character() {
+        let (persistence, data_dir) = social_persistence("offline-renown-delta");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_social_renown_deltas);
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:offline".to_string(),
+            fame_delta: 2,
+            notoriety_delta: 7,
+            tags_added: vec![RenownTagV1 {
+                tag: "背盟者".to_string(),
+                weight: 10.0,
+                last_seen_tick: 55,
+                permanent: true,
+            }],
+            tick: 55,
+            reason: "test_offline".to_string(),
+        });
+
+        app.update();
+
+        let loaded = load_social_components(&persistence, "char:offline")
+            .expect("offline renown should persist");
+        assert_eq!(loaded.renown.fame, 2);
+        assert_eq!(loaded.renown.notoriety, 7);
+        assert_eq!(loaded.renown.tags.len(), 1);
+        assert_eq!(loaded.renown.tags[0].tag, "背盟者");
+        assert!(loaded.renown.tags[0].permanent);
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
