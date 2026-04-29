@@ -431,47 +431,42 @@ fn apply_social_relationships(
     mut players: Query<(&Lifecycle, &mut Relationships), With<Client>>,
 ) {
     for event in events.read() {
+        let left_relationship = Relationship {
+            kind: event.left_kind,
+            peer: event.right.clone(),
+            since_tick: event.tick,
+            metadata: event.metadata.clone(),
+        };
+        let right_relationship = Relationship {
+            kind: event.right_kind,
+            peer: event.left.clone(),
+            since_tick: event.tick,
+            metadata: event.metadata.clone(),
+        };
+        if let Some(persistence) = persistence.as_deref() {
+            if let Err(error) =
+                persist_social_relationship(persistence, event.left.as_str(), &left_relationship)
+            {
+                tracing::warn!(
+                    "[bong][social] failed to persist relationship for `{}`: {error}",
+                    event.left
+                );
+            }
+            if let Err(error) =
+                persist_social_relationship(persistence, event.right.as_str(), &right_relationship)
+            {
+                tracing::warn!(
+                    "[bong][social] failed to persist relationship for `{}`: {error}",
+                    event.right
+                );
+            }
+        }
+
         for (lifecycle, mut relationships) in &mut players {
             if lifecycle.character_id == event.left {
-                let relationship = Relationship {
-                    kind: event.left_kind,
-                    peer: event.right.clone(),
-                    since_tick: event.tick,
-                    metadata: event.metadata.clone(),
-                };
-                relationships.upsert(relationship.clone());
-                if let Some(persistence) = persistence.as_deref() {
-                    if let Err(error) = persist_social_relationship(
-                        persistence,
-                        lifecycle.character_id.as_str(),
-                        &relationship,
-                    ) {
-                        tracing::warn!(
-                            "[bong][social] failed to persist relationship for `{}`: {error}",
-                            lifecycle.character_id
-                        );
-                    }
-                }
+                relationships.upsert(left_relationship.clone());
             } else if lifecycle.character_id == event.right {
-                let relationship = Relationship {
-                    kind: event.right_kind,
-                    peer: event.left.clone(),
-                    since_tick: event.tick,
-                    metadata: event.metadata.clone(),
-                };
-                relationships.upsert(relationship.clone());
-                if let Some(persistence) = persistence.as_deref() {
-                    if let Err(error) = persist_social_relationship(
-                        persistence,
-                        lifecycle.character_id.as_str(),
-                        &relationship,
-                    ) {
-                        tracing::warn!(
-                            "[bong][social] failed to persist relationship for `{}`: {error}",
-                            lifecycle.character_id
-                        );
-                    }
-                }
+                relationships.upsert(right_relationship.clone());
             }
         }
     }
@@ -1768,6 +1763,14 @@ mod tests {
         assert_eq!(loaded.relationships.edges[0].kind, RelationshipKindV1::Feud);
         assert_eq!(loaded.relationships.edges[0].peer, "char:rival");
         assert_eq!(loaded.relationships.edges[0].metadata["place"], "spawn");
+        let loaded_peer = load_social_components(&persistence, "char:rival")
+            .expect("reverse relationship should persist for offline peer");
+        assert_eq!(loaded_peer.relationships.edges.len(), 1);
+        assert_eq!(
+            loaded_peer.relationships.edges[0].kind,
+            RelationshipKindV1::Feud
+        );
+        assert_eq!(loaded_peer.relationships.edges[0].peer, "char:azure");
         assert_eq!(loaded.renown.fame, 3);
         assert_eq!(loaded.renown.notoriety, 5);
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
