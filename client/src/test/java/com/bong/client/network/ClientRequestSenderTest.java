@@ -193,6 +193,24 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendSpiritNicheRevealRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNicheGaze(11, 64, 10);
+        ClientRequestSender.sendSpiritNicheMarkCoordinate(12, 65, 11);
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

@@ -174,6 +174,18 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNicheRevealRequests() {
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            ClientRequestProtocol.encodeSpiritNicheGaze(11, 64, 10)
+        );
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(12, 65, 11)
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(

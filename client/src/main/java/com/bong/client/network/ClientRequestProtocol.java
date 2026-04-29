@@ -342,6 +342,22 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNicheGaze(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_gaze");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheMarkCoordinate(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_mark_coordinate");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);

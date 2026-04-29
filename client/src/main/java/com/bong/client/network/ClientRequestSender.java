@@ -110,6 +110,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
     }
 
+    public static void sendSpiritNicheGaze(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheGaze(x, y, z));
+    }
+
+    public static void sendSpiritNicheMarkCoordinate(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,
