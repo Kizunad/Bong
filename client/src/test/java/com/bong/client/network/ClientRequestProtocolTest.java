@@ -25,6 +25,12 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAbortTribulationRequest() {
+        String json = ClientRequestProtocol.encodeAbortTribulationRequest();
+        assertEquals("{\"type\":\"abort_tribulation\",\"v\":1}", json);
+    }
+
+    @Test
     void encodesForgeRequestWithRateAxis() {
         String json = ClientRequestProtocol.encodeForgeRequest(
             ClientRequestProtocol.MeridianId.Ren,
