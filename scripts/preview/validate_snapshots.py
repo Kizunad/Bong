@@ -38,9 +38,15 @@ import numpy as np
 from PIL import Image
 
 
+# R3 size 阈值取 18KB：
+#   - 纯单色 PNG（chunk 未加载，全 sky 或全 void）压缩到 ~16.9KB
+#   - 真实 top 俯视（高空 320 望地面，颜色重复度高）实测 ~25KB
+#   - 真实 iso 角度（地形 + 天空梯度）实测 ≥ 40KB
+# 18KB 在"纯单色"和"真实最低（top）"之间留足余量；下限主要意义是把"完全没渲染"
+# 的 16.9KB byte-identical PNG 钉死。
 DEFAULT_TERRAIN_MIN = 0.30
 DEFAULT_TOP_TERRAIN_MIN = 0.15
-DEFAULT_MIN_SIZE_BYTES = 30 * 1024
+DEFAULT_MIN_SIZE_BYTES = 18 * 1024
 TOP_NAME_HINTS = ("top",)
 
 
