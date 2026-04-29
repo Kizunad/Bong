@@ -363,23 +363,32 @@ pub fn tribulation_phase_tick_system(
             TribulationPhase::Lock
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_LOCK_TICKS =>
             {
-                state.phase = TribulationPhase::Wave(state.wave_current.saturating_add(1));
-                state.phase_started_tick = clock.tick;
-                state.next_wave_tick = clock.tick;
+                let next_wave = state.wave_current.saturating_add(1);
+                begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
             TribulationPhase::Wave(_) if clock.tick >= state.next_wave_tick && !state.failed => {
                 let next_wave = state.wave_current.saturating_add(1);
-                if next_wave <= state.waves_total {
-                    cleared.send(TribulationWaveCleared {
-                        entity,
-                        wave: next_wave,
-                    });
-                }
-                state.next_wave_tick = clock.tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
+                begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
             _ => {}
         }
     }
+}
+
+fn begin_tribulation_wave(
+    state: &mut TribulationState,
+    entity: Entity,
+    wave: u32,
+    tick: u64,
+    cleared: &mut EventWriter<TribulationWaveCleared>,
+) {
+    if wave == 0 || wave > state.waves_total {
+        return;
+    }
+    state.phase = TribulationPhase::Wave(wave);
+    state.phase_started_tick = tick;
+    state.next_wave_tick = tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
+    cleared.send(TribulationWaveCleared { entity, wave });
 }
 
 #[allow(clippy::type_complexity)]
@@ -396,13 +405,13 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
 ) {
-    if !clock.tick.is_multiple_of(DUXU_WAVE_COOLDOWN_TICKS.max(1)) {
-        return;
-    }
     for (tribulator_entity, state) in &tribulations {
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
+        if clock.tick != state.phase_started_tick {
+            continue;
+        }
         let center =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
         let damage = DUXU_AOE_DAMAGE_BASE * wave as f32;
@@ -1215,6 +1224,153 @@ mod tests {
     }
 
     #[test]
+    fn lock_expiry_starts_first_wave_and_schedules_cooldown() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Lock,
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 0,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 300,
+                next_wave_tick: 0,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Wave(1));
+        assert_eq!(state.phase_started_tick, 900);
+        assert_eq!(state.next_wave_tick, 900 + DUXU_WAVE_COOLDOWN_TICKS);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].wave, 1);
+    }
+
+    #[test]
+    fn wave_cooldown_starts_next_wave_without_reusing_first_wave_phase() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(1),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 900,
+                next_wave_tick: 1200,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Wave(2));
+        assert_eq!(state.phase_started_tick, 1200);
+        assert_eq!(state.next_wave_tick, 1200 + DUXU_WAVE_COOLDOWN_TICKS);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 2);
+    }
+
+    #[test]
+    fn aoe_uses_current_wave_strength_only_on_wave_start_tick() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(2),
+            epicenter: [0.0, 66.0, 0.0],
+            wave_current: 1,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 1200,
+            next_wave_tick: 1500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        });
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 100.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Spectator".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let wounds = app
+            .world()
+            .get::<Wounds>(target)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 100.0 - DUXU_AOE_DAMAGE_BASE * 2.0);
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 100.0 - DUXU_QI_DRAIN_BASE * 2.0);
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 1201;
+        app.update();
+
+        let wounds = app
+            .world()
+            .get::<Wounds>(target)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 100.0 - DUXU_AOE_DAMAGE_BASE * 2.0);
+    }
+
+    #[test]
     fn tribulation_failure_regresses_without_death_lifecycle_side_effects() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("failure-not-death");
@@ -1599,7 +1755,7 @@ mod tests {
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 0,
-                phase_started_tick: 0,
+                phase_started_tick: 300,
                 next_wave_tick: 300,
                 participants: vec!["offline:Victim".to_string(), "offline:Killer".to_string()],
                 failed: false,
@@ -1684,7 +1840,7 @@ mod tests {
                 wave_current: 1,
                 waves_total: 3,
                 started_tick: 0,
-                phase_started_tick: 0,
+                phase_started_tick: 300,
                 next_wave_tick: 300,
                 participants: vec!["offline:Victim".to_string()],
                 failed: false,
