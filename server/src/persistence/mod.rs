@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 13;
+const CURRENT_USER_VERSION: i32 = 14;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -409,6 +409,54 @@ pub struct FactionSocialBundle {
     pub reputations: Vec<FactionReputationRecord>,
     pub memberships: Vec<FactionMembershipRecord>,
     pub relationships: Vec<RelationshipRecord>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocialAnonymityRecord {
+    pub char_id: String,
+    pub displayed_name: Option<String>,
+    pub exposed_to_json: String,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocialExposureRecord {
+    pub event_id: String,
+    pub char_id: String,
+    pub kind: String,
+    pub witnesses_json: String,
+    pub at_tick: u64,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocialRenownRecord {
+    pub char_id: String,
+    pub fame: i32,
+    pub notoriety: i32,
+    pub tags_json: String,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocialSpiritNicheRecord {
+    pub owner: String,
+    pub pos: [i32; 3],
+    pub placed_at_tick: u64,
+    pub revealed: bool,
+    pub revealed_by: Option<String>,
+    pub defense_mode: Option<String>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocialPersistenceBundle {
+    pub anonymity: Vec<SocialAnonymityRecord>,
+    pub relationships: Vec<RelationshipRecord>,
+    pub exposures: Vec<SocialExposureRecord>,
+    pub renown: Vec<SocialRenownRecord>,
+    pub spirit_niches: Vec<SocialSpiritNicheRecord>,
 }
 
 pub fn register(app: &mut App) {
@@ -1102,6 +1150,66 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         }
 
         transaction.execute_batch("PRAGMA user_version = 13;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 14 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS social_anonymity (
+                char_id TEXT PRIMARY KEY,
+                displayed_name TEXT,
+                exposed_to_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE IF NOT EXISTS social_relationships (
+                char_id TEXT NOT NULL,
+                peer_char_id TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                since_tick INTEGER NOT NULL CHECK (since_tick >= 0),
+                metadata_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (char_id, peer_char_id, relationship_type)
+            );
+            CREATE TABLE IF NOT EXISTS social_exposures (
+                event_id TEXT PRIMARY KEY,
+                char_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                witnesses_json TEXT NOT NULL,
+                at_tick INTEGER NOT NULL CHECK (at_tick >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE INDEX IF NOT EXISTS idx_social_exposures_char_tick
+            ON social_exposures (char_id, at_tick, event_id);
+            CREATE TABLE IF NOT EXISTS social_renown (
+                char_id TEXT PRIMARY KEY,
+                fame INTEGER NOT NULL,
+                notoriety INTEGER NOT NULL,
+                tags_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE IF NOT EXISTS social_spirit_niches (
+                owner TEXT PRIMARY KEY,
+                pos_x INTEGER NOT NULL,
+                pos_y INTEGER NOT NULL,
+                pos_z INTEGER NOT NULL,
+                placed_at_tick INTEGER NOT NULL CHECK (placed_at_tick >= 0),
+                revealed INTEGER NOT NULL CHECK (revealed IN (0, 1)),
+                revealed_by TEXT,
+                defense_mode TEXT,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 14;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -4490,6 +4598,24 @@ mod persistence_tests {
             .optional()
             .expect("sqlite_master player_core query should succeed");
         assert_eq!(player_core_exists.as_deref(), Some("player_core"));
+
+        for table in [
+            "social_anonymity",
+            "social_relationships",
+            "social_exposures",
+            "social_renown",
+            "social_spirit_niches",
+        ] {
+            let exists: Option<String> = connection
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("sqlite_master social table query should succeed");
+            assert_eq!(exists.as_deref(), Some(table), "{table} should exist");
+        }
     }
 
     #[test]

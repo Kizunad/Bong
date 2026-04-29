@@ -26,6 +26,7 @@ mod preview;
 #[allow(dead_code)]
 mod schema;
 mod skin;
+mod social;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
 #[allow(dead_code)]
@@ -89,6 +90,7 @@ fn run_server() {
     alchemy::register(&mut app);
     audio::register(&mut app);
     combat::register(&mut app);
+    social::register(&mut app);
     forge::register(&mut app);
     lingtian::register(&mut app);
     mineral::register(&mut app);

@@ -1,0 +1,107 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "renown",
+    "relationships",
+    "exposed_to_count"
+  ],
+  "properties": {
+    "renown": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "fame",
+        "notoriety",
+        "top_tags"
+      ],
+      "properties": {
+        "fame": {
+          "type": "integer"
+        },
+        "notoriety": {
+          "type": "integer"
+        },
+        "top_tags": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "tag",
+              "weight",
+              "last_seen_tick",
+              "permanent"
+            ],
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "weight": {
+                "type": "number"
+              },
+              "last_seen_tick": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "permanent": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "peer",
+          "since_tick",
+          "metadata"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "master",
+                "type": "string"
+              },
+              {
+                "const": "disciple",
+                "type": "string"
+              },
+              {
+                "const": "companion",
+                "type": "string"
+              },
+              {
+                "const": "pact",
+                "type": "string"
+              },
+              {
+                "const": "feud",
+                "type": "string"
+              }
+            ]
+          },
+          "peer": {
+            "type": "string"
+          },
+          "since_tick": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "metadata": {}
+        }
+      }
+    },
+    "exposed_to_count": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

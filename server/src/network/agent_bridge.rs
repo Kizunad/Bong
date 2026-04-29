@@ -95,6 +95,12 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::ForgeOutcome => "forge_outcome",
         ServerDataType::ForgeBlueprintBook => "forge_blueprint_book",
         ServerDataType::BurstMeridianEvent => "burst_meridian_event",
+        ServerDataType::SocialAnonymity => "social_anonymity",
+        ServerDataType::SocialExposure => "social_exposure",
+        ServerDataType::SocialPact => "social_pact",
+        ServerDataType::SocialFeud => "social_feud",
+        ServerDataType::SocialRenownDelta => "social_renown_delta",
+        ServerDataType::SparringInvite => "sparring_invite",
     }
 }
 

@@ -683,6 +683,7 @@ where
                 recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
                 cultivation: None,
                 life_record: None,
+                social: None,
             }
         })
         .collect::<Vec<_>>();
@@ -834,6 +835,7 @@ fn collect_player_snapshots(
                 recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
                 cultivation,
                 life_record,
+                social: None,
             }
         })
         .collect::<Vec<_>>();

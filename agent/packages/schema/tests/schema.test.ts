@@ -27,6 +27,7 @@ import {
   NEWBIE_POWER_THRESHOLD,
   SPIRIT_QI_TOTAL,
 } from "../src/common.js";
+import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
 import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import {
@@ -51,6 +52,12 @@ import {
   SkillScrollUsedPayloadV1,
   SkillXpGainPayloadV1,
 } from "../src/skill.js";
+import {
+  SocialExposureEventV1,
+  SocialFeudEventV1,
+  SocialPactEventV1,
+  SocialRenownDeltaV1,
+} from "../src/social.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
 import {
@@ -87,6 +94,15 @@ type ContractValidation = (data: unknown) => { ok: boolean; errors: string[] };
 // ─── Sample validation ─────────────────────────────────
 
 describe("sample files pass schema validation", () => {
+  it("declares social Redis channels", () => {
+    expect(CHANNELS.SOCIAL_EXPOSURE).toBe("bong:social/exposure");
+    expect(CHANNELS.SOCIAL_PACT).toBe("bong:social/pact");
+    expect(CHANNELS.SOCIAL_FEUD).toBe("bong:social/feud");
+    expect(CHANNELS.SOCIAL_RENOWN_DELTA).toBe("bong:social/renown_delta");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_EXPOSURE);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.SOCIAL_RENOWN_DELTA);
+  });
+
   it("world-state.sample.json", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
@@ -332,6 +348,21 @@ describe("sample files pass schema validation", () => {
     });
   }
 
+  for (const sample of [
+    "server-data.social-anonymity.sample.json",
+    "server-data.social-exposure.sample.json",
+    "server-data.social-pact.sample.json",
+    "server-data.social-feud.sample.json",
+    "server-data.social-renown-delta.sample.json",
+    "server-data.sparring-invite.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
   it("server-data.skillbar-config.sample.json", () => {
     const data = loadSample("server-data.skillbar-config.sample.json");
     const result = validate(ServerDataV1, data);
@@ -543,6 +574,21 @@ describe("sample files pass schema validation", () => {
     const result = validate(AudioEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
+
+  it("social redis event samples", () => {
+    expect(
+      validate(SocialExposureEventV1, loadSample("social-exposure-event.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(SocialPactEventV1, loadSample("social-pact-event.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(SocialFeudEventV1, loadSample("social-feud-event.sample.json")).ok,
+    ).toBe(true);
+    expect(
+      validate(SocialRenownDeltaV1, loadSample("social-renown-delta.sample.json")).ok,
+    ).toBe(true);
+  });
 });
 
 // plan-skill-v1 §8 IPC schema — 4 份 sample 均为"多案例数组"，每条都要过 validate。
@@ -626,6 +672,13 @@ describe("negative sample files fail schema validation", () => {
   it("rejects invalid burst meridian event", () => {
     const data = loadObjectSample("server-data.burst-meridian-event.sample.json");
     data.overload_ratio = -1;
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects nested social event version inside server_data payload", () => {
+    const data = loadObjectSample("server-data.social-exposure.sample.json");
+    data.event_v = 1;
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });
@@ -736,6 +789,20 @@ describe("schema rejects invalid data", () => {
 
     expectContractAccepts(
       "WorldStateV1 life record skill milestone snapshots",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
+  it("accepts social snapshots in world state", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const firstPlayer = (data.players as Array<Record<string, unknown>>)[0];
+    const social = firstPlayer.social as Record<string, unknown>;
+    expect((social.renown as Record<string, unknown>).fame).toBe(2);
+    expect(Array.isArray(social.relationships)).toBe(true);
+
+    expectContractAccepts(
+      "WorldStateV1 player social snapshot",
       validateWorldStateV1Contract,
       data,
     );

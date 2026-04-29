@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "kind",
+    "peer",
+    "since_tick",
+    "metadata"
+  ],
+  "properties": {
+    "kind": {
+      "anyOf": [
+        {
+          "const": "master",
+          "type": "string"
+        },
+        {
+          "const": "disciple",
+          "type": "string"
+        },
+        {
+          "const": "companion",
+          "type": "string"
+        },
+        {
+          "const": "pact",
+          "type": "string"
+        },
+        {
+          "const": "feud",
+          "type": "string"
+        }
+      ]
+    },
+    "peer": {
+      "type": "string"
+    },
+    "since_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "metadata": {}
+  }
+}
