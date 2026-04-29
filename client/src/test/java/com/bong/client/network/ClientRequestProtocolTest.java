@@ -285,6 +285,24 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesHeartDemonDecisionChosen() {
+        String json = ClientRequestProtocol.encodeHeartDemonDecision(2);
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":2}",
+            json
+        );
+    }
+
+    @Test
+    void encodesHeartDemonDecisionTimeoutAsNull() {
+        String json = ClientRequestProtocol.encodeHeartDemonDecision(null);
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":null}",
+            json
+        );
+    }
+
+    @Test
     void toMeridianIdMapsSampleChannels() {
         assertEquals(ClientRequestProtocol.MeridianId.Heart,
             ClientRequestProtocol.toMeridianId(com.bong.client.inventory.model.MeridianChannel.HT));

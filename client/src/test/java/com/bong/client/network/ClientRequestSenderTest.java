@@ -192,6 +192,24 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendHeartDemonDecisionUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendHeartDemonDecision(1);
+        ClientRequestSender.sendHeartDemonDecision(null);
+
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":1}",
+            sent.get(0).body()
+        );
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":null}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
     void sendSkillBarRequestsUseCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendSkillBarCast(0);

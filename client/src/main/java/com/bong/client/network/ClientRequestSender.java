@@ -59,6 +59,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeAbortTribulationRequest());
     }
 
+    public static void sendHeartDemonDecision(Integer chosenIdx) {
+        dispatch(ClientRequestProtocol.encodeHeartDemonDecision(chosenIdx));
+    }
+
     /** 顿悟决定：{@code chosenIdx = null} 表示拒绝或超时。 */
     public static void sendInsightDecision(String triggerId, Integer chosenIdx) {
         dispatch(ClientRequestProtocol.encodeInsightDecision(triggerId, chosenIdx));
