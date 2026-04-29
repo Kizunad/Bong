@@ -4058,6 +4058,52 @@ cols = 4
     }
 
     #[test]
+    fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
+        let mut left = make_test_inventory_with_one_item();
+        let mut right = make_test_inventory_with_one_item();
+        right.revision = InventoryRevision(3);
+        right.containers[0].items[0].row = 1;
+        right.containers[0].items[0].col = 1;
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.display_name = "右物".to_string();
+
+        let outcome = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect("exchange should succeed");
+
+        assert_eq!(outcome.left_revision, InventoryRevision(8));
+        assert_eq!(outcome.right_revision, InventoryRevision(4));
+        assert!(inventory_item_by_instance(&left, 42).is_none());
+        assert!(inventory_item_by_instance(&right, 99).is_none());
+        assert!(inventory_item_by_instance(&left, 99).is_some());
+        assert!(inventory_item_by_instance(&right, 42).is_some());
+    }
+
+    #[test]
+    fn exchange_inventory_items_rejects_without_room_and_keeps_both_unchanged() {
+        let mut left = make_test_inventory_with_one_item();
+        left.containers.truncate(1);
+        left.containers[0].cols = 1;
+        left.containers[0].rows = 1;
+        let original_left = left.clone();
+        let mut right = make_test_inventory_with_one_item();
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.grid_w = 2;
+        right.containers[0].items[0].instance.grid_h = 1;
+        let original_right = right.clone();
+
+        let error = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect_err("oversized incoming item should be rejected");
+
+        assert!(error.contains("left inventory has no room"));
+        assert_eq!(left.revision, original_left.revision);
+        assert_eq!(left.containers, original_left.containers);
+        assert_eq!(left.hotbar, original_left.hotbar);
+        assert_eq!(right.revision, original_right.revision);
+        assert_eq!(right.containers, original_right.containers);
+        assert_eq!(right.hotbar, original_right.hotbar);
+    }
+
+    #[test]
     fn select_drop_instance_ids_is_seed_stable() {
         let ids = vec![1, 2, 3, 4, 5, 6];
         let left = select_drop_instance_ids(ids.clone(), 3, 12345);

@@ -60,6 +60,7 @@ public final class TradeOfferScreenBootstrap {
         }
         if (!(current instanceof TradeOfferScreen screen)
             || !screen.offerIdForTests().equals(offer.offerId())) {
+            if (current != null && !(current instanceof TradeOfferScreen)) return;
             client.setScreen(new TradeOfferScreen(offer));
         }
     }

@@ -61,6 +61,7 @@ impl Renown {
 
     fn upsert_tag(&mut self, tag: RenownTagV1) {
         if let Some(existing) = self.tags.iter_mut().find(|entry| entry.tag == tag.tag) {
+            // Keep a fresh positive report from being dampened by historical negative weight.
             existing.weight = (existing.weight + tag.weight).max(tag.weight);
             existing.last_seen_tick = existing.last_seen_tick.max(tag.last_seen_tick);
             existing.permanent |= tag.permanent;

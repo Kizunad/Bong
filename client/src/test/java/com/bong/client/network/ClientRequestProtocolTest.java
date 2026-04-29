@@ -205,7 +205,7 @@ public class ClientRequestProtocolTest {
             ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", true, 2002L)
         );
         assertEquals(
-            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":false,\"requested_instance_id\":null}",
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":false}",
             ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", false, null)
         );
     }

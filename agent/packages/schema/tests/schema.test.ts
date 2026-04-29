@@ -498,6 +498,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("client-request.trade-offer-response.sample.json", () => {
+    const data = loadSample("client-request.trade-offer-response.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("combat-event.realtime.sample.json", () => {
     const data = loadSample("combat-event.realtime.sample.json");
     const result = validate(CombatRealtimeEventV1, data);
@@ -686,6 +692,12 @@ describe("negative sample files fail schema validation", () => {
 
   it("client-request.forge-station-place.invalid-missing-tier.sample.json", () => {
     const data = loadSample("client-request.forge-station-place.invalid-missing-tier.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("client-request.trade-offer-response.invalid-null-instance.sample.json", () => {
+    const data = loadSample("client-request.trade-offer-response.invalid-null-instance.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok).toBe(false);
   });

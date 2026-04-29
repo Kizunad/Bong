@@ -1,7 +1,7 @@
 {
   "v": 1,
   "type": "trade_offer",
-  "offer_id": "trade:char:alice:char:bob:1001:42",
+  "offer_id": "trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70",
   "initiator": "char:alice",
   "target": "char:bob",
   "offered_item": {

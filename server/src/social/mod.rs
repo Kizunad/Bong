@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
+use uuid::Uuid;
 use valence::message::SendMessage;
 use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
@@ -666,7 +667,7 @@ fn dispatch_sparring_invites(
         let (Some((initiator, initiator_realm)), Some(target)) = (initiator_row, target_row) else {
             continue;
         };
-        let invite_id = format!("sparring:{}:{}:{}", invite.tick, initiator, target);
+        let invite_id = format!("sparring:{}", Uuid::now_v7());
         let payload = ServerDataV1::new(ServerDataPayloadV1::SparringInvite(
             SparringInvitePayloadV1 {
                 invite_id: invite_id.clone(),
@@ -819,13 +820,10 @@ fn dispatch_trade_offers(
         if requested_items.is_empty() {
             continue;
         }
-        let offer_id = format!(
-            "trade:{}:{}:{}:{}",
-            initiator_lifecycle.character_id,
-            target_lifecycle.character_id,
-            request.offered_instance_id,
-            request.tick
-        );
+        registry.pending.retain(|_, pending| {
+            pending.initiator != request.initiator && pending.target != request.target
+        });
+        let offer_id = format!("trade:{}", Uuid::now_v7());
         let pending = PendingTradeOffer {
             initiator: request.initiator,
             target: request.target,
@@ -884,6 +882,9 @@ fn handle_trade_offer_responses(
             continue;
         };
         if response.tick > pending.expires_at_tick {
+            if let Ok((_, mut client)) = clients.get_mut(response.player) {
+                client.send_chat_message("交易邀请已过期");
+            }
             continue;
         }
 
@@ -1354,6 +1355,17 @@ fn handle_spirit_niche_place_requests(
             );
             continue;
         }
+        if registry
+            .active_niches()
+            .any(|niche| niche.owner != lifecycle.character_id && niche.pos == event.pos)
+        {
+            tracing::warn!(
+                "[bong][social] spirit niche place rejected for `{}`: target {:?} already occupied",
+                lifecycle.character_id,
+                event.pos
+            );
+            continue;
+        }
         if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
             tracing::warn!(
                 "[bong][social] spirit niche place rejected for `{}`: consume failed: {error}",
@@ -1475,7 +1487,7 @@ fn detect_spirit_niche_break_attempts(
 
 fn handle_spirit_niche_coordinate_reveals(
     mut events: EventReader<SpiritNicheCoordinateRevealRequest>,
-    observers: Query<&Lifecycle, With<Client>>,
+    observers: Query<(&Lifecycle, &Position), With<Client>>,
     registry: Option<Res<SpiritNicheRegistry>>,
     mut reveals: EventWriter<SpiritNicheRevealRequest>,
 ) {
@@ -1483,9 +1495,14 @@ fn handle_spirit_niche_coordinate_reveals(
         return;
     };
     for event in events.read() {
-        let Ok(observer) = observers.get(event.observer) else {
+        let Ok((observer, observer_pos)) = observers.get(event.observer) else {
             continue;
         };
+        if observer.state == LifecycleState::Terminated
+            || !niche_place_target_is_close(observer_pos, event.pos)
+        {
+            continue;
+        }
         let Some(niche) = registry
             .active_niches()
             .find(|niche| niche.pos == event.pos && niche.owner != observer.character_id)
@@ -2623,6 +2640,29 @@ mod tests {
         }
     }
 
+    fn trade_test_item(instance_id: u64, name: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: format!("trade_item_{instance_id}"),
+            display_name: name.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -2642,6 +2682,61 @@ mod tests {
             bone_coins: 0,
             max_weight: 45.0,
         }
+    }
+
+    fn empty_trade_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        }
+    }
+
+    fn trade_inventory(instance_id: u64, name: &str) -> PlayerInventory {
+        inventory_with_item(trade_test_item(instance_id, name))
+    }
+
+    fn spawn_trade_player(app: &mut App, name: &str, character_id: &str, x: f64) -> Entity {
+        let (mut bundle, _helper) = create_mock_client(name);
+        bundle.player.position = Position::new([x, 64.0, 0.0]);
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: character_id.to_string(),
+                ..Default::default()
+            },
+            trade_inventory(if x == 0.0 { 1001 } else { 2002 }, name),
+            PlayerState::default(),
+            Cultivation::default(),
+            LifeRecord::new(character_id),
+        ));
+        entity
+    }
+
+    fn setup_trade_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<TradeOfferRegistry>();
+        app.add_event::<TradeOfferRequest>();
+        app.add_event::<TradeOfferResponseEvent>();
+        app.add_event::<SocialExposureEvent>();
+        app.add_systems(
+            Update,
+            (
+                dispatch_trade_offers,
+                handle_trade_offer_responses.after(dispatch_trade_offers),
+                apply_social_exposures.after(handle_trade_offer_responses),
+            ),
+        );
+        app
     }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
@@ -3013,10 +3108,9 @@ mod tests {
         assert_eq!(payloads[0].payload_type(), ServerDataType::SparringInvite);
         match &payloads[0].payload {
             ServerDataPayloadV1::SparringInvite(invite) => {
-                assert_eq!(
-                    invite.invite_id,
-                    "sparring:84000:char:initiator:char:target"
-                );
+                assert!(invite.invite_id.starts_with("sparring:"));
+                assert!(!invite.invite_id.contains("char:initiator"));
+                assert!(!invite.invite_id.contains("char:target"));
                 assert_eq!(invite.initiator, "char:initiator");
                 assert_eq!(invite.target, "char:target");
                 assert_eq!(invite.realm_band, "condense_solidify");
@@ -3064,10 +3158,18 @@ mod tests {
             tick: 100,
         });
         app.update();
+        let invite_id = app
+            .world()
+            .resource::<SparringInviteRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("sparring invite should be pending")
+            .clone();
 
         app.world_mut().send_event(SparringInviteResponseEvent {
             player: target,
-            invite_id: "sparring:100:char:initiator:char:target".to_string(),
+            invite_id,
             kind: SparringInviteResponseKind::Accept,
             tick: 110,
         });
@@ -3081,6 +3183,359 @@ mod tests {
         assert_eq!(initiator_state.partner, target);
         assert_eq!(target_state.partner, initiator);
         assert_eq!(initiator_state.invite_id, target_state.invite_id);
+    }
+
+    #[test]
+    fn trade_offer_dispatches_payload_only_to_target_and_hides_ids() {
+        let mut app = App::new();
+        app.init_resource::<TradeOfferRegistry>();
+        app.add_event::<TradeOfferRequest>();
+        app.add_systems(Update, dispatch_trade_offers);
+        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(1001, "出物"),
+        ));
+        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut().entity_mut(target).insert((
+            Lifecycle {
+                character_id: "char:target".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(2002, "回物"),
+        ));
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(collect_server_data_payloads(&mut initiator_helper).is_empty());
+        let payloads = collect_server_data_payloads(&mut target_helper);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].payload_type(), ServerDataType::TradeOffer);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::TradeOffer(offer) => {
+                assert!(offer.offer_id.starts_with("trade:"));
+                assert!(!offer.offer_id.contains("char:initiator"));
+                assert!(!offer.offer_id.contains("char:target"));
+                assert_eq!(offer.initiator, "char:initiator");
+                assert_eq!(offer.target, "char:target");
+                assert_eq!(offer.offered_item.instance_id, 1001);
+                assert_eq!(offer.requested_items[0].instance_id, 2002);
+            }
+            other => panic!("expected trade offer payload, got {other:?}"),
+        }
+        assert_eq!(
+            app.world().resource::<TradeOfferRegistry>().pending.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn trade_offer_dispatch_rejects_invalid_requests() {
+        let cases = [
+            "self_trade",
+            "far_target",
+            "terminated_initiator",
+            "missing_offered_item",
+            "empty_target_inventory",
+        ];
+        for case in cases {
+            let mut app = App::new();
+            app.init_resource::<TradeOfferRegistry>();
+            app.add_event::<TradeOfferRequest>();
+            app.add_systems(Update, dispatch_trade_offers);
+            let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+            initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+            let initiator = app.world_mut().spawn(initiator_bundle).id();
+            app.world_mut().entity_mut(initiator).insert((
+                Lifecycle {
+                    character_id: "char:initiator".to_string(),
+                    state: if case == "terminated_initiator" {
+                        LifecycleState::Terminated
+                    } else {
+                        LifecycleState::Alive
+                    },
+                    ..Default::default()
+                },
+                trade_inventory(1001, "出物"),
+            ));
+            let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+            target_bundle.player.position = Position::new(if case == "far_target" {
+                [80.0, 64.0, 0.0]
+            } else {
+                [10.0, 64.0, 0.0]
+            });
+            let target = app.world_mut().spawn(target_bundle).id();
+            app.world_mut().entity_mut(target).insert((
+                Lifecycle {
+                    character_id: "char:target".to_string(),
+                    ..Default::default()
+                },
+                if case == "empty_target_inventory" {
+                    empty_trade_inventory()
+                } else {
+                    trade_inventory(2002, "回物")
+                },
+            ));
+
+            app.world_mut().send_event(TradeOfferRequest {
+                initiator,
+                target: if case == "self_trade" {
+                    initiator
+                } else {
+                    target
+                },
+                offered_instance_id: if case == "missing_offered_item" {
+                    9999
+                } else {
+                    1001
+                },
+                tick: 42,
+            });
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            assert!(collect_server_data_payloads(&mut initiator_helper).is_empty());
+            assert!(collect_server_data_payloads(&mut target_helper).is_empty());
+            assert!(app
+                .world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn trade_acceptance_exchanges_items_records_life_and_exposure() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert!(inventory_item_by_instance(initiator_inventory, 1001).is_none());
+        assert!(inventory_item_by_instance(target_inventory, 2002).is_none());
+        assert!(inventory_item_by_instance(initiator_inventory, 2002).is_some());
+        assert!(inventory_item_by_instance(target_inventory, 1001).is_some());
+        assert_eq!(initiator_inventory.revision, InventoryRevision(1));
+        assert_eq!(target_inventory.revision, InventoryRevision(1));
+
+        let initiator_life = app.world().get::<LifeRecord>(initiator).unwrap();
+        let target_life = app.world().get::<LifeRecord>(target).unwrap();
+        match initiator_life.biography.as_slice() {
+            [BiographyEntry::TradeCompleted {
+                counterparty_id,
+                offered_item,
+                received_item,
+                tick,
+            }] => {
+                assert_eq!(counterparty_id, "char:target");
+                assert_eq!(offered_item, "Initiator");
+                assert_eq!(received_item, "Target");
+                assert_eq!(*tick, 50);
+            }
+            other => panic!("expected initiator trade biography, got {other:?}"),
+        }
+        match target_life.biography.as_slice() {
+            [BiographyEntry::TradeCompleted {
+                counterparty_id,
+                offered_item,
+                received_item,
+                tick,
+            }] => {
+                assert_eq!(counterparty_id, "char:initiator");
+                assert_eq!(offered_item, "Target");
+                assert_eq!(received_item, "Initiator");
+                assert_eq!(*tick, 50);
+            }
+            other => panic!("expected target trade biography, got {other:?}"),
+        }
+
+        let events = app.world().resource::<Events<SocialExposureEvent>>();
+        let mut reader = events.get_reader();
+        let collected = reader.read(events).cloned().collect::<Vec<_>>();
+        assert_eq!(collected.len(), 2);
+        assert!(collected.iter().any(|event| {
+            event.actor == "char:initiator"
+                && event.kind == ExposureKindV1::Trade
+                && event.witnesses == vec!["char:target"]
+        }));
+        assert!(collected.iter().any(|event| {
+            event.actor == "char:target"
+                && event.kind == ExposureKindV1::Trade
+                && event.witnesses == vec!["char:initiator"]
+        }));
+        assert!(app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .is_empty());
+    }
+
+    #[test]
+    fn trade_response_rejects_terminal_expired_or_missing_items() {
+        let cases = [
+            "declined",
+            "missing_response_item",
+            "expired",
+            "terminated_target",
+            "far_at_response",
+            "offered_item_removed",
+            "requested_item_removed",
+        ];
+        for case in cases {
+            let mut app = setup_trade_app();
+            let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+            let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+            app.world_mut().send_event(TradeOfferRequest {
+                initiator,
+                target,
+                offered_instance_id: 1001,
+                tick: 42,
+            });
+            app.update();
+            let offer_id = app
+                .world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .keys()
+                .next()
+                .expect("trade offer should be pending")
+                .clone();
+
+            match case {
+                "terminated_target" => {
+                    app.world_mut().get_mut::<Lifecycle>(target).unwrap().state =
+                        LifecycleState::Terminated;
+                }
+                "far_at_response" => {
+                    *app.world_mut().get_mut::<Position>(target).unwrap() =
+                        Position::new([80.0, 64.0, 0.0]);
+                }
+                "offered_item_removed" => {
+                    app.world_mut()
+                        .get_mut::<PlayerInventory>(initiator)
+                        .unwrap()
+                        .containers[0]
+                        .items
+                        .clear();
+                }
+                "requested_item_removed" => {
+                    app.world_mut()
+                        .get_mut::<PlayerInventory>(target)
+                        .unwrap()
+                        .containers[0]
+                        .items
+                        .clear();
+                }
+                _ => {}
+            }
+
+            app.world_mut().send_event(TradeOfferResponseEvent {
+                player: target,
+                offer_id,
+                accepted: case != "declined",
+                requested_instance_id: if case == "missing_response_item" {
+                    None
+                } else {
+                    Some(2002)
+                },
+                tick: if case == "expired" {
+                    42 + TRADE_OFFER_TIMEOUT_TICKS + 1
+                } else {
+                    50
+                },
+            });
+            app.update();
+
+            let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+            let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+            assert!(inventory_item_by_instance(initiator_inventory, 2002).is_none());
+            assert!(inventory_item_by_instance(target_inventory, 1001).is_none());
+            assert!(app
+                .world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn expire_trade_offers_garbage_collects_timed_out_pending_offers() {
+        let mut app = App::new();
+        let initiator = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn_empty().id();
+        let mut registry = TradeOfferRegistry::default();
+        registry.pending.insert(
+            "trade:old".to_string(),
+            PendingTradeOffer {
+                initiator,
+                target,
+                initiator_char_id: "char:initiator".to_string(),
+                target_char_id: "char:target".to_string(),
+                offered_instance_id: 1001,
+                offered_item: trade_item_summary(&trade_test_item(1001, "出物")),
+                expires_at_tick: 10,
+            },
+        );
+        registry.pending.insert(
+            "trade:fresh".to_string(),
+            PendingTradeOffer {
+                initiator,
+                target,
+                initiator_char_id: "char:initiator".to_string(),
+                target_char_id: "char:target".to_string(),
+                offered_instance_id: 1001,
+                offered_item: trade_item_summary(&trade_test_item(1001, "出物")),
+                expires_at_tick: 30,
+            },
+        );
+        app.insert_resource(registry);
+        app.insert_resource(CombatClock { tick: 20 });
+        app.add_systems(Update, expire_trade_offers);
+
+        app.update();
+
+        let registry = app.world().resource::<TradeOfferRegistry>();
+        assert!(!registry.pending.contains_key("trade:old"));
+        assert!(registry.pending.contains_key("trade:fresh"));
     }
 
     #[test]
@@ -3466,6 +3921,50 @@ mod tests {
     }
 
     #[test]
+    fn spirit_niche_place_rejects_occupied_active_coordinates() {
+        let mut app = App::new();
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(SpiritNiche {
+            owner: "char:owner".to_string(),
+            pos: [11, 64, 10],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            defense_mode: None,
+        });
+        app.insert_resource(registry);
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(4242)),
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(inventory_item_by_instance(inventory, 4242).is_some());
+        let registry = app.world().resource::<SpiritNicheRegistry>();
+        assert_eq!(registry.active_niches().count(), 1);
+    }
+
+    #[test]
     fn spirit_niche_break_attempt_reveals_and_disables_anchor() {
         let (persistence, data_dir) = social_persistence("spirit-niche-reveal");
         let mut app = App::new();
@@ -3507,7 +4006,8 @@ mod tests {
                 defense_mode: None,
             },
         ));
-        let (observer_bundle, _observer_helper) = create_mock_client("Observer");
+        let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
+        observer_bundle.player.position = Position::new([20.0, 64.0, 20.0]);
         let observer = app.world_mut().spawn(observer_bundle).id();
         app.world_mut().entity_mut(observer).insert(Lifecycle {
             character_id: "char:observer".to_string(),
@@ -3559,7 +4059,8 @@ mod tests {
         app.add_event::<SpiritNicheRevealRequest>();
         app.add_systems(Update, handle_spirit_niche_coordinate_reveals);
 
-        let (observer_bundle, _observer_helper) = create_mock_client("Observer");
+        let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
+        observer_bundle.player.position = Position::new([20.0, 64.0, 20.0]);
         let observer = app.world_mut().spawn(observer_bundle).id();
         app.world_mut().entity_mut(observer).insert(Lifecycle {
             character_id: "char:observer".to_string(),
@@ -3591,5 +4092,45 @@ mod tests {
         assert_eq!(collected[0].owner, "char:owner");
         assert_eq!(collected[0].source, SpiritNicheRevealSource::Gaze);
         assert_eq!(collected[0].tick, 99);
+    }
+
+    #[test]
+    fn spirit_niche_coordinate_reveal_rejects_remote_coordinate_hits() {
+        let mut app = App::new();
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(SpiritNiche {
+            owner: "char:owner".to_string(),
+            pos: [20, 64, 20],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            defense_mode: None,
+        });
+        app.insert_resource(registry);
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<SpiritNicheRevealRequest>();
+        app.add_systems(Update, handle_spirit_niche_coordinate_reveals);
+
+        let (mut observer_bundle, _observer_helper) = create_mock_client("Observer");
+        observer_bundle.player.position = Position::new([80.0, 64.0, 80.0]);
+        let observer = app.world_mut().spawn(observer_bundle).id();
+        app.world_mut().entity_mut(observer).insert(Lifecycle {
+            character_id: "char:observer".to_string(),
+            ..Default::default()
+        });
+        app.world_mut()
+            .send_event(SpiritNicheCoordinateRevealRequest {
+                observer,
+                pos: [20, 64, 20],
+                source: SpiritNicheRevealSource::Gaze,
+                tick: 99,
+            });
+
+        app.update();
+
+        let mut events = app
+            .world_mut()
+            .resource_mut::<Events<SpiritNicheRevealRequest>>();
+        assert!(events.drain().next().is_none());
     }
 }

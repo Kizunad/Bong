@@ -943,7 +943,7 @@ mod tests {
             other => panic!("expected TradeOfferRequest, got {other:?}"),
         }
 
-        let response = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:a:b:1001:20","accepted":true,"requested_instance_id":2002}"#;
+        let response = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":true,"requested_instance_id":2002}"#;
         let req: ClientRequestV1 = serde_json::from_str(response).unwrap();
         match req {
             ClientRequestV1::TradeOfferResponse {
@@ -953,10 +953,20 @@ mod tests {
                 requested_instance_id,
             } => {
                 assert_eq!(v, 1);
-                assert_eq!(offer_id, "trade:a:b:1001:20");
+                assert_eq!(offer_id, "trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70");
                 assert!(accepted);
                 assert_eq!(requested_instance_id, Some(2002));
             }
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+
+        let decline = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":false}"#;
+        let req: ClientRequestV1 = serde_json::from_str(decline).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferResponse {
+                requested_instance_id,
+                ..
+            } => assert_eq!(requested_instance_id, None),
             other => panic!("expected TradeOfferResponse, got {other:?}"),
         }
     }

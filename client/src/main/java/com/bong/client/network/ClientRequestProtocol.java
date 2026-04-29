@@ -389,9 +389,7 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("trade_offer_response");
         obj.addProperty("offer_id", offerId);
         obj.addProperty("accepted", accepted);
-        if (requestedInstanceId == null) {
-            obj.add("requested_instance_id", com.google.gson.JsonNull.INSTANCE);
-        } else {
+        if (requestedInstanceId != null) {
             if (requestedInstanceId < 0) {
                 throw new IllegalArgumentException("requestedInstanceId must be >= 0, got " + requestedInstanceId);
             }

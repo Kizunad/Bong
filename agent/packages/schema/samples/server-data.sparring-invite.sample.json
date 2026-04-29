@@ -1,7 +1,7 @@
 {
   "v": 1,
   "type": "sparring_invite",
-  "invite_id": "sparring:84000:steve:new_player_1",
+  "invite_id": "sparring:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f71",
   "initiator": "char:steve",
   "target": "char:new_player_1",
   "realm_band": "awaken_induce",
