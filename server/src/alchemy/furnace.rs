@@ -106,6 +106,8 @@ pub struct FurnaceRef(pub Entity);
 pub fn furnace_tier_from_item_id(template_id: &str) -> Option<u8> {
     match template_id {
         "furnace_fantie" => Some(1),
+        "furnace_lingtie" => Some(2),
+        "furnace_xitie" => Some(3),
         _ => None,
     }
 }
@@ -177,6 +179,8 @@ mod tests {
     #[test]
     fn furnace_tier_from_item_id_covers_fantie() {
         assert_eq!(furnace_tier_from_item_id("furnace_fantie"), Some(1));
+        assert_eq!(furnace_tier_from_item_id("furnace_lingtie"), Some(2));
+        assert_eq!(furnace_tier_from_item_id("furnace_xitie"), Some(3));
         assert_eq!(furnace_tier_from_item_id("hoe_iron"), None);
         assert_eq!(furnace_tier_from_item_id(""), None);
     }

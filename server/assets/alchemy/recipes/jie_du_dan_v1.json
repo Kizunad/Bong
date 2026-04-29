@@ -1,0 +1,32 @@
+{
+  "id": "jie_du_dan_v1",
+  "name": "解毒丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "ci_she_hao", "count": 2 },
+      { "material": "dan_sha_aux", "count": 1, "mineral_id": "dan_sha" }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.42,
+    "target_duration_ticks": 120,
+    "qi_cost": 10.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "jie_du_dan", "quality": 1.0, "toxin_amount": -0.70, "toxin_color": "Mellow" },
+    "good": { "pill": "jie_du_dan", "quality": 0.7, "toxin_amount": -0.45, "toxin_color": "Mellow" },
+    "flawed": { "pill": "jie_du_dan_flawed", "quality": 0.4, "toxin_amount": -0.20, "toxin_color": "Sharp" },
+    "waste": null,
+    "explode": { "damage": 10.0, "meridian_crack": 0.05 }
+  },
+  "flawed_fallback": {
+    "pill": "jie_du_dan_flawed",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.2,
+    "side_effect_pool": [
+      { "tag": "sharp_toxin_rebound", "duration_s": 30, "weight": 1 }
+    ]
+  }
+}
