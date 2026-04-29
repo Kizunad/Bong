@@ -1170,6 +1170,38 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
+                  "TribulationIntercepted"
+                ],
+                "properties": {
+                  "TribulationIntercepted": {
+                    "type": "object",
+                    "required": [
+                      "victim_id",
+                      "tick"
+                    ],
+                    "properties": {
+                      "victim_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "tag": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
                   "TribulationFled"
                 ],
                 "properties": {

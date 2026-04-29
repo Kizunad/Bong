@@ -151,6 +151,17 @@ const TribulationFled = Type.Object(
   { additionalProperties: false },
 );
 
+const TribulationIntercepted = Type.Object(
+  {
+    TribulationIntercepted: Type.Object({
+      victim_id: Type.String({ minLength: 1, maxLength: 128 }),
+      tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 export const HeartDemonOutcomeV1 = Type.Union([
   Type.Literal("steadfast"),
   Type.Literal("obsession"),
@@ -185,6 +196,7 @@ export const BiographyEntryV1 = Type.Union([
   LifespanExtended,
   DuoShePerformed,
   PossessedBy,
+  TribulationIntercepted,
   TribulationFled,
   HeartDemonRecord,
 ]);

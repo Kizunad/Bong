@@ -10,6 +10,7 @@ import {
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
+import { validateBiographyEntryV1Contract } from "../src/biography.js";
 import {
   AgingEventV1,
   DeceasedIndexEntryV1,
@@ -678,6 +679,30 @@ describe("schema rejects invalid data", () => {
       "WorldStateV1 life record skill milestone snapshots",
       validateWorldStateV1Contract,
       data,
+    );
+  });
+
+  it("accepts tribulation interception biography tags", () => {
+    expectContractAccepts(
+      "BiographyEntryV1 TribulationIntercepted tag",
+      validateBiographyEntryV1Contract,
+      {
+        TribulationIntercepted: {
+          victim_id: "offline:Victim",
+          tag: "戮道者 · 截劫",
+          tick: 120,
+        },
+      },
+    );
+    expectContractAccepts(
+      "BiographyEntryV1 legacy TribulationIntercepted without tag",
+      validateBiographyEntryV1Contract,
+      {
+        TribulationIntercepted: {
+          victim_id: "offline:Victim",
+          tick: 120,
+        },
+      },
     );
   });
 
