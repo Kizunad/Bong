@@ -230,6 +230,7 @@ public class BongAnimationPlayer {
 | `bong:palm_thrust` | 12t | 推掌（带气劲） | 1000 |
 | `bong:guard_raise` | 4t | 举手格挡 | 1000 |
 | `bong:dodge_back` | 8t | 后跃闪避 | 1000 |
+| `bong:beng_quan` | 8t | 爆脉流崩拳（收肘蓄力 + 零距前冲贯拳） | 1000 |
 | `bong:hit_recoil` | 6t | 受击退缩 | 2000 |
 
 ### 5.2 修仙姿态类
@@ -255,7 +256,7 @@ public class BongAnimationPlayer {
 
 ### 5.4 资源量预估
 
-约 20 个动画 × 平均 2 行 keyframe = **总 keyframe 数 < 100**。LLM 生成 JSON 一次性出货，**1 天可完成全部首批**。
+约 21 个动画（首批 20 + beng_quan 增量）× 平均 2 行 keyframe = **总 keyframe 数 < 110**。LLM 生成 JSON 一次性出货，**1 天可完成全部首批**。
 
 ---
 
@@ -280,13 +281,13 @@ public class BongAnimationPlayer {
 - [x] 第二个动画原型：从 JSON 加载（Phase 2 已完成全量迁移——20 个 Phase 1 动画全部入 `assets/bong/player_animation/*.json`，PlayerAnimator resource reload listener 自动加载；`BongAnimationRegistry` 走 JSON-first fallback Java，Java 源现已空）
 - [x] §4.1 协议 schema：`play_anim` / `stop_anim` 加入 VfxEvent TypeBox（2026-04-14 完成：`agent/packages/schema/src/vfx-event.ts` 双 variant Union + `server/src/schema/vfx_event.rs` roundtrip + sample.json 双端对齐；客户端 `VfxEventEnvelope` / `VfxEventRouter` / `ClientAnimationBridge` 解析 `bong:vfx_event` CustomPayload 并派发到 `BongAnimationPlayer`，16 个单测覆盖 play/stop/错误三档；未包含 `speed`，待 KeyframeAnimationPlayer 接 setSpeed API 再扩）
 - [ ] 端到端 demo：服务端发 `play_anim` → 附近玩家看到挥剑（schema + client receiver 已通；服务端 `network/vfx_event_emit.rs` 已实装 `VfxEventRequest::PlayAnim/StopAnim` 派发器与 `/bong-vfx play <anim_id>` 调试命令，按 `VFX_BROADCAST_RADIUS` 距离过滤广播，**手动触发链路已贯通**；剩 combat/cultivation 业务 system → `VfxEventV1::play_anim` 自动映射调用点）
-- [x] §5.1 战斗类 9 个动画批量生产（sword_swing_horiz/vert/stab、fist_punch_left/right、palm_thrust、guard_raise、dodge_back、hit_recoil）
+- [x] §5.1 战斗类 10 个动画批量生产（sword_swing_horiz/vert/stab、fist_punch_left/right、palm_thrust、guard_raise、dodge_back、hit_recoil、beng_quan ← 2026-04-29 增量）
 - [x] §5.2 修仙姿态 6 个动画（meditate_sit、cultivate_stand、levitate、sword_ride、cast_invoke、rune_draw）
 - [x] §5.3 剧情演绎 5 个动画（breakthrough_burst、tribulation_brace、enlightenment_pose、death_collapse、bow_salute）
 - [x] §3.3 多层 priority 叠加测试（行走 + 挥剑同时）—— `BongAnimationPlayerMultiLayerTest` 6 个 case 覆盖：两档同播 / 三档同播（姿态+移动+战斗）/ priority 升序排列 / stop 单条不影响其它 / 同 id 重触发走 replaceAnimationWithFade 不新增层 / stop 不存在 id 不误伤；测试用 `BongAnimationPlayer.playOnStack` seam 绕开 Mixin 依赖
 - [ ] §4.4 动态 JSON 注入原型（天道 Agent 生成）
 
-**Phase 1 资产**（§5.1/§5.2/§5.3 共 20 个）全部落地，见 `BongAnimations.java` v3.4 conventions。本地 `/anim test <id>` 即可单独验证每个。首批视觉验证通过 PunchCombo demo 已验收（见 `docs/player-animation-conventions.md` §7 迭代简史）。
+**Phase 1 资产**（§5.1/§5.2/§5.3 共 21 个 = 首批 20 + 2026-04-29 增量 beng_quan）全部落地，见 `BongAnimations.java` v3.4 conventions。本地 `/anim test <id>` 即可单独验证每个。首批视觉验证通过 PunchCombo demo 已验收（见 `docs/player-animation-conventions.md` §7 迭代简史）。
 
 **§4.1 协议层已通**（2026-04-14）：`bong:vfx_event` CustomPayload 通道双端对齐 + 客户端 `ClientAnimationBridge` 派发到 `BongAnimationPlayer`。下一步瓶颈挪到端到端 demo——服务端 Bevy system 要把战斗/剧情事件翻译成 `VfxEventV1::play_anim` 并按 §4.2 距离过滤广播；schema + client receiver 已经准备好接这个调用点。
 
@@ -335,3 +336,4 @@ public class BongAnimationPlayer {
 ## §11 进度日志
 
 - 2026-04-25：审计代码现状——Phase 1 全部 20 个动画 JSON 已落 `client/src/main/resources/assets/bong/player_animation/`（对应 `client/tools/gen_*.py` 生成器全套齐备）；client 侧 `BongAnimationRegistry/Player/Bridge` + `BongAnimCommand` 已就绪；server 侧 `network/vfx_event_emit.rs` 已实装 PlayAnim/StopAnim 广播器与 `/bong-vfx play` 调试命令，端到端手动链路贯通；剩 combat/cultivation system 自动映射 + §4.4 inline JSON 注入两项未启动。
+- 2026-04-29：战斗资产增量——`beng_quan.json`（爆脉流崩拳，8t，priority 1000）入库，对应 `client/tools/gen_beng_quan.py` 生成器；commit `b0302396` "feat: 落地爆脉崩拳真实结算"。Phase 1 资产数从 20 → 21，§5.1 战斗类 9 → 10。
