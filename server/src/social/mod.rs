@@ -17,24 +17,26 @@ use valence::prelude::{
 };
 
 use self::components::{
-    Anonymity, ExposureEvent, ExposureLog, Relationship, Relationships, Renown, SpiritNiche,
+    Anonymity, ExposureEvent, ExposureLog, FactionMembership, Relationship, Relationships, Renown,
+    SpiritNiche,
 };
 use self::events::{
-    PlayerChatCollected, SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent,
-    SocialRelationshipEvent, SocialRenownDeltaEvent, SparringInviteRequest,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
-    SpiritNicheRevealSource,
+    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, PlayerChatCollected,
+    SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
+    SocialRenownDeltaEvent, SparringInviteRequest, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{send_server_data_payload, RedisBridgeResource};
+use crate::npc::faction::FactionId;
 use crate::persistence::PersistenceSettings;
 use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
@@ -54,6 +56,8 @@ const COMPANION_RADIUS: f64 = 50.0;
 const COMPANION_SCAN_INTERVAL_TICKS: u64 = 20;
 const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
 const COMPANION_EXPIRE_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
+const FACTION_BETRAYAL_BLOCK_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
+const FACTION_PERMANENT_REFUSAL_THRESHOLD: u8 = 3;
 const SPARRING_INVITE_TIMEOUT_MS: u64 = 10_000;
 const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
@@ -61,6 +65,7 @@ const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
 const NAMELESS_LABEL: &str = "无名修士";
 
 type CompanionPairKey = (String, String);
+type FactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
 type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, Option<String>);
 
 #[derive(Debug, Default, Resource)]
@@ -104,6 +109,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SparringInviteRequest>();
+    app.add_event::<FactionMembershipDecisionEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
@@ -130,6 +136,7 @@ pub fn register(app: &mut App) {
             handle_social_mentorships,
             handle_social_pacts,
             dispatch_sparring_invites,
+            apply_faction_membership_decisions,
             apply_social_exposures
                 .after(expose_chat_speakers)
                 .after(handle_social_pacts),
@@ -141,7 +148,8 @@ pub fn register(app: &mut App) {
             expire_companion_relationships.after(apply_social_relationships),
             apply_social_renown_deltas
                 .after(handle_death_social_effects)
-                .after(handle_social_pacts),
+                .after(handle_social_pacts)
+                .after(apply_faction_membership_decisions),
             publish_social_events
                 .after(apply_social_exposures)
                 .after(apply_social_relationships)
@@ -185,10 +193,14 @@ fn attach_social_bundle_to_joined_clients(
             renown,
             relationships,
             exposure_log,
+            faction_membership,
             spirit_niche,
         } = social_state;
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((anonymity, renown, relationships, exposure_log));
+        if let Some(faction_membership) = faction_membership {
+            entity_commands.insert(faction_membership);
+        }
         if let Some(spirit_niche) = spirit_niche {
             entity_commands.insert(spirit_niche);
         }
@@ -721,6 +733,110 @@ fn apply_social_renown_deltas(
     }
 }
 
+fn apply_faction_membership_decisions(
+    persistence: Option<Res<PersistenceSettings>>,
+    mut events: EventReader<FactionMembershipDecisionEvent>,
+    mut commands: Commands,
+    mut players: Query<(
+        Entity,
+        &Lifecycle,
+        Option<&mut FactionMembership>,
+        Option<&mut Karma>,
+    )>,
+    mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
+) {
+    for event in events.read() {
+        let Ok((entity, lifecycle, membership, karma)) = players.get_mut(event.player) else {
+            continue;
+        };
+        if entity != event.player || lifecycle.state == LifecycleState::Terminated {
+            continue;
+        }
+        let mut next_membership = membership
+            .as_deref()
+            .cloned()
+            .or_else(|| {
+                persistence
+                    .as_deref()
+                    .and_then(|persistence| {
+                        load_social_faction_membership_from_persistence(
+                            persistence,
+                            lifecycle.character_id.as_str(),
+                        )
+                        .ok()
+                    })
+                    .flatten()
+            })
+            .unwrap_or(FactionMembership {
+                faction: event.faction,
+                rank: 0,
+                loyalty: 0,
+                betrayal_count: 0,
+                invite_block_until_tick: None,
+                permanently_refused: false,
+            });
+
+        match event.kind {
+            FactionMembershipDecisionKind::AcceptInvite => {
+                if next_membership.permanently_refused
+                    || next_membership
+                        .invite_block_until_tick
+                        .is_some_and(|until| until > event.tick)
+                {
+                    continue;
+                }
+                next_membership.faction = event.faction;
+                next_membership.rank = 0;
+                next_membership.loyalty = next_membership.loyalty.max(10);
+                commands
+                    .entity(event.player)
+                    .insert(next_membership.clone());
+            }
+            FactionMembershipDecisionKind::Resign => {
+                next_membership.faction = event.faction;
+                next_membership.loyalty = next_membership.loyalty.saturating_sub(20);
+                commands.entity(event.player).remove::<FactionMembership>();
+            }
+            FactionMembershipDecisionKind::Expel | FactionMembershipDecisionKind::Betray => {
+                next_membership.faction = event.faction;
+                next_membership.loyalty = 0;
+                next_membership.betrayal_count = next_membership.betrayal_count.saturating_add(1);
+                next_membership.invite_block_until_tick =
+                    Some(event.tick.saturating_add(FACTION_BETRAYAL_BLOCK_TICKS));
+                if next_membership.betrayal_count >= FACTION_PERMANENT_REFUSAL_THRESHOLD {
+                    next_membership.permanently_refused = true;
+                }
+                commands.entity(event.player).remove::<FactionMembership>();
+                if let Some(mut karma) = karma {
+                    karma.weight = (karma.weight + faction_betrayal_karma_delta(&next_membership))
+                        .clamp(-1.0, 1.0);
+                }
+                renown_deltas.send(SocialRenownDeltaEvent {
+                    char_id: lifecycle.character_id.clone(),
+                    fame_delta: 0,
+                    notoriety_delta: 50,
+                    tags_added: faction_betrayal_tags(&next_membership, event.tick),
+                    tick: event.tick,
+                    reason: "faction_betrayal".to_string(),
+                });
+            }
+        }
+
+        if let Some(persistence) = persistence.as_deref() {
+            if let Err(error) = persist_social_faction_membership(
+                persistence,
+                lifecycle.character_id.as_str(),
+                &next_membership,
+            ) {
+                tracing::warn!(
+                    "[bong][social] failed to persist faction membership for `{}`: {error}",
+                    lifecycle.character_id
+                );
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn handle_spirit_niche_place_requests(
     persistence: Option<Res<PersistenceSettings>>,
@@ -1230,6 +1346,7 @@ struct SocialComponentsSnapshot {
     renown: Renown,
     relationships: Relationships,
     exposure_log: ExposureLog,
+    faction_membership: Option<FactionMembership>,
     spirit_niche: Option<SpiritNiche>,
 }
 
@@ -1243,6 +1360,7 @@ fn load_social_components(
         renown: load_social_renown(&connection, char_id)?,
         relationships: load_social_relationships(&connection, char_id)?,
         exposure_log: load_social_exposure_log(&connection, char_id)?,
+        faction_membership: load_social_faction_membership(&connection, char_id)?,
         spirit_niche: load_social_spirit_niche(&connection, char_id)?,
     })
 }
@@ -1307,6 +1425,14 @@ fn load_social_anonymity_from_persistence(
 ) -> io::Result<Anonymity> {
     let connection = open_social_connection(persistence)?;
     load_social_anonymity(&connection, char_id)
+}
+
+fn load_social_faction_membership_from_persistence(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<Option<FactionMembership>> {
+    let connection = open_social_connection(persistence)?;
+    load_social_faction_membership(&connection, char_id)
 }
 
 fn load_social_renown_from_persistence(
@@ -1414,6 +1540,56 @@ fn load_social_exposure_log(connection: &Connection, char_id: &str) -> io::Resul
         exposure_log.0.push(row.map_err(io::Error::other)?);
     }
     Ok(exposure_log)
+}
+
+fn load_social_faction_membership(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Option<FactionMembership>> {
+    let row: Option<FactionMembershipSqlRow> = connection
+        .query_row(
+            "
+            SELECT faction, rank, loyalty, betrayal_count, invite_block_until_tick, permanently_refused
+            FROM social_faction_memberships
+            WHERE char_id = ?1
+            ",
+            params![char_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((
+        faction_label,
+        rank,
+        loyalty,
+        betrayal_count,
+        invite_block_until_tick,
+        permanently_refused,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let faction = faction_label
+        .as_deref()
+        .and_then(FactionId::from_str_name)
+        .unwrap_or(FactionId::Neutral);
+    Ok(Some(FactionMembership {
+        faction,
+        rank: u8::try_from(rank).unwrap_or_default(),
+        loyalty: i32::try_from(loyalty).unwrap_or_default(),
+        betrayal_count: u8::try_from(betrayal_count).unwrap_or_default(),
+        invite_block_until_tick: invite_block_until_tick.and_then(|tick| u64::try_from(tick).ok()),
+        permanently_refused: permanently_refused != 0,
+    }))
 }
 
 fn load_social_spirit_niche(
@@ -1650,6 +1826,52 @@ fn persist_social_renown(
     Ok(())
 }
 
+fn persist_social_faction_membership(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    membership: &FactionMembership,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO social_faction_memberships (
+                char_id, faction, rank, loyalty, betrayal_count, invite_block_until_tick,
+                permanently_refused, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)
+            ON CONFLICT(char_id) DO UPDATE SET
+                faction = excluded.faction,
+                rank = excluded.rank,
+                loyalty = excluded.loyalty,
+                betrayal_count = excluded.betrayal_count,
+                invite_block_until_tick = excluded.invite_block_until_tick,
+                permanently_refused = excluded.permanently_refused,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                char_id,
+                membership.faction.as_str(),
+                i64::from(membership.rank),
+                i64::from(membership.loyalty),
+                i64::from(membership.betrayal_count),
+                membership
+                    .invite_block_until_tick
+                    .map(tick_to_sql)
+                    .transpose()?,
+                if membership.permanently_refused {
+                    1_i64
+                } else {
+                    0_i64
+                },
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn persist_social_spirit_niche(
     persistence: &PersistenceSettings,
     niche: &SpiritNiche,
@@ -1868,6 +2090,32 @@ fn realm_band_label(realm: Realm) -> String {
         Realm::Spirit | Realm::Void => "spirit_void",
     }
     .to_string()
+}
+
+fn faction_betrayal_karma_delta(membership: &FactionMembership) -> f64 {
+    if membership.betrayal_count >= FACTION_PERMANENT_REFUSAL_THRESHOLD {
+        1.0
+    } else {
+        0.5
+    }
+}
+
+fn faction_betrayal_tags(membership: &FactionMembership, tick: u64) -> Vec<RenownTagV1> {
+    let mut tags = vec![RenownTagV1 {
+        tag: "叛门者".to_string(),
+        weight: 50.0,
+        last_seen_tick: tick,
+        permanent: true,
+    }];
+    if membership.betrayal_count >= FACTION_PERMANENT_REFUSAL_THRESHOLD {
+        tags.push(RenownTagV1 {
+            tag: "三叛之人".to_string(),
+            weight: 100.0,
+            last_seen_tick: tick,
+            permanent: true,
+        });
+    }
+    tags
 }
 
 fn current_unix_millis() -> u64 {
@@ -2338,6 +2586,111 @@ mod tests {
             }
             other => panic!("expected sparring invite payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn faction_membership_decisions_apply_cooldown_and_betrayal_tags() {
+        let (persistence, data_dir) = social_persistence("faction-membership");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<FactionMembershipDecisionEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_faction_membership_decisions,
+                apply_social_renown_deltas.after(apply_faction_membership_decisions),
+            ),
+        );
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            Karma::default(),
+        ));
+
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::AcceptInvite,
+            tick: 10,
+        });
+        app.update();
+
+        let membership = app.world().get::<FactionMembership>(player).unwrap();
+        assert_eq!(membership.faction, FactionId::Attack);
+        assert_eq!(membership.rank, 0);
+        assert_eq!(membership.loyalty, 10);
+
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::Resign,
+            tick: 20,
+        });
+        app.update();
+
+        assert!(app.world().get::<FactionMembership>(player).is_none());
+        let loaded = load_social_components(&persistence, "char:azure")
+            .expect("resigned membership should persist");
+        assert_eq!(loaded.faction_membership.unwrap().loyalty, -10);
+        assert_eq!(loaded.renown.notoriety, 0);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(FactionMembership {
+                faction: FactionId::Attack,
+                rank: 0,
+                loyalty: 10,
+                betrayal_count: 0,
+                invite_block_until_tick: None,
+                permanently_refused: false,
+            });
+        for tick in [30_u64, 40, 50] {
+            app.world_mut().send_event(FactionMembershipDecisionEvent {
+                player,
+                faction: FactionId::Attack,
+                kind: FactionMembershipDecisionKind::Betray,
+                tick,
+            });
+            app.update();
+        }
+
+        assert!(app.world().get::<FactionMembership>(player).is_none());
+        let loaded = load_social_components(&persistence, "char:azure")
+            .expect("betrayal membership should persist");
+        let membership = loaded
+            .faction_membership
+            .expect("membership memory remains");
+        assert_eq!(membership.betrayal_count, 3);
+        assert_eq!(
+            membership.invite_block_until_tick,
+            Some(50 + FACTION_BETRAYAL_BLOCK_TICKS)
+        );
+        assert!(membership.permanently_refused);
+        assert_eq!(loaded.renown.notoriety, 150);
+        assert!(loaded
+            .renown
+            .tags
+            .iter()
+            .any(|tag| tag.tag == "三叛之人" && tag.permanent));
+        let karma = app.world().get::<Karma>(player).unwrap();
+        assert_eq!(karma.weight, 1.0);
+
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Defend,
+            kind: FactionMembershipDecisionKind::AcceptInvite,
+            tick: 60,
+        });
+        app.update();
+
+        assert!(app.world().get::<FactionMembership>(player).is_none());
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]

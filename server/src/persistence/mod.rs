@@ -26,7 +26,7 @@ use crate::schema::common::NpcStateKind;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 14;
+const CURRENT_USER_VERSION: i32 = 15;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 pub const WORLD_MODEL_STATE_KEY: &str = "bong:tiandao:state";
@@ -1208,6 +1208,29 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
             );
             PRAGMA user_version = 14;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 15 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS social_faction_memberships (
+                char_id TEXT PRIMARY KEY,
+                faction TEXT,
+                rank INTEGER NOT NULL CHECK (rank >= 0),
+                loyalty INTEGER NOT NULL,
+                betrayal_count INTEGER NOT NULL CHECK (betrayal_count >= 0),
+                invite_block_until_tick INTEGER,
+                permanently_refused INTEGER NOT NULL CHECK (permanently_refused IN (0, 1)),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 15;
             ",
         )?;
         transaction.commit()?;
@@ -4605,6 +4628,7 @@ mod persistence_tests {
             "social_exposures",
             "social_renown",
             "social_spirit_niches",
+            "social_faction_memberships",
         ] {
             let exists: Option<String> = connection
                 .query_row(

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Entity, Event};
 
+use crate::npc::faction::FactionId;
 use crate::schema::social::{ExposureKindV1, RelationshipKindV1, RenownTagV1};
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
@@ -68,6 +69,23 @@ pub struct SparringInviteRequest {
     pub initiator: Entity,
     pub target: Entity,
     pub terms: String,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionMembershipDecisionKind {
+    AcceptInvite,
+    Resign,
+    Expel,
+    Betray,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct FactionMembershipDecisionEvent {
+    pub player: Entity,
+    pub faction: FactionId,
+    pub kind: FactionMembershipDecisionKind,
     pub tick: u64,
 }
 
