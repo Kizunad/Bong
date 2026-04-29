@@ -31,6 +31,7 @@ pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
+pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
 pub mod weapon_equipped_emit;
 pub mod wounds_snapshot_emit;
@@ -333,6 +334,23 @@ pub fn register(app: &mut App) {
             forge_snapshot_emit::emit_join_forge_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
         ),
+    );
+    app.add_systems(
+        Update,
+        (
+            vfx_animation_trigger::emit_attack_animation_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            vfx_animation_trigger::emit_defense_animation_triggers
+                .after(crate::combat::resolve::apply_defense_intents),
+            vfx_animation_trigger::emit_hit_recoil_animation_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
+            vfx_animation_trigger::emit_breakthrough_animation_triggers
+                .after(crate::cultivation::breakthrough::breakthrough_system),
+            vfx_animation_trigger::emit_tribulation_animation_triggers
+                .after(crate::cultivation::tribulation::start_tribulation_system)
+                .after(crate::cultivation::tribulation::tribulation_failure_system),
+        )
+            .before(vfx_event_emit::emit_vfx_event_payloads),
     );
     app.add_systems(
         Update,
