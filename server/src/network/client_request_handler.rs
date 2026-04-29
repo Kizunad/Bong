@@ -84,6 +84,10 @@ use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::social::events::{
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
@@ -160,6 +164,12 @@ pub struct ClientRequestDispatchParams<'w> {
     pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
+    pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
+    pub spirit_niche_coordinate_reveal_tx:
+        Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
+    pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
+    pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
 }
 
 #[derive(SystemParam)]
@@ -245,6 +255,12 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::SpiritNichePlace { v, .. }
+            | ClientRequestV1::SpiritNicheGaze { v, .. }
+            | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
+            | ClientRequestV1::SparringInviteResponse { v, .. }
+            | ClientRequestV1::TradeOfferRequest { v, .. }
+            | ClientRequestV1::TradeOfferResponse { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -441,6 +457,142 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos,
                     item_instance_id,
+                });
+            }
+            ClientRequestV1::SpiritNichePlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(spirit_niche_place_tx) = dispatch.spirit_niche_place_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_place because SpiritNichePlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                spirit_niche_place_tx.send(SpiritNichePlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    item_instance_id: Some(item_instance_id),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheGaze { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_gaze entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_gaze because SpiritNicheCoordinateRevealRequest event resource is missing"
+                    );
+                    continue;
+                };
+                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
+                    observer: ev.client,
+                    pos: [x, y, z],
+                    source: SpiritNicheRevealSource::Gaze,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheMarkCoordinate { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_mark_coordinate entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_mark_coordinate because SpiritNicheCoordinateRevealRequest event resource is missing"
+                    );
+                    continue;
+                };
+                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
+                    observer: ev.client,
+                    pos: [x, y, z],
+                    source: SpiritNicheRevealSource::MarkCoordinate,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SparringInviteResponse {
+                invite_id,
+                accepted,
+                timed_out,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.sparring_invite_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped sparring_invite_response because SparringInviteResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                let kind = if timed_out {
+                    SparringInviteResponseKind::Timeout
+                } else if accepted {
+                    SparringInviteResponseKind::Accept
+                } else {
+                    SparringInviteResponseKind::Decline
+                };
+                response_tx.send(SparringInviteResponseEvent {
+                    player: ev.client,
+                    invite_id,
+                    kind,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferRequest {
+                target,
+                offered_instance_id,
+                ..
+            } => {
+                let Some(request_tx) = dispatch.trade_offer_request_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_request because TradeOfferRequest event resource is missing"
+                    );
+                    continue;
+                };
+                let Some(target_entity) =
+                    resolve_trade_offer_target(target.as_str(), &combat_params)
+                else {
+                    tracing::warn!(
+                        "[bong][network] rejected trade_offer_request from {:?}: invalid target `{target}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                request_tx.send(TradeOfferRequest {
+                    initiator: ev.client,
+                    target: target_entity,
+                    offered_instance_id,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferResponse {
+                offer_id,
+                accepted,
+                requested_instance_id,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.trade_offer_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_response because TradeOfferResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                response_tx.send(TradeOfferResponseEvent {
+                    player: ev.client,
+                    offer_id,
+                    accepted,
+                    requested_instance_id,
+                    tick: combat_clock.tick,
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
@@ -1481,6 +1633,16 @@ mod tests {
     impl valence::prelude::Resource for CapturedMineralProbes {}
 
     #[derive(Default)]
+    struct CapturedSpiritNichePlaces(Vec<SpiritNichePlaceRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNichePlaces {}
+
+    #[derive(Default)]
+    struct CapturedSpiritNicheCoordinateReveals(Vec<SpiritNicheCoordinateRevealRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNicheCoordinateReveals {}
+
+    #[derive(Default)]
     struct CapturedInscriptionScrolls(Vec<InscriptionScrollSubmit>);
 
     impl valence::prelude::Resource for CapturedInscriptionScrolls {}
@@ -1524,6 +1686,20 @@ mod tests {
     fn capture_mineral_probes(
         mut events: EventReader<MineralProbeIntent>,
         mut captured: ResMut<CapturedMineralProbes>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_places(
+        mut events: EventReader<SpiritNichePlaceRequest>,
+        mut captured: ResMut<CapturedSpiritNichePlaces>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_coordinate_reveals(
+        mut events: EventReader<SpiritNicheCoordinateRevealRequest>,
+        mut captured: ResMut<CapturedSpiritNicheCoordinateReveals>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1736,6 +1912,8 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -1888,6 +2066,141 @@ mod tests {
             valence::prelude::BlockPos::new(8, 32, 8)
         );
         assert_eq!(captured.0[0].dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn spirit_niche_place_request_emits_place_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNichePlaces::default());
+        app.insert_resource(CombatClock { tick: 88 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_spirit_niche_places).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedSpiritNichePlaces>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].item_instance_id, Some(4242));
+        assert_eq!(captured.0[0].tick, 88);
+    }
+
+    #[test]
+    fn spirit_niche_coordinate_requests_emit_reveal_intents() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
+        app.insert_resource(CombatClock { tick: 89 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheCoordinateRevealRequest>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_spirit_niche_coordinate_reveals,
+            )
+                .chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut custom_payloads = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>();
+        custom_payloads.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#
+                .to_vec()
+                .into_boxed_slice(),
+        });
+        custom_payloads.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"spirit_niche_mark_coordinate","v":1,"x":12,"y":65,"z":11}"#
+                .to_vec()
+                .into_boxed_slice(),
+        });
+
+        app.update();
+
+        let captured = app
+            .world()
+            .resource::<CapturedSpiritNicheCoordinateReveals>();
+        assert_eq!(captured.0.len(), 2);
+        assert_eq!(captured.0[0].observer, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].source, SpiritNicheRevealSource::Gaze);
+        assert_eq!(captured.0[0].tick, 89);
+        assert_eq!(captured.0[1].observer, entity);
+        assert_eq!(captured.0[1].pos, [12, 65, 11]);
+        assert_eq!(
+            captured.0[1].source,
+            SpiritNicheRevealSource::MarkCoordinate
+        );
+        assert_eq!(captured.0[1].tick, 89);
     }
 
     #[test]
@@ -3353,6 +3666,14 @@ fn resolve_skill_cast_target(
     }
     let id = raw.strip_prefix("entity_bits:")?;
     id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with("entity_bits:") {
+        return None;
+    }
+    resolve_skill_cast_target(Some(raw), combat_params)
 }
 
 fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {

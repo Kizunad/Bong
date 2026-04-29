@@ -165,6 +165,52 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNichePlace() {
+        String json = ClientRequestProtocol.encodeSpiritNichePlace(11, 64, 10, 4242L);
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
+    void encodesSpiritNicheRevealRequests() {
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            ClientRequestProtocol.encodeSpiritNicheGaze(11, 64, 10)
+        );
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(12, 65, 11)
+        );
+    }
+
+    @Test
+    void encodesSparringInviteResponse() {
+        String json = ClientRequestProtocol.encodeSparringInviteResponse("sparring:1:a:b", true, false);
+        assertEquals(
+            "{\"type\":\"sparring_invite_response\",\"v\":1,\"invite_id\":\"sparring:1:a:b\",\"accepted\":true,\"timed_out\":false}",
+            json
+        );
+    }
+
+    @Test
+    void encodesTradeOfferRequests() {
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            ClientRequestProtocol.encodeTradeOfferRequest("entity:42", 1001L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", true, 2002L)
+        );
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":false}",
+            ClientRequestProtocol.encodeTradeOfferResponse("trade:a:b:1001:20", false, null)
+        );
+    }
+
+    @Test
     void encodesForgeTemperingHit() {
         String json = ClientRequestProtocol.encodeForgeTemperingHit(7L, ClientRequestProtocol.TemperBeat.L, 4);
         assertEquals(

@@ -1507,6 +1507,12 @@ pub enum InventoryMoveOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct InventoryExchangeOutcome {
+    pub left_revision: InventoryRevision,
+    pub right_revision: InventoryRevision,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct InventoryDurabilityUpdate {
     pub revision: InventoryRevision,
     pub instance_id: u64,
@@ -1654,6 +1660,45 @@ pub fn apply_inventory_move(
             })
         }
     }
+}
+
+pub fn exchange_inventory_items(
+    left_inventory: &mut PlayerInventory,
+    left_instance_id: u64,
+    right_inventory: &mut PlayerInventory,
+    right_instance_id: u64,
+) -> Result<InventoryExchangeOutcome, String> {
+    if left_instance_id == right_instance_id {
+        return Err(format!(
+            "cannot exchange identical instance {left_instance_id}"
+        ));
+    }
+    let left_item = clone_item_at(left_inventory, left_instance_id)
+        .ok_or_else(|| format!("left instance {left_instance_id} not found"))?;
+    let right_item = clone_item_at(right_inventory, right_instance_id)
+        .ok_or_else(|| format!("right instance {right_instance_id} not found"))?;
+
+    let mut next_left = left_inventory.clone();
+    let mut next_right = right_inventory.clone();
+    detach_instance(&mut next_left, left_instance_id);
+    detach_instance(&mut next_right, right_instance_id);
+
+    let left_receive_location = find_first_fit_container_location(&next_left, &right_item)
+        .ok_or_else(|| format!("left inventory has no room for instance {right_instance_id}"))?;
+    let right_receive_location = find_first_fit_container_location(&next_right, &left_item)
+        .ok_or_else(|| format!("right inventory has no room for instance {left_instance_id}"))?;
+
+    attach_at_location(&mut next_left, right_item, &left_receive_location)?;
+    attach_at_location(&mut next_right, left_item, &right_receive_location)?;
+    bump_revision(&mut next_left);
+    bump_revision(&mut next_right);
+
+    *left_inventory = next_left;
+    *right_inventory = next_right;
+    Ok(InventoryExchangeOutcome {
+        left_revision: left_inventory.revision,
+        right_revision: right_inventory.revision,
+    })
 }
 
 pub fn set_item_instance_durability(
@@ -4010,6 +4055,52 @@ cols = 4
         assert_eq!(out.remaining_stack, 0);
         assert_eq!(out.revision, InventoryRevision(8));
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
+        let mut left = make_test_inventory_with_one_item();
+        let mut right = make_test_inventory_with_one_item();
+        right.revision = InventoryRevision(3);
+        right.containers[0].items[0].row = 1;
+        right.containers[0].items[0].col = 1;
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.display_name = "右物".to_string();
+
+        let outcome = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect("exchange should succeed");
+
+        assert_eq!(outcome.left_revision, InventoryRevision(8));
+        assert_eq!(outcome.right_revision, InventoryRevision(4));
+        assert!(inventory_item_by_instance(&left, 42).is_none());
+        assert!(inventory_item_by_instance(&right, 99).is_none());
+        assert!(inventory_item_by_instance(&left, 99).is_some());
+        assert!(inventory_item_by_instance(&right, 42).is_some());
+    }
+
+    #[test]
+    fn exchange_inventory_items_rejects_without_room_and_keeps_both_unchanged() {
+        let mut left = make_test_inventory_with_one_item();
+        left.containers.truncate(1);
+        left.containers[0].cols = 1;
+        left.containers[0].rows = 1;
+        let original_left = left.clone();
+        let mut right = make_test_inventory_with_one_item();
+        right.containers[0].items[0].instance.instance_id = 99;
+        right.containers[0].items[0].instance.grid_w = 2;
+        right.containers[0].items[0].instance.grid_h = 1;
+        let original_right = right.clone();
+
+        let error = exchange_inventory_items(&mut left, 42, &mut right, 99)
+            .expect_err("oversized incoming item should be rejected");
+
+        assert!(error.contains("left inventory has no room"));
+        assert_eq!(left.revision, original_left.revision);
+        assert_eq!(left.containers, original_left.containers);
+        assert_eq!(left.hotbar, original_left.hotbar);
+        assert_eq!(right.revision, original_right.revision);
+        assert_eq!(right.containers, original_right.containers);
+        assert_eq!(right.hotbar, original_right.hotbar);
     }
 
     #[test]

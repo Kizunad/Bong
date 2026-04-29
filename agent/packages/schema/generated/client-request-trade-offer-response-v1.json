@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "offer_id",
+    "accepted"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "trade_offer_response",
+      "type": "string"
+    },
+    "offer_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "requested_instance_id": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  }
+}

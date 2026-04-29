@@ -60,6 +60,7 @@ public final class PlayerStateHandler implements ServerDataHandler {
             karma,
             compositePower,
             breakdown,
+            readOptionalSocialSnapshot(payload),
             zoneId,
             readOptionalString(payload, "zone_label"),
             zoneSpiritQi
@@ -97,6 +98,54 @@ public final class PlayerStateHandler implements ServerDataHandler {
         return PlayerStateViewModel.PowerBreakdown.create(combat, wealth, social, territory);
     }
 
+    private static PlayerStateViewModel.SocialSnapshot readOptionalSocialSnapshot(JsonObject payload) {
+        JsonElement element = payload.get("social");
+        if (element == null || element.isJsonNull() || !element.isJsonObject()) {
+            return PlayerStateViewModel.SocialSnapshot.empty();
+        }
+
+        JsonObject social = element.getAsJsonObject();
+        JsonObject renown = readObject(social, "renown");
+        int fame = readOptionalInt(renown, "fame", 0);
+        int notoriety = readOptionalInt(renown, "notoriety", 0);
+        List<String> topTags = readTopTags(renown);
+
+        JsonObject faction = readObject(social, "faction_membership");
+        return PlayerStateViewModel.SocialSnapshot.create(
+            fame,
+            notoriety,
+            topTags,
+            readOptionalString(faction, "faction"),
+            readOptionalInt(faction, "rank", 0),
+            readOptionalInt(faction, "loyalty", 0),
+            readOptionalInt(faction, "betrayal_count", 0)
+        );
+    }
+
+    private static List<String> readTopTags(JsonObject renown) {
+        JsonElement element = renown == null ? null : renown.get("top_tags");
+        if (element == null || element.isJsonNull() || !element.isJsonArray()) {
+            return List.of();
+        }
+        List<String> tags = new ArrayList<>();
+        for (JsonElement tagElement : element.getAsJsonArray()) {
+            if (!tagElement.isJsonObject()) continue;
+            String tag = readOptionalString(tagElement.getAsJsonObject(), "tag");
+            if (tag != null && !tag.isBlank()) {
+                tags.add(tag);
+            }
+        }
+        return List.copyOf(tags);
+    }
+
+    private static JsonObject readObject(JsonObject payload, String fieldName) {
+        JsonElement element = payload == null ? null : payload.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonObject()) {
+            return null;
+        }
+        return element.getAsJsonObject();
+    }
+
     private static String readRequiredString(JsonObject payload, String fieldName) {
         String value = readOptionalString(payload, fieldName);
         if (value == null || value.isBlank()) {
@@ -107,6 +156,9 @@ public final class PlayerStateHandler implements ServerDataHandler {
     }
 
     private static String readOptionalString(JsonObject payload, String fieldName) {
+        if (payload == null) {
+            return null;
+        }
         JsonElement element = payload.get(fieldName);
         if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
             return null;
@@ -137,6 +189,9 @@ public final class PlayerStateHandler implements ServerDataHandler {
     }
 
     private static Double readOptionalDouble(JsonObject payload, String fieldName, Double defaultValue) {
+        if (payload == null) {
+            return defaultValue;
+        }
         JsonElement element = payload.get(fieldName);
         if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
             return defaultValue;
@@ -149,5 +204,10 @@ public final class PlayerStateHandler implements ServerDataHandler {
 
         double value = primitive.getAsDouble();
         return Double.isFinite(value) ? value : defaultValue;
+    }
+
+    private static int readOptionalInt(JsonObject payload, String fieldName, int defaultValue) {
+        Double value = readOptionalDouble(payload, fieldName, null);
+        return value == null ? defaultValue : value.intValue();
     }
 }

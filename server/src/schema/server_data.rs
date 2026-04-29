@@ -21,6 +21,10 @@ use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
 };
+use super::social::{
+    PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
+    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
+};
 use super::world_state::PlayerPowerBreakdown;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
@@ -111,6 +115,13 @@ pub enum ServerDataType {
     ForgeOutcome,
     ForgeBlueprintBook,
     BurstMeridianEvent,
+    SocialAnonymity,
+    SocialExposure,
+    SocialPact,
+    SocialFeud,
+    SocialRenownDelta,
+    SparringInvite,
+    TradeOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +155,7 @@ pub enum ServerDataPayloadV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         ui: Option<String>,
@@ -249,6 +261,13 @@ pub enum ServerDataPayloadV1 {
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
     BurstMeridianEvent(BurstMeridianEventV1),
+    SocialAnonymity(SocialAnonymityPayloadV1),
+    SocialExposure(SocialExposureEventV1),
+    SocialPact(SocialPactEventV1),
+    SocialFeud(SocialFeudEventV1),
+    SocialRenownDelta(SocialRenownDeltaV1),
+    SparringInvite(SparringInvitePayloadV1),
+    TradeOffer(TradeOfferPayloadV1),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -299,6 +318,8 @@ enum ServerDataPayloadWireV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -535,6 +556,49 @@ enum ServerDataPayloadWireV1 {
     BurstMeridianEvent {
         #[serde(flatten)]
         event: BurstMeridianEventV1,
+    },
+    SocialAnonymity {
+        #[serde(flatten)]
+        payload: SocialAnonymityPayloadV1,
+    },
+    SocialExposure {
+        actor: String,
+        kind: super::social::ExposureKindV1,
+        witnesses: Vec<String>,
+        tick: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<String>,
+    },
+    SocialPact {
+        left: String,
+        right: String,
+        terms: String,
+        tick: u64,
+        broken: bool,
+    },
+    SocialFeud {
+        left: String,
+        right: String,
+        tick: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+    },
+    SocialRenownDelta {
+        char_id: String,
+        fame_delta: i32,
+        notoriety_delta: i32,
+        #[serde(default)]
+        tags_added: Vec<super::social::RenownTagV1>,
+        tick: u64,
+        reason: String,
+    },
+    SparringInvite {
+        #[serde(flatten)]
+        invite: SparringInvitePayloadV1,
+    },
+    TradeOffer {
+        #[serde(flatten)]
+        offer: TradeOfferPayloadV1,
     },
 }
 
@@ -802,6 +866,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Ok(Self::PlayerState {
                 player,
                 realm,
@@ -810,6 +875,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
@@ -1021,6 +1087,67 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 validate_burst_meridian_event(&event)?;
                 Ok(Self::BurstMeridianEvent(event))
             }
+            ServerDataPayloadWireV1::SocialAnonymity { payload } => {
+                Ok(Self::SocialAnonymity(payload))
+            }
+            ServerDataPayloadWireV1::SocialExposure {
+                actor,
+                kind,
+                witnesses,
+                tick,
+                zone,
+            } => Ok(Self::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor,
+                kind,
+                witnesses,
+                tick,
+                zone,
+            })),
+            ServerDataPayloadWireV1::SocialPact {
+                left,
+                right,
+                terms,
+                tick,
+                broken,
+            } => Ok(Self::SocialPact(SocialPactEventV1 {
+                v: 1,
+                left,
+                right,
+                terms,
+                tick,
+                broken,
+            })),
+            ServerDataPayloadWireV1::SocialFeud {
+                left,
+                right,
+                tick,
+                place,
+            } => Ok(Self::SocialFeud(SocialFeudEventV1 {
+                v: 1,
+                left,
+                right,
+                tick,
+                place,
+            })),
+            ServerDataPayloadWireV1::SocialRenownDelta {
+                char_id,
+                fame_delta,
+                notoriety_delta,
+                tags_added,
+                tick,
+                reason,
+            } => Ok(Self::SocialRenownDelta(SocialRenownDeltaV1 {
+                v: 1,
+                char_id,
+                fame_delta,
+                notoriety_delta,
+                tags_added,
+                tick,
+                reason,
+            })),
+            ServerDataPayloadWireV1::SparringInvite { invite } => Ok(Self::SparringInvite(invite)),
+            ServerDataPayloadWireV1::TradeOffer { offer } => Ok(Self::TradeOffer(offer)),
         }
     }
 }
@@ -1067,6 +1194,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Self::PlayerState {
                 player: player.clone(),
                 realm: realm.clone(),
@@ -1075,6 +1203,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
+                social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
                 ui: ui.clone(),
@@ -1296,6 +1425,43 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
                 event: event.clone(),
             },
+            ServerDataPayloadV1::SocialAnonymity(payload) => Self::SocialAnonymity {
+                payload: payload.clone(),
+            },
+            ServerDataPayloadV1::SocialExposure(event) => Self::SocialExposure {
+                actor: event.actor.clone(),
+                kind: event.kind,
+                witnesses: event.witnesses.clone(),
+                tick: event.tick,
+                zone: event.zone.clone(),
+            },
+            ServerDataPayloadV1::SocialPact(event) => Self::SocialPact {
+                left: event.left.clone(),
+                right: event.right.clone(),
+                terms: event.terms.clone(),
+                tick: event.tick,
+                broken: event.broken,
+            },
+            ServerDataPayloadV1::SocialFeud(event) => Self::SocialFeud {
+                left: event.left.clone(),
+                right: event.right.clone(),
+                tick: event.tick,
+                place: event.place.clone(),
+            },
+            ServerDataPayloadV1::SocialRenownDelta(event) => Self::SocialRenownDelta {
+                char_id: event.char_id.clone(),
+                fame_delta: event.fame_delta,
+                notoriety_delta: event.notoriety_delta,
+                tags_added: event.tags_added.clone(),
+                tick: event.tick,
+                reason: event.reason.clone(),
+            },
+            ServerDataPayloadV1::SparringInvite(invite) => Self::SparringInvite {
+                invite: invite.clone(),
+            },
+            ServerDataPayloadV1::TradeOffer(offer) => Self::TradeOffer {
+                offer: offer.clone(),
+            },
         }
     }
 }
@@ -1452,6 +1618,13 @@ impl ServerDataPayloadV1 {
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
             Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
+            Self::SocialAnonymity(..) => ServerDataType::SocialAnonymity,
+            Self::SocialExposure(..) => ServerDataType::SocialExposure,
+            Self::SocialPact(..) => ServerDataType::SocialPact,
+            Self::SocialFeud(..) => ServerDataType::SocialFeud,
+            Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
+            Self::SparringInvite(..) => ServerDataType::SparringInvite,
+            Self::TradeOffer(..) => ServerDataType::TradeOffer,
         }
     }
 }
@@ -1572,6 +1745,44 @@ mod tests {
                 wire_type, label,
                 "wire type {wire_type} does not match payload_type_label {label}"
             );
+        }
+    }
+
+    #[test]
+    fn social_server_data_wire_uses_single_envelope_version() {
+        let envelope =
+            ServerDataV1::new(ServerDataPayloadV1::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor: "char:alice".to_string(),
+                kind: super::super::social::ExposureKindV1::Chat,
+                witnesses: vec!["char:bob".to_string()],
+                tick: 42,
+                zone: Some("spawn".to_string()),
+            }));
+        let value = serde_json::to_value(&envelope).expect("serialize social exposure");
+        assert_eq!(value["v"], 1);
+        assert_eq!(value["type"], "social_exposure");
+        assert_eq!(value["kind"], "chat");
+        assert!(
+            value.get("event_v").is_none(),
+            "server_data payload must not duplicate nested event version"
+        );
+    }
+
+    #[test]
+    fn social_server_data_deserializes_without_nested_event_version() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
+        );
+        let payload: ServerDataV1 = serde_json::from_str(json).expect("social renown sample");
+
+        match payload.payload {
+            ServerDataPayloadV1::SocialRenownDelta(event) => {
+                assert_eq!(event.v, 1);
+                assert_eq!(event.char_id, "char:steve");
+                assert_eq!(event.tags_added[0].tag, "kept_pact");
+            }
+            other => panic!("expected SocialRenownDelta, got {other:?}"),
         }
     }
 
@@ -1754,6 +1965,27 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.burst-meridian-event.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-anonymity.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-exposure.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-pact.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-feud.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.sparring-invite.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.trade-offer.sample.json"
             ),
         ];
 

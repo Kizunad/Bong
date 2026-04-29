@@ -9,6 +9,8 @@
 
 use valence::prelude::{bevy_ecs, Position, Query, ResMut, Resource};
 
+use crate::combat::components::StatusEffects;
+use crate::combat::events::StatusEffectKind;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
@@ -59,6 +61,7 @@ pub fn qi_regen_and_zone_drain_tick(
         &MeridianSystem,
         &mut Cultivation,
         Option<&LifespanComponent>,
+        Option<&StatusEffects>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -67,7 +70,7 @@ pub fn qi_regen_and_zone_drain_tick(
         return;
     };
 
-    for (pos, current_dim, meridians, mut cultivation, lifespan) in players.iter_mut() {
+    for (pos, current_dim, meridians, mut cultivation, lifespan, statuses) in players.iter_mut() {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
         // 时按 Overworld 处理（NPC 暂未跨位面）。Player 在 spawn 时一定带
         // CurrentDimension（apply_spawn_defaults / restore_player_dimension）。
@@ -107,9 +110,10 @@ pub fn qi_regen_and_zone_drain_tick(
         } else {
             1.0
         };
+        let humility_multiplier = statuses.map(humility_qi_recovery_multiplier).unwrap_or(1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
-            rate * wind_candle_multiplier,
+            rate * wind_candle_multiplier * humility_multiplier,
             avg_integrity,
             qi_room,
         );
@@ -124,6 +128,17 @@ pub fn qi_regen_and_zone_drain_tick(
             cultivation.last_qi_zero_at = None;
         }
     }
+}
+
+fn humility_qi_recovery_multiplier(status_effects: &StatusEffects) -> f64 {
+    status_effects
+        .active
+        .iter()
+        .filter(|effect| effect.kind == StatusEffectKind::Humility && effect.remaining_ticks > 0)
+        .fold(1.0, |acc, effect| {
+            acc * (1.0 - f64::from(effect.magnitude).clamp(0.0, 0.95))
+        })
+        .clamp(0.05, 1.0)
 }
 
 #[cfg(test)]

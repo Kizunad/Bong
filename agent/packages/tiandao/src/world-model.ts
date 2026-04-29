@@ -603,6 +603,22 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
             })),
           }
         : undefined,
+      social: player.social
+        ? {
+            renown: {
+              ...player.social.renown,
+              top_tags: player.social.renown.top_tags.map((tag) => ({ ...tag })),
+            },
+            relationships: player.social.relationships.map((relationship) => ({
+              ...relationship,
+              metadata: cloneJsonValue(relationship.metadata),
+            })),
+            exposed_to_count: player.social.exposed_to_count,
+            faction_membership: player.social.faction_membership
+              ? { ...player.social.faction_membership }
+              : undefined,
+          }
+        : undefined,
     })),
     npcs: clonedNpcs,
     factions: state.factions?.map((faction): NonNullable<WorldStateV1["factions"]>[number] => ({
@@ -620,6 +636,11 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       details: event.details ? { ...event.details } : undefined,
     })),
   };
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function cloneZoneSnapshot(zone: ZoneSnapshot): ZoneSnapshot {

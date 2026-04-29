@@ -106,6 +106,30 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
     }
 
+    public static void sendSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
+    }
+
+    public static void sendSpiritNicheGaze(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheGaze(x, y, z));
+    }
+
+    public static void sendSpiritNicheMarkCoordinate(int x, int y, int z) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheMarkCoordinate(x, y, z));
+    }
+
+    public static void sendSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        dispatch(ClientRequestProtocol.encodeSparringInviteResponse(inviteId, accepted, timedOut));
+    }
+
+    public static void sendTradeOfferRequest(String target, long offeredInstanceId) {
+        dispatch(ClientRequestProtocol.encodeTradeOfferRequest(target, offeredInstanceId));
+    }
+
+    public static void sendTradeOfferResponse(String offerId, boolean accepted, Long requestedInstanceId) {
+        dispatch(ClientRequestProtocol.encodeTradeOfferResponse(offerId, accepted, requestedInstanceId));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,

@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "social_exposure",
+  "actor": "char:steve",
+  "kind": "chat",
+  "witnesses": ["char:new_player_1"],
+  "tick": 84000,
+  "zone": "starter_valley"
+}

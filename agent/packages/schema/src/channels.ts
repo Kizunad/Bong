@@ -60,6 +60,18 @@ export const CHANNELS = {
   /** Server → Agent: 派系状态变更事件（plan-npc-ai-v1 §6） */
   FACTION_EVENT: "bong:faction/event",
 
+  /** Server → Agent: 玩家社交暴露事件（plan-social-v1 §7） */
+  SOCIAL_EXPOSURE: "bong:social/exposure",
+
+  /** Server → Agent: 玩家盟约建立 / 解除（plan-social-v1 §7） */
+  SOCIAL_PACT: "bong:social/pact",
+
+  /** Server → Agent: 玩家死仇建立（plan-social-v1 §7） */
+  SOCIAL_FEUD: "bong:social/feud",
+
+  /** Server → Agent: 玩家声名变动（plan-social-v1 §7） */
+  SOCIAL_RENOWN_DELTA: "bong:social/renown_delta",
+
   /** Server → Agent: 战斗实时事件（Task 7）(Pub/Sub) */
   COMBAT_REALTIME: "bong:combat_realtime",
 
@@ -119,6 +131,10 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.NPC_SPAWN,
   CHANNELS.NPC_DEATH,
   CHANNELS.FACTION_EVENT,
+  CHANNELS.SOCIAL_EXPOSURE,
+  CHANNELS.SOCIAL_PACT,
+  CHANNELS.SOCIAL_FEUD,
+  CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.COMBAT_REALTIME,
   CHANNELS.COMBAT_SUMMARY,
   CHANNELS.ARMOR_DURABILITY_CHANGED,

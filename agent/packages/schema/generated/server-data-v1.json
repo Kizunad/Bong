@@ -301,6 +301,147 @@
         },
         "zone": {
           "type": "string"
+        },
+        "social": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "renown",
+            "relationships",
+            "exposed_to_count"
+          ],
+          "properties": {
+            "renown": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "fame",
+                "notoriety",
+                "top_tags"
+              ],
+              "properties": {
+                "fame": {
+                  "type": "integer"
+                },
+                "notoriety": {
+                  "type": "integer"
+                },
+                "top_tags": {
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "tag",
+                      "weight",
+                      "last_seen_tick",
+                      "permanent"
+                    ],
+                    "properties": {
+                      "tag": {
+                        "type": "string"
+                      },
+                      "weight": {
+                        "type": "number"
+                      },
+                      "last_seen_tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "permanent": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "relationships": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "peer",
+                  "since_tick",
+                  "metadata"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "master",
+                        "type": "string"
+                      },
+                      {
+                        "const": "disciple",
+                        "type": "string"
+                      },
+                      {
+                        "const": "companion",
+                        "type": "string"
+                      },
+                      {
+                        "const": "pact",
+                        "type": "string"
+                      },
+                      {
+                        "const": "feud",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "peer": {
+                    "type": "string"
+                  },
+                  "since_tick": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "metadata": {}
+                }
+              }
+            },
+            "exposed_to_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "faction_membership": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "faction",
+                "rank",
+                "loyalty",
+                "betrayal_count",
+                "permanently_refused"
+              ],
+              "properties": {
+                "faction": {
+                  "type": "string"
+                },
+                "rank": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "loyalty": {
+                  "type": "integer"
+                },
+                "betrayal_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "invite_block_until_tick": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanently_refused": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -7955,6 +8096,402 @@
           }
         },
         "current_index": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "viewer",
+        "remotes"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "social_anonymity",
+          "type": "string"
+        },
+        "viewer": {
+          "type": "string"
+        },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "player_uuid",
+              "anonymous",
+              "renown_tags"
+            ],
+            "properties": {
+              "player_uuid": {
+                "type": "string"
+              },
+              "anonymous": {
+                "type": "boolean"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "realm_band": {
+                "type": "string"
+              },
+              "breath_hint": {
+                "type": "string"
+              },
+              "renown_tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "actor",
+        "kind",
+        "witnesses",
+        "tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "social_exposure",
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "trade",
+              "type": "string"
+            },
+            {
+              "const": "divine",
+              "type": "string"
+            },
+            {
+              "const": "death",
+              "type": "string"
+            }
+          ]
+        },
+        "witnesses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zone": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "left",
+        "right",
+        "terms",
+        "tick",
+        "broken"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "social_pact",
+          "type": "string"
+        },
+        "left": {
+          "type": "string"
+        },
+        "right": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "string"
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "broken": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "left",
+        "right",
+        "tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "social_feud",
+          "type": "string"
+        },
+        "left": {
+          "type": "string"
+        },
+        "right": {
+          "type": "string"
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "place": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "char_id",
+        "fame_delta",
+        "notoriety_delta",
+        "tags_added",
+        "tick",
+        "reason"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "social_renown_delta",
+          "type": "string"
+        },
+        "char_id": {
+          "type": "string"
+        },
+        "fame_delta": {
+          "type": "integer"
+        },
+        "notoriety_delta": {
+          "type": "integer"
+        },
+        "tags_added": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "tag",
+              "weight",
+              "last_seen_tick",
+              "permanent"
+            ],
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "weight": {
+                "type": "number"
+              },
+              "last_seen_tick": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "permanent": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "invite_id",
+        "initiator",
+        "target",
+        "realm_band",
+        "breath_hint",
+        "terms",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "sparring_invite",
+          "type": "string"
+        },
+        "invite_id": {
+          "type": "string"
+        },
+        "initiator": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "realm_band": {
+          "type": "string"
+        },
+        "breath_hint": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "string"
+        },
+        "expires_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "offer_id",
+        "initiator",
+        "target",
+        "offered_item",
+        "requested_items",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "trade_offer",
+          "type": "string"
+        },
+        "offer_id": {
+          "type": "string"
+        },
+        "initiator": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "offered_item": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "instance_id",
+            "item_id",
+            "display_name",
+            "stack_count"
+          ],
+          "properties": {
+            "instance_id": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "display_name": {
+              "type": "string"
+            },
+            "stack_count": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "requested_items": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "instance_id",
+              "item_id",
+              "display_name",
+              "stack_count"
+            ],
+            "properties": {
+              "instance_id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "item_id": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "stack_count": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "expires_at_ms": {
           "minimum": 0,
           "type": "integer"
         }

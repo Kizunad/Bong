@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "social_feud",
+  "left": "char:steve",
+  "right": "char:bandit_01",
+  "tick": 84300,
+  "place": "blood_valley"
+}

@@ -1,0 +1,45 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "fame",
+    "notoriety",
+    "tags"
+  ],
+  "properties": {
+    "fame": {
+      "type": "integer"
+    },
+    "notoriety": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "weight",
+          "last_seen_tick",
+          "permanent"
+        ],
+        "properties": {
+          "tag": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "last_seen_tick": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "permanent": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

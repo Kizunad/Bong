@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "actor",
+    "kind",
+    "witnesses",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "social_exposure",
+      "type": "string"
+    },
+    "actor": {
+      "type": "string"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "chat",
+          "type": "string"
+        },
+        {
+          "const": "trade",
+          "type": "string"
+        },
+        {
+          "const": "divine",
+          "type": "string"
+        },
+        {
+          "const": "death",
+          "type": "string"
+        }
+      ]
+    },
+    "witnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "zone": {
+      "type": "string"
+    }
+  }
+}

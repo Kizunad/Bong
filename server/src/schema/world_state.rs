@@ -5,6 +5,7 @@ use crate::npc::faction::{FactionId, FactionRank};
 
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
 use super::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
+use super::social::PlayerSocialSnapshotV1;
 
 pub type Vec3 = [f64; 3];
 
@@ -36,6 +37,8 @@ pub struct PlayerProfile {
     pub cultivation: Option<CultivationSnapshotV1>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub life_record: Option<LifeRecordSnapshotV1>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub social: Option<PlayerSocialSnapshotV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +182,13 @@ mod tests {
         assert_eq!(state.players.len(), 2);
         assert_eq!(state.players[0].name, "Steve");
         assert_eq!(state.players[0].pos, [128.5, 66.0, 200.3]);
+        let social = state.players[0]
+            .social
+            .as_ref()
+            .expect("world-state sample should carry a social snapshot");
+        assert_eq!(social.renown.fame, 2);
+        assert_eq!(social.relationships[0].peer, "char:new_player_1");
+        assert_eq!(social.exposed_to_count, 1);
         assert_eq!(state.npcs.len(), 1);
         assert_eq!(state.npcs[0].id, "npc_001");
         assert_eq!(

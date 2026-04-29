@@ -130,6 +130,13 @@ pub enum BiographyEntry {
         plot_pos: [i32; 3],
         tick: u64,
     },
+    /// plan-social-v1 §6.2 — 交易写入双方生平卷。只记物品摘要与匿名对手。
+    TradeCompleted {
+        counterparty_id: String,
+        offered_item: String,
+        received_item: String,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +372,12 @@ fn format_entry(entry: &BiographyEntry) -> String {
             "t{tick}:lingtian:destroyed_by_other:[{},{},{}]",
             plot_pos[0], plot_pos[1], plot_pos[2]
         ),
+        BiographyEntry::TradeCompleted {
+            counterparty_id,
+            offered_item,
+            received_item,
+            tick,
+        } => format!("t{tick}:trade:{counterparty_id}:{offered_item}->{received_item}"),
     }
 }
 

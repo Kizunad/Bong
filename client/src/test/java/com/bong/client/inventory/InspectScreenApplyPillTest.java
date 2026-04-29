@@ -288,4 +288,54 @@ public class InspectScreenApplyPillTest {
         assertFalse(screen.dispatchPlaceForgeStationAt(item, 0, 64, 0));
         assertTrue(sent.isEmpty());
     }
+
+    @Test
+    void spiritNicheStoneMenuIncludesPlaceAction() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            3001L,
+            "spirit_niche_stone",
+            "龛石",
+            1,
+            1,
+            0.4,
+            "rare",
+            "可埋作私有灵龛的冷石。",
+            1,
+            0.2,
+            1.0
+        );
+
+        assertTrue(screen.openPillContextMenu(item, 10, 20));
+        assertEquals(1, screen.availablePillMenuActions(item).size());
+        assertEquals("放置灵龛", screen.availablePillMenuActions(item).get(0).label());
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheSendsStonePlacement() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            3002L,
+            "spirit_niche_stone",
+            "龛石",
+            1,
+            1,
+            0.4,
+            "rare",
+            "可埋作私有灵龛的冷石。",
+            1,
+            0.2,
+            1.0
+        );
+
+        assertTrue(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":3002}",
+            sent.get(0).body()
+        );
+    }
 }

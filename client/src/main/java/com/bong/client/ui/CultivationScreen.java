@@ -84,6 +84,10 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
         lines.add("财富: " + formatNormalized(safePlayerState.breakdown().wealth()));
         lines.add("社交: " + formatNormalized(safePlayerState.breakdown().social()));
         lines.add("领地: " + formatNormalized(safePlayerState.breakdown().territory()));
+        PlayerStateViewModel.SocialSnapshot social = safePlayerState.social();
+        lines.add("声名: fame " + formatSignedInteger(social.fame()) + " / notoriety " + formatSignedInteger(social.notoriety()));
+        lines.add("声名标签: " + formatTags(social.topTags()));
+        lines.add("派系挂靠: " + formatFaction(social));
         lines.add("当前区域: " + safePlayerState.zoneLabel());
         lines.add(
             "灵气浓度: "
@@ -123,6 +127,10 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
         return String.format(Locale.ROOT, "%+.2f", value);
     }
 
+    private static String formatSignedInteger(int value) {
+        return String.format(Locale.ROOT, "%+d", value);
+    }
+
     private static String formatNormalized(double value) {
         return String.format(Locale.ROOT, "%.2f", value);
     }
@@ -138,6 +146,26 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private static String formatTags(List<String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return "无";
+        }
+        return String.join(" / ", tags);
+    }
+
+    private static String formatFaction(PlayerStateViewModel.SocialSnapshot social) {
+        if (social == null || !social.hasFaction()) {
+            return "无";
+        }
+        return social.faction()
+            + " rank "
+            + social.factionRank()
+            + " / loyalty "
+            + formatSignedInteger(social.factionLoyalty())
+            + " / betrayals "
+            + social.factionBetrayalCount();
     }
 
     private static double clamp(double value, double min, double max) {

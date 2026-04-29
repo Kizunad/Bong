@@ -24,6 +24,12 @@ pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
 pub const CH_NPC_DEATH: &str = "bong:npc/death";
 pub const CH_FACTION_EVENT: &str = "bong:faction/event";
 
+// 玩家社交 / 匿名 / 声名（plan-social-v1 §7）。server 为权威，agent 只消费事件流水。
+pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
+pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
+pub const CH_SOCIAL_FEUD: &str = "bong:social/feud";
+pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
+
 // 战斗观测 (combat-no-ui-c1-c3 Task 7)
 pub const CH_COMBAT_REALTIME: &str = "bong:combat_realtime";
 pub const CH_COMBAT_SUMMARY: &str = "bong:combat_summary";
@@ -71,6 +77,10 @@ mod tests {
         assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
         assert_eq!(CH_NPC_DEATH, "bong:npc/death");
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");
+        assert_eq!(CH_SOCIAL_EXPOSURE, "bong:social/exposure");
+        assert_eq!(CH_SOCIAL_PACT, "bong:social/pact");
+        assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");
+        assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_COMBAT_REALTIME, "bong:combat_realtime");
         assert_eq!(CH_COMBAT_SUMMARY, "bong:combat_summary");
         assert_eq!(CH_ARMOR_DURABILITY_CHANGED, "bong:armor/durability_changed");

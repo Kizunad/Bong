@@ -80,7 +80,14 @@ public class ServerDataRouterTest {
             "forge_station",
             "forge_session",
             "forge_outcome",
-            "forge_blueprint_book"
+            "forge_blueprint_book",
+            // plan-social-v1 §7 — 匿名 / 暴露 / 关系 / 声名 / 切磋邀请。
+            "social_anonymity",
+            "social_exposure",
+            "social_pact",
+            "social_feud",
+            "social_renown_delta",
+            "sparring_invite"
         ), router.registeredTypes());
     }
 

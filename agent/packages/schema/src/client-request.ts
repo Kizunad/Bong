@@ -406,6 +406,79 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
+export const SpiritNichePlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    /** 龛石 inventory instance_id — server 校验并消耗一个。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
+
+export const SpiritNicheGazeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_gaze"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheGazeRequestV1 = Static<typeof SpiritNicheGazeRequestV1>;
+
+export const SpiritNicheMarkCoordinateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_mark_coordinate"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheMarkCoordinateRequestV1 = Static<typeof SpiritNicheMarkCoordinateRequestV1>;
+
+export const SparringInviteResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("sparring_invite_response"),
+    invite_id: Type.String({ minLength: 1 }),
+    accepted: Type.Boolean(),
+    timed_out: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+export type SparringInviteResponseRequestV1 = Static<typeof SparringInviteResponseRequestV1>;
+
+export const TradeOfferRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_request"),
+    target: Type.String({ minLength: 1, maxLength: 64 }),
+    offered_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferRequestV1 = Static<typeof TradeOfferRequestV1>;
+
+export const TradeOfferResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer_response"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    accepted: Type.Boolean(),
+    requested_instance_id: Type.Optional(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+  },
+  { additionalProperties: false },
+);
+export type TradeOfferResponseRequestV1 = Static<typeof TradeOfferResponseRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -559,6 +632,12 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  SpiritNichePlaceRequestV1,
+  SpiritNicheGazeRequestV1,
+  SpiritNicheMarkCoordinateRequestV1,
+  SparringInviteResponseRequestV1,
+  TradeOfferRequestV1,
+  TradeOfferResponseRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,

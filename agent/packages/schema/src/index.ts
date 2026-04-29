@@ -20,6 +20,7 @@ export * from "./inventory.js";
 export * from "./narration.js";
 export * from "./npc.js";
 export * from "./server-data.js";
+export * from "./social.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
 export * from "./world-state.js";

@@ -333,6 +333,71 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
+        JsonObject obj = envelope("spirit_niche_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheGaze(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_gaze");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheMarkCoordinate(int x, int y, int z) {
+        JsonObject obj = envelope("spirit_niche_mark_coordinate");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        return obj.toString();
+    }
+
+    public static String encodeSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
+        if (inviteId == null || inviteId.isBlank()) {
+            throw new IllegalArgumentException("inviteId must not be blank");
+        }
+        JsonObject obj = envelope("sparring_invite_response");
+        obj.addProperty("invite_id", inviteId);
+        obj.addProperty("accepted", accepted);
+        obj.addProperty("timed_out", timedOut);
+        return obj.toString();
+    }
+
+    public static String encodeTradeOfferRequest(String target, long offeredInstanceId) {
+        if (target == null || target.isBlank()) {
+            throw new IllegalArgumentException("target must not be blank");
+        }
+        if (offeredInstanceId < 0) {
+            throw new IllegalArgumentException("offeredInstanceId must be >= 0, got " + offeredInstanceId);
+        }
+        JsonObject obj = envelope("trade_offer_request");
+        obj.addProperty("target", target.trim());
+        obj.addProperty("offered_instance_id", offeredInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeTradeOfferResponse(String offerId, boolean accepted, Long requestedInstanceId) {
+        if (offerId == null || offerId.isBlank()) {
+            throw new IllegalArgumentException("offerId must not be blank");
+        }
+        JsonObject obj = envelope("trade_offer_response");
+        obj.addProperty("offer_id", offerId);
+        obj.addProperty("accepted", accepted);
+        if (requestedInstanceId != null) {
+            if (requestedInstanceId < 0) {
+                throw new IllegalArgumentException("requestedInstanceId must be >= 0, got " + requestedInstanceId);
+            }
+            obj.addProperty("requested_instance_id", requestedInstanceId.longValue());
+        }
+        return obj.toString();
+    }
+
     public static String encodeForgeTemperingHit(long sessionId, TemperBeat beat, int ticksRemaining) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);

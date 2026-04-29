@@ -181,6 +181,55 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendSpiritNichePlaceUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNichePlace(11, 64, 10, 4242L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendSpiritNicheRevealRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNicheGaze(11, 64, 10);
+        ClientRequestSender.sendSpiritNicheMarkCoordinate(12, 65, 11);
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_gaze\",\"v\":1,\"x\":11,\"y\":64,\"z\":10}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_mark_coordinate\",\"v\":1,\"x\":12,\"y\":65,\"z\":11}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
+    void sendTradeOfferRequestsUseCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendTradeOfferRequest("entity:42", 1001L);
+        ClientRequestSender.sendTradeOfferResponse("trade:a:b:1001:20", true, 2002L);
+
+        assertEquals(2, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_request\",\"v\":1,\"target\":\"entity:42\",\"offered_instance_id\":1001}",
+            sent.get(0).body()
+        );
+        assertEquals(new Identifier("bong", "client_request"), sent.get(1).channel());
+        assertEquals(
+            "{\"type\":\"trade_offer_response\",\"v\":1,\"offer_id\":\"trade:a:b:1001:20\",\"accepted\":true,\"requested_instance_id\":2002}",
+            sent.get(1).body()
+        );
+    }
+
+    @Test
     void sendBotanyHarvestRequestIncludesSessionAndMode() {
         install();
         ClientRequestSender.sendBotanyHarvestRequest("session-botany-01", BotanyHarvestMode.MANUAL);

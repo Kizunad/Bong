@@ -396,3 +396,10 @@ _（无未决项，所有设计问题均已收口）_
 ## §12 进度日志
 
 - 2026-04-25：核对实际代码，本 plan 主体（§0–§8 Phase 0–8）整体仍为纯设计，无玩家社交侧实装；server 仅已有 §-1 列出的聊天采集（`network/chat_collector.rs` + `schema/chat_message.rs` + Redis `bong:player_chat`），`persistence/mod.rs` 已建 `relationships` 表骨架（plan-persistence 落库，未接 social 写入路径）；server 内 `npc/faction.rs`（`Reputation`/`FactionMembership`/`FactionId`）与 `npc/social.rs`（`SocializeAction`/`FactionDuelScorer`）属 plan-npc-ai §4 NPC 内部派系，不是本 plan 的玩家匿名/关系/声名/灵龛系统，未勾任何 `[x]`。
+
+## Finish Evidence
+
+- 2026-04-29：完成社交 v1 收尾。新增终结角色公开社交快照，亡者归档现在包含声名、关系、暴露日志与玩家派系挂靠摘要；新增最小交易闭环，客户端可面对面发起交易、目标弹窗选择回礼，服务端权威交换物品、双方互相暴露并写入生平卷。
+- server 验收：`cargo fmt --check` 通过；`cargo clippy --all-targets -- -D warnings` 通过；`cargo test` 通过（1754 passed, 0 failed）。
+- agent schema 验收：`npm run generate` 生成 198 个 schema artifact；`npm test` 通过（207 passed）；`npm run check` 通过。
+- client 验收：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` 通过。

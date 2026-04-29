@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "invite_id",
+    "initiator",
+    "target",
+    "realm_band",
+    "breath_hint",
+    "terms",
+    "expires_at_ms"
+  ],
+  "properties": {
+    "invite_id": {
+      "type": "string"
+    },
+    "initiator": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "realm_band": {
+      "type": "string"
+    },
+    "breath_hint": {
+      "type": "string"
+    },
+    "terms": {
+      "type": "string"
+    },
+    "expires_at_ms": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

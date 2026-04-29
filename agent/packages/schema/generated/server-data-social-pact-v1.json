@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "left",
+    "right",
+    "terms",
+    "tick",
+    "broken"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "social_pact",
+      "type": "string"
+    },
+    "left": {
+      "type": "string"
+    },
+    "right": {
+      "type": "string"
+    },
+    "terms": {
+      "type": "string"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "broken": {
+      "type": "boolean"
+    }
+  }
+}

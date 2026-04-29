@@ -93,6 +93,49 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
+    SpiritNichePlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
+    /// plan-social-v1 §2.3 — 客户端准星凝视同一方块满 3 秒后的揭露请求。
+    SpiritNicheGaze {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// plan-social-v1 §2.3 — 主动标记坐标以揭露命中的灵龛。
+    SpiritNicheMarkCoordinate {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// plan-social-v1 §6.1 — 切磋邀请 UI 回执。
+    SparringInviteResponse {
+        v: u8,
+        invite_id: String,
+        accepted: bool,
+        #[serde(default)]
+        timed_out: bool,
+    },
+    /// plan-social-v1 §6.2 — 面对面交易发起：发起者提供一个物品实例。
+    TradeOfferRequest {
+        v: u8,
+        target: String,
+        offered_instance_id: u64,
+    },
+    /// plan-social-v1 §6.2 — 交易目标选择一个回礼物品确认，或拒绝。
+    TradeOfferResponse {
+        v: u8,
+        offer_id: String,
+        accepted: bool,
+        requested_instance_id: Option<u64>,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -813,6 +856,118 @@ mod tests {
                 assert_eq!(item_instance_id, 4242);
             }
             other => panic!("expected AlchemyFurnacePlace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_place_roundtrip() {
+        let json =
+            r#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNichePlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+                assert_eq!(item_instance_id, 4242);
+            }
+            other => panic!("expected SpiritNichePlace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_gaze_roundtrip() {
+        let json = r#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNicheGaze { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+            }
+            other => panic!("expected SpiritNicheGaze, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spirit_niche_mark_coordinate_roundtrip() {
+        let json = r#"{"type":"spirit_niche_mark_coordinate","v":1,"x":11,"y":64,"z":10}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNicheMarkCoordinate { v, x, y, z } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+            }
+            other => panic!("expected SpiritNicheMarkCoordinate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sparring_invite_response_roundtrip() {
+        let json = r#"{"type":"sparring_invite_response","v":1,"invite_id":"sparring:1:a:b","accepted":true,"timed_out":false}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SparringInviteResponse {
+                v,
+                invite_id,
+                accepted,
+                timed_out,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(invite_id, "sparring:1:a:b");
+                assert!(accepted);
+                assert!(!timed_out);
+            }
+            other => panic!("expected SparringInviteResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trade_offer_requests_roundtrip() {
+        let request = r#"{"type":"trade_offer_request","v":1,"target":"entity:42","offered_instance_id":1001}"#;
+        let req: ClientRequestV1 = serde_json::from_str(request).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferRequest {
+                v,
+                target,
+                offered_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(target, "entity:42");
+                assert_eq!(offered_instance_id, 1001);
+            }
+            other => panic!("expected TradeOfferRequest, got {other:?}"),
+        }
+
+        let response = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":true,"requested_instance_id":2002}"#;
+        let req: ClientRequestV1 = serde_json::from_str(response).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferResponse {
+                v,
+                offer_id,
+                accepted,
+                requested_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(offer_id, "trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70");
+                assert!(accepted);
+                assert_eq!(requested_instance_id, Some(2002));
+            }
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+
+        let decline = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":false}"#;
+        let req: ClientRequestV1 = serde_json::from_str(decline).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferResponse {
+                requested_instance_id,
+                ..
+            } => assert_eq!(requested_instance_id, None),
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
         }
     }
 

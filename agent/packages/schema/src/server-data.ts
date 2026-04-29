@@ -45,6 +45,16 @@ import {
   SkillSnapshotPayloadV1,
   SkillXpGainPayloadV1,
 } from "./skill.js";
+import {
+  SocialAnonymityPayloadV1,
+  SocialExposureEventV1,
+  SocialFeudEventV1,
+  SocialPactEventV1,
+  PlayerSocialSnapshotV1,
+  SocialRenownDeltaV1,
+  SparringInvitePayloadV1,
+  TradeOfferPayloadV1,
+} from "./social.js";
 import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
@@ -151,6 +161,13 @@ export const ServerDataType = Type.Union([
   Type.Literal("forge_session"),
   Type.Literal("forge_outcome"),
   Type.Literal("forge_blueprint_book"),
+  Type.Literal("social_anonymity"),
+  Type.Literal("social_exposure"),
+  Type.Literal("social_pact"),
+  Type.Literal("social_feud"),
+  Type.Literal("social_renown_delta"),
+  Type.Literal("sparring_invite"),
+  Type.Literal("trade_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -221,6 +238,7 @@ export const ServerDataPlayerStateV1 = Type.Object(
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
     zone: Type.String(),
+    social: Type.Optional(PlayerSocialSnapshotV1),
   },
   { additionalProperties: false },
 );
@@ -813,6 +831,101 @@ export type ServerDataForgeBlueprintBookV1 = Static<
   typeof ServerDataForgeBlueprintBookV1
 >;
 
+// ─── 玩家社交（plan-social-v1 §7） ───────────────────────
+export const ServerDataSocialAnonymityV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_anonymity"),
+    ...SocialAnonymityPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialAnonymityV1 = Static<
+  typeof ServerDataSocialAnonymityV1
+>;
+
+export const ServerDataSocialExposureV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_exposure"),
+    actor: SocialExposureEventV1.properties.actor,
+    kind: SocialExposureEventV1.properties.kind,
+    witnesses: SocialExposureEventV1.properties.witnesses,
+    tick: SocialExposureEventV1.properties.tick,
+    zone: SocialExposureEventV1.properties.zone,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialExposureV1 = Static<
+  typeof ServerDataSocialExposureV1
+>;
+
+export const ServerDataSocialPactV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_pact"),
+    left: SocialPactEventV1.properties.left,
+    right: SocialPactEventV1.properties.right,
+    terms: SocialPactEventV1.properties.terms,
+    tick: SocialPactEventV1.properties.tick,
+    broken: SocialPactEventV1.properties.broken,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialPactV1 = Static<typeof ServerDataSocialPactV1>;
+
+export const ServerDataSocialFeudV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_feud"),
+    left: SocialFeudEventV1.properties.left,
+    right: SocialFeudEventV1.properties.right,
+    tick: SocialFeudEventV1.properties.tick,
+    place: SocialFeudEventV1.properties.place,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialFeudV1 = Static<typeof ServerDataSocialFeudV1>;
+
+export const ServerDataSocialRenownDeltaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("social_renown_delta"),
+    char_id: SocialRenownDeltaV1.properties.char_id,
+    fame_delta: SocialRenownDeltaV1.properties.fame_delta,
+    notoriety_delta: SocialRenownDeltaV1.properties.notoriety_delta,
+    tags_added: SocialRenownDeltaV1.properties.tags_added,
+    tick: SocialRenownDeltaV1.properties.tick,
+    reason: SocialRenownDeltaV1.properties.reason,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSocialRenownDeltaV1 = Static<
+  typeof ServerDataSocialRenownDeltaV1
+>;
+
+export const ServerDataSparringInviteV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("sparring_invite"),
+    ...SparringInvitePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSparringInviteV1 = Static<
+  typeof ServerDataSparringInviteV1
+>;
+
+export const ServerDataTradeOfferV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("trade_offer"),
+    ...TradeOfferPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataTradeOfferV1 = Static<typeof ServerDataTradeOfferV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -858,5 +971,12 @@ export const ServerDataV1 = Type.Union([
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  ServerDataSocialAnonymityV1,
+  ServerDataSocialExposureV1,
+  ServerDataSocialPactV1,
+  ServerDataSocialFeudV1,
+  ServerDataSocialRenownDeltaV1,
+  ServerDataSparringInviteV1,
+  ServerDataTradeOfferV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

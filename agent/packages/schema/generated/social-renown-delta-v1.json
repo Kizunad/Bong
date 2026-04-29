@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "char_id",
+    "fame_delta",
+    "notoriety_delta",
+    "tags_added",
+    "tick",
+    "reason"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "type": "string"
+    },
+    "fame_delta": {
+      "type": "integer"
+    },
+    "notoriety_delta": {
+      "type": "integer"
+    },
+    "tags_added": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "weight",
+          "last_seen_tick",
+          "permanent"
+        ],
+        "properties": {
+          "tag": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "last_seen_tick": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "permanent": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

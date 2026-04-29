@@ -26,6 +26,7 @@ pub mod narration;
 pub mod npc;
 pub mod server_data;
 pub mod skill;
+pub mod social;
 pub mod tsy;
 pub mod tsy_hostile;
 pub mod vfx_event;

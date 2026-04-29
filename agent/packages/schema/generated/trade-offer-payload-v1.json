@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "offer_id",
+    "initiator",
+    "target",
+    "offered_item",
+    "requested_items",
+    "expires_at_ms"
+  ],
+  "properties": {
+    "offer_id": {
+      "type": "string"
+    },
+    "initiator": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "offered_item": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "instance_id",
+        "item_id",
+        "display_name",
+        "stack_count"
+      ],
+      "properties": {
+        "instance_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "stack_count": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    "requested_items": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instance_id",
+          "item_id",
+          "display_name",
+          "stack_count"
+        ],
+        "properties": {
+          "instance_id": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "item_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "stack_count": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "expires_at_ms": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

@@ -37,6 +37,7 @@ public class CultivationScreenTest {
             0.20,
             0.35,
             PlayerStateViewModel.PowerBreakdown.create(0.20, 0.40, 0.65, 0.10),
+            PlayerStateViewModel.SocialSnapshot.create(7, 12, List.of("背盟者", "三叛之人"), "defend", 0, 10, 1),
             "green_cloud_peak",
             "青云峰",
             0.78
@@ -54,8 +55,11 @@ public class CultivationScreenTest {
             "社交: 0.65",
             "领地: 0.10"
         ), content.lines().subList(5, 9));
-        assertEquals("当前区域: 青云峰", content.lines().get(9));
-        assertEquals("灵气浓度: ████████░░ 78%", content.lines().get(10));
+        assertEquals("声名: fame +7 / notoriety +12", content.lines().get(9));
+        assertEquals("声名标签: 背盟者 / 三叛之人", content.lines().get(10));
+        assertEquals("派系挂靠: defend rank 0 / loyalty +10 / betrayals 1", content.lines().get(11));
+        assertEquals("当前区域: 青云峰", content.lines().get(12));
+        assertEquals("灵气浓度: ████████░░ 78%", content.lines().get(13));
     }
 
     @Test
@@ -70,6 +74,7 @@ public class CultivationScreenTest {
             -0.25,
             0.55,
             PlayerStateViewModel.PowerBreakdown.create(0.70, 0.15, 0.25, 0.05),
+            PlayerStateViewModel.SocialSnapshot.empty(),
             "azure_peak",
             "苍岚峰",
             0.66
@@ -89,6 +94,7 @@ public class CultivationScreenTest {
             0.45,
             0.82,
             PlayerStateViewModel.PowerBreakdown.create(0.90, 0.30, 0.50, 0.20),
+            PlayerStateViewModel.SocialSnapshot.empty(),
             "violet_valley",
             "紫霞谷",
             0.91

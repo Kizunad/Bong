@@ -12,7 +12,8 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_SOCIAL_EXPOSURE,
+    CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -25,6 +26,9 @@ use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::social::{
+    SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
+};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::world_state::WorldStateV1;
@@ -70,6 +74,10 @@ pub enum RedisOutbound {
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
     TsySentinelPhaseChanged(TsySentinelPhaseChangedV1),
+    SocialExposure(SocialExposureEventV1),
+    SocialPact(SocialPactEventV1),
+    SocialFeud(SocialFeudEventV1),
+    SocialRenownDelta(SocialRenownDeltaV1),
 }
 
 #[derive(Debug, PartialEq)]
@@ -489,6 +497,44 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::SocialExposure(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SocialExposureEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_EXPOSURE,
+                payload,
+            })
+        }
+        RedisOutbound::SocialPact(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SocialPactEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_PACT,
+                payload,
+            })
+        }
+        RedisOutbound::SocialFeud(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SocialFeudEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_FEUD,
+                payload,
+            })
+        }
+        RedisOutbound::SocialRenownDelta(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SocialRenownDeltaV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SOCIAL_RENOWN_DELTA,
                 payload,
             })
         }
@@ -1155,6 +1201,7 @@ mod redis_bridge_tests {
     };
     use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
     use crate::schema::forge::ForgeOutcomeBucketV1;
+    use crate::schema::social::{ExposureKindV1, RenownTagV1};
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -1624,6 +1671,74 @@ mod redis_bridge_tests {
                 assert_eq!(v["kind"], "tsy_sentinel_phase_changed");
                 assert_eq!(v["container_entity_id"], 42);
                 assert_eq!(v["phase"], 1);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_social_events_on_social_channels() {
+        let exposure =
+            prepare_outbound_command(RedisOutbound::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor: "char:alice".to_string(),
+                kind: ExposureKindV1::Chat,
+                witnesses: vec!["char:bob".to_string()],
+                tick: 120,
+                zone: Some("spawn".to_string()),
+            }))
+            .expect("social exposure should serialize");
+        match exposure {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SOCIAL_EXPOSURE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["kind"], "chat");
+                assert_eq!(v["witnesses"][0], "char:bob");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let pact = prepare_outbound_command(RedisOutbound::SocialPact(SocialPactEventV1 {
+            v: 1,
+            left: "char:alice".to_string(),
+            right: "char:bob".to_string(),
+            terms: "shared shelter".to_string(),
+            tick: 121,
+            broken: false,
+        }))
+        .expect("social pact should serialize");
+        match pact {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SOCIAL_PACT);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["left"], "char:alice");
+                assert_eq!(v["broken"], false);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let renown =
+            prepare_outbound_command(RedisOutbound::SocialRenownDelta(SocialRenownDeltaV1 {
+                v: 1,
+                char_id: "char:alice".to_string(),
+                fame_delta: 0,
+                notoriety_delta: 10,
+                tags_added: vec![RenownTagV1 {
+                    tag: "戮道者".to_string(),
+                    weight: 10.0,
+                    last_seen_tick: 120,
+                    permanent: false,
+                }],
+                tick: 120,
+                reason: "pk".to_string(),
+            }))
+            .expect("social renown should serialize");
+        match renown {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SOCIAL_RENOWN_DELTA);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["notoriety_delta"], 10);
+                assert_eq!(v["tags_added"][0]["tag"], "戮道者");
             }
             other => panic!("expected publish, got {other:?}"),
         }

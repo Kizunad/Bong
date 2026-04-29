@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "social_anonymity",
+  "viewer": "char:steve",
+  "remotes": [
+    {
+      "player_uuid": "offline:NewPlayer1",
+      "anonymous": true,
+      "realm_band": "awaken_induce",
+      "breath_hint": "气息微弱",
+      "renown_tags": []
+    },
+    {
+      "player_uuid": "offline:KnownAlly",
+      "anonymous": false,
+      "display_name": "KnownAlly",
+      "realm_band": "condense_solidify",
+      "breath_hint": "气息在你之上",
+      "renown_tags": ["kept_pact"]
+    }
+  ]
+}
