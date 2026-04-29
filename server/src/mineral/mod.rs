@@ -44,7 +44,7 @@ use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
 
 use anchors::{spawn_mineral_anchor_nodes, MineralAnchorConfig};
 use break_handler::handle_block_break_for_mineral;
-use bridge::forward_karma_flag_to_agent;
+use bridge::{forward_karma_flag_to_agent, record_karma_flag_weights};
 use inventory_grant::consume_mineral_drops_into_inventory;
 use persistence::{record_exhausted_minerals, tick_mineral_clock};
 use probe::resolve_mineral_probe_intents;
@@ -92,6 +92,7 @@ pub fn register(app: &mut App) {
             // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。
             consume_mineral_drops_into_inventory,
             record_exhausted_minerals,
+            record_karma_flag_weights,
             forward_karma_flag_to_agent,
         ),
     );
