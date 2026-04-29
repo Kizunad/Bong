@@ -2802,6 +2802,102 @@ mod tests {
     }
 
     #[test]
+    fn half_step_success_keeps_spirit_and_does_not_occupy_quota() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("half-step-success");
+        let char_id = "offline:Azure";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                wave_current: 4,
+                waves_total: 5,
+                started_tick: 120,
+            },
+        )
+        .expect("active tribulation should persist before half-step success");
+
+        app.insert_resource(settings.clone());
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, tribulation_wave_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    ..Default::default()
+                },
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 80.0,
+                    cap_by_realm: LifespanCapTable::SPIRIT,
+                    offline_pause_tick: None,
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(5),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 120,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                    half_step_on_success: true,
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationWaveCleared>>()
+            .send(TribulationWaveCleared { entity, wave: 5 });
+
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        let cultivation = entity_ref
+            .get::<Cultivation>()
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.realm, Realm::Spirit);
+        assert_eq!(cultivation.qi_max, 210.0 * HALF_STEP_QI_MAX_MULTIPLIER);
+        let lifespan = entity_ref
+            .get::<LifespanComponent>()
+            .expect("lifespan should remain attached");
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::SPIRIT + HALF_STEP_LIFESPAN_YEARS
+        );
+        assert!(entity_ref.get::<TribulationState>().is_none());
+
+        let settled = app.world().resource::<Events<TribulationSettled>>();
+        let emitted: Vec<_> = settled.get_reader().read(settled).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].result.outcome, DuXuOutcomeV1::HalfStep);
+        assert_eq!(emitted[0].result.waves_survived, 5);
+        assert_eq!(app.world().resource::<Events<SkillCapChanged>>().len(), 0);
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "half-step success should clear active row"
+        );
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn tribulation_failure_regresses_without_death_lifecycle_side_effects() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("failure-not-death");
