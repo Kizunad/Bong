@@ -14,6 +14,8 @@
 - `plan-zhenfa-v1`（24 小时阵法载体：异变兽核镶嵌方块）
 - `plan-mineral-v2`（骨币制作与灵石品阶形成经济博弈）
 - `plan-shelflife-v1`（骨骼 / 兽核是否加 freshness 半衰期？）
+- `plan-botany-v2`（active；P5 通过本 plan 接入"植物 AttractsMobs hazard"——v2 物种 lie_yuan_tai / yuan_ni_hong_yu 等吸引特定异兽聚集，需本 plan 提供"按区域 spawn 指定 BeastKind"的 hook）
+- `plan-tools-v1`（骨架；骨骸钳从异兽尸体取骨——本 plan §3 drop 链路可选分支接入"屠宰会话"，由 tools-v1 P3 落地）
 
 **阶段总览**：
 - P0 ⬜ item 定义（骨骼分级 + 变异核心）+ drop 链路

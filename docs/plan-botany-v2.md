@@ -391,7 +391,7 @@ pub enum ModelOverlay {
 - [ ] **plan-mineral-v2**（骨架）：共享 worldgen layer 接入范式（`TerrainProvider::sample_layer`）
 - [ ] **plan-skill-v1**：herbalism XP 与 v1 一致；**WoundOnBareHand 等危险采集**给 +50% XP（高风险高回报）—— 待 skill 系统接入后回填
 - [ ] **plan-fauna-v1**（**待立 — 强依赖**）：AttractsMobs hazard 真 spawn 需此 plan；P0–P3 stub 占位；P5 接入
-- [ ] **plan-tools-v1**（**待立 — 强依赖**）：WoundOnBareHand 的 required_tool（采药刀 / 灵铲 / 灵镰 / 冰甲手套 / 骨骸钳 / 灵铁夹 / 刮刀）—— P0–P3 退化为 dispersal=1.0；P4 工具系统立后回填真伤
+- [ ] **plan-tools-v1**（**骨架 — 强依赖**）：WoundOnBareHand 的 required_tool（采药刀 / 刨锄 / 草镰 / 冰甲手套 / 骨骸钳 / 钝气夹 / 刮刀）—— P0–P3 退化为 dispersal=1.0；P4 工具系统立后回填真伤
 - [ ] **plan-lingtian-weather-v1**（骨架 — 强依赖）：灵气井相位 driver；jing_xin_zao SeasonRequired hazard 与 WaterPulse mode 依赖；P0–P3 stub，P5 接入
 - [ ] **plan-narrative-v1**（骨架）：每种 v2 物种给 agent narration 提供 1-3 个语调模板
 - [ ] **agent / tiandao**：BotanyEcologySnapshotV1 channel 自动包含 v2 物种（v1 已建好 channel）；agent narration 模板可引用 v2 物种语义（"北荒今见负元蕨遍野" 等）
@@ -400,7 +400,7 @@ pub enum ModelOverlay {
 
 ## §7 TODO / 开放问题（v3+）
 
-- [ ] **采集工具系统**：冰甲手套 / 骨骸钳 / 灵铁夹 / 刮刀 / 采药刀 / 灵铲 / 灵镰——本 plan P0–P3 不实装；待 plan-tools-v1（待立）
+- [ ] **采集工具系统**：冰甲手套 / 骨骸钳 / 钝气夹 / 刮刀 / 采药刀 / 刨锄 / 草镰——本 plan P0–P3 不实装；待 plan-tools-v1（骨架）
 - [ ] **季节系统**：v2 暂用 in-game daytime/nighttime 二分；完整四季 + 灵气井相位待 plan-lingtian-weather-v1
 - [ ] **变异系统**：v1 已有 PlantVariant::Thunder / Tainted；v2 是否新增 Cracked（断戟刺被采过的"已警觉"变种）/ Frosted（雪魄莲休眠态）/ Withered（裂渊苔塌缩前夜）—— 留 v3
 - [ ] **layer mutability 系统**：v2 NegPressureFeed / RuinResonance 物种生长理论上消耗 grid 级 layer 信号（neg_pressure / ruin_density），但 worldgen layer 当前是只读 raster；待独立 NegPressureAccount / RuinDensityAccount 等"可写 layer"系统建立后再实装层间消耗（v2 P0–P5 仅在 zone.spirit_qi 维度归还，不写 layer）

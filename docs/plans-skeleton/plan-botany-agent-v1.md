@@ -131,7 +131,7 @@ server 侧已就绪：
 - [ ] `ZoneStressFlag` 是否需要持久化（跨 agent 重启保留状态）？当前 WorldModel 持久化用 Redis，可以存，但窗口数据量小，是否值得？
 - [ ] 天道 narration 频率控制：生态异常可能持续很长时间，防止每 30s 一条叙事刷屏——需要 narration 冷却（同类型 narration 最少间隔 10 分钟）
 - [ ] P3 中 server 补发 `bong:lingtian/zone_pressure`：是否等 plan-lingtian 后续 plan 统一处理，还是本 plan 内顺手补发（修改 server/src/lingtian/pressure.rs）？后者更快但跨 plan 边界
-- [ ] 采药工具系统（botany §1.3）：右键即开 session 的现状后续加"采药刀/灵铲"影响品质/安全度——这条可以在本 plan P3+ 后作为 plan-botany-v2 骨架立项，还是折入 plan-botany-agent-v1？
+- [ ] 采药工具系统（botany §1.3）：右键即开 session 的现状后续加"采药刀 / 刨锄"影响品质 / 安全度——已由 `plan-tools-v1`（骨架，2026-04-29 立）覆盖；本 plan P3+ 接入时直接读 `ToolKind` enum 即可
 
 ---
 
