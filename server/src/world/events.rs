@@ -22,10 +22,11 @@ use crate::persistence::{
 };
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
-use crate::schema::common::GameEventType;
+use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{
     targeted_calamity_event_hit, targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap,
     TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
@@ -52,6 +53,10 @@ const TARGETED_LIGHTNING_VFX_COLOR: &str = "#D0C8FF";
 const TARGETED_LIGHTNING_VFX_COUNT: u16 = 3;
 const TARGETED_LIGHTNING_VFX_DURATION_TICKS: u16 = 14;
 const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
+pub(crate) const REALM_COLLAPSE_LOW_QI_THRESHOLD: f64 = 0.1;
+pub(crate) const REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS: u64 = 60 * 60 * 20;
+pub(crate) const REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS: u64 =
+    REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS;
 pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
 pub(crate) const REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID: &str = "bong:realm_collapse_boundary";
 const REALM_COLLAPSE_BOUNDARY_VFX_COLOR: &str = "#2B2B31";
@@ -97,6 +102,12 @@ struct TargetedDaoxiangSpawn {
     target_player: Option<String>,
     position: DVec3,
     qi_density_heat: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ZoneOccupantPosition {
+    dimension: DimensionKind,
+    position: DVec3,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,12 +172,78 @@ pub struct ActiveEventsResource {
     recent_game_events: Vec<GameEvent>,
 }
 
+#[derive(Default)]
+pub struct RealmCollapseLowQiMonitor {
+    low_qi_ticks_by_zone: HashMap<String, u64>,
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct ZoneCollapsedEvent {
     pub zone_name: String,
 }
 
 impl Resource for ActiveEventsResource {}
+impl Resource for RealmCollapseLowQiMonitor {}
+
+impl RealmCollapseLowQiMonitor {
+    fn tick(
+        &mut self,
+        zone_registry: &mut ZoneRegistry,
+        active_events: &mut ActiveEventsResource,
+        occupant_positions: &[ZoneOccupantPosition],
+    ) {
+        let mut zones_to_collapse = Vec::new();
+
+        for zone in &zone_registry.zones {
+            if zone
+                .active_events
+                .iter()
+                .any(|name| name == EVENT_REALM_COLLAPSE)
+                || active_events.contains(zone.name.as_str(), EVENT_REALM_COLLAPSE)
+            {
+                self.low_qi_ticks_by_zone.remove(&zone.name);
+                continue;
+            }
+
+            if zone.spirit_qi >= REALM_COLLAPSE_LOW_QI_THRESHOLD {
+                self.low_qi_ticks_by_zone.remove(&zone.name);
+                continue;
+            }
+
+            let low_qi_ticks = self
+                .low_qi_ticks_by_zone
+                .entry(zone.name.clone())
+                .or_default();
+            *low_qi_ticks = low_qi_ticks.saturating_add(1);
+
+            if *low_qi_ticks >= REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS
+                && zone_has_occupant(zone, occupant_positions)
+            {
+                zones_to_collapse.push(zone.name.clone());
+            }
+        }
+
+        self.low_qi_ticks_by_zone
+            .retain(|zone_name, _| zone_registry.find_zone_by_name(zone_name).is_some());
+
+        for zone_name in zones_to_collapse {
+            let command = realm_collapse_monitor_command(zone_name.as_str());
+            if active_events.enqueue_from_spawn_command_with_karma(
+                &command,
+                Some(&mut *zone_registry),
+                None,
+                None,
+            ) {
+                self.low_qi_ticks_by_zone.remove(&zone_name);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn low_qi_ticks_for_zone(&self, zone_name: &str) -> Option<u64> {
+        self.low_qi_ticks_by_zone.get(zone_name).copied()
+    }
+}
 
 impl ActiveEventsResource {
     #[cfg(test)]
@@ -833,14 +910,47 @@ impl ActiveEventsResource {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering active events scheduler");
     app.insert_resource(ActiveEventsResource::default());
+    app.insert_resource(RealmCollapseLowQiMonitor::default());
     app.add_event::<ZoneCollapsedEvent>();
     app.add_systems(
         Update,
         (
+            tick_realm_collapse_low_qi_monitor.before(tick_active_events),
             tick_active_events,
             persist_zone_collapsed_overlays.after(tick_active_events),
         ),
     );
+}
+
+fn tick_realm_collapse_low_qi_monitor(
+    mut monitor: ResMut<RealmCollapseLowQiMonitor>,
+    mut zone_registry: Option<ResMut<ZoneRegistry>>,
+    mut active_events: ResMut<ActiveEventsResource>,
+    players: Query<(&Position, Option<&CurrentDimension>), With<Client>>,
+    npcs: Query<(&Position, Option<&CurrentDimension>), With<NpcMarker>>,
+) {
+    let Some(zone_registry) = zone_registry.as_deref_mut() else {
+        return;
+    };
+
+    let mut occupants = Vec::new();
+    occupants.extend(
+        players
+            .iter()
+            .map(|(position, dimension)| ZoneOccupantPosition {
+                dimension: dimension.map(|dim| dim.0).unwrap_or_default(),
+                position: position.get(),
+            }),
+    );
+    occupants.extend(
+        npcs.iter()
+            .map(|(position, dimension)| ZoneOccupantPosition {
+                dimension: dimension.map(|dim| dim.0).unwrap_or_default(),
+                position: position.get(),
+            }),
+    );
+
+    monitor.tick(zone_registry, &mut active_events, occupants.as_slice());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -950,6 +1060,27 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
     }
 
     value.as_i64().map(|v| v as f64)
+}
+
+fn realm_collapse_monitor_command(zone_name: &str) -> Command {
+    Command {
+        command_type: CommandType::SpawnEvent,
+        target: zone_name.to_string(),
+        params: HashMap::from([
+            ("event".to_string(), json!(EVENT_REALM_COLLAPSE)),
+            (
+                "duration_ticks".to_string(),
+                json!(REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS),
+            ),
+            ("intensity".to_string(), json!(1.0)),
+        ]),
+    }
+}
+
+fn zone_has_occupant(zone: &Zone, occupant_positions: &[ZoneOccupantPosition]) -> bool {
+    occupant_positions
+        .iter()
+        .any(|occupant| occupant.dimension == zone.dimension && zone.contains(occupant.position))
 }
 
 fn targeted_calamity_event_seed(
@@ -1414,9 +1545,12 @@ mod events_tests {
 
     use super::{
         persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
-        ZoneCollapsedEvent, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
-        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
-        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, TARGETED_LIGHTNING_VFX_EVENT_ID,
+        RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH, EVENT_REALM_COLLAPSE,
+        EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
+        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS,
+        REALM_COLLAPSE_LOW_QI_THRESHOLD, REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS,
+        TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
@@ -1505,6 +1639,13 @@ mod events_tests {
     fn query_lightning_entities(world: &mut bevy_ecs::world::World) -> Vec<Entity> {
         let mut query = world.query_filtered::<Entity, With<LightningEntity>>();
         query.iter(world).collect::<Vec<_>>()
+    }
+
+    fn overworld_occupant(position: [f64; 3]) -> ZoneOccupantPosition {
+        ZoneOccupantPosition {
+            dimension: DimensionKind::Overworld,
+            position: DVec3::new(position[0], position[1], position[2]),
+        }
     }
 
     fn is_on_zone_edge(zone: &Zone, position: DVec3) -> bool {
@@ -2060,6 +2201,187 @@ mod events_tests {
                 && overlay.payload_version == 1
                 && overlay.payload_json.contains(EVENT_REALM_COLLAPSE)
         }));
+    }
+
+    #[test]
+    fn low_qi_monitor_waits_until_threshold_and_occupant_before_realm_collapse() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = REALM_COLLAPSE_LOW_QI_THRESHOLD - 0.01;
+        let mut events = ActiveEventsResource::default();
+        let mut monitor = RealmCollapseLowQiMonitor::default();
+        let occupants = [overworld_occupant([8.0, 66.0, 8.0])];
+
+        for _ in 0..REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS - 1 {
+            monitor.tick(&mut zones, &mut events, occupants.as_slice());
+        }
+
+        assert!(!events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+        assert_eq!(
+            monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME),
+            Some(REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS - 1)
+        );
+
+        monitor.tick(&mut zones, &mut events, occupants.as_slice());
+
+        assert!(events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+        assert_eq!(
+            events.elapsed_for_first(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE),
+            Some(0)
+        );
+        assert_eq!(
+            monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME),
+            None,
+            "successful schedule should clear low-qi accumulation"
+        );
+        assert_eq!(
+            zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .active_events
+                .iter()
+                .filter(|event| event.as_str() == EVENT_REALM_COLLAPSE)
+                .count(),
+            1
+        );
+
+        let alerts = events.drain_major_event_alerts();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(
+            alerts[0].duration_ticks,
+            REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS
+        );
+        let tribulation_events = events.drain_tribulation_events();
+        assert_eq!(tribulation_events.len(), 1);
+        assert_eq!(tribulation_events[0].kind, TribulationKindV1::ZoneCollapse);
+        assert_eq!(tribulation_events[0].phase, TribulationPhaseV1::Omen);
+        let vfx = events.drain_vfx_events();
+        assert_eq!(vfx.len(), 1);
+        match &vfx[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id, strength, ..
+            } => {
+                assert_eq!(event_id, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID);
+                assert_eq!(*strength, Some(0.35));
+            }
+            other => panic!("unexpected realm collapse monitor vfx payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn low_qi_monitor_requires_occupant_at_threshold() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = REALM_COLLAPSE_LOW_QI_THRESHOLD - 0.01;
+        let mut events = ActiveEventsResource::default();
+        let mut monitor = RealmCollapseLowQiMonitor::default();
+
+        for _ in 0..REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS {
+            monitor.tick(&mut zones, &mut events, &[]);
+        }
+
+        assert!(!events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+        assert_eq!(
+            monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME),
+            Some(REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS)
+        );
+
+        monitor.tick(
+            &mut zones,
+            &mut events,
+            &[ZoneOccupantPosition {
+                dimension: DimensionKind::Tsy,
+                position: DVec3::new(8.0, 66.0, 8.0),
+            }],
+        );
+
+        assert!(
+            !events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE),
+            "occupants in another dimension must not trigger overworld zone collapse"
+        );
+
+        monitor.tick(
+            &mut zones,
+            &mut events,
+            &[overworld_occupant([300.0, 66.0, 300.0])],
+        );
+
+        assert!(
+            !events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE),
+            "occupants outside the zone must not trigger collapse"
+        );
+
+        monitor.tick(
+            &mut zones,
+            &mut events,
+            &[overworld_occupant([8.0, 66.0, 8.0])],
+        );
+
+        assert!(events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+    }
+
+    #[test]
+    fn low_qi_monitor_resets_when_qi_recovers() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = REALM_COLLAPSE_LOW_QI_THRESHOLD - 0.01;
+        let mut events = ActiveEventsResource::default();
+        let mut monitor = RealmCollapseLowQiMonitor::default();
+        let occupants = [overworld_occupant([8.0, 66.0, 8.0])];
+
+        monitor.tick(&mut zones, &mut events, occupants.as_slice());
+        assert_eq!(
+            monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME),
+            Some(1)
+        );
+
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = REALM_COLLAPSE_LOW_QI_THRESHOLD;
+        monitor.tick(&mut zones, &mut events, occupants.as_slice());
+
+        assert_eq!(monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME), None);
+        assert!(!events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+    }
+
+    #[test]
+    fn low_qi_monitor_does_not_duplicate_active_realm_collapse() {
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = REALM_COLLAPSE_LOW_QI_THRESHOLD - 0.01;
+        let mut events = ActiveEventsResource::default();
+        let mut monitor = RealmCollapseLowQiMonitor::default();
+        let occupants = [overworld_occupant([8.0, 66.0, 8.0])];
+
+        for _ in 0..REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS {
+            monitor.tick(&mut zones, &mut events, occupants.as_slice());
+        }
+        monitor.tick(&mut zones, &mut events, occupants.as_slice());
+
+        assert_eq!(
+            events.count_by_zone_and_event(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE),
+            1
+        );
+        assert_eq!(monitor.low_qi_ticks_for_zone(DEFAULT_SPAWN_ZONE_NAME), None);
+        assert_eq!(
+            zones
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .active_events
+                .iter()
+                .filter(|event| event.as_str() == EVENT_REALM_COLLAPSE)
+                .count(),
+            1
+        );
     }
 
     #[test]
