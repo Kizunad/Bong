@@ -105,6 +105,50 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
             },
             { additionalProperties: false },
           ),
+          social: toolSchema.anyOf(
+            toolSchema.null(),
+            toolSchema.object(
+              {
+                renown: toolSchema.object(
+                  {
+                    fame: toolSchema.number(),
+                    notoriety: toolSchema.number(),
+                    topTags: toolSchema.array(toolSchema.string()),
+                  },
+                  { additionalProperties: false },
+                ),
+                relationships: toolSchema.array(
+                  toolSchema.object(
+                    {
+                      kind: toolSchema.string(),
+                      peer: toolSchema.string(),
+                      sinceTick: toolSchema.number(),
+                      metadata: toolSchema.unknown(),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ),
+                exposedToCount: toolSchema.number(),
+                factionMembership: toolSchema.anyOf(
+                  toolSchema.null(),
+                  toolSchema.object(
+                    {
+                      faction: toolSchema.string(),
+                      rank: toolSchema.number(),
+                      loyalty: toolSchema.number(),
+                      betrayalCount: toolSchema.number(),
+                      permanentlyRefused: toolSchema.boolean(),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ),
+              },
+              {
+                required: ["renown", "relationships", "exposedToCount"],
+                additionalProperties: false,
+              },
+            ),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -228,6 +272,32 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
               totalXpAt: milestone.total_xp_at,
             })) ?? [],
         },
+        social: player.social
+          ? {
+              renown: {
+                fame: player.social.renown.fame,
+                notoriety: player.social.renown.notoriety,
+                topTags: player.social.renown.top_tags.map((tag) => tag.tag),
+              },
+              relationships: player.social.relationships.map((relationship) => ({
+                kind: relationship.kind,
+                peer: relationship.peer,
+                sinceTick: relationship.since_tick,
+                metadata: relationship.metadata,
+              })),
+              exposedToCount: player.social.exposed_to_count,
+              factionMembership: player.social.faction_membership
+                ? {
+                    faction: player.social.faction_membership.faction,
+                    rank: player.social.faction_membership.rank,
+                    loyalty: player.social.faction_membership.loyalty,
+                    betrayalCount: player.social.faction_membership.betrayal_count,
+                    permanentlyRefused:
+                      player.social.faction_membership.permanently_refused,
+                  }
+                : null,
+            }
+          : null,
       },
       protection: {
         newbieThreshold: NEWBIE_POWER_THRESHOLD,
@@ -236,7 +306,18 @@ export const queryPlayerTool: AgentTool<QueryPlayerArgs, unknown> = {
         protected: newbieProtected || newcomerDetected,
         reasons: protectionReasons,
       },
-      summary: `${player.name}@${player.zone} power ${player.composite_power.toFixed(2)}, kills ${player.recent_kills}, deaths ${player.recent_deaths}, ${latestSkillMilestone ? `latest skill ${latestSkillMilestone.skill} Lv.${latestSkillMilestone.new_lv}` : `skill milestones ${recentSkillMilestones.length}`}`,
+      summary: `${player.name}@${player.zone} power ${player.composite_power.toFixed(2)}, kills ${player.recent_kills}, deaths ${player.recent_deaths}, ${socialSummary(player)}, ${latestSkillMilestone ? `latest skill ${latestSkillMilestone.skill} Lv.${latestSkillMilestone.new_lv}` : `skill milestones ${recentSkillMilestones.length}`}`,
     };
   },
 };
+
+function socialSummary(player: {
+  social?: {
+    renown: { fame: number; notoriety: number; top_tags: Array<{ tag: string }> };
+    relationships: unknown[];
+  };
+}): string {
+  if (!player.social) return "social unknown";
+  const tags = player.social.renown.top_tags.map((tag) => tag.tag).join("/") || "no tags";
+  return `renown ${player.social.renown.fame}/${player.social.renown.notoriety} ${tags}, relationships ${player.social.relationships.length}`;
+}

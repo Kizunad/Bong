@@ -111,15 +111,26 @@ export const playerProfilesBlock: ContextBlock = {
   required: true,
   render({ state }) {
     if (state.players.length === 0) return "";
-    const header = "| 玩家 | 综合实力 | 战斗 | karma | 趋势 | 位置 |";
-    const sep = "|------|---------|------|-------|------|------|";
+    const header = "| 玩家 | 综合实力 | 战斗 | karma | 声名 | 关系 | 趋势 | 位置 |";
+    const sep = "|------|---------|------|-------|------|------|------|------|";
     const rows = state.players.map((p: PlayerProfile) => {
       const trend = p.trend === "rising" ? "↑" : p.trend === "falling" ? "↓" : "→";
-      return `| ${p.name} | ${p.composite_power.toFixed(2)} | ${p.breakdown.combat.toFixed(2)} | ${p.breakdown.karma.toFixed(2)} | ${trend} | ${p.zone} |`;
+      const renown = p.social
+        ? `${p.social.renown.fame}/${p.social.renown.notoriety} ${formatRenownTags(
+            p.social.renown.top_tags,
+          )}`
+        : "-";
+      const relationships = p.social ? `${p.social.relationships.length}` : "-";
+      return `| ${p.name} | ${p.composite_power.toFixed(2)} | ${p.breakdown.combat.toFixed(2)} | ${p.breakdown.karma.toFixed(2)} | ${renown} | ${relationships} | ${trend} | ${p.zone} |`;
     });
     return `## 玩家画像\n${header}\n${sep}\n${rows.join("\n")}`;
   },
 };
+
+function formatRenownTags(tags: NonNullable<PlayerProfile["social"]>["renown"]["top_tags"]): string {
+  if (tags.length === 0) return "";
+  return `(${tags.map((tag) => tag.tag).join("/")})`;
+}
 
 export const recentEventsBlock: ContextBlock = {
   name: "recent_events",
