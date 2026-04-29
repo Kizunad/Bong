@@ -4242,7 +4242,7 @@ fn furnace_zone_is_collapsed(
 }
 
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
-/// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
+/// `BreakthroughBonus` / `QiRecovery` 已有运行时接入；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
 #[allow(clippy::too_many_arguments)]
 fn handle_alchemy_take_pill(
