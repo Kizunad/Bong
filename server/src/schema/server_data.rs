@@ -1837,6 +1837,9 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
             ),
             include_str!(
+                "../../../agent/packages/schema/samples/server-data.tribulation-broadcast.sample.json"
+            ),
+            include_str!(
                 "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"
             ),
         ];
