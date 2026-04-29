@@ -2028,6 +2028,71 @@ mod tests {
     }
 
     #[test]
+    fn heart_demon_no_solution_choice_records_without_penalty_or_boost() {
+        let mut app = App::new();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_systems(Update, heart_demon_choice_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(2),
+            submitted_at_tick: 2115,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 100.0);
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .expect("resolution should be recorded");
+        assert_eq!(resolution.outcome, HeartDemonOutcome::NoSolution);
+        assert_eq!(resolution.choice_idx, Some(2));
+        assert_eq!(resolution.tick, 2115);
+        assert_eq!(resolution.next_wave_multiplier, 1.0);
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::HeartDemonRecord {
+                outcome: HeartDemonOutcome::NoSolution,
+                choice_idx: Some(2),
+                tick: 2115
+            })
+        ));
+    }
+
+    #[test]
     fn heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 2140 });
