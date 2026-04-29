@@ -64,6 +64,14 @@ pub struct SocialMentorshipEvent {
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SparringInviteRequest {
+    pub initiator: Entity,
+    pub target: Entity,
+    pub terms: String,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct SpiritNichePlaceRequest {
     pub player: Entity,
     pub pos: [i32; 3],

@@ -21,8 +21,9 @@ use self::components::{
 };
 use self::events::{
     PlayerChatCollected, SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent,
-    SocialRelationshipEvent, SocialRenownDeltaEvent, SpiritNicheCoordinateRevealRequest,
-    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
+    SocialRelationshipEvent, SocialRenownDeltaEvent, SparringInviteRequest,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealRequest,
+    SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
@@ -43,7 +44,7 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
     ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
-    SocialRenownDeltaV1,
+    SocialRenownDeltaV1, SparringInvitePayloadV1,
 };
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -53,6 +54,7 @@ const COMPANION_RADIUS: f64 = 50.0;
 const COMPANION_SCAN_INTERVAL_TICKS: u64 = 20;
 const COMPANION_REQUIRED_SECONDS: u64 = 5 * 60 * 60;
 const COMPANION_EXPIRE_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
+const SPARRING_INVITE_TIMEOUT_MS: u64 = 10_000;
 const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
@@ -101,6 +103,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialPactEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
+    app.add_event::<SparringInviteRequest>();
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
@@ -126,6 +129,7 @@ pub fn register(app: &mut App) {
             update_companion_relationships.after(attach_social_bundle_to_joined_clients),
             handle_social_mentorships,
             handle_social_pacts,
+            dispatch_sparring_invites,
             apply_social_exposures
                 .after(expose_chat_speakers)
                 .after(handle_social_pacts),
@@ -569,6 +573,53 @@ fn handle_social_mentorships(
                 "technique_hint": mentorship.technique_hint.clone(),
             }),
         });
+    }
+}
+
+fn dispatch_sparring_invites(
+    mut invites: EventReader<SparringInviteRequest>,
+    mut players: Query<(Entity, &Lifecycle, Option<&Cultivation>, &mut Client), With<Client>>,
+) {
+    for invite in invites.read() {
+        if invite.initiator == invite.target {
+            continue;
+        }
+        let mut initiator_row = None;
+        let mut target_row = None;
+        for (entity, lifecycle, cultivation, _) in &mut players {
+            if lifecycle.state == LifecycleState::Terminated {
+                continue;
+            }
+            if entity == invite.initiator {
+                initiator_row =
+                    Some((lifecycle.character_id.clone(), cultivation.map(|c| c.realm)));
+            } else if entity == invite.target {
+                target_row = Some(lifecycle.character_id.clone());
+            }
+        }
+        let (Some((initiator, initiator_realm)), Some(target)) = (initiator_row, target_row) else {
+            continue;
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::SparringInvite(
+            SparringInvitePayloadV1 {
+                invite_id: format!("sparring:{}:{}:{}", invite.tick, initiator, target),
+                initiator,
+                target,
+                realm_band: initiator_realm
+                    .map(realm_band_label)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                breath_hint: "气息相试".to_string(),
+                terms: invite.terms.clone(),
+                expires_at_ms: current_unix_millis().saturating_add(SPARRING_INVITE_TIMEOUT_MS),
+            },
+        ));
+        let Ok(bytes) = serialize_server_data_payload(&payload) else {
+            tracing::warn!("[bong][social] failed to serialize sparring_invite payload");
+            continue;
+        };
+        if let Ok((_, _, _, mut client)) = players.get_mut(invite.target) {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
     }
 }
 
@@ -1810,6 +1861,22 @@ fn companion_last_interaction_tick(relationship: &Relationship) -> u64 {
         .unwrap_or(relationship.since_tick)
 }
 
+fn realm_band_label(realm: Realm) -> String {
+    match realm {
+        Realm::Awaken | Realm::Induce => "awaken_induce",
+        Realm::Condense | Realm::Solidify => "condense_solidify",
+        Realm::Spirit | Realm::Void => "spirit_void",
+    }
+    .to_string()
+}
+
+fn current_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn companion_pair_key(left: &str, right: &str) -> CompanionPairKey {
     if left <= right {
         (left.to_string(), right.to_string())
@@ -1837,12 +1904,14 @@ mod tests {
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
     use crate::persistence::bootstrap_sqlite;
+    use crate::schema::server_data::ServerDataType;
     use crate::schema::social::RenownTagV1;
     use crate::social::events::PlayerChatCollected;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, Position, Update};
-    use valence::testing::create_mock_client;
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
         ItemInstance {
@@ -1912,6 +1981,33 @@ mod tests {
             ),
             data_dir,
         )
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != "bong:server_data" {
+                continue;
+            }
+            payloads.push(
+                serde_json::from_slice(packet.data.0 .0)
+                    .expect("server_data payload should decode"),
+            );
+        }
+        payloads
     }
 
     #[test]
@@ -2187,6 +2283,61 @@ mod tests {
         assert_eq!(disciple.relationships.edges[0].peer, "char:npc_hermit");
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn sparring_invite_dispatches_payload_only_to_target() {
+        let mut app = App::new();
+        app.add_event::<SparringInviteRequest>();
+        app.add_systems(Update, dispatch_sparring_invites);
+        let (initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            Cultivation {
+                realm: Realm::Condense,
+                ..Default::default()
+            },
+        ));
+        let (target_bundle, mut target_helper) = create_mock_client("Target");
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut().entity_mut(target).insert(Lifecycle {
+            character_id: "char:target".to_string(),
+            ..Default::default()
+        });
+
+        app.world_mut().send_event(SparringInviteRequest {
+            initiator,
+            target,
+            terms: "点到为止".to_string(),
+            tick: 84000,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(collect_server_data_payloads(&mut initiator_helper).is_empty());
+        let payloads = collect_server_data_payloads(&mut target_helper);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].payload_type(), ServerDataType::SparringInvite);
+        match &payloads[0].payload {
+            ServerDataPayloadV1::SparringInvite(invite) => {
+                assert_eq!(
+                    invite.invite_id,
+                    "sparring:84000:char:initiator:char:target"
+                );
+                assert_eq!(invite.initiator, "char:initiator");
+                assert_eq!(invite.target, "char:target");
+                assert_eq!(invite.realm_band, "condense_solidify");
+                assert_eq!(invite.breath_hint, "气息相试");
+                assert_eq!(invite.terms, "点到为止");
+                assert!(invite.expires_at_ms > 0);
+            }
+            other => panic!("expected sparring invite payload, got {other:?}"),
+        }
     }
 
     #[test]
