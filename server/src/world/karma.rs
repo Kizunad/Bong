@@ -160,6 +160,24 @@ pub fn targeted_calamity_roll(
     }
 }
 
+pub fn targeted_calamity_event_hit(effective_probability: f32, seed: u64) -> (f32, bool) {
+    let probability = effective_probability.clamp(0.0, 1.0);
+    let roll_value = targeted_calamity_roll_value(seed);
+    (roll_value, roll_value < probability)
+}
+
+fn targeted_calamity_roll_value(seed: u64) -> f32 {
+    const ROLL_BUCKETS: u64 = 10_000;
+    (splitmix64(seed) % ROLL_BUCKETS) as f32 / ROLL_BUCKETS as f32
+}
+
+fn splitmix64(seed: u64) -> u64 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +244,17 @@ mod tests {
         let heat_driven = targeted_calamity_roll(TARGETED_CALAMITY_BASE_PROBABILITY, 0.1, 0.6);
         assert!(heat_driven.effective_probability > TARGETED_CALAMITY_BASE_PROBABILITY);
         assert!(heat_driven.effective_probability < TARGETED_CALAMITY_MAX_PROBABILITY);
+    }
+
+    #[test]
+    fn targeted_calamity_event_hit_uses_effective_probability() {
+        let seed = 42;
+        let (roll_value, miss) = targeted_calamity_event_hit(0.0, seed);
+        assert!((0.0..1.0).contains(&roll_value));
+        assert!(!miss);
+
+        let (same_roll_value, hit) = targeted_calamity_event_hit(1.0, seed);
+        assert_eq!(roll_value, same_roll_value);
+        assert!(hit);
     }
 }

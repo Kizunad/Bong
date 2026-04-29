@@ -27,7 +27,8 @@ use crate::schema::tribulation::{TribulationEventV1, TribulationPhaseV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::karma::{
-    targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap, TARGETED_CALAMITY_BASE_PROBABILITY,
+    targeted_calamity_event_hit, targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap,
+    TARGETED_CALAMITY_BASE_PROBABILITY,
 };
 use crate::world::zone::Zone;
 
@@ -236,6 +237,15 @@ impl ActiveEventsResource {
                 karma_weight,
                 qi_density_heat,
             );
+            let roll_seed = targeted_calamity_event_seed(
+                event.zone_name.as_str(),
+                event.target_player.as_deref(),
+                event.duration_ticks,
+                event.intensity,
+                self.recent_game_events.len() as u64,
+            );
+            let (roll_value, negative_event_triggered) =
+                targeted_calamity_event_hit(roll.effective_probability, roll_seed);
 
             self.record_recent_event(GameEvent {
                 event_type: GameEventType::EventTriggered,
@@ -258,14 +268,36 @@ impl ActiveEventsResource {
                     ),
                     ("zone_karma_weight".to_string(), json!(roll.karma_weight)),
                     ("qi_density_heat".to_string(), json!(roll.qi_density_heat)),
+                    ("roll_value".to_string(), json!(roll_value)),
+                    (
+                        "negative_event_triggered".to_string(),
+                        json!(negative_event_triggered),
+                    ),
                 ])),
             });
-            self.pending_tribulation_events
-                .push(TribulationEventV1::targeted(
-                    TribulationPhaseV1::Omen,
-                    Some(event.zone_name.clone()),
-                    Some([center.x, center.y, center.z]),
-                ));
+            if negative_event_triggered {
+                self.record_recent_event(GameEvent {
+                    event_type: GameEventType::EventTriggered,
+                    tick: 0,
+                    player: event.target_player.clone(),
+                    target: Some("targeted_negative_event".to_string()),
+                    zone: Some(event.zone_name.clone()),
+                    details: Some(HashMap::from([
+                        ("event".to_string(), Value::String("运道折耗".to_string())),
+                        (
+                            "effective_probability".to_string(),
+                            json!(roll.effective_probability),
+                        ),
+                        ("roll_value".to_string(), json!(roll_value)),
+                    ])),
+                });
+                self.pending_tribulation_events
+                    .push(TribulationEventV1::targeted(
+                        TribulationPhaseV1::Omen,
+                        Some(event.zone_name.clone()),
+                        Some([center.x, center.y, center.z]),
+                    ));
+            }
 
             return true;
         }
@@ -794,6 +826,25 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
     value.as_i64().map(|v| v as f64)
 }
 
+fn targeted_calamity_event_seed(
+    zone_name: &str,
+    target_player: Option<&str>,
+    duration_ticks: u64,
+    intensity: f64,
+    nonce: u64,
+) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    zone_name.hash(&mut hasher);
+    target_player.hash(&mut hasher);
+    duration_ticks.hash(&mut hasher);
+    intensity.to_bits().hash(&mut hasher);
+    nonce.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64) -> String {
     format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
 }
@@ -1109,6 +1160,7 @@ mod events_tests {
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
     use crate::schema::vfx_event::VfxEventPayloadV1;
+    use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
@@ -1875,6 +1927,92 @@ mod events_tests {
             ),
             "karma_backlash should append an internal hidden marker"
         );
+    }
+
+    #[test]
+    fn hidden_karma_backlash_misses_negative_event_at_base_probability() {
+        let (mut app, _layer) = setup_events_app();
+        let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command_with_karma(
+                    &command,
+                    Some(&mut zones),
+                    None,
+                    None,
+                ));
+
+                let recent = events.recent_events_snapshot();
+                let marker = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH))
+                    .expect("hidden marker should be recorded");
+                let details = marker.details.as_ref().expect("marker details");
+                assert_eq!(
+                    details
+                        .get("negative_event_triggered")
+                        .and_then(Value::as_bool),
+                    Some(false)
+                );
+                assert!(recent
+                    .iter()
+                    .all(|event| event.target.as_deref() != Some("targeted_negative_event")));
+                assert!(events.drain_tribulation_events().is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn hidden_karma_backlash_emits_targeted_hint_when_weighted_roll_hits() {
+        let (mut app, _layer) = setup_events_app();
+        let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
+        let mut karma = KarmaWeightStore::default();
+        karma.mark_player(
+            "Azure",
+            Some("spawn".to_string()),
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1.0,
+            1,
+        );
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command_with_karma(
+                    &command,
+                    Some(&mut zones),
+                    Some(&karma),
+                    None,
+                ));
+
+                let recent = events.recent_events_snapshot();
+                let marker = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH))
+                    .expect("hidden marker should be recorded");
+                let details = marker.details.as_ref().expect("marker details");
+                assert_eq!(
+                    details
+                        .get("negative_event_triggered")
+                        .and_then(Value::as_bool),
+                    Some(true)
+                );
+                assert!(recent.iter().any(|event| {
+                    event.target.as_deref() == Some("targeted_negative_event")
+                        && event.zone.as_deref() == Some("spawn")
+                }));
+
+                let tribulation_events = events.drain_tribulation_events();
+                assert_eq!(tribulation_events.len(), 1);
+                assert_eq!(tribulation_events[0].kind, TribulationKindV1::Targeted);
+                assert_eq!(tribulation_events[0].phase, TribulationPhaseV1::Omen);
+                assert_eq!(tribulation_events[0].zone.as_deref(), Some("spawn"));
+            });
+        }
     }
 
     fn unique_test_db(test_name: &str) -> std::path::PathBuf {
