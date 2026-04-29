@@ -203,7 +203,8 @@ fn expose_chat_speakers(
 #[allow(clippy::type_complexity)]
 fn handle_death_social_effects(
     mut deaths: EventReader<DeathEvent>,
-    players: Query<(Entity, &Lifecycle, &Position), With<Client>>,
+    players: Query<(Entity, &Lifecycle, &Position, Option<&Renown>), With<Client>>,
+    witness_players: Query<(Entity, &Lifecycle, &Position), With<Client>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut exposures: EventWriter<SocialExposureEvent>,
     mut relationships: EventWriter<SocialRelationshipEvent>,
@@ -214,13 +215,15 @@ fn handle_death_social_effects(
         .cloned()
         .unwrap_or_else(ZoneRegistry::fallback);
     for death in deaths.read() {
-        let Ok((victim_entity, victim_lifecycle, victim_pos)) = players.get(death.target) else {
+        let Ok((victim_entity, victim_lifecycle, victim_pos, victim_renown)) =
+            players.get(death.target)
+        else {
             continue;
         };
         let victim_char = victim_lifecycle.character_id.clone();
         let mut witnesses = HashSet::new();
         if let Some(attacker_entity) = death.attacker {
-            if let Ok((_, attacker_lifecycle, _)) = players.get(attacker_entity) {
+            if let Ok((_, attacker_lifecycle, _, attacker_renown)) = players.get(attacker_entity) {
                 witnesses.insert(attacker_lifecycle.character_id.clone());
                 if attacker_lifecycle.character_id != victim_char {
                     relationships.send(SocialRelationshipEvent {
@@ -234,14 +237,20 @@ fn handle_death_social_effects(
                             "place": zone_name_for_position(&zone_registry, victim_pos),
                         }),
                     });
-                    renown_deltas.send(SocialRenownDeltaEvent {
-                        char_id: attacker_lifecycle.character_id.clone(),
-                        fame_delta: 0,
-                        notoriety_delta: 10,
-                        tags_added: Vec::new(),
-                        tick: death.at_tick,
-                        reason: "pk_death".to_string(),
-                    });
+                    if victim_renown.map(|renown| renown.fame).unwrap_or_default()
+                        > attacker_renown
+                            .map(|renown| renown.fame)
+                            .unwrap_or_default()
+                    {
+                        renown_deltas.send(SocialRenownDeltaEvent {
+                            char_id: attacker_lifecycle.character_id.clone(),
+                            fame_delta: 0,
+                            notoriety_delta: 10,
+                            tags_added: Vec::new(),
+                            tick: death.at_tick,
+                            reason: "pk_death_higher_fame_victim".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -250,7 +259,7 @@ fn handle_death_social_effects(
             victim_char.as_str(),
             victim_pos,
             DEATH_EXPOSURE_RADIUS,
-            &players,
+            &witness_players,
         ));
         let witnesses = sorted_witnesses(witnesses);
         if !witnesses.is_empty() {
@@ -1195,5 +1204,81 @@ mod tests {
         assert_eq!(collected[0].left_kind, RelationshipKindV1::Companion);
         assert_eq!(collected[0].right_kind, RelationshipKindV1::Companion);
         assert_eq!(collected[0].metadata["source"], "co_presence");
+    }
+
+    #[test]
+    fn pk_notoriety_delta_requires_higher_fame_victim() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<SocialExposureEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, handle_death_social_effects);
+
+        let (mut killer_bundle, _killer_helper) = create_mock_client("Killer");
+        killer_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let killer = app.world_mut().spawn(killer_bundle).id();
+        let (mut low_fame_bundle, _low_helper) = create_mock_client("LowFame");
+        low_fame_bundle.player.position = Position::new([1.0, 64.0, 0.0]);
+        let low_fame_victim = app.world_mut().spawn(low_fame_bundle).id();
+        let (mut high_fame_bundle, _high_helper) = create_mock_client("HighFame");
+        high_fame_bundle.player.position = Position::new([2.0, 64.0, 0.0]);
+        let high_fame_victim = app.world_mut().spawn(high_fame_bundle).id();
+
+        app.world_mut().entity_mut(killer).insert((
+            Lifecycle {
+                character_id: "char:killer".to_string(),
+                ..Default::default()
+            },
+            Renown {
+                fame: 5,
+                ..Default::default()
+            },
+        ));
+        app.world_mut().entity_mut(low_fame_victim).insert((
+            Lifecycle {
+                character_id: "char:low".to_string(),
+                ..Default::default()
+            },
+            Renown {
+                fame: 4,
+                ..Default::default()
+            },
+        ));
+        app.world_mut().entity_mut(high_fame_victim).insert((
+            Lifecycle {
+                character_id: "char:high".to_string(),
+                ..Default::default()
+            },
+            Renown {
+                fame: 9,
+                ..Default::default()
+            },
+        ));
+        app.world_mut().send_event(DeathEvent {
+            target: low_fame_victim,
+            cause: "pvp".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("char:killer".to_string()),
+            at_tick: 10,
+        });
+        app.world_mut().send_event(DeathEvent {
+            target: high_fame_victim,
+            cause: "pvp".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("char:killer".to_string()),
+            at_tick: 11,
+        });
+
+        app.update();
+
+        let events = app.world().resource::<Events<SocialRenownDeltaEvent>>();
+        let mut reader = events.get_reader();
+        let collected = reader.read(events).cloned().collect::<Vec<_>>();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].char_id, "char:killer");
+        assert_eq!(collected[0].notoriety_delta, 10);
+        assert_eq!(collected[0].tick, 11);
+        assert_eq!(collected[0].reason, "pk_death_higher_fame_victim");
     }
 }
