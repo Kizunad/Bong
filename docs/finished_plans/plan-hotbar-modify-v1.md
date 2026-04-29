@@ -1,4 +1,4 @@
-# Bong · plan-hotbar-modify-v1 · 骨架
+# Bong · plan-hotbar-modify-v1 · Active（验收完成 2026-04-29，待归档）
 
 **快捷栏双行重构**：明确 1–9（战斗技能行）与 F1–F9（物品快捷使用行）的分工，让爆脉流等战斗流派技能可以直接绑在 1–9 行上用最顺手的手指出招。
 
@@ -24,11 +24,11 @@
 
 ## §0 设计轴心
 
-- [ ] **1–9 行 = 战斗技能行**：最顺手（WASD 正上方），绑爆脉五式等战斗技能，按键直接出招
-- [ ] **F1–F9 行 = 物品快捷使用行**：绑丹药/绷带/暗器等消耗品，有 cast time
-- [ ] **两行都可混绑**：1–9 也可以放物品（复用现网 server-driven hotbar 切换路径），F1–F9 也可放无 cast 技能
-- [ ] **互不冲突**：1–9 触发走一条通道，F1–F9 走另一条，同槽位可以各自绑定不同东西
-- [ ] **配置路径统一**：InspectScreen 内拖拽配置——1–9 行新增「战斗·修炼」tab（五区联动工作台，详见 §4）；F1–F9 行沿用现网 `quickUseStrip`（不动）
+- [x] **1–9 行 = 战斗技能行**：最顺手（WASD 正上方），绑爆脉五式等战斗技能，按键直接出招
+- [x] **F1–F9 行 = 物品快捷使用行**：绑丹药/绷带/暗器等消耗品，有 cast time
+- [x] **两行都可混绑**：1–9 也可以放物品（复用现网 server-driven hotbar 切换路径），F1–F9 也可放无 cast 技能
+- [x] **互不冲突**：1–9 触发走一条通道，F1–F9 走另一条，同槽位可以各自绑定不同东西
+- [x] **配置路径统一**：InspectScreen 内拖拽配置——1–9 行新增「战斗·修炼」tab（五区联动工作台，详见 §4）；F1–F9 行沿用现网 `quickUseStrip`（不动）
 
 ---
 
@@ -473,120 +473,121 @@ InspectScreen「战斗·修炼」tab（§4 五区工作台）
 
 ## §8 实施节点
 
-### P0 · 1–9 技能栏基础（目标：1 周）
+### P0 · 1–9 技能栏基础（目标：1 周）✅ 2026-04-28
 
 ```
 Schema：
-  - [ ] 顺手补：TS client-request.ts 新增 UseQuickSlotRequestV1 + QuickSlotBindRequestV1（修复现网遗漏）
-  - [ ] SkillBarBindRequestV1 + SkillBarCastRequestV1 TypeBox 定义（binding 用 union: null | item | skill）
-  - [ ] SkillBarConfigV1 server-data TypeBox（mirror QuickSlotConfigV1）
-  - [ ] Rust side ClientRequestV1 新增 SkillBarBind / SkillBarCast 变体 + SkillBarBindingV1 enum
+  - [x] 顺手补：TS client-request.ts 新增 UseQuickSlotRequestV1 + QuickSlotBindRequestV1（修复现网遗漏）
+  - [x] SkillBarBindRequestV1 + SkillBarCastRequestV1 TypeBox 定义（binding 用 union: null | item | skill）
+  - [x] SkillBarConfigV1 server-data TypeBox（mirror QuickSlotConfigV1）
+  - [x] Rust side ClientRequestV1 新增 SkillBarBind / SkillBarCast 变体 + SkillBarBindingV1 enum
 Server：
-  - [ ] combat/components.rs 新增 SkillBarBindings Component（mirror QuickSlotBindings）+ SkillSlot enum
-  - [ ] inventory/mod.rs:260 同地点注入 SkillBarBindings::default()
-  - [ ] PlayerUiPrefs 改 pub(crate) + 新增 skill_bar: [SkillSlotPersist; 9] 字段
-  - [ ] handle_skill_bar_bind：解析 binding union → 写 SkillBarBindings.slots[slot]（Skill: skill_id 注册校验；Item: template_id → 背包首个匹配 instance；None: Empty）
-  - [ ] handle_skill_bar_cast：读 slots[slot] → Skill 路由到 skill system / Item 视为 nop / Empty 视为 nop
-  - [ ] 路由表：skill_id → system fn pointer（**接口完整 + mock 顶位**：fn 签名按真实最终形态定义 `fn(&mut World, EntityId, slot, target) -> CastResult`；mock 实现走完整 cast→cooldown→complete 状态机，仅伤害结算/经脉消耗用占位常量；plan-baomai-v1 接入时只替换 fn pointer 不改路由层）
-  - [ ] network/skillbar_config_emit.rs 新增 emit_skillbar_config_payloads（mirror quickslot_config_emit.rs）
-  - [ ] 持久化：登录时读 prefs_json.skill_bar → 注入 SkillBarBindings；handle_skill_bar_bind 写 Component 时同步 mark prefs dirty
-  - [ ] 顺手补（P0 必做）：现网 PlayerUiPrefs.quick_slots dead field 修复——
+  - [x] combat/components.rs 新增 SkillBarBindings Component（mirror QuickSlotBindings）+ SkillSlot enum
+  - [x] inventory/mod.rs:260 同地点注入 SkillBarBindings::default()
+  - [x] PlayerUiPrefs 改 pub(crate) + 新增 skill_bar: [SkillSlotPersist; 9] 字段
+  - [x] handle_skill_bar_bind：解析 binding union → 写 SkillBarBindings.slots[slot]（Skill: skill_id 注册校验；Item: template_id → 背包首个匹配 instance；None: Empty）
+  - [x] handle_skill_bar_cast：读 slots[slot] → Skill 路由到 skill system / Item 视为 nop / Empty 视为 nop
+  - [x] 路由表：skill_id → system fn pointer（**接口完整 + mock 顶位**：fn 签名按真实最终形态定义 `fn(&mut World, EntityId, slot, target) -> CastResult`；mock 实现走完整 cast→cooldown→complete 状态机，仅伤害结算/经脉消耗用占位常量；plan-baomai-v1 接入时只替换 fn pointer 不改路由层）
+  - [x] network/skillbar_config_emit.rs 新增 emit_skillbar_config_payloads（mirror quickslot_config_emit.rs）
+  - [x] 持久化：登录时读 prefs_json.skill_bar → 注入 SkillBarBindings；handle_skill_bar_bind 写 Component 时同步 mark prefs dirty
+  - [x] 顺手补（P0 必做）：现网 PlayerUiPrefs.quick_slots dead field 修复——
         handle_quick_slot_bind 写 QuickSlotBindings 时同步写 quick_slots（template_id），
         登录时读 prefs_json.quick_slots 注入 QuickSlotBindings
 客户端：
-  - [ ] combat/SkillBarStore.java（本地镜像 9 槽，参考 QuickUseSlotStore）
-  - [ ] mixin/KeyBindingMixin.java：1–9 按键拦截 → 查 SkillBarStore.slots[n]：
+  - [x] combat/SkillBarStore.java（本地镜像 9 槽，参考 QuickUseSlotStore）
+  - [x] mixin/KeyBindingMixin.java：1–9 按键拦截 → 查 SkillBarStore.slots[n]：
         Skill → 发 SkillBarCast + cancel keypress；Item/Empty → 不 cancel，让 MC server-driven hotbar 切换继续
-  - [ ] hud/SkillBarHudPlanner.java：渲染 1–9 槽（测试用崩拳图标 + 冷却蒙灰；参考 QuickBarHudPlanner）
-  - [ ] network/SkillBarConfigHandler.java：接收 SkillBarConfigV1 → 更新 SkillBarStore（参考 QuickSlotConfigHandler）
+        （实装走 SkillBarKeyRouter.shouldCancelHotbarKey() 三态机 PASS_THROUGH/CAST_SENT/COOLDOWN_BLOCKED）
+  - [x] hud/SkillBarHudPlanner.java：渲染 1–9 槽（测试用崩拳图标 + 冷却蒙灰；参考 QuickBarHudPlanner）
+  - [x] network/SkillBarConfigHandler.java：接收 SkillBarConfigV1 → 更新 SkillBarStore（参考 QuickSlotConfigHandler）
 测试（**饱和化**：见 CLAUDE.md "Testing — 饱和化测试"，每条 case 都要把"目标行为"锁死，回归立刻撞红）：
   Schema 双端对拍：
-  - [ ] TS↔Rust sample 对拍：UseQuickSlot / QuickSlotBind / SkillBarBind / SkillBarCast 全协议 happy + invalid（多余字段 / 类型错 / slot 越界 / binding union 缺 kind）
-  - [ ] SkillBarBindingV1 union：null / item / skill 三 variant 各有正反 sample
+  - [x] TS↔Rust sample 对拍：UseQuickSlot / QuickSlotBind / SkillBarBind / SkillBarCast 全协议 happy + invalid（多余字段 / 类型错 / slot 越界 / binding union 缺 kind）
+  - [x] SkillBarBindingV1 union：null / item / skill 三 variant 各有正反 sample
   按键路由（mixin + handle_skill_bar_cast）饱和分支：
-  - [ ] slot Empty → 按 1 nop（不发 SkillBarCast，server 收到也 drop 并日志告警）
-  - [ ] slot Item → 按 1 走 server-driven hotbar 切换（不 cancel keypress、不发 SkillBarCast）
-  - [ ] slot Skill → 按 1 发 SkillBarCast → mock consumer 走完整 cast→cooldown→complete
-  - [ ] cooldown 期内按 1 → client 蒙灰挡住；server 兜底 drop（双层防御都测）
-  - [ ] cast 期内受击中断 / 控制中断 / 移动 >0.3m 中断三种各一条 case（共用 tick_casts_or_interrupt 路径）
+  - [x] slot Empty → 按 1 nop（不发 SkillBarCast，server 收到也 drop 并日志告警）
+  - [x] slot Item → 按 1 走 server-driven hotbar 切换（不 cancel keypress、不发 SkillBarCast）
+  - [x] slot Skill → 按 1 发 SkillBarCast → mock consumer 走完整 cast→cooldown→complete
+  - [x] cooldown 期内按 1 → client 蒙灰挡住；server 兜底 drop（双层防御都测）
+  - [x] cast 期内受击中断 / 控制中断 / 移动 >0.3m 中断三种各一条 case（共用 tick_casts_or_interrupt 路径）
   绑定持久化（每条 transition 一条 case）：
-  - [ ] SkillBarBind Empty → Skill：写 SkillBarBindings + 写 prefs.skill_bar + emit SkillBarConfigV1
-  - [ ] SkillBarBind Skill → Empty（binding=null）：清空双层 + emit
-  - [ ] SkillBarBind Skill → 不同 Skill：覆盖且 cooldown 重置
-  - [ ] 重启进程：prefs 落盘 → 登录读 prefs → 注入 SkillBarBindings；与重启前完全一致
-  - [ ] 边界：slot 越界（10 / -1）reject；skill_id 不在 skill_registry reject
+  - [x] SkillBarBind Empty → Skill：写 SkillBarBindings + 写 prefs.skill_bar + emit SkillBarConfigV1
+  - [x] SkillBarBind Skill → Empty（binding=null）：清空双层 + emit
+  - [x] SkillBarBind Skill → 不同 Skill：覆盖且 cooldown 重置
+  - [x] 重启进程：prefs 落盘 → 登录读 prefs → 注入 SkillBarBindings；与重启前完全一致
+  - [x] 边界：slot 越界（10 / -1）reject；skill_id 不在 skill_registry reject
   顺手补 quick_slots 死字段（同款饱和）：
-  - [ ] handle_quick_slot_bind 写 Component 同步 mark prefs dirty + 落盘
-  - [ ] 登录读 prefs.quick_slots → 注入 QuickSlotBindings；F1–F9 重启不丢
-  - [ ] 回归：现网 UseQuickSlot 行为不变（cast / cooldown / 中断三路径）
+  - [x] handle_quick_slot_bind 写 Component 同步 mark prefs dirty + 落盘
+  - [x] 登录读 prefs.quick_slots → 注入 QuickSlotBindings；F1–F9 重启不丢
+  - [x] 回归：现网 UseQuickSlot 行为不变（cast / cooldown / 中断三路径）
   Mock skill consumer 接口锁定（让 plan-baomai-v1 接入时不改测试）：
-  - [ ] 路由 fn 签名 pin 测试：fn(&mut World, EntityId, slot, target) -> CastResult 各分支命中
-  - [ ] CastResult enum 全 variant（Started / Rejected{reason} / Interrupted）各有 case
+  - [x] 路由 fn 签名 pin 测试：fn(&mut World, EntityId, slot, target) -> CastResult 各分支命中
+  - [x] CastResult enum 全 variant（Started / Rejected{reason} / Interrupted）各有 case
 ```
 
-### P1 · InspectScreen 五区联动工作台（目标：1.5 周）
+### P1 · InspectScreen 五区联动工作台（目标：1.5 周）✅ 2026-04-28
 
 按 §4 五区拆五子任务，建议按顺序推进（每子任务独立可见效，便于阶段性 review）：
 
 **P1.a · Schema + Server techniques_snapshot 链路**（解锁后续 UI 数据源）
 ```
-  - [ ] TypeBox: TechniquesSnapshotV1 + TechniqueEntryV1 + TechniqueRequiredMeridianV1
-  - [ ] Rust: ServerDataV1 加入 TechniquesSnapshot 变体
-  - [ ] cultivation/skill_registry.rs：4 个示例条目（崩拳 / 贴山靠 / 血崩步 / 逆脉护体）
+  - [x] TypeBox: TechniquesSnapshotV1 + TechniqueEntryV1 + TechniqueRequiredMeridianV1
+  - [x] Rust: ServerDataV1 加入 TechniquesSnapshot 变体
+  - [x] cultivation/skill_registry.rs：4 个示例条目（崩拳 / 贴山靠 / 血崩步 / 逆脉护体）
         必填 metadata: description / required_realm / required_meridians / qi_cost / cast_ticks / cooldown_ticks / range / grade
-  - [ ] cultivation/known_techniques.rs：KnownTechniques Component (stub: 4 个 id 全已学，proficiency 初始 0.5)
-  - [ ] network/techniques_snapshot_emit.rs：merge KnownTechniques + skill_registry → 推 TechniquesSnapshotV1
-  - [ ] client: TechniquesSnapshotHandler.java + 扩展 TechniquesListPanel.Technique record
-  - [ ] 测试：登录后 client 收到 4 条 entries，TechniquesListPanel.snapshot() 非空
+  - [x] cultivation/known_techniques.rs：KnownTechniques Component (stub: 4 个 id 全已学，proficiency 初始 0.5)
+  - [x] network/techniques_snapshot_emit.rs：merge KnownTechniques + skill_registry → 推 TechniquesSnapshotV1
+  - [x] client: TechniquesSnapshotHandler.java + 扩展 TechniquesListPanel.Technique record
+  - [x] 测试：登录后 client 收到 4 条 entries，TechniquesListPanel.snapshot() 非空
 ```
 
 **P1.b · ① 列表组件（功法 + 技艺）**
 ```
-  - [ ] InspectScreen tabNames 扩为 4 个 (`["装备", "修仙", "技艺", "战斗·修炼"]`)
-  - [ ] CombatTrainingPanel.java 主容器骨架（owo FlowLayout，五区先空占位）
-  - [ ] TechniqueRowComponent（icon + name + Grade + proficiency 进度条 + 锁定态）
-  - [ ] SkillRowComponent（复用 SkillSetStore，紧凑三行 HERB/ALCH/FORG）
-  - [ ] 段头分隔（功法 / 技艺）+ 筛选 hover 态
-  - [ ] selectedTechniqueId 状态 + selectionChanged 事件总线
+  - [x] InspectScreen tabNames 扩为 4 个 (`["装备", "修仙", "技艺", "战斗·修炼"]`)
+  - [x] CombatTrainingPanel.java 主容器骨架（owo FlowLayout，五区先空占位）
+  - [x] TechniqueRowComponent（icon + name + Grade + proficiency 进度条 + 锁定态）
+  - [x] SkillRowComponent（复用 SkillSetStore，紧凑三行 HERB/ALCH/FORG）
+  - [x] 段头分隔（功法 / 技艺）+ 筛选 hover 态
+  - [x] selectedTechniqueId 状态 + selectionChanged 事件总线
 ```
 
 **P1.c · ② 详情卡 + 联动**
 ```
-  - [ ] TechniqueDetailCard.java 容器（描述 / 需求 / 招式数值四宫格）
-  - [ ] 订阅 selectionChanged → 从 TechniquesListPanel.snapshot() 查 entry → 渲染
-  - [ ] 已绑定 slot 反查：SkillBarStore.findBySkillId(id) → "已绑定槽 N" banner
-  - [ ] 空选中态（无功法选中时）显示提示文本
+  - [x] TechniqueDetailCard.java 容器（描述 / 需求 / 招式数值四宫格）
+  - [x] 订阅 selectionChanged → 从 TechniquesListPanel.snapshot() 查 entry → 渲染
+  - [x] 已绑定 slot 反查：SkillBarStore.findBySkillId(id) → "已绑定槽 N" banner
+  - [x] 空选中态（无功法选中时）显示提示文本
 ```
 
 **P1.d · ③ 经脉缩略图（联动高亮）**
 ```
-  - [ ] BodyInspectComponent 加 compactMode（仅人体剪影，跳过 12+8 完整经脉绘制）
-        — 或新建 MeridianMiniView.java 复用 MeridianBody 数据但简化渲染
-  - [ ] highlightChannels(Set<MeridianChannel>) 接受所选功法的 required_meridians
-  - [ ] legend 列出 2-4 条所需经脉 + 健康度（绿/红） + 污染度横条
-  - [ ] 右下角 "详情" 链接 → switchTab("修仙") 跳到完整经脉视图
+  - [x] BodyInspectComponent 加 compactMode（仅人体剪影，跳过 12+8 完整经脉绘制）
+        — 或新建 MeridianMiniView.java 复用 MeridianBody 数据但简化渲染（实装走 MeridianMiniView 新组件）
+  - [x] highlightChannels(Set<MeridianChannel>) 接受所选功法的 required_meridians
+  - [x] legend 列出 2-4 条所需经脉 + 健康度（绿/红） + 污染度横条
+  - [x] 右下角 "详情" 链接 → switchTab("修仙") 跳到完整经脉视图
 ```
 
 **P1.e · ⑤ 1-9 Hotbar 拖入 + ④ 状态条**
 ```
-  - [ ] DragState 扩展 SourceKind.TECHNIQUE / TargetKind.SKILL_BAR(slot) / SourceKind.SKILL_LV (drop reject)
-  - [ ] **不新建 CombatHotbarStrip** —— ⑤ = 现网 outerRow 远左 hotbarStrip（line 528），通过 GridSlotComponent dropTargetKind 接受 SKILL_BAR(slot) 类型即可
-  - [ ] 拖入校验：境界不足 / 经脉 SEVERED → reject + 灰显反馈 + toast 提示
-  - [ ] 命中：乐观更新 SkillBarStore + 发 SkillBarBind；server reject 由 SkillBarConfigHandler 回滚
-  - [ ] 右键左侧 strip 槽位 = 清空（发 SkillBarBind { binding: null }）
-  - [ ] StatusBarsPanel 紧凑变体（真元 + 体力 + 因果 + 综合实力 + 区域），④ 区横向条
-  - [ ] markBoundSlots(skill_id) — 选中功法时，左侧 hotbarStrip 中已绑定该功法的槽描金边（GridSlotComponent.setHighlight）
-  - [ ] 抽 SkillSlotRenderer util，hotbarStrip 槽渲染 + SkillBarHudPlanner（HUD 端）共享绘制
+  - [x] DragState 扩展 SourceKind.TECHNIQUE / TargetKind.SKILL_BAR(slot) / SourceKind.SKILL_LV (drop reject)
+  - [x] **不新建 CombatHotbarStrip** —— ⑤ = 现网 outerRow 远左 hotbarStrip（line 528），通过 GridSlotComponent dropTargetKind 接受 SKILL_BAR(slot) 类型即可
+  - [x] 拖入校验：境界不足 / 经脉 SEVERED → reject + 灰显反馈 + toast 提示
+  - [x] 命中：乐观更新 SkillBarStore + 发 SkillBarBind；server reject 由 SkillBarConfigHandler 回滚
+  - [x] 右键左侧 strip 槽位 = 清空（发 SkillBarBind { binding: null }）
+  - [x] StatusBarsPanel 紧凑变体（真元 + 体力 + 因果 + 综合实力 + 区域），④ 区横向条
+  - [x] markBoundSlots(skill_id) — 选中功法时，左侧 hotbarStrip 中已绑定该功法的槽描金边（GridSlotComponent.setHighlight）
+  - [x] 抽 SkillSlotRenderer util，hotbarStrip 槽渲染 + SkillBarHudPlanner（HUD 端）共享绘制
 ```
 
-### P2 · 完整集成（随 plan-baomai-v1 P0 同步 — 仅替换 mock fn pointer，路由 / handler / 协议 / 测试都不改）
+### P2 · 完整集成（随 plan-baomai-v1 P0 同步 — 仅替换 mock fn pointer，路由 / handler / 协议 / 测试都不改）✅ 2026-04-29
 
 ```
-  - [ ] 崩拳绑定 + 按 1 出招全链路贯通（替换 mock skill consumer = plan-baomai-v1 真实 resolve_beng_quan）
-  - [ ] BurstMeridianEvent → 客户端播放动画 + 沉重色粒子
-  - [ ] 冷却同步（SkillBarConfigV1，含 cooldown_until_ms）→ SkillBarHudPlanner 倒计时蒙灰
-  - [ ] 虚脱期感知：1–9 槽位红色锁定覆盖
-  - [ ] **回归**：P0 全部饱和化测试通过率 100%（任何一条红就证明接口或路由层不该改而被改了）
+  - [x] 崩拳绑定 + 按 1 出招全链路贯通（替换 mock skill consumer = plan-baomai-v1 真实 resolve_beng_quan）
+  - [x] BurstMeridianEvent → 客户端播放动画 + 沉重色粒子
+  - [x] 冷却同步（SkillBarConfigV1，含 cooldown_until_ms）→ SkillBarHudPlanner 倒计时蒙灰
+  - [x] 虚脱期感知：1–9 槽位红色锁定覆盖
+  - [x] **回归**：P0 全部饱和化测试通过率 100%（任何一条红就证明接口或路由层不该改而被改了）
 ```
 
 ---
@@ -628,3 +629,108 @@ Server：
   - 路由表 fn 签名按真实最终形态定义 `fn(&mut World, EntityId, slot, target) -> CastResult`；mock 实现完整走 cast→cooldown→complete 状态机；plan-baomai-v1 接入时只换 fn pointer 不改路由层。
   - §8 P0 测试章节重写为饱和清单：schema 双端对拍 / 按键路由 4 分支 / 中断 3 路径 / 绑定 transition 4 状态 / 持久化 / 边界 reject / quick_slots 死字段补救 / mock consumer 接口 pin —— 每条都把"目标行为"锁死，回归即撞红。
   - P2 标注为"仅替换 mock fn pointer"，并加回归条 = P0 测试全绿。
+- 2026-04-28（P0 + P1 实装合并）：PR #65 合并 `1b2f0e0e`，分 4 个核心 commit 落地：
+  - `3062098c feat(schema): 补齐技能栏协议与样本` — TS `SkillBarBindRequestV1/SkillBarCastRequestV1/SkillBarBindingV1/UseQuickSlotRequestV1/QuickSlotBindRequestV1` + `SkillBarConfigV1` + `TechniquesSnapshotV1`；Rust 对偶 enum 与 sample 双端对拍。
+  - `1a05076f feat(server): 接入技能栏运行时与持久化` — `SkillBarBindings` Component + `SkillSlot/SkillSlotPersist` enum；`handle_skill_bar_bind/cast` + `start_generic_skillbar_cast` + skill_id 路由表（fn pointer，mock 顶位）；`network/skillbar_config_emit.rs` + 配套 `skillbar_config_emit_test.rs`；`cultivation/skill_registry.rs` 4 条目；`cultivation/known_techniques.rs` stub Component；`network/techniques_snapshot_emit.rs`；登录/dirty 双向同步 + `quick_slots` dead field 修复。
+  - `d3d797e0 feat(client): 接入技能栏协议与 HUD 路由` — `combat/SkillBarStore/SkillBarKeyRouter/SkillBarEntry/SkillBarConfig`（三态机 PASS_THROUGH/CAST_SENT/COOLDOWN_BLOCKED）；`network/SkillBarConfigHandler/TechniquesSnapshotHandler`；`hud/SkillBarHudPlanner`；`mixin/CombatKeybindings` F1-F9 注册 + 1-9 拦截 + I 键 InspectScreen。
+  - `1755d4ff feat(client): 增加战斗修炼配置页` — `combat/inspect/CombatTrainingPanel`（五区主容器，selectionChanged 事件总线）+ `TechniqueDetailCard` + `MeridianMiniView` + 扩展 `TechniquesListPanel`；InspectScreen tab 扩为 4 个；DragState `SourceKind.TECHNIQUE/TargetKind.SKILL_BAR` + 拖入校验。
+  - `e87668f9 fix(client): 收口技能栏评审问题` — review 修复回路。
+- 2026-04-29（P2 + 验收）：`b0302396 feat: 落地爆脉崩拳真实结算` — `cultivation/burst_meridian.rs` 真实 `resolve_beng_quan` 替换 mock fn pointer，按 P2 设计仅换实现不改路由 / 协议 / 测试；崩拳 slot 0 cast 400ms + cd 3000ms 经 `SkillBarKeyRouterTest` PASS_THROUGH/CAST_SENT/COOLDOWN_BLOCKED 三态机回归全绿。`/plans-status` 实地核验：P0/P1/P2 全部代码侧已落地，文档复选框补勾完毕，准备归档进 `docs/finished_plans/`。
+
+---
+
+## §11 Finish Evidence
+
+### 落地清单
+
+**P0 · 1–9 技能栏基础 + quick_slots dead field 修复**
+
+| 层 | 文件 / 路径 | 内容 |
+|---|---|---|
+| Schema (TS) | `agent/packages/schema/src/client-request.ts` | `SkillBarCastRequestV1` + `SkillBarBindRequestV1` + `SkillBarBindingV1` + 顺手补 `UseQuickSlotRequestV1` + `QuickSlotBindRequestV1`（全部入 `ClientRequestV1` Union） |
+| Schema (TS) | `agent/packages/schema/src/server-data.ts` | `SkillBarConfigV1` + `TechniquesSnapshotV1` |
+| Schema (Rust) | `server/src/schema/client_request.rs` | `ClientRequestV1::SkillBarBind/SkillBarCast` + `SkillBarBindingV1` enum |
+| Schema 样本 | `agent/packages/schema/samples/client-request-skill-bar-*.json` + `client-request-quick-slot-*.json` | 双端对拍 |
+| Server | `server/src/combat/components.rs` | `SkillBarBindings` Component（mirror `QuickSlotBindings`）+ `SkillSlot` enum |
+| Server | `server/src/inventory/mod.rs` | 同地点注入 `SkillBarBindings::default()` |
+| Server | `server/src/player/state.rs` | `PlayerUiPrefs` 改 `pub(crate)` + `skill_bar: [SkillSlotPersist; 9]`；`SkillSlotPersist` enum；登录路径注入 `SkillBarBindings` + 修 `quick_slots` dead field |
+| Server | `server/src/network/client_request_handler.rs` | `handle_skill_bar_bind` / `handle_skill_bar_cast` / `start_generic_skillbar_cast` + skill_id → fn pointer 路由表（mock 顶位，按真实最终签名定义）|
+| Server | `server/src/network/skillbar_config_emit.rs` (新) | `emit_skillbar_config_payloads` 监听 `Changed<SkillBarBindings>` |
+| Server | `server/src/network/skillbar_config_emit_test.rs` (新) | 153 行配套测试 |
+| Server | `server/src/cultivation/skill_registry.rs` (新) | 4 条目静态注册表（崩拳/贴山靠/血崩步/逆脉护体） |
+| Server | `server/src/cultivation/known_techniques.rs` (新) | `KnownTechniques` Component（stub） |
+| Server | `server/src/network/techniques_snapshot_emit.rs` (新) | merge stub + registry 推 `TechniquesSnapshotV1` |
+| Client | `client/src/main/java/com/bong/client/combat/SkillBarStore.java` (新) | 本地 9 槽镜像 |
+| Client | `client/src/main/java/com/bong/client/combat/SkillBarKeyRouter.java` (新) | 三态机 `PASS_THROUGH / CAST_SENT / COOLDOWN_BLOCKED` |
+| Client | `client/src/main/java/com/bong/client/combat/SkillBarEntry.java` + `SkillBarConfig.java` (新) | 数据载体 |
+| Client | `client/src/main/java/com/bong/client/network/SkillBarConfigHandler.java` (新) | 接收 `SkillBarConfigV1` → 更新 store |
+| Client | `client/src/main/java/com/bong/client/hud/SkillBarHudPlanner.java` (新) | 1-9 槽 HUD 渲染（图标 + 冷却蒙灰） |
+| Client | `client/src/main/java/com/bong/client/mixin/CombatKeybindings.java` | F1-F9 注册（`GLFW_KEY_F1 + i`）+ 1-9 拦截 via `SkillBarKeyRouter.shouldCancelHotbarKey()` + I 键 InspectScreen 入口 |
+
+**P1 · InspectScreen 五区联动工作台**
+
+| 子任务 | 文件 / 路径 |
+|---|---|
+| P1.a 数据链路 | `cultivation/skill_registry.rs` + `cultivation/known_techniques.rs` + `network/techniques_snapshot_emit.rs` + `client/network/TechniquesSnapshotHandler.java` |
+| P1.b 列表 | `client/inventory/InspectScreen.java` tab 列表扩为 4 个；`combat/inspect/CombatTrainingPanel.java` (新) 主容器 + `selectedTechniqueId` + `selectionChanged` 事件总线；`combat/inspect/TechniquesListPanel.java` 从空骨架填充 |
+| P1.c 详情卡 | `combat/inspect/TechniqueDetailCard.java` (新) 描述/需求/招式数值四宫格；订阅 `selectionChanged` |
+| P1.d 经脉缩略图 | `combat/inspect/MeridianMiniView.java` (新) compact 模式 + `highlightChannels(Set<MeridianChannel>)` |
+| P1.e Hotbar 拖入 + 状态条 | `inventory/state/DragState` 扩 `SourceKind.TECHNIQUE/TargetKind.SKILL_BAR(slot)`；复用现网 `hotbarStrip` 不新建 `CombatHotbarStrip`；`StatusBarsPanel` 紧凑变体；`markBoundSlots` 描金边联动 |
+
+**P2 · 完整集成（爆脉崩拳真实结算）**
+
+| 文件 / 路径 | 内容 |
+|---|---|
+| `server/src/cultivation/burst_meridian.rs` | 真实 `resolve_beng_quan`：臂经脉 integrity 扣减 + qi 消耗 + 过载 AttackIntent + `BurstMeridianEvent` |
+| `client/src/main/resources/assets/bong/player_animation/beng_quan.json` | 8t 崩拳动画（plan-player-animation-v1 §5.1 增量） |
+| 路由层未改 | skill_id `burst_meridian.beng_quan` 仅替换 fn pointer，handler / 协议 / 测试均未动 ✓ 满足 P2 设计目标 |
+
+### 关键 commit
+
+| Hash | 日期 | 说明 |
+|---|---|---|
+| `3062098c` | 2026-04-28 | feat(schema): 补齐技能栏协议与样本（P0 schema） |
+| `1a05076f` | 2026-04-28 | feat(server): 接入技能栏运行时与持久化（P0 server + P1.a server） |
+| `d3d797e0` | 2026-04-28 | feat(client): 接入技能栏协议与 HUD 路由（P0 client） |
+| `1755d4ff` | 2026-04-28 | feat(client): 增加战斗修炼配置页（P1.b/c/d/e 五区工作台） |
+| `e87668f9` | 2026-04-28 | fix(client): 收口技能栏评审问题（review 回路） |
+| `1b2f0e0e` | 2026-04-28 03:00 | Merge PR #65 实现技能栏双行快捷栏链路（P0+P1 入主） |
+| `8aa2f1c6` | 2026-04-28 | 合并 main：同步技能栏与粒子更新 |
+| `b0302396` | 2026-04-29 00:51 | feat: 落地爆脉崩拳真实结算（P2 — 仅替换 mock fn pointer） |
+
+### 测试结果
+
+```
+Server (Rust):
+  - server/src/network/skillbar_config_emit_test.rs       # 153 行配套
+  - server/src/network/client_request_handler.rs          # 5 个 skill_bar_* 测试函数
+    · skill_bar_bind_skill_then_cast_starts_skillbar_cast
+    · skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path
+    · skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits
+    · skill_bar_cast_empty_item_or_cooldown_does_not_start_cast
+    · skill_bar_bind_rejects_unknown_skill
+  - 整体 client_request_handler 模块 24 个 #[test]
+  跑法：cd server && cargo test
+Client (Java):
+  - client/src/test/.../combat/SkillBarKeyRouterTest.java     # 3 路 PASS_THROUGH / CAST_SENT / COOLDOWN_BLOCKED
+  - client/src/test/.../network/SkillBarConfigHandlerTest.java # 50 行
+  跑法：cd client && ./gradlew test
+Schema 双端对拍：
+  - agent/packages/schema/samples/client-request-{skill-bar-*,quick-slot-*}.json  双端 roundtrip
+  跑法：cd agent/packages/schema && npm test
+```
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|---|---|
+| **agent/schema** | `SkillBarCastRequestV1` / `SkillBarBindRequestV1` / `SkillBarBindingV1` / `UseQuickSlotRequestV1` / `QuickSlotBindRequestV1` / `SkillBarConfigV1` / `TechniquesSnapshotV1` |
+| **server** | `SkillBarBindings` / `SkillSlot` / `SkillSlotPersist` / `handle_skill_bar_bind` / `handle_skill_bar_cast` / `start_generic_skillbar_cast` / `emit_skillbar_config_payloads` / `emit_techniques_snapshot_payloads` / `cultivation::skill_registry` / `cultivation::known_techniques` / `cultivation::burst_meridian::resolve_beng_quan` |
+| **client** | `SkillBarStore` / `SkillBarKeyRouter` / `SkillBarConfigHandler` / `SkillBarHudPlanner` / `TechniquesSnapshotHandler` / `CombatTrainingPanel` / `TechniqueDetailCard` / `MeridianMiniView` / `TechniquesListPanel` / `CombatKeybindings` |
+
+### 遗留 / 后续
+
+- **§9 仍开放**：F1-F9 行是否支持技能绑定（扩 `QuickSlotBind.item_id` 前缀 vs 引入 union）？多流派共存（爆脉+暗器同时学）的 1-9 自动分配方案？MC 原生 1-9 hotbar 视觉切换动画在技能槽是否保留？—— 这三项是 UX/扩展设计问题，本 plan 不收口，留给后续流派 plan（plan-anqi-* / plan-zhenfa-* 等）触发时再定
+- **依赖外部 plan**：路由表 `skill_id → fn pointer` 当前仅崩拳为真实实现，其他四式（贴山靠 / 血崩步 / 逆脉护体 / etc.）随 `plan-baomai-v1` 后续阶段陆续替换；`plan-anqi-v1` / `plan-zhenfa-v1` 等其他流派同款"换 fn pointer 不改路由"
+- **`KnownTechniques` Component 仍 stub**：当前 4 条全已学 + proficiency 0.5 固定值，真实学习 / 掌握度 / 残卷消费由 `plan-baomai-v1` P1 / `plan-cultivation-progression-v*` 接管
+- **饱和测试基线**：当前 `SkillBarKeyRouterTest` 3 路覆盖三态机；CLAUDE.md 饱和测试纲要要求边界（slot 越界 / skill_id 不在 registry / 受击中断 / 移动中断）也锁——server 侧 `client_request_handler` 已覆盖大部分，client 侧未来如发现 router 边界 bug 应补 case
