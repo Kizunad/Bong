@@ -15,7 +15,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
-use crate::combat::events::DeathEvent;
+use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
@@ -112,6 +112,30 @@ impl TribulationState {
             TribulationPhase::Lock => DUXU_LOCK_RADIUS_HARD,
             TribulationPhase::Wave(_) | TribulationPhase::HeartDemon => DUXU_LOCK_RADIUS_FINAL,
             TribulationPhase::Settle => 0.0,
+        }
+    }
+
+    fn is_primary_tribulator(&self, character_id: &str) -> bool {
+        self.participants
+            .first()
+            .is_some_and(|participant| participant == character_id)
+    }
+
+    fn record_interceptor(&mut self, character_id: &str) -> bool {
+        if self
+            .participants
+            .iter()
+            .any(|participant| participant == character_id)
+        {
+            return false;
+        }
+        self.participants.push(character_id.to_string());
+        true
+    }
+
+    fn ensure_primary_tribulator(&mut self, character_id: &str) {
+        if self.participants.is_empty() {
+            self.participants.push(character_id.to_string());
         }
     }
 }
@@ -361,7 +385,7 @@ pub fn tribulation_phase_tick_system(
 #[allow(clippy::type_complexity)]
 pub fn tribulation_aoe_system(
     clock: Res<CombatClock>,
-    tribulations: Query<&TribulationState>,
+    tribulations: Query<(Entity, &TribulationState)>,
     mut targets: Query<(
         Entity,
         &Position,
@@ -375,7 +399,7 @@ pub fn tribulation_aoe_system(
     if !clock.tick.is_multiple_of(DUXU_WAVE_COOLDOWN_TICKS.max(1)) {
         return;
     }
-    for state in &tribulations {
+    for (tribulator_entity, state) in &tribulations {
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
@@ -406,14 +430,10 @@ pub fn tribulation_aoe_system(
             if !was_alive || wounds.health_current > 0.0 {
                 continue;
             }
-            let is_tribulator = lifecycle
-                .map(|lifecycle| {
-                    state
-                        .participants
-                        .iter()
-                        .any(|id| id == &lifecycle.character_id)
-                })
-                .unwrap_or(false);
+            let is_tribulator = entity == tribulator_entity
+                || lifecycle
+                    .map(|lifecycle| state.is_primary_tribulator(&lifecycle.character_id))
+                    .unwrap_or(false);
             if is_tribulator {
                 failed.send(TribulationFailed { entity, wave });
             } else {
@@ -425,6 +445,55 @@ pub fn tribulation_aoe_system(
                     at_tick: clock.tick,
                 });
             }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn record_tribulation_interceptor_system(
+    mut combat_events: EventReader<CombatEvent>,
+    mut tribulators: Query<(&mut TribulationState, &Lifecycle)>,
+    actors: Query<(&Lifecycle, &Position)>,
+) {
+    for event in combat_events.read() {
+        let Ok((mut state, target_lifecycle)) = tribulators.get_mut(event.target) else {
+            continue;
+        };
+        if state.kind != TribulationKind::DuXu
+            || !matches!(
+                state.phase,
+                TribulationPhase::Lock | TribulationPhase::Wave(_)
+            )
+        {
+            continue;
+        }
+        if state
+            .participants
+            .first()
+            .is_some_and(|participant| participant != &target_lifecycle.character_id)
+        {
+            continue;
+        }
+        let Ok((attacker_lifecycle, attacker_position)) = actors.get(event.attacker) else {
+            continue;
+        };
+        if attacker_lifecycle.character_id == target_lifecycle.character_id
+            || !attacker_lifecycle.character_id.starts_with("offline:")
+        {
+            continue;
+        }
+        let center =
+            valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
+        if attacker_position.get().distance(center) > DUXU_LOCK_RADIUS_HARD {
+            continue;
+        }
+        state.ensure_primary_tribulator(&target_lifecycle.character_id);
+        if state.record_interceptor(&attacker_lifecycle.character_id) {
+            tracing::info!(
+                "[bong][cultivation] {} entered DuXu interception against {}",
+                attacker_lifecycle.character_id,
+                target_lifecycle.character_id,
+            );
         }
     }
 }
@@ -900,7 +969,7 @@ mod tests {
     use super::*;
 
     use crate::combat::components::{CombatState, Lifecycle, LifecycleState, Stamina, Wounds};
-    use crate::combat::events::{DeathEvent, DeathInsightRequested};
+    use crate::combat::events::{CombatEvent, DeathEvent, DeathInsightRequested};
     use crate::combat::lifecycle::death_arbiter_tick;
     use crate::combat::CombatClock;
     use crate::cultivation::components::MeridianId;
@@ -1382,6 +1451,192 @@ mod tests {
         assert_eq!(emitted[0].result.killer.as_deref(), Some("offline:Killer"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn attacking_locked_tribulator_records_interceptor_participant() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, record_tribulation_interceptor_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Lock,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 0,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec!["offline:Victim".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+        let interceptor = app
+            .world_mut()
+            .spawn((
+                Position::new([12.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Killer".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        for _ in 0..2 {
+            app.world_mut().send_event(CombatEvent {
+                attacker: interceptor,
+                target: victim,
+                resolved_at_tick: 120,
+                body_part: BodyPart::Chest,
+                wound_kind: WoundKind::Cut,
+                damage: 12.0,
+                contam_delta: 0.0,
+                description: "test interception hit".to_string(),
+            });
+        }
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(victim)
+            .expect("tribulation should remain active");
+        assert_eq!(
+            state.participants,
+            vec!["offline:Victim".to_string(), "offline:Killer".to_string()]
+        );
+    }
+
+    #[test]
+    fn attacking_restored_tribulator_preserves_primary_participant() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, record_tribulation_interceptor_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState::restored(1, 3, 0),
+            ))
+            .id();
+        let interceptor = app
+            .world_mut()
+            .spawn((
+                Position::new([12.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Killer".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker: interceptor,
+            target: victim,
+            resolved_at_tick: 120,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Cut,
+            damage: 12.0,
+            contam_delta: 0.0,
+            description: "test restored interception hit".to_string(),
+        });
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(victim)
+            .expect("tribulation should remain active");
+        assert_eq!(
+            state.participants,
+            vec!["offline:Victim".to_string(), "offline:Killer".to_string()]
+        );
+    }
+
+    #[test]
+    fn registered_interceptor_dies_to_aoe_without_failing_tribulation() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 300 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn((
+            Position::new([0.0, 66.0, 0.0]),
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 120.0,
+                qi_max: 210.0,
+                ..Default::default()
+            },
+            Wounds {
+                health_current: 100.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Lifecycle {
+                character_id: "offline:Victim".to_string(),
+                ..Default::default()
+            },
+            TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(1),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 0,
+                next_wave_tick: 300,
+                participants: vec!["offline:Victim".to_string(), "offline:Killer".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            },
+        ));
+        let interceptor = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 50.0,
+                    qi_max: 80.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Killer".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().resource::<Events<TribulationFailed>>().len(), 0);
+        let deaths = app.world().resource::<Events<DeathEvent>>();
+        let emitted: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].target, interceptor);
+        assert_eq!(emitted[0].cause, "观劫而亡");
+        assert_eq!(emitted[0].attacker_player_id, None);
     }
 
     #[test]

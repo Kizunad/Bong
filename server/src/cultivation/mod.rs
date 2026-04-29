@@ -93,8 +93,9 @@ use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    abort_du_xu_on_client_removed, start_du_xu_request_system, start_tribulation_system,
-    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
+    abort_du_xu_on_client_removed, record_tribulation_interceptor_system,
+    start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
+    tribulation_escape_boundary_system, tribulation_failure_system,
     tribulation_intercept_death_system, tribulation_phase_tick_system, tribulation_wave_system,
     AscensionQuotaOpened, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
     TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
@@ -189,6 +190,8 @@ pub fn register(app: &mut App) {
                 .after(tribulation_failure_system)
                 .before(crate::player::despawn_disconnected_clients),
             tribulation_escape_boundary_system.after(abort_du_xu_on_client_removed),
+            record_tribulation_interceptor_system
+                .after(crate::combat::lifecycle::sync_combat_state_from_events),
             tribulation_wave_system.after(tribulation_escape_boundary_system),
             tribulation_intercept_death_system
                 .after(crate::combat::lifecycle::death_arbiter_tick)
