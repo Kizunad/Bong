@@ -1002,6 +1002,56 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "HeartDemonRecord"
+      ],
+      "properties": {
+        "HeartDemonRecord": {
+          "type": "object",
+          "required": [
+            "outcome",
+            "choice_idx",
+            "tick"
+          ],
+          "properties": {
+            "outcome": {
+              "anyOf": [
+                {
+                  "const": "steadfast",
+                  "type": "string"
+                },
+                {
+                  "const": "obsession",
+                  "type": "string"
+                },
+                {
+                  "const": "no_solution",
+                  "type": "string"
+                }
+              ]
+            },
+            "choice_idx": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -151,6 +151,24 @@ const TribulationFled = Type.Object(
   { additionalProperties: false },
 );
 
+export const HeartDemonOutcomeV1 = Type.Union([
+  Type.Literal("steadfast"),
+  Type.Literal("obsession"),
+  Type.Literal("no_solution"),
+]);
+export type HeartDemonOutcomeV1 = Static<typeof HeartDemonOutcomeV1>;
+
+const HeartDemonRecord = Type.Object(
+  {
+    HeartDemonRecord: Type.Object({
+      outcome: HeartDemonOutcomeV1,
+      choice_idx: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
 export const BiographyEntryV1 = Type.Union([
   BreakthroughStarted,
   BreakthroughSucceeded,
@@ -168,6 +186,7 @@ export const BiographyEntryV1 = Type.Union([
   DuoShePerformed,
   PossessedBy,
   TribulationFled,
+  HeartDemonRecord,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;
 

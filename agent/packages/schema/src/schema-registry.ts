@@ -11,7 +11,7 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
-import { BiographyEntryV1 } from "./biography.js";
+import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
@@ -42,6 +42,7 @@ import {
   ClientRequestV1,
   DuoSheRequestV1,
   ForgeRequestV1,
+  HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
   ForgeTemperingHitRequestV1,
   ForgeInscriptionScrollRequestV1,
@@ -214,6 +215,7 @@ export const SCHEMA_REGISTRY = {
   deathRegistryV1: DeathRegistryV1,
   deceasedIndexEntryV1: DeceasedIndexEntryV1,
   deceasedSnapshotV1: DeceasedSnapshotV1,
+  heartDemonOutcomeV1: HeartDemonOutcomeV1,
   lifespanEventV1: LifespanEventV1,
   agingEventV1: AgingEventV1,
   duoSheEventV1: DuoSheEventV1,
@@ -235,6 +237,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestBreakthroughV1: BreakthroughRequestV1,
   clientRequestStartDuXuV1: StartDuXuRequestV1,
   clientRequestAbortTribulationV1: AbortTribulationRequestV1,
+  clientRequestHeartDemonDecisionV1: HeartDemonDecisionRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
@@ -383,6 +386,7 @@ export const GENERATED_SCHEMA_FILES = {
   "breakthrough-event-v1.json": SCHEMA_REGISTRY.breakthroughEventV1,
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
+  "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
   "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
@@ -411,6 +415,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-start-du-xu-v1.json": SCHEMA_REGISTRY.clientRequestStartDuXuV1,
   "client-request-abort-tribulation-v1.json":
     SCHEMA_REGISTRY.clientRequestAbortTribulationV1,
+  "client-request-heart-demon-decision-v1.json":
+    SCHEMA_REGISTRY.clientRequestHeartDemonDecisionV1,
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
