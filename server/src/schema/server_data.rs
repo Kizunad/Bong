@@ -22,8 +22,8 @@ use super::skill::{
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
 };
 use super::social::{
-    SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1,
-    SocialRenownDeltaV1, SparringInvitePayloadV1,
+    PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
+    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1,
 };
 use super::world_state::PlayerPowerBreakdown;
 pub const SERVER_DATA_VERSION: u8 = 1;
@@ -154,6 +154,7 @@ pub enum ServerDataPayloadV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         ui: Option<String>,
@@ -315,6 +316,8 @@ enum ServerDataPayloadWireV1 {
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
         zone: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        social: Option<PlayerSocialSnapshotV1>,
     },
     UiOpen {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -857,6 +860,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Ok(Self::PlayerState {
                 player,
                 realm,
@@ -865,6 +869,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             }),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
@@ -1182,6 +1187,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power,
                 breakdown,
                 zone,
+                social,
             } => Self::PlayerState {
                 player: player.clone(),
                 realm: realm.clone(),
@@ -1190,6 +1196,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),
                 zone: zone.clone(),
+                social: social.clone(),
             },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
                 ui: ui.clone(),

@@ -473,6 +473,7 @@ mod server_data_tests {
                     composite_power: 0.35,
                     breakdown: sample_player_breakdown(),
                     zone: "blood_valley".to_string(),
+                    social: None,
                 }),
                 json!({
                     "v": SERVER_DATA_VERSION,

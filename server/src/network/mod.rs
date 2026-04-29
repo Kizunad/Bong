@@ -56,6 +56,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Lifecycle;
+use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
@@ -82,13 +83,17 @@ use crate::schema::cultivation::{
     SkillMilestoneSnapshotV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
-use crate::schema::social::{PlayerSocialSnapshotV1, RelationshipSnapshotV1, RenownSnapshotV1};
+use crate::schema::social::{
+    FactionMembershipSnapshotV1, PlayerSocialSnapshotV1, RelationshipSnapshotV1, RenownSnapshotV1,
+};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
     NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
 };
 use crate::skill::components::SkillId;
-use crate::social::components::{Anonymity, Relationships, Renown};
+use crate::social::components::{
+    Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
+};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -479,6 +484,7 @@ fn publish_world_state_to_redis(
             Option<&Anonymity>,
             Option<&Renown>,
             Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -578,6 +584,7 @@ fn build_world_state_snapshot(
             Option<&Anonymity>,
             Option<&Renown>,
             Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -630,7 +637,7 @@ pub(crate) fn build_player_state_payload(
     cultivation: &Cultivation,
     zone: impl Into<String>,
 ) -> Result<Vec<u8>, PayloadBuildError> {
-    let payload = player_state.server_payload(cultivation, None, zone.into());
+    let payload = player_state.server_payload_with_social(cultivation, None, zone.into(), None);
     serialize_server_data_payload(&payload)
 }
 
@@ -765,6 +772,7 @@ fn collect_player_snapshots(
             Option<&Anonymity>,
             Option<&Renown>,
             Option<&Relationships>,
+            Option<&PlayerFactionMembership>,
         ),
         With<Client>,
     >,
@@ -790,6 +798,7 @@ fn collect_player_snapshots(
                 anonymity,
                 renown,
                 relationships,
+                faction_membership,
             )| {
                 let name = username.0.clone();
                 let zone_name = zone_name_for_position(zone_registry, position.get());
@@ -857,7 +866,13 @@ fn collect_player_snapshots(
                     recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
                     cultivation,
                     life_record,
-                    social: build_player_social_snapshot(tick, anonymity, renown, relationships),
+                    social: build_player_social_snapshot(
+                        tick,
+                        anonymity,
+                        renown,
+                        relationships,
+                        faction_membership,
+                    ),
                 }
             },
         )
@@ -873,8 +888,13 @@ fn build_player_social_snapshot(
     anonymity: Option<&Anonymity>,
     renown: Option<&Renown>,
     relationships: Option<&Relationships>,
+    faction_membership: Option<&PlayerFactionMembership>,
 ) -> Option<PlayerSocialSnapshotV1> {
-    if anonymity.is_none() && renown.is_none() && relationships.is_none() {
+    if anonymity.is_none()
+        && renown.is_none()
+        && relationships.is_none()
+        && faction_membership.is_none()
+    {
         return None;
     }
 
@@ -902,11 +922,20 @@ fn build_player_social_snapshot(
     let exposed_to_count = anonymity
         .map(|anonymity| anonymity.exposed_to.len().min(u32::MAX as usize) as u32)
         .unwrap_or_default();
+    let faction_membership = faction_membership.map(|membership| FactionMembershipSnapshotV1 {
+        faction: membership.faction.as_str().to_string(),
+        rank: membership.rank,
+        loyalty: membership.loyalty,
+        betrayal_count: membership.betrayal_count,
+        invite_block_until_tick: membership.invite_block_until_tick,
+        permanently_refused: membership.permanently_refused,
+    });
 
     Some(PlayerSocialSnapshotV1 {
         renown,
         relationships,
         exposed_to_count,
+        faction_membership,
     })
 }
 
@@ -1139,6 +1168,10 @@ type PlayerStateEmitQueryItem<'a> = (
     &'a Position,
     &'a PlayerState,
     &'a Cultivation,
+    Option<&'a Anonymity>,
+    Option<&'a Renown>,
+    Option<&'a Relationships>,
+    Option<&'a PlayerFactionMembership>,
 );
 
 type PlayerStateEmitQueryFilter = (
@@ -1148,21 +1181,51 @@ type PlayerStateEmitQueryFilter = (
         Changed<PlayerState>,
         Added<Cultivation>,
         Changed<Cultivation>,
+        Added<Anonymity>,
+        Changed<Anonymity>,
+        Added<Renown>,
+        Changed<Renown>,
+        Added<Relationships>,
+        Changed<Relationships>,
+        Added<PlayerFactionMembership>,
+        Changed<PlayerFactionMembership>,
     )>,
 );
 
 fn emit_player_state_payloads(
     zone_registry: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CombatClock>>,
     mut clients: Query<PlayerStateEmitQueryItem<'_>, PlayerStateEmitQueryFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
 
-    for (entity, mut client, username, position, player_state, cultivation) in &mut clients {
+    for (
+        entity,
+        mut client,
+        username,
+        position,
+        player_state,
+        cultivation,
+        anonymity,
+        renown,
+        relationships,
+        faction_membership,
+    ) in &mut clients
+    {
         let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let payload = player_state.server_payload(
+        let social = build_player_social_snapshot(
+            tick,
+            anonymity,
+            renown,
+            relationships,
+            faction_membership,
+        );
+        let payload = player_state.server_payload_with_social(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
+            social,
         );
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -3097,12 +3160,15 @@ mod tests {
     mod player_state_payload_tests {
         use super::*;
         use crate::player::state::PlayerState;
+        use crate::schema::social::RenownTagV1;
+        use crate::social::components::{FactionMembership as PlayerFactionMembership, Renown};
         use crate::world::zone::ZoneRegistry;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
 
         fn emit_player_state_payloads_periodically_without_change(
             zone_registry: Option<Res<ZoneRegistry>>,
+            clock: Option<Res<CombatClock>>,
             mut tick_counter: valence::prelude::Local<u64>,
             mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
         ) {
@@ -3112,14 +3178,34 @@ mod tests {
             }
 
             let zone_registry = effective_zone_registry(zone_registry.as_deref());
+            let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
 
-            for (entity, mut client, username, position, player_state, cultivation) in &mut clients
+            for (
+                entity,
+                mut client,
+                username,
+                position,
+                player_state,
+                cultivation,
+                anonymity,
+                renown,
+                relationships,
+                faction_membership,
+            ) in &mut clients
             {
                 let zone_name = zone_name_for_position(&zone_registry, position.get());
-                let payload = player_state.server_payload(
+                let social = build_player_social_snapshot(
+                    tick,
+                    anonymity,
+                    renown,
+                    relationships,
+                    faction_membership,
+                );
+                let payload = player_state.server_payload_with_social(
                     cultivation,
                     Some(canonical_player_id(username.0.as_str())),
                     zone_name,
+                    social,
                 );
                 let payload_type = payload_type_label(payload.payload_type());
                 let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -3323,6 +3409,69 @@ mod tests {
                 bob_payloads.is_empty(),
                 "missing-route/fallthrough must not broadcast player_state to other clients"
             );
+        }
+
+        #[test]
+        fn emits_self_social_snapshot_in_player_state() {
+            let mut app = setup_player_state_payload_app();
+            app.insert_resource(CombatClock { tick: 123 });
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.2,
+                    inventory_score: 0.4,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 78.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                Renown {
+                    fame: 7,
+                    notoriety: 12,
+                    tags: vec![RenownTagV1 {
+                        tag: "背盟者".to_string(),
+                        weight: 50.0,
+                        last_seen_tick: 123,
+                        permanent: true,
+                    }],
+                },
+                PlayerFactionMembership {
+                    faction: crate::npc::faction::FactionId::Defend,
+                    rank: 0,
+                    loyalty: 10,
+                    betrayal_count: 1,
+                    invite_block_until_tick: Some(200),
+                    permanently_refused: false,
+                },
+            ));
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_player_state_payloads(&mut helper);
+            match &payloads[0].payload {
+                ServerDataPayloadV1::PlayerState { social, .. } => {
+                    let social = social
+                        .as_ref()
+                        .expect("self social snapshot should be present");
+                    assert_eq!(social.renown.fame, 7);
+                    assert_eq!(social.renown.notoriety, 12);
+                    assert_eq!(social.renown.top_tags[0].tag, "背盟者");
+                    let membership = social
+                        .faction_membership
+                        .as_ref()
+                        .expect("self faction membership should be present");
+                    assert_eq!(membership.faction, "defend");
+                    assert_eq!(membership.rank, 0);
+                    assert_eq!(membership.loyalty, 10);
+                    assert_eq!(membership.invite_block_until_tick, Some(200));
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
 
         #[test]

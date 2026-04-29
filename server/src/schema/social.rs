@@ -48,6 +48,19 @@ pub struct RenownSnapshotV1 {
     pub top_tags: Vec<RenownTagV1>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FactionMembershipSnapshotV1 {
+    pub faction: String,
+    pub rank: u8,
+    pub loyalty: i32,
+    pub betrayal_count: u8,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub invite_block_until_tick: Option<u64>,
+    #[serde(default)]
+    pub permanently_refused: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerSocialSnapshotV1 {
@@ -57,6 +70,8 @@ pub struct PlayerSocialSnapshotV1 {
     pub relationships: Vec<RelationshipSnapshotV1>,
     #[serde(default)]
     pub exposed_to_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub faction_membership: Option<FactionMembershipSnapshotV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,5 +182,6 @@ mod tests {
         assert_eq!(snapshot.renown.fame, 0);
         assert_eq!(snapshot.exposed_to_count, 0);
         assert!(snapshot.relationships.is_empty());
+        assert!(snapshot.faction_membership.is_none());
     }
 }
