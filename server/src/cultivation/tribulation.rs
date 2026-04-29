@@ -153,6 +153,11 @@ pub struct TribulationSettled {
     pub result: DuXuResultV1,
 }
 
+#[derive(Debug, Clone, Event)]
+pub struct AscensionQuotaOpened {
+    pub occupied_slots: u32,
+}
+
 /// 单波次通过（由战斗 plan 发送）。
 #[derive(Debug, Clone, Event)]
 pub struct TribulationWaveCleared {
@@ -632,6 +637,7 @@ pub fn publish_tribulation_events(
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
+    mut quota_opened: EventReader<AscensionQuotaOpened>,
     states: Query<&TribulationState>,
 ) {
     for ev in announce.read() {
@@ -689,6 +695,12 @@ pub fn publish_tribulation_events(
             None,
             Some(ev.result.clone()),
         );
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+    for ev in quota_opened.read() {
+        let payload = TribulationEventV1::ascension_quota_open(Some(ev.occupied_slots));
         let _ = redis
             .tx_outbound
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
@@ -919,6 +931,7 @@ mod tests {
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_systems(Update, publish_tribulation_events);
 
         app.world_mut()
@@ -943,6 +956,44 @@ mod tests {
                 assert_eq!(payload.actor_name.as_deref(), Some("Azure"));
                 assert_eq!(payload.epicenter, Some([12.0, 66.0, -8.0]));
                 assert_eq!(payload.wave_total, Some(3));
+            }
+            other => panic!("unexpected outbound payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publish_ascension_quota_open_event_to_tribulation_channel() {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_systems(Update, publish_tribulation_events);
+
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("quota open event should publish to redis bridge");
+        match outbound {
+            RedisOutbound::TribulationEvent(payload) => {
+                assert_eq!(
+                    payload.kind,
+                    crate::schema::tribulation::TribulationKindV1::AscensionQuotaOpen
+                );
+                assert_eq!(payload.phase, TribulationPhaseV1::Settle);
+                assert_eq!(payload.occupied_slots, Some(1));
             }
             other => panic!("unexpected outbound payload: {other:?}"),
         }

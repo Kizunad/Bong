@@ -95,9 +95,9 @@ use self::topology::MeridianTopology;
 use self::tribulation::{
     start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
     tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
-    tribulation_wave_system, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationLocked, TribulationSettled, TribulationState,
-    TribulationWaveCleared,
+    tribulation_wave_system, AscensionQuotaOpened, InitiateXuhuaTribulation, StartDuXuRequest,
+    TribulationAnnounce, TribulationFailed, TribulationLocked, TribulationSettled,
+    TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -140,6 +140,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TribulationWaveCleared>();
     app.add_event::<TribulationFailed>();
     app.add_event::<TribulationSettled>();
+    app.add_event::<AscensionQuotaOpened>();
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
@@ -402,15 +403,24 @@ fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error
 fn emit_skill_caps_on_realm_regressed(
     settings: Res<PersistenceSettings>,
     mut regressed: EventReader<RealmRegressed>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for event in regressed.read() {
         if event.from == Realm::Void && event.to != Realm::Void {
-            if let Err(error) = release_ascension_quota_slot(&settings) {
-                tracing::warn!(
-                    "[bong][cultivation] failed to release ascension quota after realm regression for {:?}: {error}",
-                    event.entity,
-                );
+            match release_ascension_quota_slot(&settings) {
+                Ok(release) if release.opened_slot => {
+                    quota_opened.send(AscensionQuotaOpened {
+                        occupied_slots: release.quota.occupied_slots,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to release ascension quota after realm regression for {:?}: {error}",
+                        event.entity,
+                    );
+                }
             }
         }
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
@@ -786,6 +796,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(PersistenceSettings::default());
         app.add_event::<RealmRegressed>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(Update, emit_skill_caps_on_realm_regressed);
 
@@ -819,6 +830,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.add_event::<RealmRegressed>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(Update, emit_skill_caps_on_realm_regressed);
 
@@ -834,6 +846,13 @@ mod tests {
 
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);
+        let quota_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<AscensionQuotaOpened>>()
+            .drain()
+            .collect();
+        assert_eq!(quota_events.len(), 1);
+        assert_eq!(quota_events[0].occupied_slots, 0);
 
         let _ = std::fs::remove_dir_all(root);
     }

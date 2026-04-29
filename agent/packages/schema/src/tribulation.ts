@@ -8,6 +8,7 @@ export const TribulationKindV1 = Type.Union([
   Type.Literal("du_xu"),
   Type.Literal("zone_collapse"),
   Type.Literal("targeted"),
+  Type.Literal("ascension_quota_open"),
 ]);
 export type TribulationKindV1 = Static<typeof TribulationKindV1>;
 
@@ -58,6 +59,7 @@ export const TribulationEventV1 = Type.Object(
     wave_current: Type.Optional(Type.Integer({ minimum: 0 })),
     wave_total: Type.Optional(Type.Integer({ minimum: 0 })),
     result: Type.Optional(DuXuResultV1),
+    occupied_slots: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: false },
 );

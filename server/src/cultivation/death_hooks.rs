@@ -12,6 +12,7 @@ use super::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
+use super::tribulation::AscensionQuotaOpened;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
@@ -80,6 +81,7 @@ pub fn on_player_revived(
     clock: Res<CultivationClock>,
     settings: Res<PersistenceSettings>,
     mut events: EventReader<PlayerRevived>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut players: Query<(
         &mut Cultivation,
@@ -100,11 +102,19 @@ pub fn on_player_revived(
             let prior = c.realm;
             apply_revive_penalty(&mut c, &mut ms, &mut cn);
             if prior == Realm::Void && c.realm != Realm::Void {
-                if let Err(error) = release_ascension_quota_slot(&settings) {
-                    tracing::warn!(
-                        "[bong][cultivation] failed to release ascension quota after revive for {:?}: {error}",
-                        ev.entity,
-                    );
+                match release_ascension_quota_slot(&settings) {
+                    Ok(release) if release.opened_slot => {
+                        quota_opened.send(AscensionQuotaOpened {
+                            occupied_slots: release.quota.occupied_slots,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to release ascension quota after revive for {:?}: {error}",
+                            ev.entity,
+                        );
+                    }
                 }
             }
             life.push(BiographyEntry::Rebirth {
@@ -134,6 +144,7 @@ pub fn on_player_terminated(
     settings: Res<PersistenceSettings>,
     mut commands: Commands,
     mut events: EventReader<PlayerTerminated>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     players: Query<&Cultivation>,
 ) {
     for ev in events.read() {
@@ -142,11 +153,19 @@ pub fn on_player_terminated(
             .map(|cultivation| cultivation.realm == Realm::Void)
             .unwrap_or(false);
         if was_void {
-            if let Err(error) = release_ascension_quota_slot(&settings) {
-                tracing::warn!(
-                    "[bong][cultivation] failed to release ascension quota after termination for {:?}: {error}",
-                    ev.entity,
-                );
+            match release_ascension_quota_slot(&settings) {
+                Ok(release) if release.opened_slot => {
+                    quota_opened.send(AscensionQuotaOpened {
+                        occupied_slots: release.quota.occupied_slots,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to release ascension quota after termination for {:?}: {error}",
+                        ev.entity,
+                    );
+                }
             }
         }
         if let Some(mut e) = commands.get_entity(ev.entity) {
@@ -248,6 +267,7 @@ mod tests {
         app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(valence::prelude::Update, on_player_revived);
 
@@ -287,6 +307,7 @@ mod tests {
         app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<PlayerRevived>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(valence::prelude::Update, on_player_revived);
 
@@ -342,6 +363,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -361,6 +383,13 @@ mod tests {
 
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);
+        let quota_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<AscensionQuotaOpened>>()
+            .drain()
+            .collect();
+        assert_eq!(quota_events.len(), 1);
+        assert_eq!(quota_events[0].occupied_slots, 0);
         assert!(app.world().get::<Cultivation>(entity).is_none());
 
         let _ = std::fs::remove_dir_all(root);

@@ -6,6 +6,7 @@ pub enum TribulationKindV1 {
     DuXu,
     ZoneCollapse,
     Targeted,
+    AscensionQuotaOpen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,8 @@ pub struct TribulationEventV1 {
     pub wave_total: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<DuXuResultV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occupied_slots: Option<u32>,
 }
 
 impl TribulationEventV1 {
@@ -81,6 +84,7 @@ impl TribulationEventV1 {
             wave_current,
             wave_total,
             result,
+            occupied_slots: None,
         }
     }
 
@@ -100,6 +104,7 @@ impl TribulationEventV1 {
             wave_current: None,
             wave_total: None,
             result: None,
+            occupied_slots: None,
         }
     }
 
@@ -119,6 +124,23 @@ impl TribulationEventV1 {
             wave_current: None,
             wave_total: None,
             result: None,
+            occupied_slots: None,
+        }
+    }
+
+    pub fn ascension_quota_open(occupied_slots: Option<u32>) -> Self {
+        Self {
+            v: 1,
+            kind: TribulationKindV1::AscensionQuotaOpen,
+            phase: TribulationPhaseV1::Settle,
+            char_id: None,
+            actor_name: None,
+            zone: None,
+            epicenter: None,
+            wave_current: None,
+            wave_total: None,
+            result: None,
+            occupied_slots,
         }
     }
 }

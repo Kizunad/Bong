@@ -57,6 +57,7 @@ function narrationTarget(payload: TribulationEventV1): string {
   const phase = payload.phase.kind === "wave" ? `wave:${payload.phase.wave}` : payload.phase.kind;
   if (payload.kind === "zone_collapse") return `tribulation:zone_collapse|zone:${payload.zone ?? "unknown"}|${phase}`;
   if (payload.kind === "targeted") return `tribulation:targeted|zone:${payload.zone ?? "unknown"}|${phase}`;
+  if (payload.kind === "ascension_quota_open") return `tribulation:ascension_quota_open|${phase}`;
   return `tribulation:${payload.kind}|char:${charId}|${phase}`;
 }
 
@@ -83,6 +84,14 @@ function fallbackNarration(payload: TribulationEventV1): Narration {
       scope: "zone",
       target: zone,
       text: `${zone} 近日运道不佳，灵机一动便多一分折耗。`,
+      style: "narration",
+    };
+  }
+  if (payload.kind === "ascension_quota_open") {
+    return {
+      scope: "broadcast",
+      target: narrationTarget(payload),
+      text: "化虚有位，叩关者可往；天道只空出座次，不替任何人铺路。",
       style: "narration",
     };
   }

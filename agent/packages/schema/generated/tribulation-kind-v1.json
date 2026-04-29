@@ -11,6 +11,10 @@
     {
       "const": "targeted",
       "type": "string"
+    },
+    {
+      "const": "ascension_quota_open",
+      "type": "string"
     }
   ]
 }

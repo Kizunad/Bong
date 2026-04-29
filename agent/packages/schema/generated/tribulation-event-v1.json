@@ -24,6 +24,10 @@
         {
           "const": "targeted",
           "type": "string"
+        },
+        {
+          "const": "ascension_quota_open",
+          "type": "string"
         }
       ]
     },
@@ -184,6 +188,10 @@
           "type": "integer"
         }
       }
+    },
+    "occupied_slots": {
+      "minimum": 0,
+      "type": "integer"
     }
   }
 }

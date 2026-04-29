@@ -312,6 +312,12 @@ pub struct AscensionQuotaRecord {
     pub occupied_slots: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AscensionQuotaRelease {
+    pub quota: AscensionQuotaRecord,
+    pub opened_slot: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ZoneRuntimeRecord {
     pub zone_id: String,
@@ -1402,15 +1408,16 @@ pub fn complete_tribulation_ascension(
 
 pub fn release_ascension_quota_slot(
     settings: &PersistenceSettings,
-) -> io::Result<AscensionQuotaRecord> {
+) -> io::Result<AscensionQuotaRelease> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     let mut quota = load_ascension_quota_from_transaction(&transaction)?;
+    let opened_slot = quota.occupied_slots > 0;
     quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
     upsert_ascension_quota(&transaction, &quota, wall_clock)?;
     transaction.commit().map_err(io::Error::other)?;
-    Ok(quota)
+    Ok(AscensionQuotaRelease { quota, opened_slot })
 }
 
 pub fn persist_zone_runtime_snapshot(
@@ -5553,12 +5560,16 @@ mod persistence_tests {
         .expect("quota upsert should succeed");
         transaction.commit().expect("transaction should commit");
 
-        let quota = release_ascension_quota_slot(&settings).expect("release should succeed");
-        assert_eq!(quota.occupied_slots, 1);
-        let quota = release_ascension_quota_slot(&settings).expect("release should succeed");
-        assert_eq!(quota.occupied_slots, 0);
-        let quota = release_ascension_quota_slot(&settings).expect("empty release should succeed");
-        assert_eq!(quota.occupied_slots, 0);
+        let release = release_ascension_quota_slot(&settings).expect("release should succeed");
+        assert_eq!(release.quota.occupied_slots, 1);
+        assert!(release.opened_slot);
+        let release = release_ascension_quota_slot(&settings).expect("release should succeed");
+        assert_eq!(release.quota.occupied_slots, 0);
+        assert!(release.opened_slot);
+        let release =
+            release_ascension_quota_slot(&settings).expect("empty release should succeed");
+        assert_eq!(release.quota.occupied_slots, 0);
+        assert!(!release.opened_slot);
 
         let _ = fs::remove_dir_all(root);
     }

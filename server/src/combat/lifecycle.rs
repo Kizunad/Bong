@@ -18,6 +18,7 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted, RebirthChanceInput,
     ZoneDeathKind,
 };
+use crate::cultivation::tribulation::AscensionQuotaOpened;
 use crate::cultivation::{
     color::PracticeLog,
     components::{Karma, QiColor},
@@ -707,6 +708,7 @@ pub fn handle_revival_action_intents(
     mut intents: EventReader<RevivalActionIntent>,
     mut revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut commands: valence::prelude::Commands,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
@@ -760,6 +762,7 @@ pub fn handle_revival_action_intents(
                         player_state,
                         position,
                         &mut revived,
+                        &mut quota_opened,
                     ) {
                         hide_death_screen(&mut clients, entity);
                         hide_terminate_screen(&mut clients, entity);
@@ -1145,6 +1148,7 @@ fn revive_lifecycle(
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     position: Option<valence::prelude::Mut<'_, Position>>,
     revived: &mut EventWriter<PlayerRevived>,
+    quota_opened: &mut EventWriter<AscensionQuotaOpened>,
 ) -> bool {
     let mut staged_lifecycle = lifecycle.clone();
     if matches!(
@@ -1186,11 +1190,19 @@ fn revive_lifecycle(
             return false;
         }
         if prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void {
-            if let Err(error) = release_ascension_quota_slot(persistence) {
-                tracing::warn!(
-                    "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
-                    entity,
-                );
+            match release_ascension_quota_slot(persistence) {
+                Ok(release) if release.opened_slot => {
+                    quota_opened.send(AscensionQuotaOpened {
+                        occupied_slots: release.quota.occupied_slots,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
+                        entity,
+                    );
+                }
             }
         }
     }
@@ -2046,6 +2058,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2575,6 +2588,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
@@ -2717,6 +2731,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -2764,6 +2779,13 @@ mod tests {
         assert_eq!(cultivation.realm, Realm::Spirit);
         let quota = load_ascension_quota(&settings).expect("quota load should succeed");
         assert_eq!(quota.occupied_slots, 0);
+        let quota_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .drain()
+            .collect();
+        assert_eq!(quota_events.len(), 1);
+        assert_eq!(quota_events[0].occupied_slots, 0);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2780,6 +2802,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2857,6 +2880,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -2926,6 +2950,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -3000,6 +3025,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -3186,6 +3212,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -3439,6 +3466,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 

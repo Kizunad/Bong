@@ -89,4 +89,40 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.llmFailures).toBe(1);
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
+
+  it("broadcasts cold narration when an ascension quota slot opens", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "ascension_quota_open",
+        phase: { kind: "settle" },
+        occupied_slots: 0,
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.v).toBe(1);
+    expect(envelope.narrations).toHaveLength(1);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:ascension_quota_open|settle",
+      text: "化虚有位，叩关者可往；天道只空出座次，不替任何人铺路。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
 });
