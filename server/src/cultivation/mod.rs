@@ -93,13 +93,14 @@ use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    abort_du_xu_on_client_removed, heart_demon_choice_system, heart_demon_timeout_system,
-    record_tribulation_interceptor_system, start_du_xu_request_system, start_tribulation_system,
-    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
-    tribulation_intercept_death_system, tribulation_phase_tick_system, tribulation_wave_system,
-    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest,
-    TribulationAnnounce, TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled,
-    TribulationState, TribulationWaveCleared,
+    abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
+    heart_demon_timeout_system, record_tribulation_interceptor_system, start_du_xu_request_system,
+    start_tribulation_system, tribulation_aoe_system, tribulation_escape_boundary_system,
+    tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
+    tribulation_wave_system, AscensionQuotaOpened, HeartDemonChoiceSubmitted,
+    InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce, TribulationFailed,
+    TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -185,7 +186,8 @@ pub fn register(app: &mut App) {
             start_du_xu_request_system,
             start_tribulation_system.after(start_du_xu_request_system),
             tribulation_phase_tick_system.after(start_tribulation_system),
-            tribulation_aoe_system.after(tribulation_phase_tick_system),
+            emit_tribulation_boundary_vfx_system.after(tribulation_phase_tick_system),
+            tribulation_aoe_system.after(emit_tribulation_boundary_vfx_system),
             heart_demon_choice_system.after(tribulation_aoe_system),
             heart_demon_timeout_system.after(heart_demon_choice_system),
             tribulation_failure_system.after(heart_demon_timeout_system),

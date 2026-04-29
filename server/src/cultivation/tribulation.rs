@@ -14,6 +14,8 @@ use valence::prelude::{
     Query, RemovedComponents, Res, Username, With,
 };
 
+use std::collections::HashSet;
+
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
@@ -46,6 +48,7 @@ pub const TRIBULATION_DANGER_RADIUS: f64 = 100.0;
 pub const DUXU_LOCK_RADIUS_SOFT: f64 = 50.0;
 pub const DUXU_LOCK_RADIUS_HARD: f64 = 20.0;
 pub const DUXU_LOCK_RADIUS_FINAL: f64 = 10.0;
+pub const DUXU_BOUNDARY_VFX_EVENT_ID: &str = "bong:tribulation_boundary";
 
 const DUXU_DEFAULT_WAVES: u32 = 3;
 const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
@@ -531,6 +534,78 @@ pub fn tribulation_aoe_system(
             }
         }
     }
+}
+
+pub fn emit_tribulation_boundary_vfx_system(
+    clock: Res<CombatClock>,
+    mut announce: EventReader<TribulationAnnounce>,
+    mut locked: EventReader<TribulationLocked>,
+    mut cleared: EventReader<TribulationWaveCleared>,
+    mut omen_soft_emitted: valence::prelude::Local<HashSet<Entity>>,
+    states: Query<(Entity, &TribulationState)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    omen_soft_emitted.retain(|entity| {
+        states
+            .get(*entity)
+            .is_ok_and(|(_, state)| matches!(state.phase, TribulationPhase::Omen))
+    });
+    for (entity, state) in &states {
+        if matches!(state.phase, TribulationPhase::Omen)
+            && clock.tick.saturating_sub(state.started_tick) >= DUXU_OMEN_TICKS / 2
+            && omen_soft_emitted.insert(entity)
+        {
+            emit_tribulation_boundary_vfx(
+                &mut vfx_events,
+                state.epicenter,
+                DUXU_LOCK_RADIUS_SOFT,
+                200,
+            );
+        }
+    }
+    for ev in announce.read() {
+        emit_tribulation_boundary_vfx(
+            &mut vfx_events,
+            ev.epicenter,
+            TRIBULATION_DANGER_RADIUS,
+            200,
+        );
+    }
+    for ev in locked.read() {
+        emit_tribulation_boundary_vfx(&mut vfx_events, ev.epicenter, DUXU_LOCK_RADIUS_HARD, 160);
+    }
+    for ev in cleared.read() {
+        let Ok((_, state)) = states.get(ev.entity) else {
+            continue;
+        };
+        emit_tribulation_boundary_vfx(
+            &mut vfx_events,
+            state.epicenter,
+            DUXU_LOCK_RADIUS_FINAL,
+            100,
+        );
+    }
+}
+
+fn emit_tribulation_boundary_vfx(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    epicenter: [f64; 3],
+    radius: f64,
+    duration_ticks: u16,
+) {
+    let origin = valence::math::DVec3::new(epicenter[0], epicenter[1], epicenter[2]);
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: DUXU_BOUNDARY_VFX_EVENT_ID.to_string(),
+            origin: epicenter,
+            direction: None,
+            color: Some("#D0C8FF".to_string()),
+            strength: Some((radius / TRIBULATION_DANGER_RADIUS).clamp(0.0, 1.0) as f32),
+            count: Some(1),
+            duration_ticks: Some(duration_ticks),
+        },
+    ));
 }
 
 #[allow(clippy::type_complexity)]
@@ -1458,6 +1533,140 @@ mod tests {
         assert_eq!(emitted[0].actor_name, "Azure");
         assert_eq!(emitted[0].epicenter, [12.0, 66.0, -8.0]);
         assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    fn collect_vfx_payloads(app: &mut App) -> Vec<VfxEventPayloadV1> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    #[test]
+    fn tribulation_announce_emits_boundary_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_boundary_vfx_system);
+
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: Entity::PLACEHOLDER,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [12.0, 66.0, -8.0],
+            waves_total: 3,
+        });
+
+        app.update();
+
+        let payloads = collect_vfx_payloads(&mut app);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0] {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                origin,
+                strength,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(event_id, DUXU_BOUNDARY_VFX_EVENT_ID);
+                assert_eq!(*origin, [12.0, 66.0, -8.0]);
+                assert_eq!(*strength, Some(1.0));
+                assert_eq!(*duration_ticks, Some(200));
+            }
+            other => panic!("unexpected boundary vfx payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn omen_midpoint_emits_soft_boundary_once() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: DUXU_OMEN_TICKS / 2,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_boundary_vfx_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Omen,
+            epicenter: [0.0, 66.0, 0.0],
+            wave_current: 0,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        });
+
+        app.update();
+        app.update();
+
+        let payloads = collect_vfx_payloads(&mut app);
+        assert_eq!(payloads.len(), 1);
+        match &payloads[0] {
+            VfxEventPayloadV1::SpawnParticle { strength, .. } => {
+                assert_eq!(*strength, Some(0.5));
+            }
+            other => panic!("unexpected boundary vfx payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lock_and_wave_events_emit_boundary_vfx() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_boundary_vfx_system);
+
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(1),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 900,
+                next_wave_tick: 1200,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+        app.world_mut().send_event(TribulationLocked {
+            entity,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+        });
+        app.world_mut()
+            .send_event(TribulationWaveCleared { entity, wave: 1 });
+
+        app.update();
+
+        let strengths: Vec<_> = collect_vfx_payloads(&mut app)
+            .into_iter()
+            .map(|payload| match payload {
+                VfxEventPayloadV1::SpawnParticle { strength, .. } => strength,
+                other => panic!("unexpected boundary vfx payload: {other:?}"),
+            })
+            .collect();
+        assert_eq!(strengths, vec![Some(0.2), Some(0.1)]);
     }
 
     #[test]
