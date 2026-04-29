@@ -1190,7 +1190,7 @@ pub fn publish_tribulation_events(
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
     mut quota_opened: EventReader<AscensionQuotaOpened>,
-    states: Query<&TribulationState>,
+    states: Query<(&TribulationState, Option<&Lifecycle>, Option<&Username>)>,
 ) {
     for ev in announce.read() {
         let payload = TribulationEventV1::du_xu(
@@ -1221,9 +1221,15 @@ pub fn publish_tribulation_events(
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
     }
     for ev in cleared.read() {
-        let Ok(state) = states.get(ev.entity) else {
+        let Ok((state, lifecycle, username)) = states.get(ev.entity) else {
             continue;
         };
+        let char_id = lifecycle
+            .map(|lifecycle| lifecycle.character_id.clone())
+            .or_else(|| state.participants.first().cloned());
+        let actor_name = username
+            .map(|name| name.0.clone())
+            .or_else(|| char_id.clone());
         let phase = if ev.wave == DUXU_HEART_DEMON_WAVE {
             TribulationPhaseV1::HeartDemon
         } else {
@@ -1231,8 +1237,8 @@ pub fn publish_tribulation_events(
         };
         let payload = TribulationEventV1::du_xu(
             phase,
-            None,
-            None,
+            char_id,
+            actor_name,
             Some(state.epicenter),
             Some(ev.wave),
             Some(state.waves_total),
@@ -2162,6 +2168,67 @@ mod tests {
                 assert_eq!(payload.actor_name.as_deref(), Some("Azure"));
                 assert_eq!(payload.epicenter, Some([12.0, 66.0, -8.0]));
                 assert_eq!(payload.wave_total, Some(3));
+            }
+            other => panic!("unexpected outbound payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publish_wave_event_keeps_tribulator_identity() {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_systems(Update, publish_tribulation_events);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [12.0, 66.0, -8.0],
+                    wave_current: 1,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 1200,
+                    next_wave_tick: 1500,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationWaveCleared>>()
+            .send(TribulationWaveCleared { entity, wave: 2 });
+
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("wave event should publish to redis bridge");
+        match outbound {
+            RedisOutbound::TribulationEvent(payload) => {
+                assert_eq!(payload.phase, TribulationPhaseV1::Wave { wave: 2 });
+                assert_eq!(payload.char_id.as_deref(), Some("offline:Azure"));
+                assert_eq!(payload.actor_name.as_deref(), Some("Azure"));
+                assert_eq!(payload.epicenter, Some([12.0, 66.0, -8.0]));
+                assert_eq!(payload.wave_current, Some(2));
+                assert_eq!(payload.wave_total, Some(5));
             }
             other => panic!("unexpected outbound payload: {other:?}"),
         }
