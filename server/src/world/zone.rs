@@ -302,6 +302,7 @@ impl ZoneRegistry {
                         serde_json::from_str(&overlay_record.payload_json).map_err(|error| {
                             format!("invalid collapsed overlay payload: {error}")
                         })?;
+                    zone.spirit_qi = 0.0;
                     zone.danger_level = payload.danger_level;
                     merge_overlay_events(&mut zone.active_events, payload.active_events);
                     merge_overlay_blocked_tiles(&mut zone.blocked_tiles, payload.blocked_tiles);
@@ -916,6 +917,7 @@ mod zone_tests {
     #[test]
     fn apply_overlay_records_merges_supported_overlay_payloads() {
         let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].spirit_qi = 0.8;
         registry
             .apply_overlay_records(&[
                 ZoneOverlayRecord {
@@ -954,6 +956,7 @@ mod zone_tests {
             ])
             .expect("overlay application should succeed");
 
+        assert_eq!(registry.zones[0].spirit_qi, 0.0);
         assert_eq!(registry.zones[0].danger_level, 4);
         assert_eq!(
             registry.zones[0].active_events,
