@@ -29,6 +29,7 @@ use crate::schema::world_state::GameEvent;
 use crate::world::karma::{
     targeted_calamity_event_hit, targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap,
     TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
+    TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD,
 };
 use crate::world::zone::Zone;
 
@@ -225,18 +226,10 @@ impl ActiveEventsResource {
             let duration_ticks = value_to_u64(command.params.get("duration_ticks"))
                 .unwrap_or(KARMA_BACKLASH_EVENT_DURATION_TICKS)
                 .max(MIN_EVENT_DURATION_TICKS);
-            let center = zone.center();
-            let center_block = valence::prelude::BlockPos::new(
-                center.x.floor() as i32,
-                center.y.floor() as i32,
-                center.z.floor() as i32,
-            );
             let karma_weight = karma_weights
                 .map(|weights| weights.weight_for_zone(event.zone_name.as_str()))
                 .unwrap_or_default();
-            let qi_density_heat = qi_heatmap
-                .map(|heatmap| heatmap.heat_at(zone.dimension, center_block))
-                .unwrap_or_default();
+            let qi_density_heat = targeted_qi_density_heat(qi_heatmap, zone);
             let roll = targeted_calamity_roll(
                 TARGETED_CALAMITY_BASE_PROBABILITY,
                 karma_weight,
@@ -286,6 +279,7 @@ impl ActiveEventsResource {
                     event.target_player.as_deref(),
                     karma_weights,
                 );
+                let qi_nullified = maybe_nullify_targeted_zone_qi(zone, roll.qi_density_heat);
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
                     tick: 0,
@@ -303,8 +297,24 @@ impl ActiveEventsResource {
                             "localized_lightning".to_string(),
                             json!([strike_position.x, strike_position.y, strike_position.z]),
                         ),
+                        ("qi_nullified".to_string(), json!(qi_nullified.is_some())),
                     ])),
                 });
+                if let Some(previous_spirit_qi) = qi_nullified {
+                    self.record_recent_event(GameEvent {
+                        event_type: GameEventType::EventTriggered,
+                        tick: 0,
+                        player: event.target_player.clone(),
+                        target: Some("targeted_qi_nullified".to_string()),
+                        zone: Some(event.zone_name.clone()),
+                        details: Some(HashMap::from([
+                            ("event".to_string(), Value::String("灵气归零".to_string())),
+                            ("previous_spirit_qi".to_string(), json!(previous_spirit_qi)),
+                            ("spirit_qi".to_string(), json!(0.0)),
+                            ("qi_density_heat".to_string(), json!(roll.qi_density_heat)),
+                        ])),
+                    });
+                }
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
                     tick: 0,
@@ -894,6 +904,38 @@ fn targeted_calamity_event_seed(
     hasher.finish()
 }
 
+fn targeted_qi_density_heat(qi_heatmap: Option<&QiDensityHeatmap>, zone: &Zone) -> f32 {
+    let Some(heatmap) = qi_heatmap else {
+        return 0.0;
+    };
+    let (min, max) = zone.bounds;
+    let center = zone.center();
+    let center_block = valence::prelude::BlockPos::new(
+        center.x.floor() as i32,
+        center.y.floor() as i32,
+        center.z.floor() as i32,
+    );
+    let center_heat = heatmap.heat_at(zone.dimension, center_block);
+    let zone_heat = heatmap.max_heat_in_rect(
+        zone.dimension,
+        min.x.floor() as i32,
+        max.x.ceil() as i32,
+        min.z.floor() as i32,
+        max.z.ceil() as i32,
+    );
+    center_heat.max(zone_heat)
+}
+
+fn maybe_nullify_targeted_zone_qi(zone: &mut Zone, qi_density_heat: f32) -> Option<f64> {
+    if qi_density_heat < TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD || zone.spirit_qi <= 0.0 {
+        return None;
+    }
+
+    let previous_spirit_qi = zone.spirit_qi;
+    zone.spirit_qi = 0.0;
+    Some(previous_spirit_qi)
+}
+
 fn targeted_calamity_strike_position(
     zone: &Zone,
     target_player: Option<&str>,
@@ -1260,7 +1302,8 @@ mod events_tests {
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
     use crate::schema::vfx_event::VfxEventPayloadV1;
-    use crate::world::karma::KarmaWeightStore;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
@@ -2156,6 +2199,70 @@ mod events_tests {
             1,
             "targeted local lightning should spawn a concrete lightning entity on the next world tick"
         );
+    }
+
+    #[test]
+    fn hidden_karma_backlash_nullifies_zone_qi_when_density_heat_is_high() {
+        let (mut app, _layer) = setup_events_app();
+        let command = spawn_event_command("spawn", EVENT_KARMA_BACKLASH, 3);
+        let mut heatmap = QiDensityHeatmap::default();
+        heatmap.add_heat(
+            DimensionKind::Overworld,
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1.0,
+        );
+
+        {
+            let world = app.world_mut();
+            world.resource_scope(|world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let mut events = world.resource_mut::<ActiveEventsResource>();
+                assert!(events.enqueue_from_spawn_command_with_karma(
+                    &command,
+                    Some(&mut zones),
+                    None,
+                    Some(&heatmap),
+                ));
+
+                let zone = zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .expect("spawn zone should exist");
+                assert_eq!(zone.spirit_qi, 0.0);
+
+                let recent = events.recent_events_snapshot();
+                let marker = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH))
+                    .expect("hidden marker should be recorded");
+                let marker_details = marker.details.as_ref().expect("marker details");
+                assert_eq!(
+                    marker_details
+                        .get("qi_density_heat")
+                        .and_then(Value::as_f64),
+                    Some(1.0)
+                );
+                assert_eq!(
+                    marker_details
+                        .get("negative_event_triggered")
+                        .and_then(Value::as_bool),
+                    Some(true)
+                );
+
+                let nullified = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some("targeted_qi_nullified"))
+                    .expect("high heat hit should record qi nullification");
+                let details = nullified.details.as_ref().expect("nullification details");
+                assert_eq!(
+                    details.get("previous_spirit_qi").and_then(Value::as_f64),
+                    Some(0.9)
+                );
+                assert_eq!(details.get("spirit_qi").and_then(Value::as_f64), Some(0.0));
+                assert_eq!(
+                    details.get("qi_density_heat").and_then(Value::as_f64),
+                    Some(1.0)
+                );
+            });
+        }
     }
 
     fn unique_test_db(test_name: &str) -> std::path::PathBuf {

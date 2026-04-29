@@ -18,6 +18,7 @@ pub const QI_DENSITY_HEAT_MAX: f32 = 1.0;
 pub const QI_DENSITY_CELL_SIZE: i32 = 16;
 pub const TARGETED_CALAMITY_BASE_PROBABILITY: f32 = 0.05;
 pub const TARGETED_CALAMITY_MAX_PROBABILITY: f32 = 0.30;
+pub const TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD: f32 = 0.80;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TargetedCalamityRoll {
@@ -132,6 +133,42 @@ impl QiDensityHeatmap {
             .copied()
             .unwrap_or(0.0)
     }
+
+    pub fn max_heat_in_rect(
+        &self,
+        dimension: DimensionKind,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+    ) -> f32 {
+        let (min_x, max_x) = if min_x <= max_x {
+            (min_x, max_x)
+        } else {
+            (max_x, min_x)
+        };
+        let (min_z, max_z) = if min_z <= max_z {
+            (min_z, max_z)
+        } else {
+            (max_z, min_z)
+        };
+        let min_cell_x = min_x.div_euclid(QI_DENSITY_CELL_SIZE);
+        let max_cell_x = max_x.div_euclid(QI_DENSITY_CELL_SIZE);
+        let min_cell_z = min_z.div_euclid(QI_DENSITY_CELL_SIZE);
+        let max_cell_z = max_z.div_euclid(QI_DENSITY_CELL_SIZE);
+
+        self.by_cell
+            .iter()
+            .filter(|(cell, _)| {
+                cell.dimension == dimension
+                    && cell.x >= min_cell_x
+                    && cell.x <= max_cell_x
+                    && cell.z >= min_cell_z
+                    && cell.z <= max_cell_z
+            })
+            .map(|(_, heat)| *heat)
+            .fold(0.0, f32::max)
+    }
 }
 
 impl QiDensityCell {
@@ -229,6 +266,29 @@ mod tests {
         assert_eq!(
             heatmap.heat_at(DimensionKind::Tsy, BlockPos::new(20, 64, -8)),
             0.40
+        );
+    }
+
+    #[test]
+    fn qi_density_heatmap_reports_max_heat_in_rect() {
+        let mut heatmap = QiDensityHeatmap::default();
+
+        heatmap.add_heat(DimensionKind::Overworld, BlockPos::new(8, 64, 8), 0.30);
+        heatmap.add_heat(DimensionKind::Overworld, BlockPos::new(40, 64, 40), 0.75);
+        heatmap.add_heat(DimensionKind::Tsy, BlockPos::new(8, 64, 8), 1.0);
+
+        assert_eq!(
+            heatmap.max_heat_in_rect(DimensionKind::Overworld, 0, 48, 0, 48),
+            0.75
+        );
+        assert_eq!(
+            heatmap.max_heat_in_rect(DimensionKind::Overworld, 48, 0, 48, 0),
+            0.75,
+            "reversed bounds should be normalized"
+        );
+        assert_eq!(
+            heatmap.max_heat_in_rect(DimensionKind::Overworld, 64, 80, 64, 80),
+            0.0
         );
     }
 
