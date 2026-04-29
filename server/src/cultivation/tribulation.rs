@@ -1142,6 +1142,7 @@ pub fn tribulation_intercept_death_system(
             if let Ok(mut life_record) = life_records.get_mut(killer_entity) {
                 life_record.push(BiographyEntry::TribulationIntercepted {
                     victim_id: lifecycle.character_id.clone(),
+                    tag: "戮道者 · 截劫".to_string(),
                     tick: death.at_tick,
                 });
             }
@@ -2788,8 +2789,8 @@ mod tests {
             .expect("killer life record should remain attached");
         assert!(matches!(
             killer_life_record.biography.last(),
-            Some(BiographyEntry::TribulationIntercepted { victim_id, tick })
-                if victim_id == "offline:Victim" && *tick == 120
+            Some(BiographyEntry::TribulationIntercepted { victim_id, tag, tick })
+                if victim_id == "offline:Victim" && tag == "戮道者 · 截劫" && *tick == 120
         ));
 
         assert!(app.world().get::<TribulationState>(victim).is_none());
