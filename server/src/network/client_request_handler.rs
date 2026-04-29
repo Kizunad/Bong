@@ -29,7 +29,7 @@ use crate::combat::events::{
 };
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{recover_current_qi, Cultivation};
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::known_techniques::technique_definition;
@@ -463,6 +463,7 @@ pub fn handle_client_request_payloads(
                 handle_alchemy_take_pill(
                     ev.client,
                     &pill_item_id,
+                    &mut commands,
                     &combat_clock,
                     &mut inventories,
                     &mut clients,
@@ -631,6 +632,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     instance_id,
                     target,
+                    &mut commands,
                     &combat_clock,
                     &mut inventories,
                     &mut clients,
@@ -3767,6 +3769,26 @@ fn resync_snapshot(
     cultivations: &Query<&Cultivation>,
     reason: &str,
 ) {
+    resync_snapshot_with_cultivation_override(
+        entity,
+        inventory,
+        clients,
+        player_states,
+        cultivations,
+        None,
+        reason,
+    );
+}
+
+fn resync_snapshot_with_cultivation_override(
+    entity: valence::prelude::Entity,
+    inventory: &PlayerInventory,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    cultivation_override: Option<&Cultivation>,
+    reason: &str,
+) {
     let player_state = match player_states.get(entity) {
         Ok(state) => state,
         Err(_) => {
@@ -3776,13 +3798,20 @@ fn resync_snapshot(
             return;
         }
     };
-    let cultivation = match cultivations.get(entity) {
-        Ok(cultivation) => cultivation,
-        Err(_) => {
-            tracing::warn!(
-                "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
-            );
-            return;
+    let fallback_cultivation;
+    let cultivation = match cultivation_override {
+        Some(cultivation) => cultivation,
+        None => {
+            fallback_cultivation = match cultivations.get(entity) {
+                Ok(cultivation) => cultivation,
+                Err(_) => {
+                    tracing::warn!(
+                        "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
+                    );
+                    return;
+                }
+            };
+            fallback_cultivation
         }
     };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
@@ -3989,6 +4018,7 @@ fn handle_apply_pill(
     entity: Entity,
     instance_id: u64,
     _target: crate::schema::client_request::ApplyPillTargetV1,
+    commands: &mut Commands,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -4013,6 +4043,7 @@ fn handle_apply_pill(
     handle_alchemy_take_pill(
         entity,
         &template_id,
+        commands,
         clock,
         inventories,
         clients,
@@ -4159,6 +4190,7 @@ fn furnace_zone_is_collapsed(
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
+    commands: &mut Commands,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -4196,6 +4228,7 @@ fn handle_alchemy_take_pill(
         return;
     }
 
+    let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
@@ -4208,6 +4241,22 @@ fn handle_alchemy_take_pill(
             tracing::info!(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
             );
+        }
+        ItemEffect::QiRecovery { amount } => {
+            if let Ok(current) = cultivations.get(entity) {
+                let mut cultivation = current.clone();
+                let qi_max_before = cultivation.qi_max;
+                let recovered = recover_current_qi(&mut cultivation, amount);
+                cultivation_snapshot_override = Some(cultivation.clone());
+                commands.entity(entity).insert(cultivation);
+                tracing::info!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` recovered current qi +{recovered:.1}; qi_max stays {qi_max_before:.1}"
+                );
+            } else {
+                tracing::debug!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` QiRecovery noop: no Cultivation"
+                );
+            }
         }
         ItemEffect::LifespanExtension { years, source } => {
             if let Some(lifespan_extension_tx) = lifespan_extension_tx.as_deref_mut() {
@@ -4230,12 +4279,13 @@ fn handle_alchemy_take_pill(
         }
     }
 
-    resync_snapshot(
+    resync_snapshot_with_cultivation_override(
         entity,
         &inventory,
         clients,
         player_states,
         cultivations,
+        cultivation_snapshot_override.as_ref(),
         "take_pill",
     );
 }

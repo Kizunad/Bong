@@ -218,6 +218,32 @@ public class InspectScreenApplyPillTest {
     }
 
     @Test
+    void dispatchApplyPillSelfAlsoSendsForHuiyuanPill() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            1004L,
+            "huiyuan_pill",
+            "回元丹",
+            1,
+            1,
+            0.2,
+            "rare",
+            "战斗中温补真元，只恢复当前真元，不提升真元上限。",
+            1,
+            1.0,
+            1.0
+        );
+
+        assertTrue(screen.dispatchApplyPillSelf(item));
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1004,\"target\":{\"kind\":\"self\"}}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void forgeStationAnvilMenuIncludesPlaceAction() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());

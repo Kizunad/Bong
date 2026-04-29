@@ -159,6 +159,7 @@ pub enum ItemRarity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemEffect {
     BreakthroughBonus { magnitude: f64 },
+    QiRecovery { amount: f64 },
     MeridianHeal { magnitude: f64, target: String },
     ContaminationCleanse { magnitude: f64 },
     LifespanExtension { years: u32, source: String },
@@ -1202,6 +1203,9 @@ fn parse_item_effect(
     match effect.kind.trim().to_ascii_lowercase().as_str() {
         "breakthrough_bonus" => Ok(ItemEffect::BreakthroughBonus {
             magnitude: effect.magnitude,
+        }),
+        "qi_recovery" => Ok(ItemEffect::QiRecovery {
+            amount: effect.magnitude,
         }),
         "meridian_heal" => {
             let target =
@@ -3124,6 +3128,10 @@ mod tests {
                 years: 10,
                 source,
             }) if source == "life_extension_pill"
+        ));
+        assert!(matches!(
+            registry.get("huiyuan_pill").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::QiRecovery { amount }) if (*amount - 60.0).abs() < f64::EPSILON
         ));
         assert!(matches!(
             registry.get("life_core").and_then(|item| item.effect.as_ref()),

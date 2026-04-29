@@ -1625,7 +1625,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 item.itemId());
             return false;
         }
-        if (!"guyuan_pill".equals(item.itemId()) && !"huiyuan_pill_forbidden".equals(item.itemId())) {
+        if (!"guyuan_pill".equals(item.itemId())
+            && !"huiyuan_pill".equals(item.itemId())
+            && !"huiyuan_pill_forbidden".equals(item.itemId())) {
             return false;
         }
         com.bong.client.BongClient.LOGGER.info(
@@ -1676,7 +1678,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item == null || item.instanceId() == 0L) {
             return actions;
         }
-        if ("guyuan_pill".equals(item.itemId()) || "huiyuan_pill_forbidden".equals(item.itemId())) {
+        if ("guyuan_pill".equals(item.itemId())
+            || "huiyuan_pill".equals(item.itemId())
+            || "huiyuan_pill_forbidden".equals(item.itemId())) {
             actions.add(new PillMenuAction("服用", ActionKind.SELF_USE));
         }
         if ("ningmai_powder".equals(item.itemId())) {
