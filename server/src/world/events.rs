@@ -40,6 +40,7 @@ const THUNDER_DEFAULT_Y_OFFSET: f64 = 1.0;
 const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
 const KARMA_BACKLASH_EVENT_DURATION_TICKS: u64 = 1;
 const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
+pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEvent {
@@ -68,6 +69,7 @@ struct BeastTideRuntimeState {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct RealmCollapseRuntimeState {
     completed: bool,
+    evacuation_warning_emitted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +77,7 @@ pub struct MajorEventAlert {
     pub event_name: String,
     pub zone_name: String,
     pub duration_ticks: u64,
+    pub message: Option<String>,
 }
 
 impl ActiveEvent {
@@ -237,6 +240,7 @@ impl ActiveEventsResource {
             event_name: event.event_name.clone(),
             zone_name: event.zone_name.clone(),
             duration_ticks: event.duration_ticks,
+            message: None,
         });
 
         if event.event_name == EVENT_REALM_COLLAPSE {
@@ -425,9 +429,34 @@ impl ActiveEventsResource {
                     }
                 }
                 EVENT_REALM_COLLAPSE => {
-                    if event.elapsed_ticks.saturating_add(1) >= event.duration_ticks
+                    let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if !event.collapse.evacuation_warning_emitted
                         && !event.collapse.completed
+                        && next_elapsed < event.duration_ticks
                     {
+                        let remaining_ticks = event.duration_ticks.saturating_sub(next_elapsed);
+                        if remaining_ticks <= REALM_COLLAPSE_EVACUATION_WINDOW_TICKS {
+                            event.collapse.evacuation_warning_emitted = true;
+                            self.pending_major_alerts.push(MajorEventAlert {
+                                event_name: event.event_name.clone(),
+                                zone_name: event.zone_name.clone(),
+                                duration_ticks: remaining_ticks,
+                                message: Some(realm_collapse_evacuation_alert_message(
+                                    event.zone_name.as_str(),
+                                    remaining_ticks,
+                                )),
+                            });
+                            self.pending_tribulation_events.push(
+                                TribulationEventV1::zone_collapse(
+                                    TribulationPhaseV1::Lock,
+                                    Some(event.zone_name.clone()),
+                                    Some([zone.center().x, zone.center().y, zone.center().z]),
+                                ),
+                            );
+                        }
+                    }
+
+                    if next_elapsed >= event.duration_ticks && !event.collapse.completed {
                         let Some(death_events) = death_events.as_deref_mut() else {
                             tracing::warn!(
                                 "[bong][world] realm_collapse runtime for zone `{}` skipped: missing DeathEvent writer",
@@ -439,7 +468,7 @@ impl ActiveEventsResource {
                         let killed = collapse_zone(
                             zone_registry,
                             &zone,
-                            event.elapsed_ticks.saturating_add(1),
+                            next_elapsed,
                             collapse_targets.unwrap_or(&[]),
                             death_events,
                         );
@@ -457,7 +486,7 @@ impl ActiveEventsResource {
                             ));
                         recent_events.push(GameEvent {
                             event_type: GameEventType::EventTriggered,
-                            tick: event.elapsed_ticks.saturating_add(1),
+                            tick: next_elapsed,
                             player: None,
                             target: Some(EVENT_REALM_COLLAPSE.to_string()),
                             zone: Some(event.zone_name.clone()),
@@ -690,6 +719,10 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
     }
 
     value.as_i64().map(|v| v as f64)
+}
+
+fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64) -> String {
+    format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
 }
 
 pub(crate) fn persist_zone_collapsed_overlays(
@@ -967,7 +1000,7 @@ mod events_tests {
     use super::{
         persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
         ZoneCollapsedEvent, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
-        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+        EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::NpcRegistry;
@@ -976,6 +1009,7 @@ mod events_tests {
     use crate::persistence::{bootstrap_sqlite, load_zone_overlays, PersistenceSettings};
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
+    use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
@@ -1485,6 +1519,52 @@ mod events_tests {
             !collected.iter().any(|event| event.target == outsider),
             "realm_collapse must not kill entities outside zone bounds"
         );
+    }
+
+    #[test]
+    fn realm_collapse_emits_evacuation_warning_before_collapse() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut events = ActiveEventsResource::default();
+        let duration_ticks = REALM_COLLAPSE_EVACUATION_WINDOW_TICKS + 2;
+        let command = spawn_event_command(
+            DEFAULT_SPAWN_ZONE_NAME,
+            EVENT_REALM_COLLAPSE,
+            duration_ticks,
+        );
+
+        assert!(events.enqueue_from_spawn_command(&command, Some(&mut zones)));
+        let initial_alerts = events.drain_major_event_alerts();
+        assert_eq!(initial_alerts.len(), 1);
+        assert_eq!(initial_alerts[0].duration_ticks, duration_ticks);
+        assert!(initial_alerts[0].message.is_none());
+        let initial_events = events.drain_tribulation_events();
+        assert_eq!(initial_events.len(), 1);
+        assert_eq!(initial_events[0].kind, TribulationKindV1::ZoneCollapse);
+        assert_eq!(initial_events[0].phase, TribulationPhaseV1::Omen);
+
+        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        assert!(events.drain_major_event_alerts().is_empty());
+        assert!(events.drain_tribulation_events().is_empty());
+
+        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        let evacuation_alerts = events.drain_major_event_alerts();
+        assert_eq!(evacuation_alerts.len(), 1);
+        assert_eq!(
+            evacuation_alerts[0].duration_ticks,
+            REALM_COLLAPSE_EVACUATION_WINDOW_TICKS
+        );
+        assert!(evacuation_alerts[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("撤离窗口") && message.contains("横死")));
+        let lock_events = events.drain_tribulation_events();
+        assert_eq!(lock_events.len(), 1);
+        assert_eq!(lock_events[0].kind, TribulationKindV1::ZoneCollapse);
+        assert_eq!(lock_events[0].phase, TribulationPhaseV1::Lock);
+
+        let _ = events.tick(Some(&mut zones), None, None, None, None, None, None, None);
+        assert!(events.drain_major_event_alerts().is_empty());
+        assert!(events.drain_tribulation_events().is_empty());
     }
 
     #[test]

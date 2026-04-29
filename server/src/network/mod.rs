@@ -1117,6 +1117,13 @@ fn emit_event_alerts_on_major_event_creation(
     };
 
     for pending_alert in active_events.drain_major_event_alerts() {
+        let message = pending_alert.message.unwrap_or_else(|| {
+            major_event_alert_message(
+                pending_alert.event_name.as_str(),
+                pending_alert.zone_name.as_str(),
+                pending_alert.duration_ticks,
+            )
+        });
         let Some(event_kind) = event_kind_from_name(pending_alert.event_name.as_str()) else {
             tracing::warn!(
                 "[bong][network] skipping unsupported major event alert `{}` for zone `{}`",
@@ -1128,11 +1135,7 @@ fn emit_event_alerts_on_major_event_creation(
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::EventAlert {
             event: event_kind,
-            message: major_event_alert_message(
-                pending_alert.event_name.as_str(),
-                pending_alert.zone_name.as_str(),
-                pending_alert.duration_ticks,
-            ),
+            message,
             zone: Some(pending_alert.zone_name.clone()),
             duration_ticks: Some(pending_alert.duration_ticks),
         });
