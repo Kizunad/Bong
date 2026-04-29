@@ -305,4 +305,41 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.llmFailures).toBe(1);
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
+
+  it("falls back to zone-scoped hint for hidden targeted calamity", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "targeted",
+        phase: { kind: "omen" },
+        zone: "spawn",
+        epicenter: [8, 66, 8],
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.v).toBe(1);
+    expect(envelope.narrations).toHaveLength(1);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "zone",
+      target: "spawn",
+      text: "spawn 近日运道不佳，灵机一动便多一分折耗。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
 });
