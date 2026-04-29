@@ -2405,6 +2405,18 @@ mod tests {
     }
 
     #[test]
+    fn ascension_quota_limit_scales_by_player_count_with_hard_cap() {
+        assert_eq!(ascension_quota_limit(0), 1);
+        assert_eq!(ascension_quota_limit(49), 1);
+        assert_eq!(ascension_quota_limit(50), 1);
+        assert_eq!(ascension_quota_limit(99), 1);
+        assert_eq!(ascension_quota_limit(100), 2);
+        assert_eq!(ascension_quota_limit(149), 2);
+        assert_eq!(ascension_quota_limit(150), 3);
+        assert_eq!(ascension_quota_limit(200), 3);
+    }
+
+    #[test]
     fn lock_expiry_starts_first_wave_and_schedules_cooldown() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 900 });
