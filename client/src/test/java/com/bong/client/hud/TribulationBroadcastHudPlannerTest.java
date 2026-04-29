@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.store.TribulationBroadcastStore;
+import com.bong.client.combat.store.TribulationStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +10,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TribulationBroadcastHudPlannerTest {
-    @AfterEach void tearDown() { TribulationBroadcastStore.resetForTests(); }
+    @AfterEach void tearDown() {
+        TribulationBroadcastStore.resetForTests();
+        TribulationStateStore.resetForTests();
+    }
 
     @Test void hiddenWhenInactive() {
         assertTrue(TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L).isEmpty());
@@ -68,5 +72,31 @@ class TribulationBroadcastHudPlannerTest {
             && c.text().contains("观战")
             && c.text().contains("100 格内会承雷"));
         assertTrue(hasSpectate);
+    }
+
+    @Test void drawsWaveProgressFromTribulationStateStore() {
+        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
+            true, "甲", "striking", 0, 0, 10_000L, false, 0
+        ));
+        TribulationStateStore.replace(new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "wave", 0, 0,
+            3, 5, 100, 200, 300, false, true, List.of("offline:Azure"), ""
+        ));
+
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+
+        boolean hasProgress = cmds.stream().anyMatch(c -> c.isText()
+            && c.text().contains("劫波 3/5")
+            && c.text().contains("名额已满"));
+        assertTrue(hasProgress);
+    }
+
+    @Test void progressLabelCoversHeartDemonPhase() {
+        TribulationStateStore.State state = new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "heart_demon", 0, 0,
+            4, 5, 100, 200, 300, false, false, List.of("offline:Azure"), ""
+        );
+
+        assertEquals("心魔劫 4/5", TribulationBroadcastHudPlanner.progressLabel(state));
     }
 }

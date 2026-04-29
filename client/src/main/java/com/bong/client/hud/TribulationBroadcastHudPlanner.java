@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.store.TribulationBroadcastStore;
+import com.bong.client.combat.store.TribulationStateStore;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.ArrayList;
@@ -48,6 +49,10 @@ public final class TribulationBroadcastHudPlanner {
         String line = "\u26a1 " + stageLabel
             + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName())
             + " \u00b7 \u5750\u6807 (" + Math.round(state.worldX()) + ", " + Math.round(state.worldZ()) + ")";
+        String progress = progressLabel(TribulationStateStore.snapshot());
+        if (!progress.isEmpty()) {
+            line += " \u00b7 " + progress;
+        }
         String direction = directionLabel(viewerPosition, state.worldX(), state.worldZ());
         if (!direction.isEmpty()) {
             line += " \u00b7 \u65b9\u4f4d " + direction;
@@ -72,6 +77,25 @@ public final class TribulationBroadcastHudPlanner {
             ));
         }
         return out;
+    }
+
+    static String progressLabel(TribulationStateStore.State state) {
+        if (state == null || !state.active()) return "";
+        String phase = switch (state.phase()) {
+            case "omen" -> "\u9884\u5146\u671f";
+            case "lock" -> "\u9501\u5b9a\u671f";
+            case "heart_demon" -> "\u5fc3\u9b54\u52ab";
+            case "settle" -> "\u7ed3\u7b97";
+            case "wave" -> "\u52ab\u6ce2";
+            default -> "";
+        };
+        if (state.waveTotal() > 0 && ("wave".equals(state.phase()) || "heart_demon".equals(state.phase()))) {
+            phase += " " + state.waveCurrent() + "/" + state.waveTotal();
+        }
+        if (state.halfStepOnSuccess()) {
+            phase += phase.isEmpty() ? "\u540d\u989d\u5df2\u6ee1" : " \u00b7 \u540d\u989d\u5df2\u6ee1";
+        }
+        return phase;
     }
 
     static String directionLabel(ViewerPosition viewerPosition, double targetX, double targetZ) {
