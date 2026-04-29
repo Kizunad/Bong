@@ -1,12 +1,15 @@
 {
-  "_doc": "Preview harness 配置（plan-worldgen-snapshot-v1 P1 §2.1 5 角度版）。激活方式：BONG_PREVIEW_HARNESS=1 + BONG_PREVIEW_CONFIG 指向本文件（绝对路径）。client 端用 sendChatMessage(!preview-tp ...) 让 server 做 authoritative teleport，server 端必须设 BONG_PREVIEW_MODE=1。",
+  "_doc": "Preview harness 配置（plan-worldgen-snapshot-v1 §2.1 5 角度 + §4.2 chunk-ready barrier）。激活方式：BONG_PREVIEW_HARNESS=1 + BONG_PREVIEW_CONFIG 指向本文件（绝对路径）。client 端用 networkHandler.sendCommand(\"preview_tp ...\") 让 server 做 authoritative teleport，server 端必须设 BONG_PREVIEW_MODE=1。",
   "_pitch_convention": "-90 仰天 / +90 朝地 / 0 水平（plan §1.5 表里写反过，已修）",
   "_yaw_convention": "0 朝南 +Z / 90 朝西 -X / 180 朝北 -Z / -90 朝东 +X。yaw=atan2(-(0-camX), (0-camZ))*180/PI 把摄像机指向 (0,0)",
+  "_settle_doc": "chunk_ready_radius=4 → 9x9=81 chunks 必须先加载（plan §4.2）；加载到位后再多 settle_ticks=100 (5s) 给 mesa llvmpipe 渲染管线。chunk_ready_timeout_ticks=600 (30s) 兜底超时（仍未加载则 log warn 后拍照让 validate_snapshots.py 标红，CI 不静默吞）。",
   "server": "127.0.0.1:25565",
   "username": "PreviewBot",
   "wait_world_ticks": 1200,
   "wait_chunks_ticks": 600,
   "settle_ticks": 100,
+  "chunk_ready_radius": 4,
+  "chunk_ready_timeout_ticks": 600,
   "output_dir": "screenshots",
   "exit_on_complete": true,
   "screenshots": [
