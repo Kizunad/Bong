@@ -25,6 +25,7 @@ public final class ServerDataRouter {
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
+        HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -93,6 +94,7 @@ public final class ServerDataRouter {
         handlers.put("terminate_screen", terminateScreenHandler);
         handlers.put("wounds_snapshot", woundsSnapshotHandler);
         handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
+        handlers.put("heart_demon_offer", heartDemonOfferHandler);
         handlers.put("combat_hud_state", combatHudStateHandler);
         handlers.put("defense_window", defenseWindowHandler);
         handlers.put("cast_sync", castSyncHandler);

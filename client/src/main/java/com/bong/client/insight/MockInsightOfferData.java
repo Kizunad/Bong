@@ -51,4 +51,42 @@ public final class MockInsightOfferData {
             )
         );
     }
+
+    public static InsightOfferViewModel heartDemonOffer() {
+        return new InsightOfferViewModel(
+            "heart_demon:1:1000",
+            "心魔劫临身",
+            "渡虚劫 · 心魔",
+            0.5,
+            1,
+            1,
+            System.currentTimeMillis() + 30_000L,
+            List.of(
+                new InsightChoice(
+                    "heart_demon_choice_0",
+                    InsightCategory.COMPOSURE,
+                    "守本心",
+                    "回复少量当前真元",
+                    "你把呼吸压回丹田。",
+                    "稳妥"
+                ),
+                new InsightChoice(
+                    "heart_demon_choice_1",
+                    InsightCategory.BREAKTHROUGH,
+                    "斩执念",
+                    "失败则强化下一雷",
+                    "刀锋照见自己的影。",
+                    "冒险"
+                ),
+                new InsightChoice(
+                    "heart_demon_choice_2",
+                    InsightCategory.PERCEPTION,
+                    "无解",
+                    "不增益也不受真元惩罚",
+                    "你不再替天道补题。",
+                    "止损"
+                )
+            )
+        );
+    }
 }
