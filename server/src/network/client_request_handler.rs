@@ -45,9 +45,10 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    apply_inventory_move, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
-    DroppedLootRegistry, InventoryMoveOutcome, PlayerInventory,
+    apply_inventory_move, apply_item_spiritual_wear, consume_item_instance_once,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
+    inventory_item_by_instance_borrow, pickup_dropped_loot_instance, DroppedLootRegistry,
+    InventoryDurabilityChangedEvent, InventoryMoveOutcome, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{
     ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
@@ -89,6 +90,11 @@ use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
     StartExtractRequest as StartExtractRequestEvent,
 };
+use crate::world::karma::KarmaWeightStore;
+
+const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
+const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
+const TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD: f32 = 0.01;
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -193,6 +199,8 @@ pub fn handle_client_request_payloads(
     mut alchemy_params: AlchemyRequestParams,
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
+    karma_weights: Option<Res<KarmaWeightStore>>,
+    mut durability_changed_tx: Option<ResMut<Events<InventoryDurabilityChangedEvent>>>,
     mut combat_params: CombatRequestParams,
     mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
@@ -513,6 +521,8 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
+                    karma_weights.as_deref(),
+                    durability_changed_tx.as_deref_mut(),
                 );
             }
             ClientRequestV1::InventoryDiscardItem {
@@ -1703,6 +1713,27 @@ mod tests {
         }
     }
 
+    fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
     fn flush_all_client_packets(app: &mut App) {
         let world = app.world_mut();
         let mut query = world.query::<&mut Client>();
@@ -1725,6 +1756,29 @@ mod tests {
                 continue;
             };
             if value.get("type").and_then(|ty| ty.as_str()) == Some("inventory_snapshot") {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn has_inventory_durability_payload(helper: &mut MockClientHelper, instance_id: u64) -> bool {
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) else {
+                continue;
+            };
+            if value.get("type").and_then(|ty| ty.as_str()) != Some("inventory_event") {
+                continue;
+            }
+            if value.get("kind").and_then(|kind| kind.as_str()) == Some("durability_changed")
+                && value.get("instance_id").and_then(|id| id.as_u64()) == Some(instance_id)
+            {
                 return true;
             }
         }
@@ -1778,7 +1832,15 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
-        app.add_systems(Update, handle_client_request_payloads);
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
+            )
+                .chain(),
+        );
     }
 
     #[test]
@@ -1858,6 +1920,96 @@ mod tests {
                 .0
                 .is_empty(),
             "unsupported request version should not emit InsightChosen"
+        );
+    }
+
+    #[test]
+    fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "spiritual_ore".to_string(),
+            ItemTemplate {
+                id: "spiritual_ore".to_string(),
+                display_name: "灵矿".to_string(),
+                category: ItemCategory::Misc,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Rare,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+            },
+        )])));
+        let mut karma = KarmaWeightStore::default();
+        karma.mark_player(
+            "Azure",
+            Some("spawn".to_string()),
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1.0,
+            1,
+        );
+        app.insert_resource(karma);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "spiritual_ore".to_string(),
+                    display_name: "灵矿".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Rare,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: Some("ling_shi_zhong".to_string()),
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":0,"col":1}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let moved = inventory_item_by_instance_borrow(inventory, 77).expect("item should remain");
+        assert!(moved.durability < 1.0);
+        assert!(moved.durability >= 0.95);
+        assert_eq!(moved.durability, moved.spirit_quality);
+        assert!(
+            has_inventory_durability_payload(&mut helper, 77),
+            "targeted wear should reuse durability incremental payload"
         );
     }
 
@@ -3384,7 +3536,18 @@ fn handle_inventory_move(
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
+    karma_weights: Option<&KarmaWeightStore>,
+    durability_changed_tx: Option<&mut Events<InventoryDurabilityChangedEvent>>,
 ) {
+    let item_before_move = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id).cloned());
+    let username = clients
+        .get(entity)
+        .ok()
+        .map(|(username, _)| username.0.clone());
+
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
         Err(_) => {
@@ -3397,6 +3560,17 @@ fn handle_inventory_move(
 
     match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
+            let wear_update = maybe_apply_targeted_item_wear(
+                entity,
+                &mut inventory,
+                item_before_move.as_ref(),
+                username.as_deref(),
+                karma_weights,
+                durability_changed_tx,
+            );
+            let revision = wear_update
+                .map(|update| update.revision)
+                .unwrap_or(revision);
             tracing::info!(
                 "[bong][network][inventory] moved instance={instance_id} {from:?} -> {to:?} revision={}",
                 revision.0
@@ -3439,6 +3613,72 @@ fn handle_inventory_move(
             );
         }
     }
+}
+
+fn maybe_apply_targeted_item_wear(
+    entity: Entity,
+    inventory: &mut PlayerInventory,
+    item: Option<&ItemInstance>,
+    username: Option<&str>,
+    karma_weights: Option<&KarmaWeightStore>,
+    durability_changed_tx: Option<&mut Events<InventoryDurabilityChangedEvent>>,
+) -> Option<crate::inventory::InventorySpiritualWearUpdate> {
+    let item = item?;
+    if !is_spiritual_item_for_targeted_wear(item) {
+        return None;
+    }
+    let username = username?;
+    let weight = karma_weights?.weight_for_player(username);
+    if weight < TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD {
+        return None;
+    }
+
+    let wear_fraction = targeted_item_wear_fraction(item.instance_id, username, weight);
+    match apply_item_spiritual_wear(inventory, item.instance_id, wear_fraction) {
+        Ok(update) => {
+            if let Some(events) = durability_changed_tx {
+                events.send(InventoryDurabilityChangedEvent {
+                    entity,
+                    revision: update.revision,
+                    instance_id: update.instance_id,
+                    durability: update.durability,
+                });
+            }
+            tracing::info!(
+                "[bong][network][inventory] targeted item wear entity={entity:?} instance={} wear={:.4} durability={:.4} spirit_quality={:.4}",
+                update.instance_id,
+                update.wear_fraction,
+                update.durability,
+                update.spirit_quality
+            );
+            Some(update)
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][network][inventory] targeted item wear failed entity={entity:?} instance={}: {error}",
+                item.instance_id
+            );
+            None
+        }
+    }
+}
+
+fn is_spiritual_item_for_targeted_wear(item: &ItemInstance) -> bool {
+    item.spirit_quality > 0.0 || item.forge_quality.is_some() || item.mineral_id.is_some()
+}
+
+fn targeted_item_wear_fraction(instance_id: u64, username: &str, karma_weight: f32) -> f64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    instance_id.hash(&mut hasher);
+    username.hash(&mut hasher);
+    karma_weight.to_bits().hash(&mut hasher);
+    let bucket = hasher.finish() % 10_000;
+    let unit = bucket as f64 / 9_999.0;
+    TARGETED_ITEM_WEAR_MIN_FRACTION
+        + (TARGETED_ITEM_WEAR_MAX_FRACTION - TARGETED_ITEM_WEAR_MIN_FRACTION) * unit
 }
 
 fn send_moved_event(

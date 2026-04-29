@@ -68,8 +68,7 @@ impl KarmaWeightStore {
         entry.weight = (entry.weight + normalized_delta).clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
     }
 
-    #[cfg(test)]
-    fn weight_for_player(&self, player_id: &str) -> f32 {
+    pub fn weight_for_player(&self, player_id: &str) -> f32 {
         self.by_player
             .get(player_id)
             .map(|entry| entry.weight)

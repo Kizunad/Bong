@@ -1513,6 +1513,15 @@ pub struct InventoryDurabilityUpdate {
     pub durability: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventorySpiritualWearUpdate {
+    pub revision: InventoryRevision,
+    pub instance_id: u64,
+    pub durability: f64,
+    pub spirit_quality: f64,
+    pub wear_fraction: f64,
+}
+
 /// Inventory item durability changed for a specific client entity.
 ///
 /// This event exists to allow low-frequency incremental updates (e.g. armor hit
@@ -1683,6 +1692,33 @@ pub fn set_item_instance_durability(
         revision: inventory.revision,
         instance_id,
         durability,
+    })
+}
+
+pub fn apply_item_spiritual_wear(
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+    wear_fraction: f64,
+) -> Result<InventorySpiritualWearUpdate, String> {
+    if !wear_fraction.is_finite() || !(0.0..=1.0).contains(&wear_fraction) {
+        return Err(format!(
+            "invalid spiritual wear {wear_fraction}; expected finite value in [0, 1]"
+        ));
+    }
+
+    let item = inventory_item_by_instance_mut(inventory, instance_id)
+        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+    item.durability = (item.durability - wear_fraction).clamp(0.0, 1.0);
+    item.spirit_quality = (item.spirit_quality - wear_fraction).clamp(0.0, 1.0);
+    let durability = item.durability;
+    let spirit_quality = item.spirit_quality;
+    bump_revision(inventory);
+    Ok(InventorySpiritualWearUpdate {
+        revision: inventory.revision,
+        instance_id,
+        durability,
+        spirit_quality,
+        wear_fraction,
     })
 }
 
