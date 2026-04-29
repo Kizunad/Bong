@@ -49,8 +49,18 @@ pub const DUXU_LOCK_RADIUS_FINAL: f64 = 10.0;
 const DUXU_DEFAULT_WAVES: u32 = 3;
 const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
 const DUXU_QI_DRAIN_BASE: f64 = 35.0;
+const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
+const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
 const HALF_STEP_QI_MAX_MULTIPLIER: f64 = 1.10;
 const HALF_STEP_LIFESPAN_YEARS: u32 = 200;
+
+#[derive(Debug, Clone, Copy)]
+struct DuXuWaveProfile {
+    strikes: u32,
+    damage: f32,
+    qi_drain: f64,
+    qi_max_freeze_ratio: f64,
+}
 
 #[derive(Debug, Clone, Component)]
 pub struct TribulationState {
@@ -414,28 +424,33 @@ pub fn tribulation_aoe_system(
         }
         let center =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
-        let damage = DUXU_AOE_DAMAGE_BASE * wave as f32;
-        let qi_drain = DUXU_QI_DRAIN_BASE * f64::from(wave);
+        let profile = du_xu_wave_profile(wave);
+        let strike_damage = profile.damage / profile.strikes.max(1) as f32;
         for (entity, pos, mut cultivation, mut wounds, lifecycle) in &mut targets {
             if pos.get().distance(center) > TRIBULATION_DANGER_RADIUS {
                 continue;
             }
-            cultivation.qi_current = (cultivation.qi_current - qi_drain).max(0.0);
-            if wave == 3 {
+            cultivation.qi_current = (cultivation.qi_current - profile.qi_drain).max(0.0);
+            if profile.qi_max_freeze_ratio > 0.0 {
                 let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
-                cultivation.qi_max_frozen =
-                    Some((frozen + cultivation.qi_max * 0.20).min(cultivation.qi_max));
+                cultivation.qi_max_frozen = Some(
+                    (frozen + cultivation.qi_max * profile.qi_max_freeze_ratio)
+                        .min(cultivation.qi_max),
+                );
             }
             let was_alive = wounds.health_current > 0.0;
-            wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
-            wounds.entries.push(Wound {
-                location: BodyPart::Chest,
-                kind: WoundKind::Burn,
-                severity: damage,
-                bleeding_per_sec: 0.0,
-                created_at_tick: clock.tick,
-                inflicted_by: Some("du_xu_tribulation".to_string()),
-            });
+            wounds.health_current =
+                (wounds.health_current - profile.damage).clamp(0.0, wounds.health_max);
+            for _ in 0..profile.strikes {
+                wounds.entries.push(Wound {
+                    location: BodyPart::Chest,
+                    kind: WoundKind::Burn,
+                    severity: strike_damage,
+                    bleeding_per_sec: 0.0,
+                    created_at_tick: clock.tick,
+                    inflicted_by: Some("du_xu_tribulation".to_string()),
+                });
+            }
             if !was_alive || wounds.health_current > 0.0 {
                 continue;
             }
@@ -455,6 +470,23 @@ pub fn tribulation_aoe_system(
                 });
             }
         }
+    }
+}
+
+fn du_xu_wave_profile(wave: u32) -> DuXuWaveProfile {
+    DuXuWaveProfile {
+        strikes: if wave == 2 {
+            DUXU_CHAIN_LIGHTNING_STRIKES
+        } else {
+            1
+        },
+        damage: DUXU_AOE_DAMAGE_BASE * wave as f32,
+        qi_drain: DUXU_QI_DRAIN_BASE * f64::from(wave),
+        qi_max_freeze_ratio: if wave == 3 {
+            DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO
+        } else {
+            0.0
+        },
     }
 }
 
@@ -1354,11 +1386,19 @@ mod tests {
             .get::<Wounds>(target)
             .expect("wounds should remain attached");
         assert_eq!(wounds.health_current, 100.0 - DUXU_AOE_DAMAGE_BASE * 2.0);
+        assert_eq!(wounds.entries.len(), DUXU_CHAIN_LIGHTNING_STRIKES as usize);
+        for wound in &wounds.entries {
+            assert_eq!(wound.kind, WoundKind::Burn);
+            assert_eq!(wound.severity, DUXU_AOE_DAMAGE_BASE * 2.0 / 3.0);
+            assert_eq!(wound.created_at_tick, 1200);
+            assert_eq!(wound.inflicted_by.as_deref(), Some("du_xu_tribulation"));
+        }
         let cultivation = app
             .world()
             .get::<Cultivation>(target)
             .expect("cultivation should remain attached");
         assert_eq!(cultivation.qi_current, 100.0 - DUXU_QI_DRAIN_BASE * 2.0);
+        assert_eq!(cultivation.qi_max_frozen, None);
 
         app.world_mut().resource_mut::<CombatClock>().tick = 1201;
         app.update();
@@ -1368,6 +1408,72 @@ mod tests {
             .get::<Wounds>(target)
             .expect("wounds should remain attached");
         assert_eq!(wounds.health_current, 100.0 - DUXU_AOE_DAMAGE_BASE * 2.0);
+        assert_eq!(wounds.entries.len(), DUXU_CHAIN_LIGHTNING_STRIKES as usize);
+    }
+
+    #[test]
+    fn third_wave_freezes_qi_max_as_soul_devouring_lightning() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1500 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(3),
+            epicenter: [0.0, 66.0, 0.0],
+            wave_current: 3,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 1500,
+            next_wave_tick: 1800,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        });
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 200.0,
+                    qi_max: 210.0,
+                    qi_max_frozen: Some(10.0),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 200.0,
+                    health_max: 200.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Spectator".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let wounds = app
+            .world()
+            .get::<Wounds>(target)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 200.0 - DUXU_AOE_DAMAGE_BASE * 3.0);
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].severity, DUXU_AOE_DAMAGE_BASE * 3.0);
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 200.0 - DUXU_QI_DRAIN_BASE * 3.0);
+        let expected_frozen = 10.0 + 210.0 * DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO;
+        assert!(
+            (cultivation.qi_max_frozen.expect("qi max should freeze") - expected_frozen).abs()
+                < f64::EPSILON
+        );
     }
 
     #[test]
