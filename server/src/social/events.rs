@@ -55,6 +55,15 @@ pub struct SocialPactEvent {
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SocialMentorshipEvent {
+    pub master: String,
+    pub disciple: String,
+    pub tick: u64,
+    pub technique_hint: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct SpiritNichePlaceRequest {
     pub player: Entity,
     pub pos: [i32; 3],

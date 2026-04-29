@@ -20,9 +20,9 @@ use self::components::{
     Anonymity, ExposureEvent, ExposureLog, Relationship, Relationships, Renown, SpiritNiche,
 };
 use self::events::{
-    PlayerChatCollected, SocialExposureEvent, SocialPactEvent, SocialRelationshipEvent,
-    SocialRenownDeltaEvent, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
-    SpiritNicheRevealRequest, SpiritNicheRevealSource,
+    PlayerChatCollected, SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent,
+    SocialRelationshipEvent, SocialRenownDeltaEvent, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::DeathEvent;
@@ -97,6 +97,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<SpiritNicheRegistry>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
+    app.add_event::<SocialMentorshipEvent>();
     app.add_event::<SocialPactEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
@@ -123,12 +124,14 @@ pub fn register(app: &mut App) {
                 .after(detect_spirit_niche_break_attempts)
                 .after(handle_spirit_niche_coordinate_reveals),
             update_companion_relationships.after(attach_social_bundle_to_joined_clients),
+            handle_social_mentorships,
             handle_social_pacts,
             apply_social_exposures
                 .after(expose_chat_speakers)
                 .after(handle_social_pacts),
             apply_social_relationships
                 .after(handle_death_social_effects)
+                .after(handle_social_mentorships)
                 .after(update_companion_relationships)
                 .after(handle_social_pacts),
             expire_companion_relationships.after(apply_social_relationships),
@@ -543,6 +546,28 @@ fn handle_social_pacts(
             }],
             tick: pact.tick,
             reason: "pact_broken".to_string(),
+        });
+    }
+}
+
+fn handle_social_mentorships(
+    mut mentorships: EventReader<SocialMentorshipEvent>,
+    mut relationships: EventWriter<SocialRelationshipEvent>,
+) {
+    for mentorship in mentorships.read() {
+        if mentorship.master == mentorship.disciple {
+            continue;
+        }
+        relationships.send(SocialRelationshipEvent {
+            left: mentorship.master.clone(),
+            right: mentorship.disciple.clone(),
+            left_kind: RelationshipKindV1::Master,
+            right_kind: RelationshipKindV1::Disciple,
+            tick: mentorship.tick,
+            metadata: serde_json::json!({
+                "source": mentorship.source.clone(),
+                "technique_hint": mentorship.technique_hint.clone(),
+            }),
         });
     }
 }
@@ -2107,6 +2132,59 @@ mod tests {
         assert_eq!(bob.renown.tags.len(), 1);
         assert_eq!(bob.renown.tags[0].tag, "背盟者");
         assert!(bob.renown.tags[0].permanent);
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn mentorship_event_writes_directional_master_disciple_edges() {
+        let (persistence, data_dir) = social_persistence("mentorship-event");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialMentorshipEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_systems(
+            Update,
+            (
+                handle_social_mentorships,
+                apply_social_relationships.after(handle_social_mentorships),
+            ),
+        );
+
+        app.world_mut().send_event(SocialMentorshipEvent {
+            master: "char:npc_hermit".to_string(),
+            disciple: "char:alice".to_string(),
+            tick: 313,
+            technique_hint: Some("残拳一式".to_string()),
+            source: "encounter_event".to_string(),
+        });
+
+        app.update();
+
+        let master = load_social_components(&persistence, "char:npc_hermit")
+            .expect("master relationship state should reload");
+        assert_eq!(master.relationships.edges.len(), 1);
+        assert_eq!(
+            master.relationships.edges[0].kind,
+            RelationshipKindV1::Master
+        );
+        assert_eq!(master.relationships.edges[0].peer, "char:alice");
+        assert_eq!(
+            master.relationships.edges[0].metadata["source"],
+            "encounter_event"
+        );
+        assert_eq!(
+            master.relationships.edges[0].metadata["technique_hint"],
+            "残拳一式"
+        );
+        let disciple = load_social_components(&persistence, "char:alice")
+            .expect("disciple relationship state should reload");
+        assert_eq!(disciple.relationships.edges.len(), 1);
+        assert_eq!(
+            disciple.relationships.edges[0].kind,
+            RelationshipKindV1::Disciple
+        );
+        assert_eq!(disciple.relationships.edges[0].peer, "char:npc_hermit");
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
