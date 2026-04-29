@@ -123,6 +123,19 @@ pub enum ClientRequestV1 {
         #[serde(default)]
         timed_out: bool,
     },
+    /// plan-social-v1 §6.2 — 面对面交易发起：发起者提供一个物品实例。
+    TradeOfferRequest {
+        v: u8,
+        target: String,
+        offered_instance_id: u64,
+    },
+    /// plan-social-v1 §6.2 — 交易目标选择一个回礼物品确认，或拒绝。
+    TradeOfferResponse {
+        v: u8,
+        offer_id: String,
+        accepted: bool,
+        requested_instance_id: Option<u64>,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -910,6 +923,41 @@ mod tests {
                 assert!(!timed_out);
             }
             other => panic!("expected SparringInviteResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trade_offer_requests_roundtrip() {
+        let request = r#"{"type":"trade_offer_request","v":1,"target":"entity:42","offered_instance_id":1001}"#;
+        let req: ClientRequestV1 = serde_json::from_str(request).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferRequest {
+                v,
+                target,
+                offered_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(target, "entity:42");
+                assert_eq!(offered_instance_id, 1001);
+            }
+            other => panic!("expected TradeOfferRequest, got {other:?}"),
+        }
+
+        let response = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:a:b:1001:20","accepted":true,"requested_instance_id":2002}"#;
+        let req: ClientRequestV1 = serde_json::from_str(response).unwrap();
+        match req {
+            ClientRequestV1::TradeOfferResponse {
+                v,
+                offer_id,
+                accepted,
+                requested_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(offer_id, "trade:a:b:1001:20");
+                assert!(accepted);
+                assert_eq!(requested_instance_id, Some(2002));
+            }
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
         }
     }
 

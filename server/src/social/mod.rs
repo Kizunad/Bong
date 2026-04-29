@@ -25,14 +25,18 @@ use self::events::{
     SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
     SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
     SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
-    SpiritNicheRevealRequest, SpiritNicheRevealSource,
+    SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Karma, Realm};
+use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::inventory::{consume_item_instance_once, inventory_item_by_instance, PlayerInventory};
+use crate::inventory::{
+    consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
+    PlayerInventory,
+};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
@@ -47,7 +51,7 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
     ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
-    SocialRenownDeltaV1, SparringInvitePayloadV1,
+    SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -63,6 +67,8 @@ const SPARRING_INVITE_TIMEOUT_TICKS: u64 = 10 * 20;
 const SPARRING_INVITE_TIMEOUT_MS: u64 = 10_000;
 const SPARRING_MAX_TICKS: u64 = 5 * 60 * 20;
 const SPARRING_HUMILITY_TICKS: u64 = 5 * 60 * 20;
+const TRADE_OFFER_TIMEOUT_TICKS: u64 = 10 * 20;
+const TRADE_OFFER_TIMEOUT_MS: u64 = 10_000;
 const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
@@ -87,6 +93,22 @@ struct PendingSparringInvite {
 #[derive(Debug, Default, Resource)]
 struct SparringInviteRegistry {
     pending: HashMap<String, PendingSparringInvite>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingTradeOffer {
+    initiator: Entity,
+    target: Entity,
+    initiator_char_id: String,
+    target_char_id: String,
+    offered_instance_id: u64,
+    offered_item: TradeItemSummaryV1,
+    expires_at_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+struct TradeOfferRegistry {
+    pending: HashMap<String, PendingTradeOffer>,
 }
 
 #[derive(Debug, Default, Resource)]
@@ -118,6 +140,7 @@ impl SpiritNicheRegistry {
 pub fn register(app: &mut App) {
     app.init_resource::<CompanionProgress>();
     app.init_resource::<SparringInviteRegistry>();
+    app.init_resource::<TradeOfferRegistry>();
     app.init_resource::<SpiritNicheRegistry>();
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
@@ -127,6 +150,8 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SparringInviteRequest>();
     app.add_event::<SparringInviteResponseEvent>();
+    app.add_event::<TradeOfferRequest>();
+    app.add_event::<TradeOfferResponseEvent>();
     app.add_event::<FactionMembershipDecisionEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
@@ -178,7 +203,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             handle_sparring_invite_responses.after(dispatch_sparring_invites),
+            dispatch_trade_offers,
+            handle_trade_offer_responses.after(dispatch_trade_offers),
             expire_sparring_sessions.after(handle_sparring_invite_responses),
+            expire_trade_offers.after(handle_trade_offer_responses),
         ),
     );
 }
@@ -756,6 +784,240 @@ fn handle_sparring_invite_responses(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn dispatch_trade_offers(
+    mut requests: EventReader<TradeOfferRequest>,
+    mut registry: ResMut<TradeOfferRegistry>,
+    players: Query<(Entity, &Lifecycle, &Position, &PlayerInventory), With<Client>>,
+    mut clients: Query<&mut Client, With<Client>>,
+) {
+    for request in requests.read() {
+        if request.initiator == request.target {
+            continue;
+        }
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory)) =
+            players.get(request.initiator)
+        else {
+            continue;
+        };
+        let Ok((_, target_lifecycle, target_pos, target_inventory)) = players.get(request.target)
+        else {
+            continue;
+        };
+        if initiator_lifecycle.state == LifecycleState::Terminated
+            || target_lifecycle.state == LifecycleState::Terminated
+            || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
+        {
+            continue;
+        }
+        let Some(offered_item) =
+            inventory_item_by_instance(initiator_inventory, request.offered_instance_id)
+        else {
+            continue;
+        };
+        let requested_items = trade_item_summaries(target_inventory);
+        if requested_items.is_empty() {
+            continue;
+        }
+        let offer_id = format!(
+            "trade:{}:{}:{}:{}",
+            initiator_lifecycle.character_id,
+            target_lifecycle.character_id,
+            request.offered_instance_id,
+            request.tick
+        );
+        let pending = PendingTradeOffer {
+            initiator: request.initiator,
+            target: request.target,
+            initiator_char_id: initiator_lifecycle.character_id.clone(),
+            target_char_id: target_lifecycle.character_id.clone(),
+            offered_instance_id: request.offered_instance_id,
+            offered_item: trade_item_summary(&offered_item),
+            expires_at_tick: request.tick.saturating_add(TRADE_OFFER_TIMEOUT_TICKS),
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::TradeOffer(TradeOfferPayloadV1 {
+            offer_id: offer_id.clone(),
+            initiator: pending.initiator_char_id.clone(),
+            target: pending.target_char_id.clone(),
+            offered_item: pending.offered_item.clone(),
+            requested_items,
+            expires_at_ms: current_unix_millis().saturating_add(TRADE_OFFER_TIMEOUT_MS),
+        }));
+        let Ok(bytes) = serialize_server_data_payload(&payload) else {
+            tracing::warn!("[bong][social] failed to serialize trade_offer payload");
+            continue;
+        };
+        if let Ok(mut target_client) = clients.get_mut(request.target) {
+            send_server_data_payload(&mut target_client, bytes.as_slice());
+            registry.pending.insert(offer_id, pending);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn handle_trade_offer_responses(
+    mut responses: EventReader<TradeOfferResponseEvent>,
+    mut registry: ResMut<TradeOfferRegistry>,
+    mut players: Query<
+        (
+            Entity,
+            &Lifecycle,
+            &Position,
+            &mut PlayerInventory,
+            Option<&mut LifeRecord>,
+        ),
+        With<Client>,
+    >,
+    mut clients: Query<(&Username, &mut Client), With<Client>>,
+    player_states: Query<&PlayerState>,
+    cultivations: Query<&Cultivation>,
+    mut exposures: EventWriter<SocialExposureEvent>,
+) {
+    for response in responses.read() {
+        let Some(pending) = registry.pending.remove(response.offer_id.as_str()) else {
+            continue;
+        };
+        if response.player != pending.target || !response.accepted {
+            continue;
+        }
+        let Some(requested_instance_id) = response.requested_instance_id else {
+            continue;
+        };
+        if response.tick > pending.expires_at_tick {
+            continue;
+        }
+
+        let mut exchanged = false;
+        if let Ok(
+            [(_, initiator_lifecycle, initiator_pos, mut initiator_inventory, initiator_life_record), (_, target_lifecycle, target_pos, mut target_inventory, target_life_record)],
+        ) = players.get_many_mut([pending.initiator, pending.target])
+        {
+            if initiator_lifecycle.state == LifecycleState::Terminated
+                || target_lifecycle.state == LifecycleState::Terminated
+                || initiator_lifecycle.character_id != pending.initiator_char_id
+                || target_lifecycle.character_id != pending.target_char_id
+                || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
+            {
+                continue;
+            }
+            let Some(offered_item) =
+                inventory_item_by_instance(&initiator_inventory, pending.offered_instance_id)
+            else {
+                continue;
+            };
+            let Some(requested_item) =
+                inventory_item_by_instance(&target_inventory, requested_instance_id)
+            else {
+                continue;
+            };
+            if let Err(error) = exchange_inventory_items(
+                &mut initiator_inventory,
+                pending.offered_instance_id,
+                &mut target_inventory,
+                requested_instance_id,
+            ) {
+                tracing::warn!(
+                    "[bong][social] rejected trade offer {}: {error}",
+                    response.offer_id
+                );
+                continue;
+            }
+            if let Some(mut life_record) = initiator_life_record {
+                life_record.push(BiographyEntry::TradeCompleted {
+                    counterparty_id: pending.target_char_id.clone(),
+                    offered_item: offered_item.display_name.clone(),
+                    received_item: requested_item.display_name.clone(),
+                    tick: response.tick,
+                });
+            }
+            if let Some(mut life_record) = target_life_record {
+                life_record.push(BiographyEntry::TradeCompleted {
+                    counterparty_id: pending.initiator_char_id.clone(),
+                    offered_item: requested_item.display_name.clone(),
+                    received_item: offered_item.display_name.clone(),
+                    tick: response.tick,
+                });
+            }
+            if let (Ok((username, mut client)), Ok(player_state), Ok(cultivation)) = (
+                clients.get_mut(pending.initiator),
+                player_states.get(pending.initiator),
+                cultivations.get(pending.initiator),
+            ) {
+                send_inventory_snapshot_to_client(
+                    pending.initiator,
+                    &mut client,
+                    username.0.as_str(),
+                    &initiator_inventory,
+                    player_state,
+                    cultivation,
+                    "trade",
+                );
+            }
+            if let (Ok((username, mut client)), Ok(player_state), Ok(cultivation)) = (
+                clients.get_mut(pending.target),
+                player_states.get(pending.target),
+                cultivations.get(pending.target),
+            ) {
+                send_inventory_snapshot_to_client(
+                    pending.target,
+                    &mut client,
+                    username.0.as_str(),
+                    &target_inventory,
+                    player_state,
+                    cultivation,
+                    "trade",
+                );
+            }
+            exchanged = true;
+        }
+        if !exchanged {
+            continue;
+        }
+
+        exposures.send(SocialExposureEvent {
+            actor: pending.initiator_char_id.clone(),
+            kind: ExposureKindV1::Trade,
+            witnesses: vec![pending.target_char_id.clone()],
+            tick: response.tick,
+            zone: None,
+        });
+        exposures.send(SocialExposureEvent {
+            actor: pending.target_char_id.clone(),
+            kind: ExposureKindV1::Trade,
+            witnesses: vec![pending.initiator_char_id.clone()],
+            tick: response.tick,
+            zone: None,
+        });
+    }
+}
+
+fn trade_item_summary(item: &ItemInstance) -> TradeItemSummaryV1 {
+    TradeItemSummaryV1 {
+        instance_id: item.instance_id,
+        item_id: item.template_id.clone(),
+        display_name: item.display_name.clone(),
+        stack_count: item.stack_count,
+    }
+}
+
+fn trade_item_summaries(inventory: &PlayerInventory) -> Vec<TradeItemSummaryV1> {
+    let mut items = Vec::new();
+    for container in &inventory.containers {
+        for placed in &container.items {
+            items.push(trade_item_summary(&placed.instance));
+        }
+    }
+    for item in inventory.hotbar.iter().flatten() {
+        items.push(trade_item_summary(item));
+    }
+    items.sort_by(|left, right| {
+        left.display_name
+            .cmp(&right.display_name)
+            .then(left.instance_id.cmp(&right.instance_id))
+    });
+    items
+}
+
 fn expire_sparring_sessions(
     clock: Res<CombatClock>,
     mut registry: ResMut<SparringInviteRegistry>,
@@ -770,6 +1032,12 @@ fn expire_sparring_sessions(
             commands.entity(entity).remove::<SparringState>();
         }
     }
+}
+
+fn expire_trade_offers(clock: Res<CombatClock>, mut registry: ResMut<TradeOfferRegistry>) {
+    registry
+        .pending
+        .retain(|_, pending| clock.tick <= pending.expires_at_tick);
 }
 
 pub fn active_sparring_between(

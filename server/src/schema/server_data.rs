@@ -23,7 +23,7 @@ use super::skill::{
 };
 use super::social::{
     PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
-    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1,
+    SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
 use super::world_state::PlayerPowerBreakdown;
 pub const SERVER_DATA_VERSION: u8 = 1;
@@ -121,6 +121,7 @@ pub enum ServerDataType {
     SocialFeud,
     SocialRenownDelta,
     SparringInvite,
+    TradeOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +267,7 @@ pub enum ServerDataPayloadV1 {
     SocialFeud(SocialFeudEventV1),
     SocialRenownDelta(SocialRenownDeltaV1),
     SparringInvite(SparringInvitePayloadV1),
+    TradeOffer(TradeOfferPayloadV1),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -593,6 +595,10 @@ enum ServerDataPayloadWireV1 {
     SparringInvite {
         #[serde(flatten)]
         invite: SparringInvitePayloadV1,
+    },
+    TradeOffer {
+        #[serde(flatten)]
+        offer: TradeOfferPayloadV1,
     },
 }
 
@@ -1141,6 +1147,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 reason,
             })),
             ServerDataPayloadWireV1::SparringInvite { invite } => Ok(Self::SparringInvite(invite)),
+            ServerDataPayloadWireV1::TradeOffer { offer } => Ok(Self::TradeOffer(offer)),
         }
     }
 }
@@ -1452,6 +1459,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SparringInvite(invite) => Self::SparringInvite {
                 invite: invite.clone(),
             },
+            ServerDataPayloadV1::TradeOffer(offer) => Self::TradeOffer {
+                offer: offer.clone(),
+            },
         }
     }
 }
@@ -1614,6 +1624,7 @@ impl ServerDataPayloadV1 {
             Self::SocialFeud(..) => ServerDataType::SocialFeud,
             Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
             Self::SparringInvite(..) => ServerDataType::SparringInvite,
+            Self::TradeOffer(..) => ServerDataType::TradeOffer,
         }
     }
 }
@@ -1972,6 +1983,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.sparring-invite.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.trade-offer.sample.json"
             ),
         ];
 

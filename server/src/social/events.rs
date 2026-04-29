@@ -88,6 +88,23 @@ pub struct SparringInviteResponseEvent {
     pub tick: u64,
 }
 
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct TradeOfferRequest {
+    pub initiator: Entity,
+    pub target: Entity,
+    pub offered_instance_id: u64,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct TradeOfferResponseEvent {
+    pub player: Entity,
+    pub offer_id: String,
+    pub accepted: bool,
+    pub requested_instance_id: Option<u64>,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactionMembershipDecisionKind {

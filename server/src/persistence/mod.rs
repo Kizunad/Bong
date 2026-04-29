@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
 use valence::prelude::{
@@ -23,6 +23,10 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
 use crate::schema::common::NpcStateKind;
+use crate::schema::social::{
+    ExposureKindV1, FactionMembershipSnapshotV1, RelationshipKindV1, RelationshipSnapshotV1,
+    RenownTagV1,
+};
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
@@ -152,7 +156,39 @@ pub struct DeceasedSnapshot {
     pub termination_category: String,
     pub lifecycle: Lifecycle,
     pub life_record: LifeRecord,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub social: Option<DeceasedSocialSnapshot>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DeceasedSocialSnapshot {
+    #[serde(default)]
+    pub renown: DeceasedRenownSnapshot,
+    #[serde(default)]
+    pub relationships: Vec<RelationshipSnapshotV1>,
+    #[serde(default)]
+    pub exposure_log: Vec<DeceasedExposureSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub faction_membership: Option<FactionMembershipSnapshotV1>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DeceasedRenownSnapshot {
+    pub fame: i32,
+    pub notoriety: i32,
+    #[serde(default)]
+    pub tags: Vec<RenownTagV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeceasedExposureSnapshot {
+    pub tick: u64,
+    pub kind: ExposureKindV1,
+    #[serde(default)]
+    pub witnesses: Vec<String>,
+}
+
+type DeceasedFactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeathInsightEventPayload {
@@ -1952,12 +1988,14 @@ fn persist_termination_transition_inner(
     let wall_clock = current_unix_seconds();
     let died_at_tick = biography_tick(entry);
     let termination_category = termination_category_from_entry(entry);
+    let social = load_deceased_social_snapshot(settings, life_record.character_id.as_str())?;
     let snapshot = DeceasedSnapshot {
         char_id: life_record.character_id.clone(),
         died_at_tick,
         termination_category: termination_category.clone(),
         lifecycle: lifecycle.clone(),
         life_record: life_record.clone(),
+        social,
     };
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -3802,6 +3840,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::PlotQiDrainedByOther { .. } => "plot_qi_drained_by_other",
         BiographyEntry::PlotQiDrainedFromOther { .. } => "plot_qi_drained_from_other",
         BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
+        BiographyEntry::TradeCompleted { .. } => "trade_completed",
     }
 }
 
@@ -3872,7 +3911,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::PlotHarvestedFromOther { tick, .. }
         | BiographyEntry::PlotQiDrainedByOther { tick, .. }
         | BiographyEntry::PlotQiDrainedFromOther { tick, .. }
-        | BiographyEntry::PlotDestroyedByOther { tick, .. } => *tick,
+        | BiographyEntry::PlotDestroyedByOther { tick, .. }
+        | BiographyEntry::TradeCompleted { tick, .. } => *tick,
     }
 }
 
@@ -4061,6 +4101,215 @@ fn upsert_deceased_snapshot(
     Ok(())
 }
 
+fn load_deceased_social_snapshot(
+    settings: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<Option<DeceasedSocialSnapshot>> {
+    let connection = open_persistence_connection(settings)?;
+    let renown = load_deceased_renown(&connection, char_id)?;
+    let relationships = load_deceased_relationships(&connection, char_id)?;
+    let exposure_log = load_deceased_exposure_log(&connection, char_id)?;
+    let faction_membership = load_deceased_faction_membership(&connection, char_id)?;
+
+    if renown == DeceasedRenownSnapshot::default()
+        && relationships.is_empty()
+        && exposure_log.is_empty()
+        && faction_membership.is_none()
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(DeceasedSocialSnapshot {
+        renown,
+        relationships,
+        exposure_log,
+        faction_membership,
+    }))
+}
+
+fn load_deceased_renown(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<DeceasedRenownSnapshot> {
+    let row: Option<(i32, i32, String)> = connection
+        .query_row(
+            "SELECT fame, notoriety, tags_json FROM social_renown WHERE char_id = ?1",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((fame, notoriety, tags_json)) = row else {
+        return Ok(DeceasedRenownSnapshot::default());
+    };
+    let tags = serde_json::from_str::<Vec<RenownTagV1>>(tags_json.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(DeceasedRenownSnapshot {
+        fame,
+        notoriety,
+        tags,
+    })
+}
+
+fn load_deceased_relationships(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Vec<RelationshipSnapshotV1>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT peer_char_id, relationship_type, since_tick, metadata_json
+            FROM social_relationships
+            WHERE char_id = ?1
+            ORDER BY peer_char_id ASC, relationship_type ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![char_id], |row| {
+            let kind_label: String = row.get(1)?;
+            let metadata_json: String = row.get(3)?;
+            let kind =
+                parse_enum_label::<RelationshipKindV1>(kind_label.as_str()).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            let metadata = serde_json::from_str(metadata_json.as_str()).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(RelationshipSnapshotV1 {
+                peer: row.get(0)?,
+                kind,
+                since_tick: sql_to_tick(row.get::<_, i64>(2)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })?,
+                metadata,
+            })
+        })
+        .map_err(io::Error::other)?;
+
+    let mut relationships = Vec::new();
+    for row in rows {
+        relationships.push(row.map_err(io::Error::other)?);
+    }
+    Ok(relationships)
+}
+
+fn load_deceased_exposure_log(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Vec<DeceasedExposureSnapshot>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT kind, witnesses_json, at_tick
+            FROM social_exposures
+            WHERE char_id = ?1
+            ORDER BY at_tick ASC, event_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![char_id], |row| {
+            let kind_label: String = row.get(0)?;
+            let witnesses_json: String = row.get(1)?;
+            let kind =
+                parse_enum_label::<ExposureKindV1>(kind_label.as_str()).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            let witnesses = serde_json::from_str(witnesses_json.as_str()).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(DeceasedExposureSnapshot {
+                kind,
+                witnesses,
+                tick: sql_to_tick(row.get::<_, i64>(2)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })?,
+            })
+        })
+        .map_err(io::Error::other)?;
+
+    let mut exposure_log = Vec::new();
+    for row in rows {
+        exposure_log.push(row.map_err(io::Error::other)?);
+    }
+    Ok(exposure_log)
+}
+
+fn load_deceased_faction_membership(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<Option<FactionMembershipSnapshotV1>> {
+    let row: Option<DeceasedFactionMembershipSqlRow> = connection
+        .query_row(
+            "
+            SELECT faction, rank, loyalty, betrayal_count, invite_block_until_tick, permanently_refused
+            FROM social_faction_memberships
+            WHERE char_id = ?1
+            ",
+            params![char_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((
+        faction,
+        rank,
+        loyalty,
+        betrayal_count,
+        invite_block_until_tick,
+        permanently_refused,
+    )) = row
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(FactionMembershipSnapshotV1 {
+        faction: faction.unwrap_or_else(|| "neutral".to_string()),
+        rank: u8::try_from(rank)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        loyalty: i32::try_from(loyalty)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        betrayal_count: u8::try_from(betrayal_count)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        invite_block_until_tick: invite_block_until_tick.map(sql_to_tick).transpose()?,
+        permanently_refused: permanently_refused != 0,
+    }))
+}
+
 fn update_deceased_snapshot_life_record(
     transaction: &rusqlite::Transaction<'_>,
     char_id: &str,
@@ -4119,6 +4368,14 @@ fn sanitize_deceased_snapshot_stem(char_id: &str) -> String {
 
 fn default_termination_category() -> String {
     "横死".to_string()
+}
+
+fn parse_enum_label<T>(label: &str) -> io::Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_value(serde_json::Value::String(label.to_string()))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn termination_category_from_entry(entry: &BiographyEntry) -> String {
@@ -6312,6 +6569,152 @@ mod persistence_tests {
                 snapshot.life_record.skill_milestones[0].narration,
                 "丹火三转，炉意已成。"
             );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_termination_transition_exports_public_social_snapshot() {
+        let (settings, root) = persistence_settings("deceased-export-social");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let tags_json = serde_json::to_string(&vec![RenownTagV1 {
+            tag: "三叛之人".to_string(),
+            weight: 20.0,
+            last_seen_tick: 70,
+            permanent: true,
+        }])
+        .expect("renown tags should serialize");
+        connection
+            .execute(
+                "
+                INSERT INTO social_renown (
+                    char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, 1, 1)
+                ",
+                params!["offline:Ancestor", 12, 80, tags_json],
+            )
+            .expect("renown row should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO social_relationships (
+                    char_id, peer_char_id, relationship_type, since_tick, metadata_json,
+                    schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
+                ",
+                params![
+                    "offline:Ancestor",
+                    "char:rival",
+                    "feud",
+                    33,
+                    r#"{"cause":"ambush"}"#
+                ],
+            )
+            .expect("relationship row should insert");
+        let witnesses_json = serde_json::to_string(&vec!["char:killer", "char:witness"])
+            .expect("witnesses should serialize");
+        connection
+            .execute(
+                "
+                INSERT INTO social_exposures (
+                    event_id, char_id, kind, witnesses_json, at_tick, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
+                ",
+                params![
+                    "exposure-death-1",
+                    "offline:Ancestor",
+                    "death",
+                    witnesses_json,
+                    77
+                ],
+            )
+            .expect("exposure row should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO social_faction_memberships (
+                    char_id, faction, rank, loyalty, betrayal_count, invite_block_until_tick,
+                    permanently_refused, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1)
+                ",
+                params!["offline:Ancestor", "attack", 2, -10, 3, 88, 1],
+            )
+            .expect("faction membership row should insert");
+        drop(connection);
+
+        let life_record = LifeRecord {
+            character_id: "offline:Ancestor".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            insights_taken: Vec::new(),
+            death_insights: Vec::new(),
+            skill_milestones: Vec::new(),
+            spirit_root_first: None,
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            death_count: 3,
+            fortune_remaining: 0,
+            last_death_tick: Some(77),
+            last_revive_tick: Some(55),
+            spawn_anchor: None,
+            near_death_deadline_tick: None,
+            awaiting_decision: None,
+            revival_decision_deadline_tick: None,
+            weakened_until_tick: None,
+            state: crate::combat::components::LifecycleState::Terminated,
+        };
+
+        persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect("terminated snapshot should persist");
+
+        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(settings.deceased_public_dir().join("offline_Ancestor.json"))
+                .expect("snapshot json should exist"),
+        )
+        .expect("public snapshot json should deserialize");
+        let sqlite_snapshot_json: String = Connection::open(settings.db_path())
+            .expect("db should reopen")
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Ancestor"],
+                |row| row.get(0),
+            )
+            .expect("deceased snapshot row should exist");
+        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
+            .expect("sqlite snapshot json should deserialize");
+
+        for snapshot in [&public_snapshot, &sqlite_snapshot] {
+            let social = snapshot.social.as_ref().expect("social should be public");
+            assert_eq!(social.renown.fame, 12);
+            assert_eq!(social.renown.notoriety, 80);
+            assert_eq!(social.renown.tags[0].tag, "三叛之人");
+            assert_eq!(social.relationships.len(), 1);
+            assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
+            assert_eq!(social.relationships[0].peer, "char:rival");
+            assert_eq!(social.relationships[0].since_tick, 33);
+            assert_eq!(social.relationships[0].metadata["cause"], "ambush");
+            assert_eq!(social.exposure_log.len(), 1);
+            assert_eq!(social.exposure_log[0].kind, ExposureKindV1::Death);
+            assert_eq!(social.exposure_log[0].tick, 77);
+            assert_eq!(social.exposure_log[0].witnesses.len(), 2);
+            let membership = social
+                .faction_membership
+                .as_ref()
+                .expect("faction membership should be public");
+            assert_eq!(membership.faction, "attack");
+            assert_eq!(membership.rank, 2);
+            assert_eq!(membership.loyalty, -10);
+            assert_eq!(membership.betrayal_count, 3);
+            assert_eq!(membership.invite_block_until_tick, Some(88));
+            assert!(membership.permanently_refused);
         }
 
         let _ = fs::remove_dir_all(root);

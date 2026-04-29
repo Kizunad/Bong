@@ -86,7 +86,7 @@ use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
     SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
-    SpiritNichePlaceRequest, SpiritNicheRevealSource,
+    SpiritNichePlaceRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::extract_system::{
@@ -168,6 +168,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
+    pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
+    pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
 }
 
 #[derive(SystemParam)]
@@ -257,6 +259,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
             | ClientRequestV1::SparringInviteResponse { v, .. }
+            | ClientRequestV1::TradeOfferRequest { v, .. }
+            | ClientRequestV1::TradeOfferResponse { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
@@ -541,6 +545,53 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     invite_id,
                     kind,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferRequest {
+                target,
+                offered_instance_id,
+                ..
+            } => {
+                let Some(request_tx) = dispatch.trade_offer_request_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_request because TradeOfferRequest event resource is missing"
+                    );
+                    continue;
+                };
+                let Some(target_entity) =
+                    resolve_trade_offer_target(target.as_str(), &combat_params)
+                else {
+                    tracing::warn!(
+                        "[bong][network] rejected trade_offer_request from {:?}: invalid target `{target}`",
+                        ev.client
+                    );
+                    continue;
+                };
+                request_tx.send(TradeOfferRequest {
+                    initiator: ev.client,
+                    target: target_entity,
+                    offered_instance_id,
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::TradeOfferResponse {
+                offer_id,
+                accepted,
+                requested_instance_id,
+                ..
+            } => {
+                let Some(response_tx) = dispatch.trade_offer_response_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped trade_offer_response because TradeOfferResponseEvent resource is missing"
+                    );
+                    continue;
+                };
+                response_tx.send(TradeOfferResponseEvent {
+                    player: ev.client,
+                    offer_id,
+                    accepted,
+                    requested_instance_id,
                     tick: combat_clock.tick,
                 });
             }
@@ -3615,6 +3666,14 @@ fn resolve_skill_cast_target(
     }
     let id = raw.strip_prefix("entity_bits:")?;
     id.parse::<u64>().ok().map(Entity::from_bits)
+}
+
+fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with("entity_bits:") {
+        return None;
+    }
+    resolve_skill_cast_target(Some(raw), combat_params)
 }
 
 fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {

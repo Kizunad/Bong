@@ -101,6 +101,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SocialFeud => "social_feud",
         ServerDataType::SocialRenownDelta => "social_renown_delta",
         ServerDataType::SparringInvite => "sparring_invite",
+        ServerDataType::TradeOffer => "trade_offer",
     }
 }
 

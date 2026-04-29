@@ -156,6 +156,27 @@ pub struct SparringInvitePayloadV1 {
     pub expires_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TradeItemSummaryV1 {
+    pub instance_id: u64,
+    pub item_id: String,
+    pub display_name: String,
+    pub stack_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TradeOfferPayloadV1 {
+    pub offer_id: String,
+    pub initiator: String,
+    pub target: String,
+    pub offered_item: TradeItemSummaryV1,
+    #[serde(default)]
+    pub requested_items: Vec<TradeItemSummaryV1>,
+    pub expires_at_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
