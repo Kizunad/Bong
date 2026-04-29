@@ -1640,6 +1640,107 @@ mod tests {
     }
 
     #[test]
+    fn spectator_death_by_tribulation_aoe_is_written_to_life_record() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("spectator-death-biography");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 300 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(
+            Update,
+            (
+                tribulation_aoe_system,
+                death_arbiter_tick.after(tribulation_aoe_system),
+            ),
+        );
+
+        app.world_mut().spawn((
+            Position::new([0.0, 66.0, 0.0]),
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 120.0,
+                qi_max: 210.0,
+                ..Default::default()
+            },
+            Wounds {
+                health_current: 100.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            Lifecycle {
+                character_id: "offline:Victim".to_string(),
+                state: LifecycleState::Alive,
+                ..Default::default()
+            },
+            TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(1),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 0,
+                next_wave_tick: 300,
+                participants: vec!["offline:Victim".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            },
+        ));
+        let spectator = app
+            .world_mut()
+            .spawn((
+                Position::new([20.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 40.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:Spectator".to_string(),
+                    state: LifecycleState::Alive,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                DeathRegistry::new("offline:Spectator".to_string()),
+                LifespanComponent::new(LifespanCapTable::AWAKEN),
+                LifeRecord::new("offline:Spectator"),
+            ))
+            .id();
+
+        app.update();
+
+        let lifecycle = app
+            .world()
+            .get::<Lifecycle>(spectator)
+            .expect("spectator lifecycle should remain attached");
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        let life = app
+            .world()
+            .get::<LifeRecord>(spectator)
+            .expect("spectator life record should remain attached");
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::NearDeath { cause, tick }) if cause == "观劫而亡" && *tick == 300
+        ));
+        assert_eq!(app.world().resource::<Events<TribulationFailed>>().len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn disconnecting_during_tribulation_flees_and_regresses_without_death() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("disconnect-fled");
