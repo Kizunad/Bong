@@ -50,6 +50,7 @@ import {
   SocialExposureEventV1,
   SocialFeudEventV1,
   SocialPactEventV1,
+  PlayerSocialSnapshotV1,
   SocialRenownDeltaV1,
   SparringInvitePayloadV1,
 } from "./social.js";
@@ -235,6 +236,7 @@ export const ServerDataPlayerStateV1 = Type.Object(
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
     zone: Type.String(),
+    social: Type.Optional(PlayerSocialSnapshotV1),
   },
   { additionalProperties: false },
 );

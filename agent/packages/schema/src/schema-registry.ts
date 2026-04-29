@@ -177,6 +177,7 @@ import {
 } from "./server-data.js";
 import {
   ExposureKindV1,
+  FactionMembershipSnapshotV1,
   PlayerSocialSnapshotV1,
   RelationshipKindV1,
   RelationshipSnapshotV1,
@@ -317,6 +318,7 @@ export const SCHEMA_REGISTRY = {
   renownTagV1: RenownTagV1,
   relationshipSnapshotV1: RelationshipSnapshotV1,
   renownSnapshotV1: RenownSnapshotV1,
+  factionMembershipSnapshotV1: FactionMembershipSnapshotV1,
   playerSocialSnapshotV1: PlayerSocialSnapshotV1,
   socialRemoteIdentityV1: SocialRemoteIdentityV1,
   socialAnonymityPayloadV1: SocialAnonymityPayloadV1,
@@ -538,6 +540,8 @@ export const GENERATED_SCHEMA_FILES = {
   "renown-tag-v1.json": SCHEMA_REGISTRY.renownTagV1,
   "relationship-snapshot-v1.json": SCHEMA_REGISTRY.relationshipSnapshotV1,
   "renown-snapshot-v1.json": SCHEMA_REGISTRY.renownSnapshotV1,
+  "faction-membership-snapshot-v1.json":
+    SCHEMA_REGISTRY.factionMembershipSnapshotV1,
   "player-social-snapshot-v1.json": SCHEMA_REGISTRY.playerSocialSnapshotV1,
   "social-remote-identity-v1.json": SCHEMA_REGISTRY.socialRemoteIdentityV1,
   "social-anonymity-payload-v1.json": SCHEMA_REGISTRY.socialAnonymityPayloadV1,

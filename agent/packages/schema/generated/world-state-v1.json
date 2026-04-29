@@ -475,6 +475,40 @@
               "exposed_to_count": {
                 "minimum": 0,
                 "type": "integer"
+              },
+              "faction_membership": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "faction",
+                  "rank",
+                  "loyalty",
+                  "betrayal_count",
+                  "permanently_refused"
+                ],
+                "properties": {
+                  "faction": {
+                    "type": "string"
+                  },
+                  "rank": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "loyalty": {
+                    "type": "integer"
+                  },
+                  "betrayal_count": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "invite_block_until_tick": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "permanently_refused": {
+                    "type": "boolean"
+                  }
+                }
               }
             }
           }

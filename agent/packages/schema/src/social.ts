@@ -51,11 +51,25 @@ export const RenownSnapshotV1 = Type.Object(
 );
 export type RenownSnapshotV1 = Static<typeof RenownSnapshotV1>;
 
+export const FactionMembershipSnapshotV1 = Type.Object(
+  {
+    faction: Type.String(),
+    rank: Type.Integer({ minimum: 0 }),
+    loyalty: Type.Integer(),
+    betrayal_count: Type.Integer({ minimum: 0 }),
+    invite_block_until_tick: Type.Optional(Type.Integer({ minimum: 0 })),
+    permanently_refused: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type FactionMembershipSnapshotV1 = Static<typeof FactionMembershipSnapshotV1>;
+
 export const PlayerSocialSnapshotV1 = Type.Object(
   {
     renown: RenownSnapshotV1,
     relationships: Type.Array(RelationshipSnapshotV1),
     exposed_to_count: Type.Integer({ minimum: 0 }),
+    faction_membership: Type.Optional(FactionMembershipSnapshotV1),
   },
   { additionalProperties: false },
 );
