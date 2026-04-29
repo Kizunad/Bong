@@ -26,6 +26,7 @@ mod skillbar_config_emit_test;
 pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tribulation_broadcast_emit;
+pub mod tribulation_heart_demon_offer_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_event_emit;
@@ -293,6 +294,7 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
             crate::cultivation::tribulation::publish_tribulation_events,
             tribulation_broadcast_emit::emit_tribulation_broadcast_payloads,
+            tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,
             vfx_event_emit::emit_vfx_event_payloads

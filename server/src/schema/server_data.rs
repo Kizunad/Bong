@@ -112,6 +112,7 @@ pub enum ServerDataType {
     ForgeOutcome,
     ForgeBlueprintBook,
     TribulationBroadcast,
+    HeartDemonOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -250,6 +251,32 @@ pub enum ServerDataPayloadV1 {
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
     TribulationBroadcast(TribulationBroadcastV1),
+    HeartDemonOffer(HeartDemonOfferV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeartDemonOfferChoiceV1 {
+    pub choice_id: String,
+    pub category: String,
+    pub title: String,
+    pub effect_summary: String,
+    pub flavor: String,
+    pub style_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeartDemonOfferV1 {
+    pub offer_id: String,
+    pub trigger_id: String,
+    pub trigger_label: String,
+    pub realm_label: String,
+    pub composure: f64,
+    pub quota_remaining: u32,
+    pub quota_total: u32,
+    pub expires_at_ms: u64,
+    pub choices: Vec<HeartDemonOfferChoiceV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -583,6 +610,10 @@ enum ServerDataPayloadWireV1 {
     TribulationBroadcast {
         #[serde(flatten)]
         data: TribulationBroadcastV1,
+    },
+    HeartDemonOffer {
+        #[serde(flatten)]
+        data: HeartDemonOfferV1,
     },
 }
 
@@ -1068,6 +1099,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TribulationBroadcast { data } => {
                 Ok(Self::TribulationBroadcast(data))
             }
+            ServerDataPayloadWireV1::HeartDemonOffer { data } => Ok(Self::HeartDemonOffer(data)),
         }
     }
 }
@@ -1343,6 +1375,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TribulationBroadcast(data) => {
                 Self::TribulationBroadcast { data: data.clone() }
             }
+            ServerDataPayloadV1::HeartDemonOffer(data) => {
+                Self::HeartDemonOffer { data: data.clone() }
+            }
         }
     }
 }
@@ -1480,6 +1515,7 @@ impl ServerDataPayloadV1 {
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
             Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
+            Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
         }
     }
 }
@@ -1580,6 +1616,24 @@ mod tests {
             ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
                 "Kiz", "warn", 12.0, -34.0, 60_000,
             )),
+            ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
+                offer_id: "heart_demon:1:100".to_string(),
+                trigger_id: "heart_demon:1:100".to_string(),
+                trigger_label: "心魔劫临身".to_string(),
+                realm_label: "渡虚劫 · 心魔".to_string(),
+                composure: 0.5,
+                quota_remaining: 1,
+                quota_total: 1,
+                expires_at_ms: 1_700_000_000_000,
+                choices: vec![HeartDemonOfferChoiceV1 {
+                    choice_id: "heart_demon_choice_0".to_string(),
+                    category: "Composure".to_string(),
+                    title: "守本心".to_string(),
+                    effect_summary: "回复少量当前真元".to_string(),
+                    flavor: "你把呼吸压回丹田。".to_string(),
+                    style_hint: "稳妥".to_string(),
+                }],
+            }),
         ];
 
         for payload in cases {
@@ -1774,6 +1828,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"
             ),
         ];
 
