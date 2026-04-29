@@ -7,6 +7,7 @@
 - `worldview.md §九 经济与交易 · 食腐者 / 游商傀儡`（散修守墓人是宗门废墟的本土 NPC 类型）
 - `worldview.md §八 天道行为准则`（隐性手段"narration 暗示某个方向有机缘"——废墟中的阵核就是机缘饵）
 - `worldview.md §十 资源与匮乏 · 残卷`（残卷来源："击杀道伥 / 遗迹探索"——遗迹探索的核心场景就是宗门废墟）
+- `worldview.md §十七 地形对季节的响应`（**上古宗门遗迹 / 阵核 = 汐转期阵核激活率 ×2** —— 古阵感应天道情绪；汐转期天道节律紊乱，封死的阵核易被误触发；老玩家不在汐转期穿越宗门遗迹）
 
 **library 锚点**：
 - `world-0002 末法纪略` 第一变（九大宗门崩塌，仅存青云外门 + 灵泉丹宗——本 plan 是"另外七宗"的物理化）
@@ -36,6 +37,7 @@
 - [ ] **阵核可激活**：每个废墟 1-3 个阵核（landmark），玩家投入特定材料（灵草 / 骨币 / 真元）→ 短期形成局部 0.6 灵气区（30 分钟）+ 高概率招异变兽 / 道伥；高风险高回报
 - [ ] **残卷为核心 loot**：残卷只能从废墟内特定容器（藏经阁残基、长老坐化处）取得，不是地表散落。掘三铲都是凡铁、运气好挖到一卷功法残页
 - [ ] **守墓人 NPC**：每个宗一个固定守墓人（散修，自称该宗后代或信徒），中立但若玩家激活阵核则敌对（"诸君何苦惊扰先师"）
+- [ ] **季节响应**（worldview §十七）：阵核**自激活率**（玩家不投料的"自动启动"概率）= base × `Season::tide_multiplier()`（Summer / Winter ×1.0 / 汐转期 ×2.0）。汐转期穿越宗门遗迹有翻倍概率撞上"先前没人激活的阵核突然亮起"——是末法残土"老玩家避汐转 / 新手撞死"教学的具体场景
 
 ## §1 世界观推断逻辑（为何此地必然存在）
 
@@ -298,7 +300,7 @@ extra_layers = (
 ## §9 开放问题
 
 - [ ] 七宗特征流派与现有 plan 的对齐——爆脉流（plan-baomai-v1） vs 血溪宗 / 阵法（plan-zhenfa-v1）vs 北陵宗，是否要把"残卷 = 该 plan 的功法"明确化？
-- [ ] `zongmen_origin_id` 新增独立层 vs 复用 `tsy_origin_id` 的高位段——后者节省 schema 但语义不洁；首版倾向独立层
+- [x] ~~`zongmen_origin_id` 新增独立层 vs 复用 `tsy_origin_id` 的高位段~~ **已决议**（用户 2026-04-29）：**新增独立层**——复用 tsy_origin_id 高位段会让 layer 语义混淆（地表宗门遗迹 vs TSY 位面遗迹是不同物理位置 / 不同探索路径），独立 layer 更清晰；schema 层成本可接受（uint8 + 8 个 origin 值 + safe_default=0 + swap blend）
 - [ ] 阵核激活的"招异变兽 / 道伥"是否走 anomaly_kind 还是单独 event？建议复用 anomaly_kind=5 (wild_formation)
 - [ ] 守墓人 NPC 是否会对**激活了别宗废墟**的玩家产生跨宗仇视（"你不该激活同道之坟"）？倾向 P3+ 才考虑
 - [ ] 与 plan-tsy-zongmen-ruin-v1 的"内容差异度"：本 plan 残卷是否一律是低阶？高阶残卷必须去 TSY 取？倾向 **是**（地表低阶 + TSY 高阶）
@@ -311,3 +313,31 @@ extra_layers = (
   - **strong-3** 修：origin_id=7 "幽暗附属（非九宗主流）" 改为"**幽暗**"——worldview §三 / world-0002 明列九宗，幽暗本身就是九宗之一，非附属；地理上与 cave_network 邻接是叙事自洽（现代地穴是古宗演化遗留）。
   - **mid-11** 修：阵核激活的 narration "全服广播" 改为"区域广播 (1000 格半径) + 凝脉+ inspect 可读"——全服仅留化虚渡劫级。
   - **weak-14** 修：§3 七宗特征流派表加注"以下流派为推演"提示 + 建议先立 `library-jiuzong-history` 锚 lore。
+- **2026-04-29**：实地核验 + 决策标注（**保留骨架**，不升 active——schema 决策已锁但 7 宗 lore 仍缺 library 背书；前置 plan-tsy-zongmen-ruin-v1 状态自报有误，实际仅有 worldgen 侧 `tsy_zongmen_ruin.py` 生成器存在，无独立 plan 文档）。
+  - **季节联动**（用户决策 2026-04-29）：汐转期阵核激活率 ×2（worldview §十七 锚定）。已写入头部锚点 + §0 设计轴心。
+  - **schema 决策**（用户决策）：`zongmen_origin_id` 新增独立 LAYER_REGISTRY 层（不复用 tsy_origin_id 高位段）。§9 第 2 项已标决议。
+  - 7 宗特征流派 + 残卷功法绑定（§9 第 1 项）+ lore 来源（§9 第 6 项 `library-jiuzong-history`）仍待立——这是升 active 前的硬阻塞。建议**先用 `/write-book` 起草 7 篇宗门志**入 library，再立 lore-anchored plan。
+  - 补 `## Finish Evidence` 占位。
+  - 升 active 触发条件：（a）`library-jiuzong-history` 7 篇宗门志入库且通过 `/review-book`；（b）§9 第 1 项"残卷 = 该 plan 的功法"明确化（与 plan-baomai / plan-zhenfa / plan-skill-v1 对齐）。两件 done 后再升。
+
+---
+
+## Finish Evidence
+
+<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+
+- 落地清单：
+  - P0：`worldgen/scripts/terrain_gen/fields.py` LAYER_REGISTRY 加 `zongmen_origin_id: LayerSpec(0, "swap", "uint8")` + `worldgen/terrain-profiles.example.json` 加 `jiu_zong_ruin` profile + 7 zone JSON
+  - P1：`worldgen/scripts/terrain_gen/profiles/jiu_zong_ruin.py`（JiuzongRuinGenerator + 七宗装饰物 palette）
+  - P2：`server/src/worldgen/zong_formation.rs`（qi 紊乱 tick + 阵核激活 + 自激活率 × Season::tide_multiplier）
+  - P3：`agent/packages/tiandao/src/narration/zong_lore.ts`（七宗壁文 narration）+ 残卷 loot table 接入
+- 关键 commit：
+- 测试结果：
+- 跨仓库核验：
+  - worldgen：`zongmen_origin_id` LAYER_REGISTRY / `JiuzongRuinGenerator` / 7 zone
+  - server：`ZongFormationTick` / 阵核激活 system / 守墓人 NPC（每宗 1 个）
+  - agent：七宗 narration template
+- 遗留 / 后续：
+  - 七宗 library 入库（前置：`library-jiuzong-history`）
+  - 残卷功法绑定（与 plan-baomai / plan-zhenfa / plan-skill-v1 对齐）
+  - 跨宗仇视守墓人（§9 第 4 项，P3+ 才考虑）

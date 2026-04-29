@@ -1,4 +1,4 @@
-# Bong · plan-terrain-ash-deadzone-v1 · 骨架
+# Bong · plan-terrain-ash-deadzone-v1
 
 **余烬死域**（`ash_dead_zone`）。真正的 `qi_density = 0` 死地——不是 waste_plateau 的 0.05 灵气贫瘠，而是 worldview §二 死域章原文："环境与你互不干涉，真元只随时间自然流失。没有任何资源，只有无尽的赶路与消耗。" 没有生物（除了拟态灰烬蛛），脚下踩出可追踪脚印的残灰方块，唯一物资是历代过路死者的干尸残骸。
 
@@ -7,6 +7,7 @@
 - `worldview.md §二 馈赠区 · 残灰方块`（"灵气下降导致植物枯萎，土石沙化为「残灰方块」（踩上去减速、留下可追踪的脚印）"——死域是残灰方块的总宿主）
 - `worldview.md §七 拟态灰烬蛛`（"死域边缘的伏击者。外观材质与残灰方块完全一致"——死域专属生态位）
 - `worldview.md §十 资源与匮乏`（"灵气会被先来的人吸干，好地方是会被用完的，然后变成废地"——死域是衰减终点）
+- `worldview.md §十七 地形对季节的响应`（**死域 / 余烬死地 = 恒 0，不受季节影响** —— 死地是绝对死地，节律对它无意义；天道吐纳已绕开此区。冬季不会让死域 qi 上来，汐转期也不会引起波动）
 
 **library 锚点**：
 - `ecology-0003 灵气零和记`（"末法之活法乃负数之活法——非求增，乃求少减"——死域是这条法则的物理终极）
@@ -35,6 +36,7 @@
 - [ ] **残灰方块为主**：地表 95%+ 用一种"灰化"基底 block——`coarse_dirt + gravel + sand` 混叠，配合 §二"踩上去减速 + 留下可追踪脚印"
 - [ ] **唯一资源是死者**：表层散布"干尸堆 / 骸骨堆"小型 structure，凡铁、退活骨币、干灵草——loot 全是历代过路者的遗物（呼应 §十六 坍缩渊的 99% 探索者遗物逻辑，但死域版是地表暴露态）
 - [ ] **不能修炼，只能赶路**：死域内静坐**真元不回**（zone.spirit_qi=0 → cultivation tick 公式 `× 0`）；玩家应该感觉到"这里待越久越亏"
+- [ ] **季节免疫**（worldview §十七）：死域不参与 §十七 二季 / 汐转节律——`Season::*_modifier()` 在死域 zone 内一律 `× 0` 短路；不写 ZoneSeasonState（节省存储）；客户端 HUD 显示 "无节律" 而非具体季节标签——玩家该知道这里"时间停了"
 
 ## §1 世界观推断逻辑（为何此地必然存在）
 
@@ -51,7 +53,7 @@
 | 机制 | 触发 | 效果 |
 |---|---|---|
 | **真元零回复 + 统一被动流失** | 玩家在死域内（`qi_density < 0.01`）| `qi_per_tick = 0`；被动流失**统一速率** −1 真元 / 分钟（不分境界——worldview §二 死域章原文"环境与你互不干涉，真元只随时间自然流失"明确**不抽**，只是不补 + 自然挥发；与 worldview §四"真元 = 0 → 10 分钟内不补充就降境界"baseline 对齐。**境界相关的非线性抽吸只属于负灵域 / 渊口荒丘，不属于死域**。） |
-| **shelflife 漏失加速** | 物品在死域内 | `decay_rate × 3.0` zone multiplier——**plan-shelflife-v1 P+ 接口扩展**（现 `decay_per_tick` 是 profile 固定参数，不读 zone；本 plan 依赖 plan-shelflife-v1 加 `zone_multiplier_lookup` 钩子，详见 §6 / §8） |
+| **shelflife 漏失加速** | 物品在死域内 | `decay_rate × 3.0` zone multiplier——**plan-shelflife-v1 已归档**，本 plan P2 顺手扩展 shelflife 模块加 `zone_multiplier_lookup` 钩子（详见 §6）；新接口对所有 profile 透明 |
 | **生物 spawn ban** | 全 zone 内 | 普通 mob 不刷；只有拟态灰烬蛛 / 道伥（坍缩渊塌缩外溢，§十六.六）可在边缘出现 |
 | **脚印追踪** | 玩家走过残灰地表 | 留下持续 5-15 分钟的足迹（block tag 或 entity）——成为追兵线索 |
 | **拟态灰烬蛛伏击** | 玩家穿过边缘 50 格圈 | 灰烬蛛伪装为残灰方块，玩家踩上 → 暴起；密度按 `flora_variant_id == ASH_SPIDER_LAIR` 决定 |
@@ -198,17 +200,26 @@ extra_layers = (
 | P1 | `ASH_DEAD_ZONE_DECORATIONS` 6 项 | 同上 |
 | P2 | `struct DeadZoneTickHandler { qi_drain_per_minute = 1.0, shelflife_zone_multiplier = 3.0 }` | `server/src/cultivation/dead_zone.rs`（新增） |
 | P2 | `MobSpawnFilter::ban_in_dead_zone` | `server/src/world/mob_spawn.rs` |
-| P2 | shelflife zone multiplier `× 3.0` 钩子（**依赖 plan-shelflife-v1 加 `zone_multiplier_lookup` 接口**——现 `decay_per_tick` 是 profile 固定参数无法 zone-scope 调速；建议 plan-shelflife-v1 P+ 引入 `tick_with_zone_multiplier(item, zone_qi_density) -> f32`） | `server/src/shelflife/decay.rs::tick` + `server/src/shelflife/registry.rs` |
+| P2 | shelflife zone multiplier `× 3.0` 钩子（**plan-shelflife-v1 已归档**——本 plan P2 顺手扩展 `server/src/shelflife/decay.rs::tick` 加 `zone_multiplier_lookup(item, zone_qi_density) -> f32` 接口；现 `decay_per_tick` 是 profile 固定参数无法 zone-scope 调速；新接口对所有 profile 透明，不破坏现有 registry 行为） | `server/src/shelflife/decay.rs::tick` + `server/src/shelflife/registry.rs` |
 | P3 | `dried_corpse_mound` structure spawner | `worldgen/scripts/terrain_gen/structures/corpse_mound.py`（新增） |
 | P3 | 拟态灰烬蛛密度规则 `flora_variant_id == 4 → spawn weight ×8` | `server/src/mob/ash_spider.rs` |
 | P3 | raster_check pin: `qi_vein_flow.max() == 0` for dead zone tiles | `worldgen/scripts/terrain_gen/harness/raster_check.py` |
 
 ## §7 实施节点
 
-- [ ] **P0** profile + zone — 验收：`pipeline.sh` 通过；raster manifest 包含 `south_ash_dead_zone`
-- [ ] **P1** generator + 装饰物 — 验收：raster 中心 `qi_density.max() < 0.01`；`flora_variant_id` 命中全部 6 种；`ambient_effects` 数组为空（client 静音验证）
-- [ ] **P2** tick + spawn ban + shelflife 钩子 — 验收：单测玩家在 zone 内 60 秒真元下降 ≥ 预期；mob spawn list 中无 zombie/skeleton；带入的灵草 1 分钟漏失测得 ≈ 3× 基线
-- [ ] **P3** corpse_mound + 灰烬蛛规则 + raster_check — 验收：smoke test 跑通；玩家在边缘 50 格内 100 次穿越中至少 3 次触发蛛伏击
+- [ ] **P0** profile + zone — 验收：`pipeline.sh` 通过；raster manifest 包含 `south_ash_dead_zone`；`Season` enum 在此 zone 内 short-circuit 测试通过（`Season::*_modifier()` 返回 1.0 / 0.0 而非真实季节修饰）
+- [ ] **P1** generator + 装饰物 — 验收：raster 中心 `qi_density.max() < 0.01`；`flora_variant_id` 命中全部 6 种；`ambient_effects` 数组为空（client 静音验证）；6 种装饰物每种至少 ≥ 1 个单测覆盖出现
+- [ ] **P2** tick + spawn ban + shelflife 钩子 — 验收：
+  - 单测：玩家在 zone 内 60 秒真元下降 = **1 真元**（−1 / minute × 1 min；不分境界）
+  - 单测：醒灵 / 引气 / 凝脉 / 固元 / 通灵 / 化虚 6 境界各跑一遍，速率全部恒为 −1 / min（验证"不分境界"）
+  - 单测：mob spawn list 中无 zombie/skeleton/creeper（whitelist 仅含 ash_spider / 道伥）
+  - e2e：带入的 fresh herb（half_life=72h base profile）在死域 1 game-day 后 freshness ≈ `(1 - 1/72)³` ≈ 0.96（×3 zone multiplier 验证）
+  - e2e：同一 herb 在普通 zone 1 game-day 后 freshness ≈ 0.986（基线对照）
+- [ ] **P3** corpse_mound + 灰烬蛛规则 + raster_check — 验收：
+  - smoke test 跑通；
+  - 玩家在边缘 50 格内 100 次穿越中至少 3 次触发蛛伏击（statistical: 3-15 次为通过，> 15 次报警密度过高）；
+  - raster_check pin: `assert ash_dead_zone tile.qi_vein_flow.max() == 0.0`
+  - corpse_mound loot 命中 ≥ 3 种（凡铁 / 退活骨币 / 干灵草，各至少 1 个 fixture spawn）
 
 ## §8 开放问题
 
@@ -226,3 +237,30 @@ extra_layers = (
   - **strong-5** 修：删"境界越高真元流失越快"——worldview §二 死域章明确"环境与你互不干涉，真元只随时间自然流失"，**不抽** + 不分境界；境界相关的非线性抽吸只属于负灵域 / 坍缩渊。改为统一速率 −1 真元 / 分钟。
   - **strong-6** 修：§8 死域死亡 "无 Roll" 开放问题改为"按 worldview §十二 正典直接进入概率期 Roll"——不是开放点，已是正典。
   - **mid-8** 修：§2 + §6 明确 shelflife `× 3.0` 是 zone multiplier 接口扩展，**依赖 plan-shelflife-v1 P+ 引入 `zone_multiplier_lookup`**（现 `decay_per_tick` 是 profile 固定参数无法 zone-scope）；不双计、不绕过现 profile registry。
+- **2026-04-29**：实地核验 + 升 active 准备。
+  - 前置 plan 状态：`plan-shelflife-v1` ✅ **已归档** finished_plans（代码 2770 行已落，但 `zone_multiplier_lookup` 接口未实装——归档不动，**改由本 plan P2 顺手在 server/src/shelflife/decay.rs 加该接口**，作为 ash-deadzone 的工程附加项；本 plan §6 数据契约表已显式标接口扩展点）；`plan-cultivation-v1` 代码已落但无独立 plan 文档（不阻塞——本 plan 真元流失走通用 cultivation tick 而非 cultivation 主公式扩展）；`plan-perception-v1` 仅骨架（不阻塞——本 plan §2 "境界感知反信号" 是被动叙事 hook，不依赖 perception 主动 API）；`plan-death-lifecycle-v1` ✅ finished_plans。
+  - **用户决策**（2026-04-29）：死域恒 0 不受季节影响（A 选项）—— 理由：死地是绝对死地，节律对它无意义；选项 B（汐转噪声）破坏"死=不变"语义。已写入 §0 设计轴心 + 头部 worldview §十七 锚点 + §7 P0 验收。
+  - 测试阈值数量化（§7）：6 境界统一速率 / shelflife ×3 zone multiplier 公式 / 蛛伏击概率 3-15 次 / 100 / corpse_mound loot ≥ 3 种。
+  - 补 `## Finish Evidence` 占位。准备 `git mv` 进 docs/ active。
+
+---
+
+## Finish Evidence
+
+<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+
+- 落地清单：
+  - P0：`worldgen/terrain-profiles.example.json` 加 `ash_dead_zone` profile + `zones.worldview.example.json` 加 `south_ash_dead_zone` zone；`Season::*_modifier()` 在死域 zone short-circuit 单测
+  - P1：`worldgen/scripts/terrain_gen/profiles/ash_dead_zone.py`（AshDeadZoneGenerator + 6 装饰物）
+  - P2：`server/src/cultivation/dead_zone.rs`（DeadZoneTickHandler）+ `server/src/world/mob_spawn.rs::ban_in_dead_zone` + `server/src/shelflife/decay.rs` 加 `zone_multiplier_lookup` 接口扩展（本 plan 顺手做，shelflife-v1 已归档）
+  - P3：`worldgen/scripts/terrain_gen/structures/corpse_mound.py` + `server/src/mob/ash_spider.rs` 蛛伏击规则 + `raster_check.py` qi_vein_flow=0 pin
+- 关键 commit：
+- 测试结果：（目标 P0 1 + P1 ≥ 6 + P2 ≥ 8 + P3 ≥ 4）
+- 跨仓库核验：
+  - worldgen：`ash_dead_zone` profile / `south_ash_dead_zone` zone / `ASH_DEAD_ZONE_DECORATIONS` / `corpse_mound.py`
+  - server：`DeadZoneTickHandler` / `ban_in_dead_zone` / shelflife `zone_multiplier_lookup` 接入
+  - client：HUD "无节律" 显示
+- 遗留 / 后续：
+  - 死域动态扩张（§8 开放问题——首版不做）
+  - 自动慢老化（§8 开放问题——首版不做）
+  - 凝脉+ 境界感知 narration（依 plan-perception-v1 / plan-narrative-v1 推进）

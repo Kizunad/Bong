@@ -1,11 +1,12 @@
-# Bong · plan-terrain-pseudo-vein-v1 · 骨架
+# Bong · plan-terrain-pseudo-vein-v1
 
-**伪灵脉绿洲**（`pseudo_vein_oasis`）。荒野中突现的高灵气小绿洲——**天道刻意制造的陷阱**，灵气 0.7 异常浓郁，吸引修士聚集自相残杀以回收真元。30-90 分钟（按聚集人数动态加速）后消散，外缘伴生小型负灵游离风暴。
+**伪灵脉绿洲**（`pseudo_vein_oasis`）。荒野中突现的高灵气小绿洲——**天道刻意制造的陷阱**，灵气 **0.6**（worldview §二 / §十三 锚定值）异常浓郁，吸引修士聚集自相残杀以回收真元。基线 30 分钟（worldview §十三 锚定）/ 独行最长 90 分钟，按聚集人数动态加速；外缘伴生小型负灵游离风暴。
 
 **世界观锚点**：
 - `worldview.md §二 灵压环境`（馈赠区"天道陷阱（伪灵脉）"原文）
 - `worldview.md §八 天道行为准则`（中等手段第 3 项 / 隐性手段"narration 暗示某个方向有机缘"）
-- `worldview.md §十三 世界地理 · 荒野`（"荒野中偶尔出现天道临时生成的伪灵脉——维持 30 分钟的高灵气点（0.6），之后消散。这是天道的陷阱"）
+- `worldview.md §十三 世界地理 · 荒野`（"荒野中偶尔出现天道临时生成的伪灵脉——维持 30 分钟的高灵气点（0.6），之后消散。这是天道的陷阱"——本 plan 数值锚定 0.6 + 基线 30 min）
+- `worldview.md §十七 地形对季节的响应`（**伪灵脉 = 汐转期刷新节奏 ×2** —— 节律紊乱时天道更频繁撒陷阱诱多；汐转期同一片地图能见到 2 倍的"绿洲"诱饵）
 
 **library 锚点**：
 - `world-0004 天道口述残编`（"瓮口向天，瓮底向地""吾只收"——天道收割者性格）
@@ -29,7 +30,8 @@
 ## §0 设计轴心
 
 - [ ] **临时地理**：与六域固定 zone 不同，伪灵脉是 transient zone——blueprint 不固定坐标，由天道 agent 在荒野（spawn_plain 外缘 / waste_plateau 内部）动态注入
-- [ ] **诱饵性高灵气**：核心区 `qi_density = 0.7`，远高于荒野基线 0.12——这个反差就是诱饵
+- [ ] **诱饵性高灵气**：主体区 `qi_density = 0.6`（worldview §十三 锚定值），远高于荒野基线 0.12——这个反差就是诱饵；核心伪泉眼 0.85 是局部峰值（梯度详见 §4）
+- [ ] **汐转期翻倍**（worldview §十七）：天道 agent 在汐转期（SummerToWinter / WinterToSummer）的 spawn rate 翻倍——节律紊乱时天道更频繁撒陷阱诱多；非汐转期按基线 spawn rate 走
 - [ ] **聚集即衰减**：在场修士每多一人，区内灵气衰减速度 +20%；3 人聚集时 30 分钟内消散，独行者可能撑 90 分钟
 - [ ] **代偿负灵风暴**：消散瞬间，外缘 100-200 格随机生成 1-3 个负灵游离风暴 hot-spot（`neg_pressure` 层短期值 -0.4 ~ -0.6），按 §二"自然真空"原文实现
 - [ ] **不可预设灵龛**：玩家不能在伪灵脉内放龛石（消散瞬间龛石被吞），符合 §十一"灵龛不能设置在活坍缩渊内"同源逻辑
@@ -39,10 +41,10 @@
 > 末法残土的灵气总量恒定且零和（ecology-0003）。天道的工作是"减缓灵气消耗速度，延长世界寿命"（worldview §八）。它的中等手段是"在强者区域刷新异变兽（既是威胁也是诱饵）"和"发布天象预兆让修士自行迁移"。
 
 伪灵脉是这两条手段的合成：
-- **天道反直觉操作**：把灵气从无人荒野**临时聚集**到一个小点 → 反向制造一个高浓度反差 → 修士因感知到 0.7 灵气会本能聚集 → 聚集消耗加倍 → 天劫劈死最强者 → 灵气连同真元一起回收
+- **天道反直觉操作**：把灵气从无人荒野**临时聚集**到一个小点 → 反向制造一个高浓度反差 → 修士因感知到 0.6 灵气会本能聚集 → 聚集消耗加倍 → 天劫劈死最强者 → 灵气连同真元一起回收
 - **零和守恒（生成期）**：伪灵脉的灵气不是"凭空生"，是从周围荒野临时调拨——所以伪灵脉外围 50 格内基线 `qi_density` **额外 -0.04** 作为代偿（visible "饥渴圈"）。这部分代偿在伪灵脉**整个生命周期内**保持，是天道"借"出去的灵气
 - **零和守恒（消散期）**：消散瞬间灵气去向**完整闭环**——按 worldview §八 / §十 灵气总量恒定原则：
-  - **70% 回灌饥渴圈**：消散瞬间核心 0.7 灵气向外扩散，饥渴圈（50-200 格）qi 临时 +0.05~+0.10，1 小时内缓慢扩散回基线。物理上是"还借走的"
+  - **70% 回灌饥渴圈**：消散瞬间核心 0.6 灵气向外扩散，饥渴圈（50-200 格）qi 临时 +0.04~+0.08，1 小时内缓慢扩散回基线。物理上是"还借走的"
   - **30% 被天道直接收回**：天道作为收割者吃掉这部分（worldview §八"吾只收"+ world-0004 锚定）；这部分灵气进入天道的"全服灵气调度池"，可能数小时后在另一处荒野作为新伪灵脉重现——总量守恒不破
 - **代偿负灵风暴**：worldview §二"游离风暴：天道为代偿某处伪灵脉而在荒野随机制造的负能风暴"——伪灵脉消散瞬间，外缘 100-200 格随机生成 1-3 个负灵 hot-spot（持续 5-10 分钟），是上述 30% 灵气被收割过程中产生的局部负压扰动；不是永久负灵域，会随灵气回灌过程消退
 
@@ -52,7 +54,7 @@
 |---|---|---|
 | **诱饵静坐加速** | 玩家在伪灵脉核心静坐修炼 | 经脉打通速度 +60%（伪灵脉真的有用，否则不算诱饵） |
 | **聚集探测** | 50 格内 ≥ 2 名玩家 | 区内灵气衰减速度按人数 ×1.0 / 1.4 / 1.8 / 2.5 / 3.5 倍递增 |
-| **消散预警** | 灵气从 0.7 跌至 0.4 时 | 全员收到 narration："此处灵气，似有异变"（不明示是陷阱） |
+| **消散预警** | 灵气从 0.6 跌至 0.3 时 | 全员收到 narration："此处灵气，似有异变"（不明示是陷阱） |
 | **天劫诱饵** | 区内灵气总消耗 ≥ 阈值 | 天道 agent 触发劫气标记，区内最高境界玩家天劫概率 +30%（24h 内） |
 | **消散瞬间** | 灵气 = 0 | 中心 `feature_mask` 残留 1 分钟"残灰圈" → 灰化为 `coarse_dirt + gravel`；70% 灵气回灌饥渴圈（qi 临时 +0.05~+0.10，1h 衰回基线）；30% 被天道收割（进全服灵气池）；外缘 100-200 格随机播种 1-3 个**短期负灵 hot-spot**（持续 5-10 分钟，使用 `neg_pressure` 层 + `anomaly_kind=2 (qi_turbulence)`，**不用** `spacetime_rift`——后者是 portal 锚点专用语义） |
 | **龛石失效** | 玩家试图在区内放灵龛 | 龛石碎裂 + chat："此地灵脉飘忽，龛石不立" |
@@ -137,7 +139,7 @@ PSEUDO_VEIN_DECORATIONS = (
   "aabb": { "min": [<cx-150>, 60, <cz-150>], "max": [<cx+150>, 90, <cz+150>] },
   "center_xz": [<cx>, <cz>],
   "size_xz": [300, 300],
-  "spirit_qi": 0.70,
+  "spirit_qi": 0.60,
   "danger_level": 4,
   "worldgen": {
     "terrain_profile": "pseudo_vein_oasis",
@@ -152,9 +154,9 @@ PSEUDO_VEIN_DECORATIONS = (
 
 | 区位 | t | qi_density | mofa_decay | qi_vein_flow | flora_density |
 |---|---|---|---|---|---|
-| 核心（伪泉眼）| 0-0.2 | 0.85 | 0.05 | 0.95 | 0.85 |
-| 主体（花海）| 0.2-0.7 | 0.65 | 0.10 | 0.50 | 0.85 |
-| 边缘 | 0.7-1.0 | 0.30 | 0.20 | 0.10 | 0.45 |
+| 核心（伪泉眼）| 0-0.2 | 0.80 | 0.05 | 0.95 | 0.85 |
+| 主体（花海）| 0.2-0.7 | **0.60** | 0.10 | 0.50 | 0.85 |
+| 边缘 | 0.7-1.0 | 0.25 | 0.20 | 0.10 | 0.45 |
 | 饥渴圈 | 1.0-2.0 | **0.08**（基线 -0.04 代偿）| 0.55 | 0 | 0 |
 | 外荒野 | >2.0 | 0.12（恢复基线）| 0.40 | 0 | 0 |
 
@@ -192,12 +194,63 @@ extra_layers = (
 | P2 | `bong:event_dissipate` event payload `{id, center, storm_anchors: [(x,z)]}` | 同上 |
 | P3 | 天道 narration template `pseudo_vein.lure / pseudo_vein.warning / pseudo_vein.dissipate` | `agent/packages/tiandao/src/narration/templates.ts` |
 
+### §6.1 IPC schema 草稿
+
+```typescript
+// agent/packages/schema/src/pseudo-vein.ts
+export const PseudoVeinSnapshotV1 = Type.Object({
+  id: Type.String(),                                  // unique id per spawn
+  center_xz: Type.Tuple([Type.Number(), Type.Number()]),
+  spirit_qi_current: Type.Number({ minimum: 0, maximum: 1 }),
+  occupants: Type.Array(Type.String()),               // player UUIDs in 50m
+  spawned_at_tick: Type.Integer(),
+  estimated_decay_at_tick: Type.Integer(),
+  season_at_spawn: Type.Union([
+    Type.Literal("summer"),
+    Type.Literal("summer_to_winter"),
+    Type.Literal("winter"),
+    Type.Literal("winter_to_summer"),
+  ]),
+});
+
+export const PseudoVeinDissipateEventV1 = Type.Object({
+  id: Type.String(),
+  center_xz: Type.Tuple([Type.Number(), Type.Number()]),
+  storm_anchors: Type.Array(Type.Tuple([Type.Number(), Type.Number()])),
+  storm_duration_ticks: Type.Integer({ minimum: 6000, maximum: 12000 }),  // 5-10 min
+  qi_redistribution: Type.Object({
+    refill_to_hungry_ring: Type.Number(),  // 0.7（70% 回灌）
+    collected_by_tiandao: Type.Number(),   // 0.3（30% 入全服调度池）
+  }),
+});
+```
+
+Rust 镜像：`server/src/schema/pseudo_vein.rs`。Redis 通道：
+- `bong:pseudo_vein:active` —— PseudoVeinSnapshotV1（每 game-min 一次更新）
+- `bong:pseudo_vein:dissipate` —— PseudoVeinDissipateEventV1（消散事件，一次性）
+
 ## §7 实施节点
 
-- [ ] **P0** blueprint + profile spec 注册（不动 generator） — 验收：`python -m scripts.terrain_gen` 不 panic 即可，伪灵脉 zone 走 wilderness fallback
-- [ ] **P1** generator 实装 — 验收：手动 inject 一条 transient zone → raster_export 后 qi_density 中心 0.7 / 饥渴圈 0.08 / `flora_variant_id` 命中 5 种装饰
-- [ ] **P2** 生命周期 — 验收：单元测试 3 名占位玩家在场 → 30 min 内 qi 跌到 0；消散事件触发 1-3 storm anchor 正确写入 `anomaly_kind=2 (qi_turbulence)` + `neg_pressure ∈ [0.4, 0.6]` 持续 5-10 分钟后清零
-- [ ] **P3** 天道 narration + 天劫劫气标记 — 验收：占位玩家最高境界 → 24h 内天劫 roll 概率 +30%；narration 三档（lure / warning / dissipate）按阈值触发
+- [ ] **P0** blueprint + profile spec 注册（不动 generator） — 验收：
+  - `python -m scripts.terrain_gen` 不 panic（伪灵脉 zone 走 wilderness fallback）
+  - profile JSON schema 校验通过；transient zone 接口签名 single test
+- [ ] **P1** generator 实装 — 验收：
+  - 手动 inject 一条 transient zone → raster_export 后 qi_density 主体 = **0.60**（worldview 锚定）/ 核心 = 0.80 / 饥渴圈 = 0.08
+  - `flora_variant_id` 命中全部 5 种装饰（pin: per-decoration assertion × 5）
+  - 饥渴圈 `flora_density == 0` 视觉验证
+- [ ] **P2** 生命周期 — 验收：
+  - 单测：3 名占位玩家在场 → 30 min 内 qi 跌到 0（statistical: 25-35 min 通过）
+  - 单测：独行者 90 min 内 qi 跌到 0（80-100 min 通过）
+  - 单测：人数动态加速公式 `1.0 / 1.4 / 1.8 / 2.5 / 3.5` 各档 spawn 时间符合预期 ±15%
+  - 单测：消散事件触发 **1-3** storm anchor（pin: count ≥ 1 ∧ count ≤ 3）；正确写入 `anomaly_kind=2 (qi_turbulence)` + `neg_pressure ∈ [0.4, 0.6]`
+  - e2e：storm anchor 持续 5-10 分钟（6000-12000 ticks）后 server-side override 清零
+  - e2e：消散后饥渴圈 qi 临时 +0.04~+0.08，1 game-hour 内衰回基线
+  - e2e：消散瞬间龛石放置 → 龛石碎裂 + chat 命中
+  - **季节耦合**（worldview §十七）：在汐转期 spawn rate 翻倍统计验证（fixture: 1 game-year × 2 模拟，汐转期实际 spawn 数 ≈ 非汐转期 ×2）
+- [ ] **P3** 天道 narration + 天劫劫气标记 — 验收：
+  - 占位玩家最高境界 → 24h 内天劫 roll 概率 +30%（statistical: ≥30 trial 收敛 ±5%）
+  - narration 三档（lure / warning / dissipate）按阈值触发（fixture: qi 0.6→0.4→0.3→0 各阈值命中）
+  - schema double-side roundtrip：PseudoVeinSnapshotV1 / PseudoVeinDissipateEventV1 sample.json 双端解析
 
 ## §8 开放问题
 
@@ -214,3 +267,31 @@ extra_layers = (
 - 2026-04-28（自查修订）：
   - **mid-10** 修：§1 补全灵气**消散期**零和闭环——70% 回灌饥渴圈（1h 衰回基线）+ 30% 天道收割（进全服灵气池可能在他处重现）。原版只说生成期 -0.04 代偿，未交代消散去向，违反 ecology-0003 灵气零和原则。
   - **weak-13** 修：消散外缘 anomaly_kind 改 `qi_turbulence (2)` + `neg_pressure` 层，**不用** `spacetime_rift (1)`——后者是 rift_mouth portal 专属语义；游离风暴按 worldview §二 是"负能风暴"，更贴 qi_turbulence + neg_pressure 组合。
+- **2026-04-29**：实地核验 + 升 active 准备。
+  - **数值修正**（用户决策 2026-04-29）：原 plan 自创 `qi_density = 0.7`，与 worldview §十三 锚定值 `0.6` 偏差。改 0.6 对齐正典——主体 0.6 / 核心 0.80 / 饥渴圈 0.08；blueprint zone `spirit_qi: 0.60`；§1 / §2 / §4 多处同步；消散瞬间核心 0.6 灵气向外扩散。
+  - **季节联动**（用户决策）：worldview §十七 "汐转期刷新节奏 ×2"——已写入 §0 设计轴心 + 头部 worldview §十七 锚点 + §7 P2 验收（fixture 模拟 1 game-year × 2 验证 ×2 倍率）+ §6.1 schema `season_at_spawn` 字段。
+  - 工程性 gap 补完：§6.1 加完整 IPC schema 草稿（PseudoVeinSnapshotV1 / PseudoVeinDissipateEventV1）+ §7 测试阈值数量化（≥ 15 条单测 / e2e）+ Finish Evidence 占位。
+  - 前置 plan 状态：`plan-narrative-v1` 骨架（不阻塞——P3 narration template 可在 narrative-v1 立项前先写 stub）；`plan-tribulation-v1` active（劫气标记 hook 已暴露）；`plan-perception-v1` 骨架（不阻塞 P0–P2）。
+  - 准备 `git mv` 进 docs/ active。
+
+---
+
+## Finish Evidence
+
+<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+
+- 落地清单：
+  - P0：`worldgen/terrain-profiles.example.json` 加 `pseudo_vein_oasis` profile + `server/src/worldgen/transient_zone.rs`（动态 zone 注入接口）
+  - P1：`worldgen/scripts/terrain_gen/profiles/pseudo_vein_oasis.py`（PseudoVeinOasisGenerator + 5 装饰物）
+  - P2：`server/src/worldgen/pseudo_vein.rs`（PseudoVeinLifecycle + decay system + dissipate event）+ Redis pub
+  - P3：`agent/packages/schema/src/pseudo-vein.ts` + Rust 镜像 + `agent/packages/tiandao/src/narration/templates.ts` 三档 + 劫气标记 hook
+- 关键 commit：
+- 测试结果：（目标 P0 ≥ 2 + P1 ≥ 7 + P2 ≥ 8 + P3 ≥ 4）
+- 跨仓库核验：
+  - worldgen：`pseudo_vein_oasis` profile / `PseudoVeinOasisGenerator` / `PSEUDO_VEIN_DECORATIONS`
+  - server：`PseudoVeinLifecycle` / `transient_zone` / Redis `bong:pseudo_vein:*`
+  - agent：`PseudoVeinSnapshotV1` / `PseudoVeinDissipateEventV1` / `pseudo_vein.lure/warning/dissipate` narration
+- 遗留 / 后续：
+  - 多个伪灵脉互相干涉（§8 开放问题——首版禁止 500 格内并存）
+  - +60% 加速总量上限（§8 开放问题——v1 暂不限）
+  - 客户端粒子方案（依 plan-particle-system-v1 / plan-narrative-v1）

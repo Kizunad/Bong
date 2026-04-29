@@ -7,6 +7,7 @@
 - `worldview.md §三 突破条件 · 通灵 → 化虚 / 渡虚劫`（"天道降下渡虚劫，强度极高，全服广播"——化虚渡劫死处必形成焦土）
 - `worldview.md §十三 区域详情 · 血谷`（"高级野兽、天劫多发"——血谷已隐含一部分焦土特征，本 profile 是其专属化）
 - `worldview.md §六 真元染色谱 · 雷法`（"暴烈色——真元带电，间歇放电。击穿护体真气+，可远程小威慑。阴雨/水域真元紊乱"——焦土对雷法染色专修是天然修炼场）
+- `worldview.md §十七 地形对季节的响应`（**天劫焦地 / 渡劫遗痕 = 生态可缓慢恢复 / 灵气永久抹除** —— 天道劫气抹掉的真元不会回；焦地核心 qi_density 永久归 0；植被 / 微小生命可在数十 game-year 后慢慢回归。这是 §三 / §八 "天道学费"的物理实现：你被劈过的地方，地永远记得）
 
 **library 锚点**：
 - `world-0002 末法纪略` 第三变（"末法以来三百年无一人飞升"+"通灵者数人，化虚无一"——焦土上的化虚劫遗迹是上古积累，今天再生很慢）
@@ -35,6 +36,7 @@
 - [ ] **修炼速度按 worldview §三 公式走**：本 profile **不改写** `cultivation 速度 ∝ zone.spirit_qi × (qi_current / qi_max)` 主公式（属 plan-cultivation-v1 范围）；染色亲和不进 cultivation 主公式——焦土对暴烈色的吸引力来自"敢站着不被劈穿"的生存优势，不来自双倍刷怪
 - [ ] **真元紊乱外缘**：焦土外缘 50-100 格内是低概率"游离风暴"区（天劫余压），所有玩家（含暴烈色）真元自然漏失 +30%——worldview §六 雷法明文"阴雨/水域真元紊乱"，**暴烈色不豁免**
 - [ ] **化虚渡劫遗迹（极稀有）**：每 zone 0-1 个 `tianjie_ascension_pit` **structure（非 DecorationSpec）**——上古化虚者渡虚劫死处，中心是巨型玄武岩坑 + 残破渡劫人形痕；可能爆出极稀有的"虚劫残屑"；用 zone.extras.ascension_pit_xz 强制单点定位
+- [ ] **季节响应**（worldview §十七）：焦地 qi_density 不参与 §十七 二季 / 汐转节律——`Season::*_modifier()` 在焦地 zone 内一律 short-circuit（与死域同源）；但**生态层**（flora_density / 微小生命 spawn）可缓慢恢复——首版固定速率（每 game-year ×1.05 衰回基线，10 game-year 后接近原野）；不与季节系统直接耦合，避免冬季加速 / 夏季加速等"快速治愈"反 worldview 语义
 
 ## §1 世界观推断逻辑（为何此地必然存在）
 
@@ -284,3 +286,31 @@ extra_layers = (
   - **mid-7** 修：化虚遗迹 `tianjie_ascension_pit` 从 DecorationSpec 移除（rarity 采样无法保证"每 zone 0-1"约束），改为独立 structure spawner，由 zone.extras.ascension_pit_xz 显式坐标驱动；只有 north_waste_east_scorch zone 有此字段（呼应 world-0004 "二在北荒东陲已殒"）。
   - **mid-12** 修：删 `weather_overrides` profile 字段——MC 天气全局，无 zone-scope 系统消费；改为纯文档 `ambient_hint`，"雷雨实招雷"走 server tick 强制 spawn lightning entity。
   - **weak-13** 修：`anomaly_kind` 复用现有 `4 = cursed_echo`（天劫余响 = 神识残留，语义最贴），删除草稿"提议新增 6 = tribulation_residue"——避免 enum 通胀。
+- **2026-04-29**：实地核验 + 决策标注（**保留骨架**，**强阻塞**——前置 plan-tribulation-v1 仅 schema + 化虚结算两条落地，P1 / P2 渡劫核心机制（预兆锁定 / 雷劫渲染 / location 广播 RPC）大量未实装；本 plan P3 "实时天劫钩子"无 emit 接口可挂；plan-cultivation-v1 无独立 plan 文档，P2 "暴烈色 ×0.7 命中率"无染色查询 API）。
+  - **季节联动**（用户决策 2026-04-29）：焦地 qi_density 永久归 0，不参与季节节律；生态层缓慢恢复（每 game-year ×1.05），不与季节耦合。已写入头部锚点 + §0 设计轴心。
+  - **§8 第 2 项虚劫残屑用途**：仍待 plan-skill-v1 / plan-weapon-v1 / plan-cultivation-v1 三选一立项；不阻塞 P0–P2，可在 P3 启动前 1 周决策。
+  - 补 `## Finish Evidence` 占位。
+  - 升 active 触发条件：（a）plan-tribulation-v1 P1 完成（预兆锁定 + 雷劫渲染 + location 广播 RPC）；（b）plan-cultivation-v1 立骨架 + 暴露染色查询 API 签名；（c）§8 第 2 项虚劫残屑用途三选一决策。三件 done 后再升。
+
+---
+
+## Finish Evidence
+
+<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
+
+- 落地清单：
+  - P0：`worldgen/terrain-profiles.example.json` 加 `tribulation_scorch` profile + `xue_gu_dong_lu_scorch` / `north_waste_east_scorch` 等 zone JSON
+  - P1：`worldgen/scripts/terrain_gen/profiles/tribulation_scorch.py`（generator + 7 装饰物 incl. glass_fulgurite / charred_tree / lodestone_pillar）
+  - P2：`server/src/cultivation/tribulation_scorch_tick.rs`（lightning 强制 spawn + 暴烈色 ×0.7 命中率 + 阴雨漏失 +30%）+ plan-cultivation-v1 染色查询接入
+  - P3：`tianjie_ascension_pit` structure spawner + 虚劫残屑 loot + plan-tribulation-v1 实时天劫 hook
+- 关键 commit：
+- 测试结果：
+- 跨仓库核验：
+  - worldgen：`tribulation_scorch` profile / generator / `tianjie_ascension_pit` structure
+  - server：lightning entity spawn / 暴烈色查询 / 化虚遗迹 trigger
+  - agent：天劫 narration（依 plan-tribulation-v1 emit 接口）
+- 遗留 / 后续：
+  - 虚劫残屑用途（依 §8 第 2 项决策）
+  - zone-scoped 天气改写（plan-weather-zone-override，v2+）
+  - 古战场焦土带复合 zone（§8 第 6 项，首版不做）
+  - lightning_rod 主动招雷防御（§8 第 5 项，建议禁止）
