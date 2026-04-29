@@ -17,19 +17,26 @@ import java.util.Optional;
  * preview-harness.json 解析结果。字段缺省时使用默认值，screenshots[] 必填且
  * 至少 1 条。
  *
- * 期望 JSON 形态（详见 plan-worldgen-snapshot-v1.md §1.5）:
+ * 期望 JSON 形态（详见 plan-worldgen-snapshot-v1.md §1.5 + §4.2）:
  * {
  *   "server": "127.0.0.1:25565",
  *   "username": "PreviewBot",
  *   "wait_world_ticks": 1200,
  *   "wait_chunks_ticks": 100,
  *   "settle_ticks": 20,
+ *   "chunk_ready_radius": 4,
+ *   "chunk_ready_timeout_ticks": 600,
  *   "output_dir": "screenshots",
  *   "exit_on_complete": true,
  *   "screenshots": [
  *     { "name": "top", "tp": [8, 150, 8], "yaw": 0, "pitch": -90 }
  *   ]
  * }
+ *
+ * chunk_ready_radius=0 表示退回旧行为（盲等 settle_ticks），> 0 启用 chunk-ready
+ * barrier（plan §4.2）：传送后等中心 ±radius chunks 全部加载再多 settle_ticks tick
+ * 给渲染管线，chunk_ready_timeout_ticks 是兜底超时（仍未加载则 log warn 后拍照让
+ * validate_snapshots.py 标红）。
  */
 public record PreviewConfig(
         String server,
@@ -37,6 +44,8 @@ public record PreviewConfig(
         int waitWorldTicks,
         int waitChunksTicks,
         int settleTicks,
+        int chunkReadyRadius,
+        int chunkReadyTimeoutTicks,
         String outputDir,
         boolean exitOnComplete,
         List<PreviewShot> screenshots
@@ -57,8 +66,19 @@ public record PreviewConfig(
         int waitWorldTicks = optInt(root, "wait_world_ticks").orElse(20 * 60);
         int waitChunksTicks = optInt(root, "wait_chunks_ticks").orElse(20 * 5);
         int settleTicks = optInt(root, "settle_ticks").orElse(20);
+        int chunkReadyRadius = optInt(root, "chunk_ready_radius").orElse(4);
+        int chunkReadyTimeoutTicks = optInt(root, "chunk_ready_timeout_ticks").orElse(20 * 30);
         String outputDir = optString(root, "output_dir").orElse("screenshots");
         boolean exitOnComplete = optBool(root, "exit_on_complete").orElse(true);
+
+        if (chunkReadyRadius < 0) {
+            throw new IllegalArgumentException(
+                    "chunk_ready_radius 必须 >= 0，实际 " + chunkReadyRadius);
+        }
+        if (chunkReadyTimeoutTicks < 0) {
+            throw new IllegalArgumentException(
+                    "chunk_ready_timeout_ticks 必须 >= 0，实际 " + chunkReadyTimeoutTicks);
+        }
 
         if (!root.has("screenshots") || !root.get("screenshots").isJsonArray()) {
             throw new IllegalArgumentException("preview-harness.json missing required array field 'screenshots'");
@@ -74,7 +94,8 @@ public record PreviewConfig(
 
         return new PreviewConfig(
                 server, username, waitWorldTicks, waitChunksTicks,
-                settleTicks, outputDir, exitOnComplete,
+                settleTicks, chunkReadyRadius, chunkReadyTimeoutTicks,
+                outputDir, exitOnComplete,
                 Collections.unmodifiableList(shots));
     }
 

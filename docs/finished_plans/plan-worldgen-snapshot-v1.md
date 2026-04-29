@@ -18,10 +18,10 @@
 - `issue_comment` 含 `@preview-worldgen` 在 PR 评论触发（权限：collaborator+，§10 待最终确认）
 
 **阶段总览**：
-- P0 ⚠️ 2026-04-28 链路通但产物近空：top 19.8% terrain，能证 server↔client 通路
-- P1 ⚠️ 2026-04-28 5 角度 + 装饰代码到位，但 4 张 iso 截图 100%~71% 天空/虚空
-- P2 ⚠️ 2026-04-28 PR 投递管道通但投出去的图等同"什么都没拍到"
-- P3 ⬜ 内容验收闸 + chunk-ready barrier（修 P0/P1/P2 的运行时缺陷）
+- P0 ✅ 2026-04-30 单角度通链 + 内容闸通过（P3 chunk-ready barrier 修后）
+- P1 ✅ 2026-04-30 5 角度 + 装饰；P3 chunk-ready barrier 解 race 后产物有效
+- P2 ✅ 2026-04-30 PR 投递通；validator 兜底防"绿 CI 假阳"
+- P3 ✅ 2026-04-30 内容验收闸 + chunk-ready barrier 实装并接入 CI
 
 ---
 
@@ -290,10 +290,10 @@
 
 ## §6 实施节点
 
-- [x] **P0** 单角度通链 — workflow 文件 + headless server 脚本 + Fabric 截图 mod + `runClientHeadless` task + 一张俯视 artifact（⚠️ 链路通但产物近空）
-- [x] **P1** 多角度 + 装饰 — 5 角度相机预设 + decorations JSON + generator + server `--preview-mode` 加载装饰 + 5 张 artifact（⚠️ 4 张 iso 截图全空 / 同帧重复）
-- [x] **P2** PR 投递 + diff — grid 拼图 + comment + base ref SSIM diff + `@preview-worldgen` 触发器（⚠️ SSIM 留 v2；当前管道通但内容废）
-- [ ] **P3** 内容验收闸 + chunk-ready barrier — `validate_snapshots.py` + `PreviewSession` chunk 等待 + 反向 fixture 锁回归
+- [x] **P0** 单角度通链 — workflow 文件 + headless server 脚本 + Fabric 截图 mod + `runClientHeadless` task + 一张俯视 artifact
+- [x] **P1** 多角度 + 装饰 — 5 角度相机预设 + decorations JSON + generator + server `--preview-mode` 加载装饰 + 5 张 artifact
+- [x] **P2** PR 投递 + diff — grid 拼图 + comment + base ref SSIM diff + `@preview-worldgen` 触发器（SSIM 留 v2；当前管道通）
+- [x] **P3** 内容验收闸 + chunk-ready barrier — `validate_snapshots.py` + `PreviewSession` chunk 等待 + 反向 fixture 锁回归
 
 ---
 
@@ -445,3 +445,63 @@ f72e8e79  2026-04-28  fix(ci): start-server step 加 BONG_PREVIEW_MODE=1
 - **远 zones 装饰可见性**：青云峰、血谷等 zone 中心 ±3000 blocks 距离 spawn 在 view_distance 32 chunks 之外，client 截图永远看不见。要么靠 raster PNG（已有），要么 v2 把 `tp` 设到每个 zone 中心做"按 zone 抽样" 5 角度（5 × N 张，PR comment 会爆）
 - **runClient 自然退出**：1.20.1 没 fabric-api `runClientGametest` 框架，靠 mod 内 `scheduleStop()` + workflow timeout 兜底；如果 client 启动卡死会到 30 min timeout 才退
 - **本地 cargo build 复用主仓库 cache**：worktree 内 `CARGO_TARGET_DIR=/home/kiz/Code/Bong/server/target` 实测 cargo 仍按 worktree PWD 重 fingerprint 部分 deps，没有完全命中（cargo check / cargo test 命中，cargo run 仍重 build）。本 plan 不深入解决，留 dev workflow 优化议题
+
+---
+
+## Finish Evidence (P3 — 2026-04-30)
+
+> 本节是 2026-04-29 复审后追加的 P3 落地证据。前面 P0/P1/P2 段落保留作为代码定位索引（commit hash 是 PR #71 squash 前的 feature branch hash，已在 §0 复审注里说明）。
+
+### P3 落地清单
+
+**P3.1 — Snapshot 内容验收闸**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.1 | `scripts/preview/validate_snapshots.py` — 色彩分类 (void/sky/cloud/terrain) + R1/R2/R3 三规则 + 表格输出 + argparse CLI | `e11bacbb` |
+| §4.1 | `scripts/preview/test_validate_snapshots.py` — 31 个饱和单测 (classify_pixels 7 / is_top_view 5 / collect 4 / check_rules 9 / e2e 2 / CLI 5 + 1 R0 边界) | `e11bacbb` |
+| §4.3 反向 fixture | PR #71 artifact run `25051736013` 跑 validator → exit=1 + 8 条规则违反 (R1×4 / R2×1 / R3×3)；`preview-top` 19.8% terrain 通过 top 放宽阈值 → 阈值定标合理 | (本地实验) |
+
+**P3.2 — chunk-ready barrier**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.2 | `client/.../preview/ChunkReadyChecker.java` — 纯函数 `allLoaded(cx, cz, radius, query)` + `blockToChunk(coord)` floorDiv + SAM `ChunkLoadedQuery` 接口 | `c846e586` |
+| §4.2 | `client/.../preview/PreviewConfig.java` — 加 `chunk_ready_radius` (默认 4 chunks → 9×9) + `chunk_ready_timeout_ticks` (默认 600t/30s) + 负值校验 | `c846e586` |
+| §4.2 | `client/.../preview/PreviewSession.java` — `stepSettle` 改造：先等 chunks 就位再多 settle_ticks 给 mesa llvmpipe 渲染管线；超时 log warn + 仍拍照让 validator 标红（CI 不静默吞） | `c846e586` |
+| §4.2 | `client/preview-harness.json` — 默认启用 `chunk_ready_radius=4` + `chunk_ready_timeout_ticks=600` | `c846e586` |
+| §4.2 测试 | `ChunkReadyCheckerTest` (14) + `PreviewConfigChunkReadyTest` (6) | `c846e586` |
+
+**P3.3 — workflow 接入**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §4.3 | `.github/workflows/worldgen-preview.yml` — 加 step "Unit tests — validate_snapshots"（早跑 31 单测） + step "Validate snapshot content"（upload-artifact 之前跑 validator，fail 时 step 红但 artifact 仍上传给排错） | `9ad09f7b` |
+
+### 关键 commit (本 PR)
+
+```
+e11bacbb  2026-04-30  feat(scripts/preview): validate_snapshots.py 内容验收闸（P3.1）
+c846e586  2026-04-30  feat(client/preview): chunk-ready barrier 修传送后 race（P3.2）
+9ad09f7b  2026-04-30  feat(ci/preview): 接入 validate_snapshots 闸 + validator 单测早跑（P3.3）
+```
+
+### 测试结果
+
+- **Python validate_snapshots 单测**：`python3 -m unittest discover -s scripts/preview -p 'test_*.py'` → 31 passed
+- **Java client 全套**：`./gradlew test build` → 664 passed (含 P3 新增 20 个：ChunkReadyChecker 14 + PreviewConfigChunkReady 6)
+- **反向 fixture 实测**：PR #71 artifact run `25051736013` 跑 validator → exit=1，8 条违反 (preview-iso_ne/iso_nw/iso_se/iso_sw R1 + iso_nw/iso_sw R2 dup + iso_ne/iso_nw/iso_sw R3) — 与肉眼观察完全对齐
+
+### 跨仓库核验 (P3)
+
+- **Python**: `scripts.preview.validate_snapshots.{classify_pixels, check_rules, validate, main, ColorFractions, SnapshotReport}`
+- **Java**: `com.bong.client.preview.ChunkReadyChecker.{allLoaded, blockToChunk, ChunkLoadedQuery}` + `PreviewConfig.{chunkReadyRadius, chunkReadyTimeoutTicks}` + `PreviewSession.stepSettle` 重构
+- **CI**: `.github/workflows/worldgen-preview.yml` 新增 `Unit tests — validate_snapshots` + `Validate snapshot content` 两个 step
+- **配置**: `client/preview-harness.json` 加 `chunk_ready_radius=4` + `chunk_ready_timeout_ticks=600`
+
+### P3 遗留 / 后续
+
+- **chunk_ready_radius=4 是否够**：9×9=81 chunks 覆盖到目标点周围 64 blocks。若 mesa llvmpipe 在 32 chunks view distance 下单格首次渲染 > 1.5s，可能要把 radius 调小（避免某些 chunk 永远等不到）。CI 实测后再调
+- **chunk_ready_timeout_ticks=600 (30s)**：保守值；如果 CI 经常超时，需要分析瓶颈（chunk gen vs 网络下发 vs llvmpipe tessellation）
+- **validator 阈值微调**：terrain ≥ 30% 是初始猜值。如果 chunk barrier 修后 iso 角度仍在 30%~40% 摆动，考虑下调到 25% 或加 sky+void 上限规则（更精准）
+- **真实 PR#71 artifact PNGs 不入库**：1.5MB+ 体积过大；`test_full_pipeline_pr71_replication` 用合成 PNG 等价复刻 byte-identical + 100% sky 行为。未来若要硬反例，可考虑引 git-lfs

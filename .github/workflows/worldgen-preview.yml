@@ -54,7 +54,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Python deps (worldgen + compose_grid)
+      - name: Install Python deps (worldgen + compose_grid + validator)
         run: pip install numpy pillow
 
       - name: Unit tests — anvil_export + anvil_region_writer
@@ -64,6 +64,11 @@ jobs:
         run: |
           python3 -m unittest test_anvil_export -v
           python3 -m unittest test_anvil_region_writer -v
+
+      - name: Unit tests — validate_snapshots
+        # plan-worldgen-snapshot-v1 §4.3：validator 自身有饱和单测（31 个），
+        # CI 早期跑保证规则不退化。失败 = validator bug，整个 workflow 应该红。
+        run: python3 -m unittest discover -s scripts/preview -p 'test_*.py' -v
 
       - name: Run worldgen pipeline (raster + PNG previews + anvil world)
         # plan-worldgen-anvil-export-v1 §3.1：BACKEND=anvil 先跑 raster (PR #78
@@ -150,6 +155,18 @@ jobs:
           echo ""
           echo "=== worldgen raster PNG (顶视全图 / 大尺度) ==="
           find worldgen/generated -name "*-preview.png" -ls 2>/dev/null | head -30 || true
+
+      - name: Validate snapshot content (R1 terrain% / R2 hash 唯一 / R3 size)
+        # plan §4.1 内容验收闸：CI 不再只看"截图文件存在"就 pass，必须按色彩
+        # 分类核验图像内容。若 R1/R2/R3 任一红，本 step 失败但不阻塞后续
+        # compose_grid + upload-artifact —— artifact 仍要上传给排错（让人眼
+        # 也能看到失败截图）。
+        id: validate
+        if: always()
+        run: |
+          python3 scripts/preview/validate_snapshots.py \
+            --client-dir client/run/screenshots \
+            --require-min-count 5
 
       - name: Compose grid PNG (5 client 角度 + raster 拼图总览)
         if: always()

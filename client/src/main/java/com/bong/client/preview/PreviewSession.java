@@ -44,6 +44,9 @@ public final class PreviewSession {
     private int currentShotIdx = 0;
     private boolean stopRequested = false;
     private int shotsTaken = 0;
+    // chunk-ready barrier 状态（plan §4.2）：在 SETTLE 内 chunks 加载就位的 tick
+    // 数；-1 表示尚未就位。chunks 就位后再多 settleTicks 给渲染管线。
+    private int chunksReadyAtPhaseTick = -1;
 
     public PreviewSession(PreviewConfig config) {
         this.config = config;
@@ -82,7 +85,7 @@ public final class PreviewSession {
             case WAIT_WORLD -> stepWaitWorld(client);
             case WAIT_CHUNKS -> stepWaitChunks();
             case SETUP_SHOT -> stepSetupShot(client);
-            case SETTLE -> stepSettle();
+            case SETTLE -> stepSettle(client);
             case SHOOT -> stepShoot(client);
             case FINISHED -> stepFinished(client);
         }
@@ -150,10 +153,58 @@ public final class PreviewSession {
         advance(Phase.SETTLE);
     }
 
-    private void stepSettle() {
-        if (phaseTicks >= config.settleTicks()) {
+    private void stepSettle(MinecraftClient client) {
+        // chunk_ready_radius=0 → 退回旧行为，盲等 settle_ticks
+        if (config.chunkReadyRadius() <= 0) {
+            if (phaseTicks >= config.settleTicks()) {
+                advance(Phase.SHOOT);
+            }
+            return;
+        }
+
+        // chunk-ready barrier（plan §4.2）：每 tick 查一次目标点周围 chunks
+        if (chunksReadyAtPhaseTick < 0) {
+            PreviewShot shot = config.screenshots().get(currentShotIdx);
+            if (isChunksReadyForShot(client, shot)) {
+                chunksReadyAtPhaseTick = phaseTicks;
+                LOGGER.info(
+                        "[preview] chunks ready for shot '{}' at phase tick {} "
+                                + "(radius={} → {} chunks)",
+                        shot.name(), phaseTicks, config.chunkReadyRadius(),
+                        (2 * config.chunkReadyRadius() + 1) * (2 * config.chunkReadyRadius() + 1));
+            } else if (phaseTicks >= config.chunkReadyTimeoutTicks()) {
+                LOGGER.warn(
+                        "[preview] chunk-ready timeout({}t={}s) for shot '{}' — "
+                                + "chunks 未流到，仍拍照让 validate_snapshots.py 标红",
+                        config.chunkReadyTimeoutTicks(),
+                        config.chunkReadyTimeoutTicks() / 20,
+                        shot.name());
+                chunksReadyAtPhaseTick = phaseTicks;
+            } else {
+                return;  // 继续等
+            }
+        }
+
+        // chunks 已就位（或超时），再多 settleTicks 给 mesa llvmpipe 渲染管线
+        if (phaseTicks - chunksReadyAtPhaseTick >= config.settleTicks()) {
             advance(Phase.SHOOT);
         }
+    }
+
+    /**
+     * 查 client.world.getChunkManager() 在 shot tp 周围 chunkReadyRadius 范围内
+     * 的 chunks 是否全部加载。client.world == null 时返回 false（等下一 tick）。
+     */
+    private boolean isChunksReadyForShot(MinecraftClient client, PreviewShot shot) {
+        if (client.world == null) {
+            return false;
+        }
+        int cx = ChunkReadyChecker.blockToChunk(shot.tp()[0]);
+        int cz = ChunkReadyChecker.blockToChunk(shot.tp()[2]);
+        return ChunkReadyChecker.allLoaded(
+                cx, cz, config.chunkReadyRadius(),
+                (chunkX, chunkZ) ->
+                        client.world.getChunkManager().getWorldChunk(chunkX, chunkZ) != null);
     }
 
     private void stepShoot(MinecraftClient client) {
@@ -186,6 +237,7 @@ public final class PreviewSession {
     private void advance(Phase next) {
         phase = next;
         phaseTicks = 0;
+        chunksReadyAtPhaseTick = -1;
     }
 
     private void requestStop(MinecraftClient client) {
