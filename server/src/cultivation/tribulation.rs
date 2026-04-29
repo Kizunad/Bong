@@ -1793,6 +1793,94 @@ mod tests {
     }
 
     #[test]
+    fn start_du_xu_request_rejects_non_spirit_or_incomplete_meridians() {
+        let mut app = App::new();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+
+        let non_spirit = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+            ))
+            .id();
+        let incomplete = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(StartDuXuRequest {
+            entity: non_spirit,
+            requested_at_tick: 100,
+        });
+        app.world_mut().send_event(StartDuXuRequest {
+            entity: incomplete,
+            requested_at_tick: 100,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        assert!(events.get_reader().read(events).next().is_none());
+    }
+
+    #[test]
+    fn start_du_xu_request_rejects_already_active_tribulation() {
+        let mut app = App::new();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Omen,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 0,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(StartDuXuRequest {
+            entity,
+            requested_at_tick: 100,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        assert!(events.get_reader().read(events).next().is_none());
+    }
+
+    #[test]
     fn fourth_wave_enters_heart_demon_without_aoe() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 2100 });
