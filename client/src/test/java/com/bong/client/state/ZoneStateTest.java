@@ -15,6 +15,7 @@ public class ZoneStateTest {
         assertEquals("", state.zoneLabel());
         assertEquals(0.0, state.spiritQiNormalized());
         assertEquals(0, state.dangerLevel());
+        assertEquals("normal", state.status());
         assertEquals(0L, state.changedAtMillis());
     }
 
@@ -26,7 +27,18 @@ public class ZoneStateTest {
         assertEquals("blood_valley", state.zoneLabel());
         assertEquals(1.0, state.spiritQiNormalized());
         assertEquals(5, state.dangerLevel());
+        assertEquals("normal", state.status());
         assertEquals(0L, state.changedAtMillis());
+    }
+
+    @Test
+    void createPreservesCollapsedStatusAndDefaultsUnknownStatus() {
+        ZoneState collapsed = ZoneState.create("blood_valley", "Blood Valley", 0.1, 5, " collapsed ", 10L);
+        ZoneState unknown = ZoneState.create("jade_valley", "Jade Valley", 0.5, 1, "fading", 11L);
+
+        assertEquals("collapsed", collapsed.status());
+        assertTrue(collapsed.collapsed());
+        assertEquals("normal", unknown.status());
     }
 
     @Test

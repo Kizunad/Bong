@@ -84,10 +84,16 @@ public final class BongZoneHud {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
         return "区域"
             + safeZoneState.zoneLabel()
+            + statusText(safeZoneState)
             + " 灵气"
             + qiBar(safeZoneState.spiritQiNormalized())
             + " 危"
             + dangerText(safeZoneState.dangerLevel());
+    }
+
+    static String statusText(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.collapsed() ? " 死域" : "";
     }
 
     static String qiBar(double spiritQiNormalized) {
