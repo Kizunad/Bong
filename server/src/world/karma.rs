@@ -83,7 +83,13 @@ impl KarmaWeightStore {
             .fold(KARMA_WEIGHT_MIN, f32::max)
     }
 
-    #[allow(dead_code)] // 后续概率操控系统读取；当前仅测试覆盖。
+    pub fn strongest_entry_for_zone(&self, zone: &str) -> Option<&KarmaWeightEntry> {
+        self.by_player
+            .values()
+            .filter(|entry| entry.zone.as_deref() == Some(zone))
+            .max_by(|left, right| left.weight.total_cmp(&right.weight))
+    }
+
     pub fn entry_for_player(&self, player_id: &str) -> Option<&KarmaWeightEntry> {
         self.by_player.get(player_id)
     }

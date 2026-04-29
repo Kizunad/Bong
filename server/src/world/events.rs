@@ -28,7 +28,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::karma::{
     targeted_calamity_event_hit, targeted_calamity_roll, KarmaWeightStore, QiDensityHeatmap,
-    TARGETED_CALAMITY_BASE_PROBABILITY,
+    TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
 };
 use crate::world::zone::Zone;
 
@@ -46,6 +46,10 @@ const THUNDER_TARGET_BIAS_RADIUS: f64 = 5.0;
 const THUNDER_DEFAULT_Y_OFFSET: f64 = 1.0;
 const BEAST_TIDE_BEASTS_PER_INTENSITY: f64 = 10.0;
 const KARMA_BACKLASH_EVENT_DURATION_TICKS: u64 = 1;
+const TARGETED_LIGHTNING_VFX_EVENT_ID: &str = "bong:tribulation_lightning";
+const TARGETED_LIGHTNING_VFX_COLOR: &str = "#D0C8FF";
+const TARGETED_LIGHTNING_VFX_COUNT: u16 = 3;
+const TARGETED_LIGHTNING_VFX_DURATION_TICKS: u16 = 14;
 const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
 pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
 pub(crate) const REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID: &str = "bong:realm_collapse_boundary";
@@ -143,6 +147,7 @@ pub struct ActiveEventsResource {
     pending_major_alerts: Vec<MajorEventAlert>,
     pending_tribulation_events: Vec<TribulationEventV1>,
     pending_vfx_events: Vec<VfxEventRequest>,
+    pending_lightning_strikes: Vec<DVec3>,
     recent_game_events: Vec<GameEvent>,
 }
 
@@ -276,6 +281,11 @@ impl ActiveEventsResource {
                 ])),
             });
             if negative_event_triggered {
+                let strike_position = targeted_calamity_strike_position(
+                    zone,
+                    event.target_player.as_deref(),
+                    karma_weights,
+                );
                 self.record_recent_event(GameEvent {
                     event_type: GameEventType::EventTriggered,
                     tick: 0,
@@ -289,13 +299,40 @@ impl ActiveEventsResource {
                             json!(roll.effective_probability),
                         ),
                         ("roll_value".to_string(), json!(roll_value)),
+                        (
+                            "localized_lightning".to_string(),
+                            json!([strike_position.x, strike_position.y, strike_position.z]),
+                        ),
                     ])),
                 });
+                self.record_recent_event(GameEvent {
+                    event_type: GameEventType::EventTriggered,
+                    tick: 0,
+                    player: event.target_player.clone(),
+                    target: Some("targeted_local_lightning".to_string()),
+                    zone: Some(event.zone_name.clone()),
+                    details: Some(HashMap::from([
+                        ("event".to_string(), Value::String("局部落雷".to_string())),
+                        (
+                            "position".to_string(),
+                            json!([strike_position.x, strike_position.y, strike_position.z]),
+                        ),
+                        (
+                            "effective_probability".to_string(),
+                            json!(roll.effective_probability),
+                        ),
+                    ])),
+                });
+                self.pending_lightning_strikes.push(strike_position);
+                self.pending_vfx_events.push(targeted_lightning_vfx(
+                    strike_position,
+                    roll.effective_probability,
+                ));
                 self.pending_tribulation_events
                     .push(TribulationEventV1::targeted(
                         TribulationPhaseV1::Omen,
                         Some(event.zone_name.clone()),
-                        Some([center.x, center.y, center.z]),
+                        Some([strike_position.x, strike_position.y, strike_position.z]),
                     ));
             }
 
@@ -417,6 +454,18 @@ impl ActiveEventsResource {
             return npc_spawn_budget;
         };
         let mut recent_events = Vec::new();
+
+        if !self.pending_lightning_strikes.is_empty() {
+            if let (Some(layer_entity), Some(commands)) = (layer_entity, commands.as_deref_mut()) {
+                for strike_position in std::mem::take(&mut self.pending_lightning_strikes) {
+                    spawn_lightning(commands, layer_entity, strike_position);
+                }
+            } else {
+                tracing::warn!(
+                    "[bong][world] targeted local lightning skipped this tick: missing entity layer or Commands"
+                );
+            }
+        }
 
         for event in &mut self.active_events {
             if event.is_expired() {
@@ -845,6 +894,57 @@ fn targeted_calamity_event_seed(
     hasher.finish()
 }
 
+fn targeted_calamity_strike_position(
+    zone: &Zone,
+    target_player: Option<&str>,
+    karma_weights: Option<&KarmaWeightStore>,
+) -> DVec3 {
+    if let Some(weights) = karma_weights {
+        if let Some(target_player) = target_player {
+            let target_player = target_player.trim();
+            let stripped = target_player
+                .trim_start_matches("offline:")
+                .trim_start_matches("OFFLINE:");
+            if let Some(entry) = weights
+                .entry_for_player(target_player)
+                .or_else(|| weights.entry_for_player(stripped))
+            {
+                return zone.clamp_position(DVec3::new(
+                    entry.last_position[0] as f64,
+                    entry.last_position[1] as f64,
+                    entry.last_position[2] as f64,
+                ));
+            }
+        }
+
+        if let Some(entry) = weights.strongest_entry_for_zone(zone.name.as_str()) {
+            return zone.clamp_position(DVec3::new(
+                entry.last_position[0] as f64,
+                entry.last_position[1] as f64,
+                entry.last_position[2] as f64,
+            ));
+        }
+    }
+
+    zone.center()
+}
+
+fn targeted_lightning_vfx(position: DVec3, effective_probability: f32) -> VfxEventRequest {
+    let strength = (effective_probability / TARGETED_CALAMITY_MAX_PROBABILITY).clamp(0.0, 1.0);
+    VfxEventRequest::new(
+        position,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: TARGETED_LIGHTNING_VFX_EVENT_ID.to_string(),
+            origin: [position.x, position.y, position.z],
+            direction: None,
+            color: Some(TARGETED_LIGHTNING_VFX_COLOR.to_string()),
+            strength: Some(strength),
+            count: Some(TARGETED_LIGHTNING_VFX_COUNT),
+            duration_ticks: Some(TARGETED_LIGHTNING_VFX_DURATION_TICKS),
+        },
+    )
+}
+
 fn realm_collapse_evacuation_alert_message(zone_name: &str, remaining_ticks: u64) -> String {
     format!("域崩撤离窗口已在区域 {zone_name} 开启，剩余 {remaining_ticks} tick；未撤者横死。")
 }
@@ -1149,7 +1249,7 @@ mod events_tests {
         persist_zone_collapsed_overlays, tick_active_events, ActiveEventsResource,
         ZoneCollapsedEvent, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
         EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
-        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
+        REALM_COLLAPSE_EVACUATION_WINDOW_TICKS, TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::NpcRegistry;
@@ -2005,14 +2105,57 @@ mod events_tests {
                     event.target.as_deref() == Some("targeted_negative_event")
                         && event.zone.as_deref() == Some("spawn")
                 }));
+                let lightning_marker = recent
+                    .iter()
+                    .find(|event| event.target.as_deref() == Some("targeted_local_lightning"))
+                    .expect("weighted negative event should record local lightning");
+                let lightning_position = lightning_marker
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("position"))
+                    .and_then(Value::as_array)
+                    .expect("local lightning marker should record position");
+                assert_eq!(lightning_position[0].as_f64(), Some(8.0));
+                assert_eq!(lightning_position[1].as_f64(), Some(66.0));
+                assert_eq!(lightning_position[2].as_f64(), Some(8.0));
+
+                let vfx = events.drain_vfx_events();
+                assert_eq!(vfx.len(), 1);
+                match &vfx[0].payload {
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id,
+                        origin,
+                        color,
+                        strength,
+                        count,
+                        duration_ticks,
+                        ..
+                    } => {
+                        assert_eq!(event_id, TARGETED_LIGHTNING_VFX_EVENT_ID);
+                        assert_eq!(*origin, [8.0, 66.0, 8.0]);
+                        assert_eq!(color.as_deref(), Some("#D0C8FF"));
+                        assert_eq!(*strength, Some(1.0));
+                        assert_eq!(*count, Some(3));
+                        assert_eq!(*duration_ticks, Some(14));
+                    }
+                    other => panic!("unexpected targeted lightning vfx payload: {other:?}"),
+                }
 
                 let tribulation_events = events.drain_tribulation_events();
                 assert_eq!(tribulation_events.len(), 1);
                 assert_eq!(tribulation_events[0].kind, TribulationKindV1::Targeted);
                 assert_eq!(tribulation_events[0].phase, TribulationPhaseV1::Omen);
                 assert_eq!(tribulation_events[0].zone.as_deref(), Some("spawn"));
+                assert_eq!(tribulation_events[0].epicenter, Some([8.0, 66.0, 8.0]));
             });
         }
+
+        app.update();
+        assert_eq!(
+            query_lightning_entities(app.world_mut()).len(),
+            1,
+            "targeted local lightning should spawn a concrete lightning entity on the next world tick"
+        );
     }
 
     fn unique_test_db(test_name: &str) -> std::path::PathBuf {
