@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /**
  * 全局 KeyframeAnimation 注册表。
@@ -80,6 +81,38 @@ public final class BongAnimationRegistry {
         } catch (RuntimeException exception) {
             LOGGER.warn("[bong/anim] inline animation {} parse failed: {}", id, exception.toString());
             return false;
+        }
+    }
+
+    /**
+     * 注册 inline JSON 后执行播放动作；若播放失败或抛错，恢复注册前的 inline 状态。
+     */
+    static boolean registerInlineJsonForPlayback(Identifier id, String animJson, BooleanSupplier playAction) {
+        if (playAction == null) {
+            return false;
+        }
+        boolean hadPrevious = INLINE_ANIMATIONS.containsKey(id);
+        KeyframeAnimation previous = INLINE_ANIMATIONS.get(id);
+        if (!registerInlineJson(id, animJson)) {
+            return false;
+        }
+        try {
+            if (playAction.getAsBoolean()) {
+                return true;
+            }
+            restoreInlineSnapshot(id, hadPrevious, previous);
+            return false;
+        } catch (RuntimeException exception) {
+            restoreInlineSnapshot(id, hadPrevious, previous);
+            throw exception;
+        }
+    }
+
+    private static void restoreInlineSnapshot(Identifier id, boolean hadPrevious, KeyframeAnimation previous) {
+        if (hadPrevious) {
+            INLINE_ANIMATIONS.put(id, previous);
+        } else {
+            INLINE_ANIMATIONS.remove(id);
         }
     }
 

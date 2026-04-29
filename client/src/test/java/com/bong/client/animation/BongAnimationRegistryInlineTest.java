@@ -46,6 +46,44 @@ public class BongAnimationRegistryInlineTest {
         assertEquals(8, BongAnimationRegistry.get(INLINE_ID).endTick);
     }
 
+    @Test
+    void playbackRegistrationRollsBackNewInlineOnPlaybackMiss() {
+        assertTrue(!BongAnimationRegistry.registerInlineJsonForPlayback(
+            INLINE_ID,
+            inlineJson("inline_pose", 4),
+            () -> false
+        ));
+
+        assertNull(BongAnimationRegistry.get(INLINE_ID));
+        assertEquals(BongAnimationRegistry.Source.NONE, BongAnimationRegistry.sourceOf(INLINE_ID));
+    }
+
+    @Test
+    void playbackRegistrationRestoresPreviousInlineOnPlaybackMiss() {
+        assertTrue(BongAnimationRegistry.registerInlineJson(INLINE_ID, inlineJson("inline_pose_a", 4)));
+
+        assertTrue(!BongAnimationRegistry.registerInlineJsonForPlayback(
+            INLINE_ID,
+            inlineJson("inline_pose_b", 8),
+            () -> false
+        ));
+
+        assertEquals(4, BongAnimationRegistry.get(INLINE_ID).endTick);
+        assertEquals(BongAnimationRegistry.Source.INLINE, BongAnimationRegistry.sourceOf(INLINE_ID));
+    }
+
+    @Test
+    void playbackRegistrationKeepsInlineOnPlaybackSuccess() {
+        assertTrue(BongAnimationRegistry.registerInlineJsonForPlayback(
+            INLINE_ID,
+            inlineJson("inline_pose", 4),
+            () -> true
+        ));
+
+        assertNotNull(BongAnimationRegistry.get(INLINE_ID));
+        assertEquals(4, BongAnimationRegistry.get(INLINE_ID).endTick);
+    }
+
     private static String inlineJson(String name, int endTick) {
         return "{\"version\":3,\"name\":\"" + name + "\",\"emote\":{"
             + "\"beginTick\":0,\"endTick\":" + endTick + ",\"isLoop\":false,"
