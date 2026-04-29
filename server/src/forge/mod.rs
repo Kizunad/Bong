@@ -28,7 +28,7 @@ pub mod steps;
 use std::collections::HashMap;
 
 use valence::prelude::{
-    App, EventReader, EventWriter, IntoSystemConfigs, Query, Res, ResMut, Update,
+    App, DVec3, EventReader, EventWriter, IntoSystemConfigs, Query, Res, ResMut, Update,
 };
 
 use self::blueprint::{BlueprintRegistry, StepKind, DEFAULT_BLUEPRINTS_DIR};
@@ -51,6 +51,9 @@ use crate::mineral::{build_default_registry as build_default_mineral_registry, M
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::DimensionKind;
+use crate::world::events::EVENT_REALM_COLLAPSE;
+use crate::world::zone::ZoneRegistry;
 
 type ForgeCasterSkillQueryItem<'a> = (&'a Cultivation, &'a QiColor, &'a SkillSet);
 
@@ -280,6 +283,8 @@ fn handle_scroll_submits(
 fn handle_consecration_injects(
     mut ev: EventReader<ConsecrationInject>,
     mut sessions: ResMut<ForgeSessions>,
+    stations: Query<&WeaponForgeStation>,
+    zone_registry: Option<Res<ZoneRegistry>>,
 ) {
     for inject in ev.read() {
         let Some(session) = sessions.get_mut(inject.session) else {
@@ -288,10 +293,41 @@ fn handle_consecration_injects(
         if session.current_step != ForgeStep::Consecration {
             continue;
         }
+        if stations
+            .get(session.station)
+            .ok()
+            .is_some_and(|station| station_zone_is_collapsed(station, zone_registry.as_deref()))
+        {
+            tracing::debug!(
+                "[bong][forge] consecration inject ignored: station={:?} is in collapsed zone",
+                session.station
+            );
+            continue;
+        }
         if let StepState::Consecration(state) = &mut session.step_state {
             inject_qi(state, inject.qi_amount);
         }
     }
+}
+
+fn station_zone_is_collapsed(
+    station: &WeaponForgeStation,
+    zone_registry: Option<&ZoneRegistry>,
+) -> bool {
+    let Some(zone_registry) = zone_registry else {
+        return false;
+    };
+    let Some((x, y, z)) = station.pos else {
+        return false;
+    };
+    let station_pos = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
+    zone_registry
+        .find_zone(DimensionKind::Overworld, station_pos)
+        .is_some_and(|zone| {
+            zone.active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE)
+        })
 }
 
 /// StepAdvance 统一收束：根据当前 step 结果推进，若到 Done → 派发 outcome。
@@ -629,6 +665,9 @@ fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f
 mod tests {
     use super::*;
     use crate::forge::blueprint::{BilletProfile, BilletTolerance, CarrierSpec, MaterialStack};
+    use crate::forge::session::ForgeSessionId;
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::{App, BlockPos, Update};
 
     #[test]
     fn runtime_required_material_accepts_forge_metal() {
@@ -664,5 +703,55 @@ mod tests {
             invalid_required_forge_material(&profile, &minerals),
             Some(("dan_sha", "is not a forge metal"))
         );
+    }
+
+    #[test]
+    fn collapsed_zone_blocks_consecration_qi_injection() {
+        let mut app = App::new();
+        app.add_event::<ConsecrationInject>();
+        app.add_systems(Update, handle_consecration_injects);
+
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+        let session_id = ForgeSessionId(7);
+        let mut sessions = ForgeSessions::new();
+        let mut session = ForgeSession::new(
+            session_id,
+            "qing_feng_v0".to_string(),
+            station,
+            valence::prelude::Entity::PLACEHOLDER,
+        );
+        session.current_step = ForgeStep::Consecration;
+        session.step_state = StepState::Consecration(Default::default());
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: 5.0,
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions.get(session_id).unwrap();
+        match &session.step_state {
+            StepState::Consecration(state) => assert_eq!(state.qi_injected, 0.0),
+            other => panic!("expected consecration state, got {other:?}"),
+        }
+        assert!(app.world().entity(station).contains::<WeaponForgeStation>());
     }
 }
