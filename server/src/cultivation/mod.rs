@@ -94,10 +94,10 @@ use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, start_du_xu_request_system, start_tribulation_system,
-    tribulation_aoe_system, tribulation_failure_system, tribulation_intercept_death_system,
-    tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOpened,
-    InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce, TribulationFailed,
-    TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
+    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
+    tribulation_intercept_death_system, tribulation_phase_tick_system, tribulation_wave_system,
+    AscensionQuotaOpened, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
@@ -188,7 +188,8 @@ pub fn register(app: &mut App) {
             abort_du_xu_on_client_removed
                 .after(tribulation_failure_system)
                 .before(crate::player::despawn_disconnected_clients),
-            tribulation_wave_system.after(tribulation_failure_system),
+            tribulation_escape_boundary_system.after(abort_du_xu_on_client_removed),
+            tribulation_wave_system.after(tribulation_escape_boundary_system),
             tribulation_intercept_death_system
                 .after(crate::combat::lifecycle::death_arbiter_tick)
                 .before(crate::inventory::apply_death_drop_on_revive),
