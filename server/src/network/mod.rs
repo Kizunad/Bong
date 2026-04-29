@@ -82,11 +82,13 @@ use crate::schema::cultivation::{
     SkillMilestoneSnapshotV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::social::{PlayerSocialSnapshotV1, RelationshipSnapshotV1, RenownSnapshotV1};
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
     NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
 };
 use crate::skill::components::SkillId;
+use crate::social::components::{Anonymity, Relationships, Renown};
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -474,6 +476,9 @@ fn publish_world_state_to_redis(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
         ),
         With<Client>,
     >,
@@ -570,6 +575,9 @@ fn build_world_state_snapshot(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
         ),
         With<Client>,
     >,
@@ -594,7 +602,7 @@ fn build_world_state_snapshot(
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) =
-        collect_player_snapshots(clients, &zone_registry, cultivation_by_entity);
+        collect_player_snapshots(tick, clients, &zone_registry, cultivation_by_entity);
 
     WorldStateV1 {
         v: 1,
@@ -746,6 +754,7 @@ fn effective_zone_registry(zone_registry: Option<&ZoneRegistry>) -> ZoneRegistry
 
 #[allow(clippy::type_complexity)]
 fn collect_player_snapshots(
+    tick: u64,
     clients: &Query<
         (
             Entity,
@@ -753,6 +762,9 @@ fn collect_player_snapshots(
             &Username,
             Option<&PlayerState>,
             Option<&Cultivation>,
+            Option<&Anonymity>,
+            Option<&Renown>,
+            Option<&Relationships>,
         ),
         With<Client>,
     >,
@@ -768,81 +780,134 @@ fn collect_player_snapshots(
 
     let mut players = clients
         .iter()
-        .map(|(entity, position, username, player_state, cultivation)| {
-            let name = username.0.clone();
-            let zone_name = zone_name_for_position(zone_registry, position.get());
-            let canonical_id = canonical_player_id(&name);
-            let state = player_state.cloned().unwrap_or_default();
-
-            // For player list summary, prefer live Cultivation on the entity when
-            // available (tests attach it directly). Fall back to periodic
-            // cultivation snapshots, then to defaults.
-
-            // Player list summary uses the best cultivation snapshot we have at
-            // the time of building WorldState. Fall back to default cultivation.
-            let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
-                (
-                    realm_to_string(cultivation.realm).to_string(),
-                    state.composite_power(cultivation),
-                    state.power_breakdown(cultivation),
-                )
-            } else {
-                cultivation_by_entity
-                    .get(&entity)
-                    .map(|(cultivation_snapshot, _)| {
-                        let cultivation = Cultivation {
-                            realm: realm_from_string(cultivation_snapshot.realm.as_str()),
-                            qi_current: cultivation_snapshot.qi_current,
-                            qi_max: cultivation_snapshot.qi_max,
-                            ..Cultivation::default()
-                        };
-                        (
-                            cultivation_snapshot.realm.clone(),
-                            state.composite_power(&cultivation),
-                            state.power_breakdown(&cultivation),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        let cultivation = Cultivation::default();
-                        (
-                            realm_to_string(cultivation.realm).to_string(),
-                            state.composite_power(&cultivation),
-                            state.power_breakdown(&cultivation),
-                        )
-                    })
-            };
-
-            player_ids_by_entity.insert(entity, canonical_id.clone());
-            *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
-
-            let (cultivation, life_record) = cultivation_by_entity
-                .get(&entity)
-                .cloned()
-                .map(|(c, l)| (Some(c), Some(l)))
-                .unwrap_or((None, None));
-
-            PlayerProfile {
-                uuid: canonical_id,
-                name,
-                realm,
-                composite_power,
-                breakdown,
-                trend: PlayerTrend::Stable,
-                active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
-                zone: zone_name,
-                pos: vec3_to_array(position.get()),
-                recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
-                recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+        .map(
+            |(
+                entity,
+                position,
+                username,
+                player_state,
                 cultivation,
-                life_record,
-                social: None,
-            }
-        })
+                anonymity,
+                renown,
+                relationships,
+            )| {
+                let name = username.0.clone();
+                let zone_name = zone_name_for_position(zone_registry, position.get());
+                let canonical_id = canonical_player_id(&name);
+                let state = player_state.cloned().unwrap_or_default();
+
+                // For player list summary, prefer live Cultivation on the entity when
+                // available (tests attach it directly). Fall back to periodic
+                // cultivation snapshots, then to defaults.
+
+                // Player list summary uses the best cultivation snapshot we have at
+                // the time of building WorldState. Fall back to default cultivation.
+                let (realm, composite_power, breakdown) = if let Some(cultivation) = cultivation {
+                    (
+                        realm_to_string(cultivation.realm).to_string(),
+                        state.composite_power(cultivation),
+                        state.power_breakdown(cultivation),
+                    )
+                } else {
+                    cultivation_by_entity
+                        .get(&entity)
+                        .map(|(cultivation_snapshot, _)| {
+                            let cultivation = Cultivation {
+                                realm: realm_from_string(cultivation_snapshot.realm.as_str()),
+                                qi_current: cultivation_snapshot.qi_current,
+                                qi_max: cultivation_snapshot.qi_max,
+                                ..Cultivation::default()
+                            };
+                            (
+                                cultivation_snapshot.realm.clone(),
+                                state.composite_power(&cultivation),
+                                state.power_breakdown(&cultivation),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            let cultivation = Cultivation::default();
+                            (
+                                realm_to_string(cultivation.realm).to_string(),
+                                state.composite_power(&cultivation),
+                                state.power_breakdown(&cultivation),
+                            )
+                        })
+                };
+
+                player_ids_by_entity.insert(entity, canonical_id.clone());
+                *player_counts_by_zone.entry(zone_name.clone()).or_default() += 1;
+
+                let (cultivation, life_record) = cultivation_by_entity
+                    .get(&entity)
+                    .cloned()
+                    .map(|(c, l)| (Some(c), Some(l)))
+                    .unwrap_or((None, None));
+
+                PlayerProfile {
+                    uuid: canonical_id,
+                    name,
+                    realm,
+                    composite_power,
+                    breakdown,
+                    trend: PlayerTrend::Stable,
+                    active_hours: DEFAULT_PLAYER_ACTIVE_HOURS,
+                    zone: zone_name,
+                    pos: vec3_to_array(position.get()),
+                    recent_kills: DEFAULT_PLAYER_RECENT_KILLS,
+                    recent_deaths: DEFAULT_PLAYER_RECENT_DEATHS,
+                    cultivation,
+                    life_record,
+                    social: build_player_social_snapshot(tick, anonymity, renown, relationships),
+                }
+            },
+        )
         .collect::<Vec<_>>();
 
     players.sort_by(|left, right| left.uuid.cmp(&right.uuid));
 
     (players, player_ids_by_entity, player_counts_by_zone)
+}
+
+fn build_player_social_snapshot(
+    tick: u64,
+    anonymity: Option<&Anonymity>,
+    renown: Option<&Renown>,
+    relationships: Option<&Relationships>,
+) -> Option<PlayerSocialSnapshotV1> {
+    if anonymity.is_none() && renown.is_none() && relationships.is_none() {
+        return None;
+    }
+
+    let renown = renown
+        .map(|renown| RenownSnapshotV1 {
+            fame: renown.fame,
+            notoriety: renown.notoriety,
+            top_tags: renown.top_tags(tick, 5),
+        })
+        .unwrap_or_default();
+    let relationships = relationships
+        .map(|relationships| {
+            relationships
+                .edges
+                .iter()
+                .map(|relationship| RelationshipSnapshotV1 {
+                    kind: relationship.kind,
+                    peer: relationship.peer.clone(),
+                    since_tick: relationship.since_tick,
+                    metadata: relationship.metadata.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let exposed_to_count = anonymity
+        .map(|anonymity| anonymity.exposed_to.len().min(u32::MAX as usize) as u32)
+        .unwrap_or_default();
+
+    Some(PlayerSocialSnapshotV1 {
+        renown,
+        relationships,
+        exposed_to_count,
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -2100,6 +2165,8 @@ mod tests {
         };
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
         use crate::player::state::PlayerState;
+        use crate::schema::social::{RelationshipKindV1, RenownTagV1};
+        use crate::social::components::{Anonymity, Relationship, Relationships, Renown};
 
         fn setup_publish_app(with_zone_registry: bool) -> (App, Receiver<RedisOutbound>) {
             let (tx_outbound, rx_outbound) = unbounded();
@@ -2279,6 +2346,63 @@ mod tests {
                 player.breakdown.combat > 0.0,
                 "attached PlayerState should replace placeholder power breakdown"
             );
+        }
+
+        #[test]
+        fn publishes_attached_social_snapshot_when_present() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            let player_entity = spawn_test_client(&mut app, "Azure", [8.0, 66.0, 8.0]);
+
+            app.world_mut().entity_mut(player_entity).insert((
+                Anonymity {
+                    displayed_name: None,
+                    exposed_to: ["char:bob".to_string(), "char:chen".to_string()]
+                        .into_iter()
+                        .collect(),
+                },
+                Renown {
+                    fame: 12,
+                    notoriety: 7,
+                    tags: (0..6)
+                        .map(|index| RenownTagV1 {
+                            tag: format!("tag:{index}"),
+                            weight: index as f64,
+                            last_seen_tick: WORLD_STATE_PUBLISH_INTERVAL_TICKS,
+                            permanent: false,
+                        })
+                        .collect(),
+                },
+                Relationships {
+                    edges: vec![Relationship {
+                        kind: RelationshipKindV1::Feud,
+                        peer: "char:rival".to_string(),
+                        since_tick: 17,
+                        metadata: serde_json::json!({ "place": "spawn" }),
+                    }],
+                },
+            ));
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let player = state
+                .players
+                .iter()
+                .find(|player| player.name == "Azure")
+                .expect("Azure should be present in the world snapshot");
+            let social = player
+                .social
+                .as_ref()
+                .expect("attached social components should publish a social snapshot");
+
+            assert_eq!(social.exposed_to_count, 2);
+            assert_eq!(social.renown.fame, 12);
+            assert_eq!(social.renown.notoriety, 7);
+            assert_eq!(social.renown.top_tags.len(), 5);
+            assert_eq!(social.renown.top_tags[0].tag, "tag:5");
+            assert_eq!(social.relationships.len(), 1);
+            assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
+            assert_eq!(social.relationships[0].peer, "char:rival");
+            assert_eq!(social.relationships[0].since_tick, 17);
+            assert_eq!(social.relationships[0].metadata["place"], "spawn");
         }
 
         #[test]
