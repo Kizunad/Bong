@@ -17,8 +17,8 @@ use std::collections::HashMap;
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, BlockState, ChunkLayer, Commands, Entity, EventReader, EventWriter, Query, Res,
-    ResMut, Resource, With,
+    bevy_ecs, BlockState, ChunkLayer, Commands, DVec3, Entity, EventReader, EventWriter, Query,
+    Res, ResMut, Resource, With,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
@@ -47,6 +47,8 @@ use super::session::{
     REPLENISH_COOLDOWN_LINGTIAN_TICKS,
 };
 use super::terrain::classify_for_till;
+use crate::world::events::EVENT_REALM_COLLAPSE;
+use crate::world::zone::ZoneRegistry;
 
 const LING_SHUI_ITEM_ID: &str = "ling_shui";
 const BEAST_CORE_ITEM_ID: &str = "mutant_beast_core";
@@ -1124,21 +1126,24 @@ pub fn cancel_player_session(
 /// 推进 growth + plot_qi + zone qi。
 ///
 /// zone 解析当前简化为 `DEFAULT_ZONE`（plan §1.3 注释：world::zone 真挂接
-/// 留 P3+，与 plan-zhenfa-v1 / WorldQiAccount 整合）。
+/// 留 P3+，与 plan-zhenfa-v1 / WorldQiAccount 整合）；若当前 world zone 已域崩，
+/// 仅阻断灵田自身灵气功能，不移除 plot 实体。
 pub fn lingtian_growth_tick(
     mut accumulator: ResMut<LingtianTickAccumulator>,
     mut clock: ResMut<LingtianClock>,
     mut zone_qi: ResMut<ZoneQiAccount>,
     registry: Res<PlantKindRegistry>,
     mut plots: Query<&mut LingtianPlot>,
+    zone_registry: Option<Res<ZoneRegistry>>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
 ) {
     if !accumulator.step() {
         return;
     }
     clock.lingtian_tick = clock.lingtian_tick.saturating_add(1);
+    let zone_registry = zone_registry.as_deref();
     for mut plot in plots.iter_mut() {
-        advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+        advance_plot_one_lingtian_tick_in_zone(&mut plot, &registry, &mut zone_qi, zone_registry);
     }
     // plan §1.5 — 作物成熟在 plot 顶部放 HayBlock 作"熟"标记，空 / 未熟时 Air。
     if let Ok(mut layer) = layers.get_single_mut() {
@@ -1238,6 +1243,20 @@ pub fn advance_plot_one_lingtian_tick(
     registry: &PlantKindRegistry,
     zone_qi: &mut ZoneQiAccount,
 ) {
+    advance_plot_one_lingtian_tick_in_zone(plot, registry, zone_qi, None);
+}
+
+fn advance_plot_one_lingtian_tick_in_zone(
+    plot: &mut LingtianPlot,
+    registry: &PlantKindRegistry,
+    zone_qi: &mut ZoneQiAccount,
+    zone_registry: Option<&ZoneRegistry>,
+) {
+    if plot_zone_is_collapsed(plot, zone_registry) {
+        plot.plot_qi = 0.0;
+        return;
+    }
+
     let kind_id = match plot.crop.as_ref().map(|c| c.kind.clone()) {
         Some(id) => id,
         None => return,
@@ -1254,6 +1273,24 @@ pub fn advance_plot_one_lingtian_tick(
     advance_one_lingtian_tick(plot, kind, zone_qi_ref);
 }
 
+fn plot_zone_is_collapsed(plot: &LingtianPlot, zone_registry: Option<&ZoneRegistry>) -> bool {
+    let Some(zone_registry) = zone_registry else {
+        return false;
+    };
+    let plot_pos = DVec3::new(
+        plot.pos.x as f64 + 0.5,
+        plot.pos.y as f64,
+        plot.pos.z as f64 + 0.5,
+    );
+    zone_registry
+        .find_zone(crate::world::dimension::DimensionKind::Overworld, plot_pos)
+        .is_some_and(|zone| {
+            zone.active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE)
+        })
+}
+
 // ============================================================================
 // 端到端集成测试
 // ============================================================================
@@ -1263,7 +1300,7 @@ mod tests {
     use super::*;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
     use std::collections::HashMap;
-    use valence::prelude::{App, BlockPos, IntoSystemConfigs, Update};
+    use valence::prelude::{App, BlockPos, DVec3, IntoSystemConfigs, Update};
 
     use super::super::events::{
         RenewCompleted, StartRenewRequest, StartTillRequest, TillCompleted,
@@ -1658,6 +1695,23 @@ mod tests {
         app
     }
 
+    fn build_collapsed_growth_app(zone_qi: f32) -> App {
+        let mut app = build_growth_app(zone_qi);
+        app.insert_resource(ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: "collapsed_test".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(-16.0, 0.0, -16.0), DVec3::new(16.0, 256.0, 16.0)),
+                spirit_qi: 0.0,
+                danger_level: 5,
+                active_events: vec![EVENT_REALM_COLLAPSE.to_string()],
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        });
+        app
+    }
+
     fn spawn_planted_plot(app: &mut App, plot_qi: f32) -> Entity {
         let mut p = LingtianPlot::new(BlockPos::new(0, 64, 0), None);
         p.plot_qi = plot_qi;
@@ -1692,9 +1746,15 @@ mod tests {
             let world = app.world_mut();
             let mut zone_qi = world.remove_resource::<ZoneQiAccount>().unwrap();
             let registry = world.remove_resource::<PlantKindRegistry>().unwrap();
+            let zone_registry = world.get_resource::<ZoneRegistry>().cloned();
             let mut state = world.query::<&mut LingtianPlot>();
             for mut plot in state.iter_mut(world) {
-                advance_plot_one_lingtian_tick(&mut plot, &registry, &mut zone_qi);
+                advance_plot_one_lingtian_tick_in_zone(
+                    &mut plot,
+                    &registry,
+                    &mut zone_qi,
+                    zone_registry.as_ref(),
+                );
             }
             world.insert_resource(zone_qi);
             world.insert_resource(registry);
@@ -1732,6 +1792,22 @@ mod tests {
         assert!(
             (zone_left - (2.0 - zone_consumed)).abs() < 1e-5,
             "zone_left = {zone_left}"
+        );
+    }
+
+    #[test]
+    fn collapsed_zone_clears_plot_qi_and_stops_growth() {
+        let mut app = build_collapsed_growth_app(2.0);
+        let plot = spawn_planted_plot(&mut app, 1.0);
+
+        advance_n_lingtian_ticks_direct(&mut app, 1);
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+
+        assert_eq!(p.plot_qi, 0.0);
+        assert_eq!(p.crop.as_ref().unwrap().growth, 0.0);
+        assert_eq!(
+            app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE),
+            2.0
         );
     }
 
