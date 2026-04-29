@@ -313,3 +313,67 @@ cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build
 - 本 plan 是 v1 的补完，不要求修改 `docs/plan-weapon-v1.md`。
 - 若实际执行中发现 inventory persistence 需要大范围重构，停止并把 Task 4 拆成独立 `plan-inventory-persistence-v1.md`，不要在 v1.1 中扩大范围。
 - 若决定改回独立 `bong:combat/*` 物理 channel，必须同步改 server emit、client register、schema、测试和 Evidence；不能只改注释。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- Task 1 Schema 单一来源：`agent/packages/schema/src/server-data.ts`、`agent/packages/schema/src/schema-registry.ts`、`agent/packages/schema/generated/server-data-v1.json`、`agent/packages/schema/generated/server-data-weapon-equipped-v1.json`、`agent/packages/schema/generated/server-data-weapon-broken-v1.json`、`agent/packages/schema/generated/server-data-treasure-equipped-v1.json`、`agent/packages/schema/samples/server-data.weapon-equipped.sample.json`、`agent/packages/schema/samples/server-data.weapon-equipped-empty.sample.json`、`agent/packages/schema/samples/server-data.weapon-broken.sample.json`、`agent/packages/schema/samples/server-data.treasure-equipped.sample.json`。
+- Task 2 Channel 契约：`server/src/network/weapon_equipped_emit.rs`、`server/src/network/treasure_equipped_emit.rs`、`server/src/network/agent_bridge.rs`，物理 channel 固定为 `bong:server_data`，通过 JSON `type` 分发 `weapon_equipped` / `weapon_broken` / `treasure_equipped`。
+- Task 3 铁剑伤害验收：`server/assets/items/weapons.toml`、`server/src/combat/weapon.rs`、`server/src/combat/resolve.rs`，`iron_sword.base_attack=12.0`，专名测试覆盖满耐久铁剑对赤手倍率。
+- Task 4 装备持久化：`server/src/player/state.rs`，覆盖装备到 `main_hand`、卸回背包、破损后 `durability=0.0` 三类 SQLite player slice 保存/加载闭环。
+- Task 5 资源路径契约：`client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java`、`client/src/main/java/com/bong/client/weapon/WeaponRenderBootstrap.java`、`client/src/test/java/com/bong/client/weapon/BongWeaponModelRegistryTest.java`，七把 v1 武器 registry、host JSON、OBJ、MTL、贴图目录均有测试。
+- Task 6 视觉验收证据：`client/src/test/java/com/bong/client/weapon/WeaponVisualEvidenceHarnessTest.java`、`client/src/test/java/com/bong/client/network/WeaponBrokenHandlerTest.java`，覆盖 armed / unarmed / broken notification 三场景。
+- Task 7 Evidence 汇总：`.sisyphus/evidence/weapon-v1.1/summary.txt`、`.sisyphus/evidence/weapon-v1.1/task-7-final-matrix.log`。
+
+### 关键 commit
+
+- `ac9ebb3a`（2026-04-28）`docs(plan): 新增 weapon-v1.1 补完计划`
+- `8d22922f`（2026-04-28）`feat(schema): 补齐武器装备推送契约`
+- `5640a63b`（2026-04-28）`test(server): 固化武器推送 channel 契约`
+- `f0e658ac`（2026-04-28）`fix(server): 提升铁剑伤害验收倍率`
+- `c91177c4`（2026-04-28）`test(server): 固化武器装备持久化`
+- `3cac6240`（2026-04-28）`test(client): 固化武器资源路径契约`
+- `c6823544`（2026-04-28）`test(client): 补齐武器视觉验收证据`
+- `57004062`（2026-04-28）`test: 汇总 weapon-v1.1 验证证据`
+- 合并 PR：`a0ed60fe`（2026-04-27）`Merge pull request #69 from Kizunad/auto/plan-weapon-v1.1`
+
+### 测试结果
+
+- `cd agent/packages/schema && npm test && npm run check && npm run generate`：PASS；`7` 个 test files、`175` tests passed，`154` schemas exported。
+- `cd server && cargo fmt --check && cargo test`：PASS；`1567` tests passed。
+- `cd server && cargo clippy --all-targets -- -D warnings`：PASS；无 weapon-v1.1 clippy 例外。
+- `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" ./gradlew test build`：PASS；`BUILD SUCCESSFUL`。
+- 专项命令与原始输出见 `.sisyphus/evidence/weapon-v1.1/task-1-schema.log`、`task-2-channel.log`、`task-3-iron-sword-damage.log`、`task-4-persistence.log`、`task-5-resources.log`、`task-6-visual.log`、`task-7-final-matrix.log`。
+
+### 跨仓库核验
+
+- server symbols：`ServerDataPayloadWireV1::WeaponEquipped`、`ServerDataPayloadWireV1::WeaponBroken`、`ServerDataPayloadWireV1::TreasureEquipped`、`emit_weapon_equipped_payloads`、`emit_weapon_broken_payloads`、`emit_treasure_equipped_payloads`、`iron_sword_increases_damage_by_at_least_20_percent_vs_unarmed`。
+- agent symbols：`WeaponEquippedV1`、`WeaponBrokenV1`、`TreasureEquippedV1`、`ServerDataWeaponEquippedV1`、`ServerDataWeaponBrokenV1`、`ServerDataTreasureEquippedV1`、`SCHEMA_REGISTRY.serverDataWeaponEquippedV1`。
+- client symbols：`ServerDataRouterTest`、`WeaponBrokenHandlerTest`、`BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS`、`BongWeaponModelRegistryTest`、`WeaponVisualEvidenceHarnessTest`。
+
+### Evidence artifacts
+
+- `.sisyphus/evidence/weapon-v1.1/task-1-schema.log`
+- `.sisyphus/evidence/weapon-v1.1/task-1-schema-grep.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-2-channel.log`
+- `.sisyphus/evidence/weapon-v1.1/task-2-payload.json`
+- `.sisyphus/evidence/weapon-v1.1/task-3-iron-sword-damage.log`
+- `.sisyphus/evidence/weapon-v1.1/task-3-damage-numbers.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-4-persistence.log`
+- `.sisyphus/evidence/weapon-v1.1/task-4-persisted-snapshot.json`
+- `.sisyphus/evidence/weapon-v1.1/task-5-resources.log`
+- `.sisyphus/evidence/weapon-v1.1/task-5-resource-manifest.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-6-visual.log`
+- `.sisyphus/evidence/weapon-v1.1/task-6-armed.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-6-unarmed.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-6-broken-notice.txt`
+- `.sisyphus/evidence/weapon-v1.1/task-7-final-matrix.log`
+- `.sisyphus/evidence/weapon-v1.1/summary.txt`
+
+### 遗留 / 后续
+
+- Treasure 展开 Entity、Bow 远程弹药、武器技能不在本 plan 范围，继续留给后续专项。
+- `rusted_blade` 仍作为 legacy registry entry 保留，不计入 v1 七把武器验收。
