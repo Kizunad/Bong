@@ -15,9 +15,9 @@
 **触发模型**：本 plan 不接 PR-触发 CI；它把 anvil 文件作为 `worldgen-preview.yml` artifact 的一部分产出，由 `plan-worldgen-snapshot-v1` 的 server start step 消费。
 
 **阶段总览**：
-- P0 ⬜ 单 chunk anvil 写入 + round-trip 单测
-- P1 ⬜ pipeline 集成：`anvil` backend 把全 raster 转 region 文件
-- P2 ⬜ CI 接入 + 验证 PR #78（plan-worldgen-snapshot-v1）5 角度全过 validator
+- P0 ✅ 2026-04-30 单 chunk anvil 写入 + 23 round-trip 单测
+- P1 ✅ 2026-04-30 region writer + export driver + pipeline.sh anvil 后端
+- P2 ✅ 2026-04-30 CI 接入 BONG_WORLD_PATH（PR #78 rebase 验证留 PR #78 自己跑）
 
 ---
 
@@ -190,3 +190,70 @@
 ## §7 进度日志
 
 - **2026-04-30**：骨架立项 — 承接 plan-worldgen-snapshot-v1 PR #78 实测发现 server fallback flat world 16×16 chunks (±128 blocks) 太小，iso 角度传送到 ±400 blocks 看到纯虚空。两轮 CI 修复（chunk-ready barrier + 30s blind settle）都没解决，因为根因不是 timing 而是 chunks 不存在。本 plan 提供 raster→anvil 路径让 CI 跑出真实地形给 server 加载，PR #78 rebase 后即可绿。
+
+---
+
+## Finish Evidence (2026-04-30)
+
+### 落地清单
+
+**P0 — 单 chunk anvil 写入**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §1.1 | `worldgen/scripts/terrain_gen/anvil_export.py` — `chunk_to_nbt(chunk_x, chunk_z, heights, ...)` 纯 stdlib（struct + zlib + io）NBT 编码；DataVersion=3465 钉死 | `8d4419aa` |
+| §1.1 | 内部：`_bits_per_index` / `_pack_indexes_into_longs` / `_encode_heightmap` / `_section_block_palette_and_data` | 同上 |
+| §1.1 | `chunk_to_nbt_compressed` 包 zlib，region writer 直接消费 | 同上 |
+| §1.3 | `worldgen/scripts/terrain_gen/test_anvil_export.py` — 23 个单测 | 同上 |
+
+**P1 — pipeline 集成**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §2.1 | `worldgen/scripts/terrain_gen/anvil_region_writer.py` — `write_region` / `write_empty_region` / `region_for_chunk` / `chunk_index_in_region` / `region_file_name` | `0ddb969a` |
+| §2.2 | `worldgen/scripts/terrain_gen/anvil_world_export.py` — `export_anvil_world(output_dir, chunk_*_min/max, height_fn, ...)` + `rolling_hills_height_fn` synthetic（**plan §4 偏离**：原计划 exporters.py，实测 exporters.py 相对 import 链让裸模块加载失败，改独立模块） | 同上 |
+| §2.3 | `worldgen/pipeline.sh` `BACKEND=anvil` 分支：raster + 内联 python 调 export_anvil_world，输出 `<OUTPUT>/world/region/r.*.mca` | 同上 |
+| §2.4 | `worldgen/scripts/terrain_gen/test_anvil_region_writer.py` — 16 个单测（IndexHelpers 4 / WriteRegion 7 / ExportAnvilWorld 4 + extra） | 同上 |
+
+**P2 — CI 接入**
+
+| § | 文件 / 模块 | commit |
+|---|---|---|
+| §3.1 | `.github/workflows/worldgen-preview.yml` 改 `bash pipeline.sh ... anvil`（替代 raster），server start step 加 `env: BONG_WORLD_PATH: …/worldgen/generated/snapshot/world` | 本提交 |
+| §3.1 | 新 step `Unit tests — anvil_export + anvil_region_writer` 早跑 39 单测 | 同上 |
+
+**plan-worldgen-snapshot-v1 (PR #78) rebase**：本 plan PR merge 后，到 #78 worktree 跑 `git fetch && git rebase origin/main && git push --force-with-lease`，CI 重跑应 5 张全过 validator。该动作由人工或后续 /consume-plan 续做（不在本 plan PR 内）。
+
+### 关键 commit (本 PR)
+
+```
+8d4419aa  2026-04-30  feat(worldgen/anvil): 单 chunk anvil NBT 编码 chunk_to_nbt（P0）
+0ddb969a  2026-04-30  feat(worldgen/anvil): region writer + export driver + pipeline.sh anvil 后端（P1）
+[pending]  2026-04-30  feat(ci/preview): worldgen-preview.yml 接入 anvil + BONG_WORLD_PATH（P2）
+```
+
+### 测试结果
+
+- **anvil_export 单测**：`cd worldgen/scripts/terrain_gen && python3 -m unittest test_anvil_export -v` → **23 passed**
+  - ChunkRoundTripTests 9 / EmptySectionTests 1 / InvalidInputTests 7 / CompressedOutputTests 2 / BitsPerIndexTests 4
+- **anvil_region_writer 单测**：`python3 -m unittest test_anvil_region_writer -v` → **16 passed**
+  - IndexHelpersTests 4 / WriteRegionTests 7 / ExportAnvilWorldTests 4 + 1 extra
+- **直接 anvil 端到端 smoke**（无 raster pre-step）：±25 chunks (51×51 = 2601) → 4 region 文件 (r.0.0/r.0.-1/r.-1.0/r.-1.-1) / 11MB / 19.6s
+- **Server / client / agent 测试**：本 plan 不动 server/client/agent 代码，无需重跑
+
+### 跨仓库核验
+
+- **worldgen**: `worldgen.scripts.terrain_gen.anvil_export.{chunk_to_nbt, chunk_to_nbt_compressed, DATA_VERSION}` + `anvil_region_writer.{write_region, region_for_chunk, chunk_index_in_region}` + `anvil_world_export.{export_anvil_world, rolling_hills_height_fn}`
+- **CI**: `.github/workflows/worldgen-preview.yml` 加 `Unit tests — anvil_export + anvil_region_writer` step + `Run worldgen pipeline` 改 anvil + Server start step 加 `BONG_WORLD_PATH` env
+- **server**: 0 改动 — 既有 `configured_world_path() → BONG_WORLD_PATH` env 路径直接消费 anvil 文件
+
+### 遗留 / 后续
+
+- **真 raster reader 接入**：当前 `rolling_hills_height_fn` 是合成高度，没读 worldgen pipeline 的 raster height layer。后续小 plan：写 `RasterHeightReader` adapter 替换 height_fn body（接口已锁定，签名不变）。读后才能在 iso 视角看到真实 zone 地形（青云峰 / 血谷等），不只 sin 波起伏
+- **biome 来源**：当前所有 chunks 单一 plains biome（`_write_biomes` hardcode）。raster reader plan 同时接入 biome layer
+- **surface block 决策**：默认 grass+stone+bedrock。`worldview_color_palette.json` 接入需 worldview 沟通，留 future plan
+- **chunks 范围**：目前 hardcode ±25 chunks (±400 blocks)。不同 plan 可能要不同范围 — 若 PR #78 5×N 按 zone 抽样需要更大覆盖，pipeline.sh 加 `--chunks-radius` 参数
+- **anvil 单 chunk 性能**：当前 ~7.5ms / chunk 单线程。2601 chunks 19.6s。若要扩到 ±50 chunks (10000 chunks) 需要并发 — `multiprocessing.Pool` 即可
+- **DataVersion 升 MC 版本**：`DATA_VERSION=3465` 钉死 1.20.1。升到 1.20.4 (DataVersion=3700) 需同改测试 + 验 NBT 兼容
+- **plan §4 数据契约偏离**：`export_anvil_world` 实际落到 `anvil_world_export.py` 而非 `exporters.py`（exporters.py 的相对 import 阻碍裸模块加载）。Finish Evidence 已记录
+- **PR #78 rebase 验证**：本 plan PR merge 后 PR #78 rebase + CI 重跑应 5 张全过 validator。人工/后续 consume-plan 续做

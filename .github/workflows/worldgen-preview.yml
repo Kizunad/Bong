@@ -57,14 +57,25 @@ jobs:
       - name: Install Python deps (worldgen + compose_grid)
         run: pip install numpy pillow
 
-      - name: Run worldgen pipeline (raster + PNG previews)
-        # focus-{layout,surface,height}-preview.png + zone-*-preview.png
-        # 这些是 matplotlib 无关的纯 stdlib + numpy 出图（exporters.py 用 zlib
-        # 手写 PNG），看到的是大尺度 raster 顶视，跟 client 截图互补：
-        # - raster PNG 看几千 blocks 整张图（worldgen 全貌、山脉、zone 布局）
-        # - client 截图看 spawn 周围 ~512 blocks 的真游戏画面
+      - name: Unit tests — anvil_export + anvil_region_writer
+        # plan-worldgen-anvil-export-v1 §1.4 + §2.4: 39 个饱和单测
+        # 在 pipeline 跑前早跑，编码 / region 文件格式 bug 立即撞红
+        working-directory: worldgen/scripts/terrain_gen
+        run: |
+          python3 -m unittest test_anvil_export -v
+          python3 -m unittest test_anvil_region_writer -v
+
+      - name: Run worldgen pipeline (raster + PNG previews + anvil world)
+        # plan-worldgen-anvil-export-v1 §3.1：BACKEND=anvil 先跑 raster (PR #78
+        # snapshot artifact 仍消费 PNG previews) 再跑 anvil_world_export 写
+        # generated/snapshot/world/region/r.*.mca。server 启动设
+        # BONG_WORLD_PATH=...generated/snapshot/world 走 AnvilIfPresent path,
+        # iso ±400 视角拍到真实 (synthetic rolling hills) 起伏地形而不是 fallback
+        # flat world 的 16×16 chunk 边界外纯虚空。
+        #
+        # focus-{layout,surface,height}-preview.png + zone-*-preview.png 仍正常产出。
         working-directory: worldgen
-        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot raster
+        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil
 
       - name: Cache Rust target
         uses: actions/cache@v4
@@ -98,8 +109,15 @@ jobs:
         # BONG_PREVIEW_MODE=1 激活 preview module 的 !preview-tp 命令处理 +
         # ViewDistance(32) boost；不设的话 client 发命令 server 解析后 event
         # 不会被消费，5 角度都拍到 spawn 同一位置（fallback 行为）。
+        #
+        # BONG_WORLD_PATH 指 anvil_world_export 产出的 world dir
+        # （plan-worldgen-anvil-export-v1 §3.1）。server/src/world/mod.rs 检查
+        # region/ 下有 r.*.mca 文件 → AnvilIfPresent path → 加载真实地形覆盖
+        # spawn ±400 blocks，让 plan-worldgen-snapshot-v1 iso 角度拍到地形而非
+        # 16×16 fallback flat 边界外的虚空。
         env:
           BONG_PREVIEW_MODE: "1"
+          BONG_WORLD_PATH: ${{ github.workspace }}/worldgen/generated/snapshot/world
         run: bash scripts/preview/run-server-headless.sh --release --timeout 120
 
       - name: Run Fabric client headless (xvfb + preview harness)
