@@ -99,7 +99,7 @@ function fallbackNarration(payload: TribulationEventV1): Narration {
   let text = `${actor} 的渡虚劫有异动，雷声压低，旁人只宜退远。`;
   switch (payload.phase.kind) {
     case "omen":
-      text = `${actor} 欲渡虚劫，天色先暗，雷意未落，四野已知不可近。`;
+      text = "北风忽起，雷云自聚。又有修士在逆天。";
       break;
     case "lock":
       text = `${actor} 已入劫锁，退路断尽，旁观者但见风雷收窄。`;

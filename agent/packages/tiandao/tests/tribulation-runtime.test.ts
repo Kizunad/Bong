@@ -87,6 +87,42 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
 
+  it("uses the plan omen broadcast when DuXu begins", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new TribulationNarrationRuntime({
+      llm: failingLlm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "du_xu",
+        phase: { kind: "omen" },
+        char_id: "offline:Azure",
+        actor_name: "Azure",
+        epicenter: [400, 66, -200],
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:du_xu|char:offline:Azure|omen",
+      text: "北风忽起，雷云自聚。又有修士在逆天。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(1);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
   it("falls back to cold sarcasm when DuXu is intercepted and killed", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
