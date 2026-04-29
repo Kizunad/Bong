@@ -11,9 +11,10 @@ import java.util.UUID;
  * `bong:vfx_event` CustomPayload 解析后的强类型载荷。
  *
  * <p>与 {@code agent/packages/schema/src/vfx-event.ts} / {@code server/src/schema/vfx_event.rs}
- * 一一对应。当前三个 variant：
+ * 一一对应。当前四个 variant：
  * <ul>
  *   <li>{@link PlayAnim} / {@link StopAnim}：玩家骨骼动画触发（plan-player-animation-v1）</li>
+ *   <li>{@link PlayAnimInline}：运行时注入完整 PlayerAnimator JSON 并立即播放</li>
  *   <li>{@link SpawnParticle}：世界内粒子触发（plan-particle-system-v1 §2.2）</li>
  * </ul>
  *
@@ -25,7 +26,8 @@ import java.util.UUID;
  * {@link #debugDescriptor()}，具体字段由模式匹配取。
  */
 public sealed interface VfxEventPayload
-    permits VfxEventPayload.PlayAnim, VfxEventPayload.StopAnim, VfxEventPayload.SpawnParticle {
+    permits VfxEventPayload.PlayAnim, VfxEventPayload.PlayAnimInline,
+    VfxEventPayload.StopAnim, VfxEventPayload.SpawnParticle {
 
     /** JSON 里的 `type` 字段原值，仅给日志用。 */
     String type();
@@ -56,6 +58,31 @@ public sealed interface VfxEventPayload
         @Override
         public String debugDescriptor() {
             return "play_anim anim=" + animId + " target=" + targetPlayer;
+        }
+    }
+
+    record PlayAnimInline(
+        UUID targetPlayer,
+        Identifier animId,
+        String animJson,
+        int priority,
+        OptionalInt fadeInTicks
+    ) implements VfxEventPayload {
+        public PlayAnimInline {
+            Objects.requireNonNull(targetPlayer, "targetPlayer");
+            Objects.requireNonNull(animId, "animId");
+            Objects.requireNonNull(animJson, "animJson");
+            Objects.requireNonNull(fadeInTicks, "fadeInTicks");
+        }
+
+        @Override
+        public String type() {
+            return "play_anim_inline";
+        }
+
+        @Override
+        public String debugDescriptor() {
+            return "play_anim_inline anim=" + animId + " target=" + targetPlayer;
         }
     }
 

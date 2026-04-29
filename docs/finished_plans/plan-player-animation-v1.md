@@ -337,3 +337,11 @@ public class BongAnimationPlayer {
 
 - 2026-04-25：审计代码现状——Phase 1 全部 20 个动画 JSON 已落 `client/src/main/resources/assets/bong/player_animation/`（对应 `client/tools/gen_*.py` 生成器全套齐备）；client 侧 `BongAnimationRegistry/Player/Bridge` + `BongAnimCommand` 已就绪；server 侧 `network/vfx_event_emit.rs` 已实装 PlayAnim/StopAnim 广播器与 `/bong-vfx play` 调试命令，端到端手动链路贯通；剩 combat/cultivation system 自动映射 + §4.4 inline JSON 注入两项未启动。
 - 2026-04-29：战斗资产增量——`beng_quan.json`（爆脉流崩拳，8t，priority 1000）入库，对应 `client/tools/gen_beng_quan.py` 生成器；commit `b0302396` "feat: 落地爆脉崩拳真实结算"。Phase 1 资产数从 20 → 21，§5.1 战斗类 9 → 10。
+
+## Finish Evidence
+
+- 服务端业务事件自动映射完成：`AttackIntent` / `DefenseIntent` / `CombatEvent` / `BreakthroughOutcome` / `TribulationAnnounce` / `TribulationFailed` 统一转换为 `VfxEventRequest::PlayAnim`，并保持 `BurstMeridian` 走已有 `bong:beng_quan` 专用链路；commit `531438c5 feat(player-animation): 自动触发业务动画`。
+- §4.4 动态 JSON 注入原型完成：`play_anim_inline` 已加入 Rust schema、TypeBox/generated schema、Java client envelope/router/bridge/registry；客户端运行时解析 PlayerAnimator JSON 后注册 inline 源并立即播放；commit `c76d8988 feat(player-animation): 支持 inline 动画 JSON 注入`。
+- 验证通过：`server/ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
+- 验证通过：`client/ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`。
+- 验证通过：`agent/ npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)`。

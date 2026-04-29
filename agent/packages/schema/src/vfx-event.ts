@@ -5,10 +5,11 @@ import { Type, type Static } from "@sinclair/typebox";
  *
  * 设计参考：`docs/plans-skeleton/plan-player-animation-v1.md §4.1` + `plan-particle-system-v1.md §2.2`。
  *
- * 当前支持 3 个 variant：
+ * 当前支持 4 个 variant：
  *   - `play_anim`：服务端广播一次性动作（挥剑、突破、渡劫…）
  *   - `stop_anim`：终止某条持续动画（通常由状态切换驱动）
  *   - `spawn_particle`：触发一次自定义粒子（Bong 独有：剑气 / 符文 / 灵压涟漪…）
+ *   - `play_anim_inline`：天道 Agent / dev LLM 直接注入完整 Emotecraft v3 JSON 并播放
  *
  * 形态约束：
  *   - `target_player`：目标玩家 UUID（RFC 4122 canonical `8-4-4-4-12` 36 字符）
@@ -25,7 +26,6 @@ import { Type, type Static } from "@sinclair/typebox";
  *
  * 未纳入当前版本：
  *   - `speed` 字段 —— `KeyframeAnimationPlayer` 没现成 setSpeed API，v2 再扩
- *   - `play_anim_inline`（§4.4）—— 动态 JSON 注入路径，独立工单
  */
 
 const UUID_PATTERN =
@@ -50,10 +50,14 @@ export const VFX_PARTICLE_COUNT_MAX = 64;
 /** 粒子持续时间上限（tick）。20 tick/s → 10s，一次性事件够用。 */
 export const VFX_PARTICLE_DURATION_TICKS_MAX = 200;
 
+/** inline 动画 JSON 字符串上限。最终 CustomPayload 仍受 MAX_PAYLOAD_BYTES 兜底。 */
+export const VFX_INLINE_ANIM_JSON_MAX_CHARS = 4096;
+
 export const VfxEventType = Type.Union([
   Type.Literal("play_anim"),
   Type.Literal("stop_anim"),
   Type.Literal("spawn_particle"),
+  Type.Literal("play_anim_inline"),
 ]);
 export type VfxEventType = Static<typeof VfxEventType>;
 
@@ -77,6 +81,25 @@ export const VfxEventPlayAnimV1 = Type.Object(
   { additionalProperties: false },
 );
 export type VfxEventPlayAnimV1 = Static<typeof VfxEventPlayAnimV1>;
+
+export const VfxEventPlayAnimInlineV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("play_anim_inline"),
+    target_player: Type.String({ pattern: UUID_PATTERN }),
+    anim_id: Type.String({ pattern: ANIM_ID_PATTERN, maxLength: 128 }),
+    anim_json: Type.String({ minLength: 1, maxLength: VFX_INLINE_ANIM_JSON_MAX_CHARS }),
+    priority: Type.Integer({
+      minimum: VFX_ANIM_PRIORITY_MIN,
+      maximum: VFX_ANIM_PRIORITY_MAX,
+    }),
+    fade_in_ticks: Type.Optional(
+      Type.Integer({ minimum: 0, maximum: VFX_FADE_TICKS_MAX }),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type VfxEventPlayAnimInlineV1 = Static<typeof VfxEventPlayAnimInlineV1>;
 
 export const VfxEventStopAnimV1 = Type.Object(
   {
@@ -121,6 +144,7 @@ export type VfxEventSpawnParticleV1 = Static<typeof VfxEventSpawnParticleV1>;
 
 export const VfxEventV1 = Type.Union([
   VfxEventPlayAnimV1,
+  VfxEventPlayAnimInlineV1,
   VfxEventStopAnimV1,
   VfxEventSpawnParticleV1,
 ]);

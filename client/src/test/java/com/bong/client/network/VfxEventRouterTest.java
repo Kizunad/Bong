@@ -35,6 +35,24 @@ public class VfxEventRouterTest {
     }
 
     @Test
+    void dispatchesPlayAnimInlineToBridge() throws IOException {
+        RecordingBridge bridge = new RecordingBridge(true);
+        VfxEventRouter router = new VfxEventRouter(bridge);
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-anim-inline.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isHandled(), "result should be handled: " + result.logMessage());
+        assertEquals(1, bridge.inlineCalls.size());
+        RecordingBridge.InlineCall call = bridge.inlineCalls.get(0);
+        assertEquals(FIXTURE_UUID, call.target);
+        assertEquals(new Identifier("bong", "inline_test_pose"), call.animId);
+        assertTrue(call.animJson.contains("inline_test_pose"));
+        assertEquals(3000, call.priority);
+        assertEquals(OptionalInt.of(3), call.fadeInTicks);
+    }
+
+    @Test
     void dispatchesStopAnimToBridge() throws IOException {
         RecordingBridge bridge = new RecordingBridge(true);
         VfxEventRouter router = new VfxEventRouter(bridge);
@@ -59,6 +77,7 @@ public class VfxEventRouterTest {
 
         assertTrue(result.isParseError());
         assertEquals(0, bridge.playCalls.size());
+        assertEquals(0, bridge.inlineCalls.size());
         assertEquals(0, bridge.stopCalls.size());
     }
 
@@ -121,6 +140,7 @@ public class VfxEventRouterTest {
 
     private static final class RecordingBridge implements VfxEventAnimationBridge {
         final List<PlayCall> playCalls = new ArrayList<>();
+        final List<InlineCall> inlineCalls = new ArrayList<>();
         final List<StopCall> stopCalls = new ArrayList<>();
         private final boolean returnValue;
 
@@ -135,12 +155,27 @@ public class VfxEventRouterTest {
         }
 
         @Override
+        public boolean playAnimInline(
+            UUID target,
+            Identifier animId,
+            String animJson,
+            int priority,
+            OptionalInt fadeInTicks
+        ) {
+            inlineCalls.add(new InlineCall(target, animId, animJson, priority, fadeInTicks));
+            return returnValue;
+        }
+
+        @Override
         public boolean stopAnim(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
             stopCalls.add(new StopCall(target, animId, fadeOutTicks));
             return returnValue;
         }
 
         record PlayCall(UUID target, Identifier animId, int priority, OptionalInt fadeInTicks) {
+        }
+
+        record InlineCall(UUID target, Identifier animId, String animJson, int priority, OptionalInt fadeInTicks) {
         }
 
         record StopCall(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
@@ -165,6 +200,17 @@ public class VfxEventRouterTest {
     private static final class ThrowingBridge implements VfxEventAnimationBridge {
         @Override
         public boolean playAnim(UUID target, Identifier animId, int priority, OptionalInt fadeInTicks) {
+            throw new IllegalStateException("simulated bridge failure");
+        }
+
+        @Override
+        public boolean playAnimInline(
+            UUID target,
+            Identifier animId,
+            String animJson,
+            int priority,
+            OptionalInt fadeInTicks
+        ) {
             throw new IllegalStateException("simulated bridge failure");
         }
 

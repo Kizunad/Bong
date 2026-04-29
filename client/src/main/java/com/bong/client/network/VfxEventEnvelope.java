@@ -24,7 +24,7 @@ import com.google.gson.JsonArray;
  *       再做 JSON walk 没意义</li>
  * </ul>
  *
- * <p>版本 + 大小限制照搬 {@link ServerDataEnvelope}，与 Rust 侧 {@code MAX_PAYLOAD_BYTES=1024}
+ * <p>版本 + 大小限制照搬 {@link ServerDataEnvelope}，与 Rust 侧 {@code MAX_PAYLOAD_BYTES=8192}
  * 对齐。
  *
  * <p>字段校验对齐 {@code agent/packages/schema/src/vfx-event.ts} 的 TypeBox 约束：
@@ -37,12 +37,13 @@ import com.google.gson.JsonArray;
  */
 public final class VfxEventEnvelope {
     public static final int EXPECTED_VERSION = 1;
-    public static final int MAX_PAYLOAD_BYTES = 1024;
+    public static final int MAX_PAYLOAD_BYTES = 8192;
     public static final int VFX_ANIM_PRIORITY_MIN = 100;
     public static final int VFX_ANIM_PRIORITY_MAX = 3999;
     public static final int VFX_FADE_TICKS_MAX = 40;
     public static final int VFX_PARTICLE_COUNT_MAX = 64;
     public static final int VFX_PARTICLE_DURATION_TICKS_MAX = 200;
+    public static final int VFX_INLINE_ANIM_JSON_MAX_CHARS = 4096;
 
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
     private static final Pattern UUID_PATTERN =
@@ -92,6 +93,7 @@ public final class VfxEventEnvelope {
 
             return switch (type) {
                 case "play_anim" -> parsePlayAnim(root);
+                case "play_anim_inline" -> parsePlayAnimInline(root);
                 case "stop_anim" -> parseStopAnim(root);
                 case "spawn_particle" -> parseSpawnParticle(root);
                 default -> VfxEventParseResult.error("Unknown vfx_event type: '" + type + "'");
@@ -127,6 +129,44 @@ public final class VfxEventEnvelope {
         }
         return VfxEventParseResult.success(
             new VfxEventPayload.PlayAnim(targetPlayer, animId, priority, fadeInTicks)
+        );
+    }
+
+    private static VfxEventParseResult parsePlayAnimInline(JsonObject root) {
+        UUID targetPlayer = parseRequiredUuid(root, "target_player");
+        if (targetPlayer == null) {
+            return VfxEventParseResult.error("Invalid or missing 'target_player' UUID");
+        }
+        Identifier animId = parseRequiredAnimId(root, "anim_id");
+        if (animId == null) {
+            return VfxEventParseResult.error("Invalid or missing 'anim_id'");
+        }
+        String animJson = readRequiredString(root, "anim_json");
+        if (animJson == null || animJson.isEmpty()) {
+            return VfxEventParseResult.error("Invalid or missing 'anim_json'");
+        }
+        if (animJson.length() > VFX_INLINE_ANIM_JSON_MAX_CHARS) {
+            return VfxEventParseResult.error(
+                "Field 'anim_json' exceeds max length of " + VFX_INLINE_ANIM_JSON_MAX_CHARS
+            );
+        }
+        Integer priority = readRequiredInteger(root, "priority");
+        if (priority == null) {
+            return VfxEventParseResult.error("Missing required field 'priority'");
+        }
+        if (priority < VFX_ANIM_PRIORITY_MIN || priority > VFX_ANIM_PRIORITY_MAX) {
+            return VfxEventParseResult.error(
+                "Field 'priority' out of range [" + VFX_ANIM_PRIORITY_MIN + "," + VFX_ANIM_PRIORITY_MAX + "]: " + priority
+            );
+        }
+        OptionalInt fadeInTicks = readOptionalFadeTicks(root, "fade_in_ticks");
+        if (fadeInTicks == null) {
+            return VfxEventParseResult.error(
+                "Field 'fade_in_ticks' out of range [0," + VFX_FADE_TICKS_MAX + "]"
+            );
+        }
+        return VfxEventParseResult.success(
+            new VfxEventPayload.PlayAnimInline(targetPlayer, animId, animJson, priority, fadeInTicks)
         );
     }
 
