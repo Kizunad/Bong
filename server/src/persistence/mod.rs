@@ -3693,6 +3693,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
         BiographyEntry::TribulationIntercepted { .. } => "tribulation_intercepted",
         BiographyEntry::TribulationFled { .. } => "tribulation_fled",
+        BiographyEntry::HeartDemonRecord { .. } => "heart_demon_record",
     }
 }
 
@@ -3765,7 +3766,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::PlotQiDrainedFromOther { tick, .. }
         | BiographyEntry::PlotDestroyedByOther { tick, .. }
         | BiographyEntry::TribulationIntercepted { tick, .. }
-        | BiographyEntry::TribulationFled { tick, .. } => *tick,
+        | BiographyEntry::TribulationFled { tick, .. }
+        | BiographyEntry::HeartDemonRecord { tick, .. } => *tick,
     }
 }
 

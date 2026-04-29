@@ -17,7 +17,7 @@ use valence::prelude::{
 use crate::combat::components::{BodyPart, Lifecycle, Wound, WoundKind, Wounds};
 use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::combat::CombatClock;
-use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -53,6 +53,9 @@ const DUXU_QI_DRAIN_BASE: f64 = 35.0;
 const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
 const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
 const DUXU_HEART_DEMON_WAVE: u32 = 4;
+const DUXU_HEART_DEMON_TIMEOUT_TICKS: u64 = 30 * 20;
+const DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO: f64 = 0.30;
+const DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER: f32 = 1.20;
 const DUXU_KAITIAN_WAVE: u32 = 5;
 const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;
 const DUXU_FULL_QI_EPSILON: f64 = 0.001;
@@ -83,6 +86,14 @@ pub struct TribulationState {
     pub half_step_on_success: bool,
 }
 
+#[derive(Debug, Clone, Copy, Component)]
+pub struct HeartDemonResolution {
+    pub outcome: HeartDemonOutcome,
+    pub choice_idx: Option<u32>,
+    pub tick: u64,
+    pub next_wave_multiplier: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TribulationKind {
     DuXu,
@@ -103,7 +114,11 @@ impl TribulationState {
     pub fn restored(wave_current: u32, waves_total: u32, started_tick: u64) -> Self {
         Self {
             kind: TribulationKind::DuXu,
-            phase: TribulationPhase::Wave(wave_current.max(1)),
+            phase: if wave_current == DUXU_HEART_DEMON_WAVE {
+                TribulationPhase::HeartDemon
+            } else {
+                TribulationPhase::Wave(wave_current.max(1))
+            },
             epicenter: [0.0, 64.0, 0.0],
             wave_current,
             waves_total,
@@ -216,6 +231,20 @@ pub struct TribulationFailed {
 pub struct TribulationFled {
     pub entity: Entity,
     pub tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct HeartDemonChoiceSubmitted {
+    pub entity: Entity,
+    pub choice_idx: Option<u32>,
+    pub submitted_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HeartDemonDecision {
+    entity: Entity,
+    choice_idx: Option<u32>,
+    tick: u64,
 }
 
 #[allow(clippy::type_complexity)]
@@ -353,13 +382,14 @@ pub fn tribulation_phase_tick_system(
     mut query: Query<(
         Entity,
         &mut TribulationState,
+        Option<&HeartDemonResolution>,
         Option<&Lifecycle>,
         Option<&Username>,
     )>,
     mut locked: EventWriter<TribulationLocked>,
     mut cleared: EventWriter<TribulationWaveCleared>,
 ) {
-    for (entity, mut state, lifecycle, username) in &mut query {
+    for (entity, mut state, heart_demon, lifecycle, username) in &mut query {
         match state.phase {
             TribulationPhase::Omen
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_OMEN_TICKS =>
@@ -391,10 +421,7 @@ pub fn tribulation_phase_tick_system(
                 let next_wave = state.wave_current.saturating_add(1);
                 begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
-            TribulationPhase::HeartDemon
-                if clock.tick.saturating_sub(state.phase_started_tick)
-                    >= DUXU_WAVE_COOLDOWN_TICKS =>
-            {
+            TribulationPhase::HeartDemon if heart_demon.is_some() => {
                 let next_wave = state.wave_current.saturating_add(1);
                 begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
@@ -426,7 +453,7 @@ fn begin_tribulation_wave(
 #[allow(clippy::type_complexity)]
 pub fn tribulation_aoe_system(
     clock: Res<CombatClock>,
-    tribulations: Query<(Entity, &TribulationState)>,
+    tribulations: Query<(Entity, &TribulationState, Option<&HeartDemonResolution>)>,
     mut targets: Query<(
         Entity,
         &Position,
@@ -437,7 +464,7 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
 ) {
-    for (tribulator_entity, state) in &tribulations {
+    for (tribulator_entity, state, heart_demon) in &tribulations {
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
@@ -447,6 +474,10 @@ pub fn tribulation_aoe_system(
         let center =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
         let profile = du_xu_wave_profile(wave);
+        let damage_multiplier = heart_demon
+            .filter(|_| wave == DUXU_KAITIAN_WAVE)
+            .map(|heart_demon| heart_demon.next_wave_multiplier)
+            .unwrap_or(1.0);
         let strike_damage = profile.damage / profile.strikes.max(1) as f32;
         for (entity, pos, mut cultivation, mut wounds, lifecycle) in &mut targets {
             if pos.get().distance(center) > TRIBULATION_DANGER_RADIUS {
@@ -472,13 +503,13 @@ pub fn tribulation_aoe_system(
                 );
             }
             let was_alive = wounds.health_current > 0.0;
-            wounds.health_current =
-                (wounds.health_current - profile.damage).clamp(0.0, wounds.health_max);
+            let damage = profile.damage * damage_multiplier;
+            wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
             for _ in 0..profile.strikes {
                 wounds.entries.push(Wound {
                     location: BodyPart::Chest,
                     kind: WoundKind::Burn,
-                    severity: strike_damage,
+                    severity: strike_damage * damage_multiplier,
                     bleeding_per_sec: 0.0,
                     created_at_tick: clock.tick,
                     inflicted_by: Some("du_xu_tribulation".to_string()),
@@ -499,6 +530,131 @@ pub fn tribulation_aoe_system(
                 });
             }
         }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn heart_demon_choice_system(
+    mut choices: EventReader<HeartDemonChoiceSubmitted>,
+    mut commands: Commands,
+    mut players: Query<(
+        &mut Cultivation,
+        &mut TribulationState,
+        Option<&mut LifeRecord>,
+        Option<&HeartDemonResolution>,
+    )>,
+) {
+    for choice in choices.read() {
+        let Ok((mut cultivation, state, life_record, existing_resolution)) =
+            players.get_mut(choice.entity)
+        else {
+            continue;
+        };
+        if !matches!(state.phase, TribulationPhase::HeartDemon) {
+            continue;
+        }
+        resolve_heart_demon_choice(
+            HeartDemonDecision {
+                entity: choice.entity,
+                choice_idx: choice.choice_idx,
+                tick: choice.submitted_at_tick,
+            },
+            &mut commands,
+            &mut cultivation,
+            &state,
+            life_record,
+            existing_resolution,
+        );
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn heart_demon_timeout_system(
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    mut players: Query<(
+        Entity,
+        &mut Cultivation,
+        &mut TribulationState,
+        Option<&mut LifeRecord>,
+        Option<&HeartDemonResolution>,
+    )>,
+) {
+    for (entity, mut cultivation, state, life_record, existing_resolution) in &mut players {
+        if !matches!(state.phase, TribulationPhase::HeartDemon) {
+            continue;
+        }
+        if existing_resolution.is_some()
+            || clock.tick.saturating_sub(state.phase_started_tick) < DUXU_HEART_DEMON_TIMEOUT_TICKS
+        {
+            continue;
+        }
+        resolve_heart_demon_choice(
+            HeartDemonDecision {
+                entity,
+                choice_idx: None,
+                tick: clock.tick,
+            },
+            &mut commands,
+            &mut cultivation,
+            &state,
+            life_record,
+            existing_resolution,
+        );
+    }
+}
+
+fn resolve_heart_demon_choice(
+    decision: HeartDemonDecision,
+    commands: &mut Commands,
+    cultivation: &mut Cultivation,
+    state: &TribulationState,
+    life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
+    existing_resolution: Option<&HeartDemonResolution>,
+) {
+    if existing_resolution.is_some() {
+        return;
+    }
+    if !matches!(state.phase, TribulationPhase::HeartDemon) {
+        return;
+    }
+    let outcome = heart_demon_outcome_for_choice(decision.choice_idx);
+    let mut next_wave_multiplier = 1.0;
+    match outcome {
+        HeartDemonOutcome::Steadfast => {
+            let effective_qi_max =
+                (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+            cultivation.qi_current =
+                (cultivation.qi_current + effective_qi_max * 0.10).min(effective_qi_max);
+        }
+        HeartDemonOutcome::Obsession => {
+            cultivation.qi_current *= 1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
+            next_wave_multiplier = DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER;
+        }
+        HeartDemonOutcome::NoSolution => {}
+    }
+    if let Some(mut life_record) = life_record {
+        life_record.push(BiographyEntry::HeartDemonRecord {
+            outcome,
+            choice_idx: decision.choice_idx,
+            tick: decision.tick,
+        });
+    }
+    commands
+        .entity(decision.entity)
+        .insert(HeartDemonResolution {
+            outcome,
+            choice_idx: decision.choice_idx,
+            tick: decision.tick,
+            next_wave_multiplier,
+        });
+}
+
+fn heart_demon_outcome_for_choice(choice_idx: Option<u32>) -> HeartDemonOutcome {
+    match choice_idx {
+        Some(0) => HeartDemonOutcome::Steadfast,
+        Some(2) => HeartDemonOutcome::NoSolution,
+        _ => HeartDemonOutcome::Obsession,
     }
 }
 
@@ -649,7 +805,9 @@ pub fn tribulation_wave_system(
                     },
                 });
                 state.phase = TribulationPhase::Settle;
-                commands.entity(ev.entity).remove::<TribulationState>();
+                commands
+                    .entity(ev.entity)
+                    .remove::<(TribulationState, HeartDemonResolution)>();
                 tracing::info!(
                     "[bong][cultivation] {:?} settled DuXu as {:?} after {} waves",
                     ev.entity,
@@ -720,7 +878,9 @@ pub fn tribulation_failure_system(
                 },
             });
         }
-        commands.entity(ev.entity).remove::<TribulationState>();
+        commands
+            .entity(ev.entity)
+            .remove::<(TribulationState, HeartDemonResolution)>();
     }
 }
 
@@ -860,7 +1020,9 @@ fn settle_fled_tribulation(
         entity,
         tick: fled_tick,
     });
-    commands.entity(entity).remove::<TribulationState>();
+    commands
+        .entity(entity)
+        .remove::<(TribulationState, HeartDemonResolution)>();
 }
 
 #[allow(clippy::type_complexity)]
@@ -918,7 +1080,9 @@ pub fn tribulation_intercept_death_system(
                 waves_survived: state.wave_current,
             },
         });
-        commands.entity(death.target).remove::<TribulationState>();
+        commands
+            .entity(death.target)
+            .remove::<(TribulationState, HeartDemonResolution)>();
     }
 }
 
@@ -1436,7 +1600,7 @@ mod tests {
     }
 
     #[test]
-    fn heart_demon_cooldown_advances_to_kaitian_wave() {
+    fn unresolved_heart_demon_waits_without_advancing_to_kaitian_wave() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 2400 });
         app.add_event::<TribulationLocked>();
@@ -1465,12 +1629,251 @@ mod tests {
             .world()
             .get::<TribulationState>(entity)
             .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::HeartDemon);
+        assert_eq!(state.phase_started_tick, 2100);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert!(emitted.is_empty());
+    }
+
+    #[test]
+    fn restored_fourth_wave_remains_heart_demon() {
+        let state = TribulationState::restored(4, 5, 120);
+
+        assert_eq!(state.phase, TribulationPhase::HeartDemon);
+        assert_eq!(state.wave_current, 4);
+        assert_eq!(state.waves_total, 5);
+    }
+
+    #[test]
+    fn heart_demon_steadfast_choice_records_and_restores_qi() {
+        let mut app = App::new();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_systems(Update, heart_demon_choice_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 120.0,
+                    qi_max: 210.0,
+                    qi_max_frozen: Some(10.0),
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(0),
+            submitted_at_tick: 2110,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 140.0);
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .expect("resolution should be recorded");
+        assert_eq!(resolution.outcome, HeartDemonOutcome::Steadfast);
+        assert_eq!(resolution.choice_idx, Some(0));
+        assert_eq!(resolution.tick, 2110);
+        assert_eq!(resolution.next_wave_multiplier, 1.0);
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::HeartDemonRecord {
+                outcome: HeartDemonOutcome::Steadfast,
+                choice_idx: Some(0),
+                tick: 2110
+            })
+        ));
+    }
+
+    #[test]
+    fn heart_demon_obsession_timeout_penalizes_qi_and_boosts_kaitian_damage() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
+        });
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, heart_demon_timeout_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 70.0);
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .expect("resolution should be recorded");
+        assert_eq!(resolution.outcome, HeartDemonOutcome::Obsession);
+        assert_eq!(resolution.choice_idx, None);
+        assert_eq!(
+            resolution.next_wave_multiplier,
+            DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER
+        );
+    }
+
+    #[test]
+    fn heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2140 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                HeartDemonResolution {
+                    outcome: HeartDemonOutcome::Obsession,
+                    choice_idx: None,
+                    tick: 2130,
+                    next_wave_multiplier: DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
         assert_eq!(state.phase, TribulationPhase::Wave(5));
-        assert_eq!(state.phase_started_tick, 2400);
+        assert_eq!(state.phase_started_tick, 2140);
         let events = app.world().resource::<Events<TribulationWaveCleared>>();
         let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].wave, 5);
+    }
+
+    #[test]
+    fn obsession_resolution_increases_kaitian_damage() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2400 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 300.0,
+                    qi_max: 300.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 200.0,
+                    health_max: 200.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(5),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 5,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2400,
+                    next_wave_tick: 2700,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                HeartDemonResolution {
+                    outcome: HeartDemonOutcome::Obsession,
+                    choice_idx: None,
+                    tick: 2130,
+                    next_wave_multiplier: DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().resource::<Events<TribulationFailed>>().len(), 0);
+        let wounds = app
+            .world()
+            .get::<Wounds>(entity)
+            .expect("wounds should remain attached");
+        assert_eq!(
+            wounds.health_current,
+            200.0 - DUXU_AOE_DAMAGE_BASE * 5.0 * DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER
+        );
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(
+            wounds.entries[0].severity,
+            DUXU_AOE_DAMAGE_BASE * 5.0 * DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER
+        );
     }
 
     #[test]

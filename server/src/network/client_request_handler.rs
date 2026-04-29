@@ -36,7 +36,7 @@ use crate::cultivation::known_techniques::technique_definition;
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
-use crate::cultivation::tribulation::StartDuXuRequest;
+use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
@@ -148,6 +148,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
+    pub heart_demon_choice_tx: Option<ResMut<'w, Events<HeartDemonChoiceSubmitted>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
@@ -234,6 +235,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::BreakthroughRequest { v }
             | ClientRequestV1::StartDuXu { v }
             | ClientRequestV1::AbortTribulation { v }
+            | ClientRequestV1::HeartDemonDecision { v, .. }
             | ClientRequestV1::ForgeRequest { v, .. }
             | ClientRequestV1::InsightDecision { v, .. }
             | ClientRequestV1::BotanyHarvestRequest { v, .. }
@@ -328,6 +330,20 @@ pub fn handle_client_request_payloads(
                     "[bong][network] client_request abort_tribulation ignored entity={:?}; DuXu cannot be cancelled after confirmation",
                     ev.client,
                 );
+            }
+            ClientRequestV1::HeartDemonDecision { choice_idx, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request heart_demon_decision entity={:?} idx={:?}",
+                    ev.client,
+                    choice_idx,
+                );
+                if let Some(heart_demon_choice_tx) = dispatch.heart_demon_choice_tx.as_deref_mut() {
+                    heart_demon_choice_tx.send(HeartDemonChoiceSubmitted {
+                        entity: ev.client,
+                        choice_idx,
+                        submitted_at_tick: combat_clock.tick,
+                    });
+                }
             }
             ClientRequestV1::InsightDecision {
                 trigger_id,

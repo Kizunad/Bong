@@ -10,6 +10,14 @@ use crate::skill::components::SkillId;
 
 const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartDemonOutcome {
+    Steadfast,
+    Obsession,
+    NoSolution,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BiographyEntry {
     BreakthroughStarted {
@@ -138,6 +146,12 @@ pub enum BiographyEntry {
     /// plan-tribulation-v1 §2.6 — 下线/逃离劫场，按首波失败处理并公开记档。
     TribulationFled {
         wave: u32,
+        tick: u64,
+    },
+    /// plan-tribulation-v1 §2.4 — 心魔劫抉择公开记档。
+    HeartDemonRecord {
+        outcome: HeartDemonOutcome,
+        choice_idx: Option<u32>,
         tick: u64,
     },
 }
@@ -381,6 +395,11 @@ fn format_entry(entry: &BiographyEntry) -> String {
         BiographyEntry::TribulationFled { wave, tick } => {
             format!("t{tick}:tribulation_fled:wave{wave}:畏劫而逃")
         }
+        BiographyEntry::HeartDemonRecord {
+            outcome,
+            choice_idx,
+            tick,
+        } => format!("t{tick}:heart_demon:{outcome:?}:{choice_idx:?}"),
     }
 }
 
@@ -538,6 +557,21 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy life record should deserialize");
 
         assert!(decoded.skill_milestones.is_empty());
+    }
+
+    #[test]
+    fn heart_demon_record_summary_is_public() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::HeartDemonRecord {
+            outcome: HeartDemonOutcome::Steadfast,
+            choice_idx: Some(0),
+            tick: 233,
+        });
+
+        assert_eq!(
+            lr.recent_summary_text(1),
+            "t233:heart_demon:Steadfast:Some(0)"
+        );
     }
 
     #[test]

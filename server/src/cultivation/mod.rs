@@ -93,13 +93,13 @@ use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    abort_du_xu_on_client_removed, record_tribulation_interceptor_system,
-    start_du_xu_request_system, start_tribulation_system, tribulation_aoe_system,
-    tribulation_escape_boundary_system, tribulation_failure_system,
+    abort_du_xu_on_client_removed, heart_demon_choice_system, heart_demon_timeout_system,
+    record_tribulation_interceptor_system, start_du_xu_request_system, start_tribulation_system,
+    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
     tribulation_intercept_death_system, tribulation_phase_tick_system, tribulation_wave_system,
-    AscensionQuotaOpened, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
-    TribulationWaveCleared,
+    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest,
+    TribulationAnnounce, TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled,
+    TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -144,6 +144,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TribulationFled>();
     app.add_event::<TribulationSettled>();
     app.add_event::<AscensionQuotaOpened>();
+    app.add_event::<HeartDemonChoiceSubmitted>();
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
@@ -185,7 +186,9 @@ pub fn register(app: &mut App) {
             start_tribulation_system.after(start_du_xu_request_system),
             tribulation_phase_tick_system.after(start_tribulation_system),
             tribulation_aoe_system.after(tribulation_phase_tick_system),
-            tribulation_failure_system.after(tribulation_aoe_system),
+            heart_demon_choice_system.after(tribulation_aoe_system),
+            heart_demon_timeout_system.after(heart_demon_choice_system),
+            tribulation_failure_system.after(heart_demon_timeout_system),
             abort_du_xu_on_client_removed
                 .after(tribulation_failure_system)
                 .before(crate::player::despawn_disconnected_clients),
