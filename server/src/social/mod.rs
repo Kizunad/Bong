@@ -2,7 +2,12 @@ pub mod components;
 pub mod events;
 
 use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{de::DeserializeOwned, Serialize};
 use valence::prelude::{
     Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Position,
     Query, Res, Update, With, Without,
@@ -19,10 +24,12 @@ use crate::combat::events::DeathEvent;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{send_server_data_payload, RedisBridgeResource};
+use crate::persistence::PersistenceSettings;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
-    ExposureKindV1, RelationshipKindV1, SocialAnonymityPayloadV1, SocialExposureEventV1,
-    SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1, SocialRenownDeltaV1,
+    ExposureKindV1, RelationshipKindV1, RenownTagV1, SocialAnonymityPayloadV1,
+    SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
+    SocialRenownDeltaV1,
 };
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -53,17 +60,37 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[allow(clippy::type_complexity)]
 fn attach_social_bundle_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<valence::prelude::Entity, (Added<Client>, Without<Anonymity>)>,
+    persistence: Option<Res<PersistenceSettings>>,
+    joined_clients: Query<
+        (valence::prelude::Entity, Option<&Lifecycle>),
+        (Added<Client>, Without<Anonymity>),
+    >,
 ) {
-    for entity in &joined_clients {
-        commands.entity(entity).insert((
-            Anonymity::default(),
-            Renown::default(),
-            Relationships::default(),
-            ExposureLog::default(),
-        ));
+    for (entity, lifecycle) in &joined_clients {
+        let social_state = lifecycle
+            .and_then(|lifecycle| {
+                persistence
+                    .as_deref()
+                    .map(|persistence| (persistence, lifecycle))
+            })
+            .and_then(|(persistence, lifecycle)| {
+                match load_social_components(persistence, lifecycle.character_id.as_str()) {
+                    Ok(components) => Some(components),
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][social] failed to load social state for `{}`: {error}",
+                            lifecycle.character_id
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or_default();
+
+        commands.entity(entity).insert(social_state.into_bundle());
     }
 }
 
@@ -222,6 +249,7 @@ fn handle_death_social_effects(
 }
 
 fn apply_social_exposures(
+    persistence: Option<Res<PersistenceSettings>>,
     mut exposures: EventReader<SocialExposureEvent>,
     mut players: Query<(&Lifecycle, &mut Anonymity, &mut ExposureLog), With<Client>>,
     mut clients: Query<(&Lifecycle, &mut Client), With<Client>>,
@@ -237,6 +265,22 @@ fn apply_social_exposures(
                 kind: exposure.kind,
                 witnesses: exposure.witnesses.clone(),
             });
+            if let Some(persistence) = persistence.as_deref() {
+                if let Err(error) =
+                    persist_social_anonymity(persistence, exposure.actor.as_str(), &anonymity)
+                {
+                    tracing::warn!(
+                        "[bong][social] failed to persist anonymity for `{}`: {error}",
+                        exposure.actor
+                    );
+                }
+                if let Err(error) = persist_social_exposure(persistence, exposure) {
+                    tracing::warn!(
+                        "[bong][social] failed to persist exposure for `{}`: {error}",
+                        exposure.actor
+                    );
+                }
+            }
         }
 
         let payload =
@@ -266,31 +310,59 @@ fn apply_social_exposures(
 }
 
 fn apply_social_relationships(
+    persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRelationshipEvent>,
     mut players: Query<(&Lifecycle, &mut Relationships), With<Client>>,
 ) {
     for event in events.read() {
         for (lifecycle, mut relationships) in &mut players {
             if lifecycle.character_id == event.left {
-                relationships.upsert(Relationship {
+                let relationship = Relationship {
                     kind: event.left_kind,
                     peer: event.right.clone(),
                     since_tick: event.tick,
                     metadata: event.metadata.clone(),
-                });
+                };
+                relationships.upsert(relationship.clone());
+                if let Some(persistence) = persistence.as_deref() {
+                    if let Err(error) = persist_social_relationship(
+                        persistence,
+                        lifecycle.character_id.as_str(),
+                        &relationship,
+                    ) {
+                        tracing::warn!(
+                            "[bong][social] failed to persist relationship for `{}`: {error}",
+                            lifecycle.character_id
+                        );
+                    }
+                }
             } else if lifecycle.character_id == event.right {
-                relationships.upsert(Relationship {
+                let relationship = Relationship {
                     kind: event.right_kind,
                     peer: event.left.clone(),
                     since_tick: event.tick,
                     metadata: event.metadata.clone(),
-                });
+                };
+                relationships.upsert(relationship.clone());
+                if let Some(persistence) = persistence.as_deref() {
+                    if let Err(error) = persist_social_relationship(
+                        persistence,
+                        lifecycle.character_id.as_str(),
+                        &relationship,
+                    ) {
+                        tracing::warn!(
+                            "[bong][social] failed to persist relationship for `{}`: {error}",
+                            lifecycle.character_id
+                        );
+                    }
+                }
             }
         }
     }
 }
 
 fn apply_social_renown_deltas(
+    persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRenownDeltaEvent>,
     mut players: Query<(&Lifecycle, &mut Renown), With<Client>>,
 ) {
@@ -304,8 +376,382 @@ fn apply_social_renown_deltas(
                 event.notoriety_delta,
                 event.tags_added.clone(),
             );
+            if let Some(persistence) = persistence.as_deref() {
+                if let Err(error) =
+                    persist_social_renown(persistence, event.char_id.as_str(), &renown)
+                {
+                    tracing::warn!(
+                        "[bong][social] failed to persist renown for `{}`: {error}",
+                        event.char_id
+                    );
+                }
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SocialComponentsSnapshot {
+    anonymity: Anonymity,
+    renown: Renown,
+    relationships: Relationships,
+    exposure_log: ExposureLog,
+}
+
+impl SocialComponentsSnapshot {
+    fn into_bundle(self) -> (Anonymity, Renown, Relationships, ExposureLog) {
+        (
+            self.anonymity,
+            self.renown,
+            self.relationships,
+            self.exposure_log,
+        )
+    }
+}
+
+fn load_social_components(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<SocialComponentsSnapshot> {
+    let connection = open_social_connection(persistence)?;
+    Ok(SocialComponentsSnapshot {
+        anonymity: load_social_anonymity(&connection, char_id)?,
+        renown: load_social_renown(&connection, char_id)?,
+        relationships: load_social_relationships(&connection, char_id)?,
+        exposure_log: load_social_exposure_log(&connection, char_id)?,
+    })
+}
+
+fn open_social_connection(persistence: &PersistenceSettings) -> io::Result<Connection> {
+    if let Some(parent) = persistence.db_path().parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let connection = Connection::open(persistence.db_path()).map_err(io::Error::other)?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
+        .map_err(io::Error::other)?;
+    Ok(connection)
+}
+
+fn load_social_anonymity(connection: &Connection, char_id: &str) -> io::Result<Anonymity> {
+    let row: Option<(Option<String>, String)> = connection
+        .query_row(
+            "SELECT displayed_name, exposed_to_json FROM social_anonymity WHERE char_id = ?1",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((displayed_name, exposed_to_json)) = row else {
+        return Ok(Anonymity::default());
+    };
+    let exposed_to = serde_json::from_str::<Vec<String>>(&exposed_to_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .into_iter()
+        .collect();
+    Ok(Anonymity {
+        displayed_name,
+        exposed_to,
+    })
+}
+
+fn load_social_renown(connection: &Connection, char_id: &str) -> io::Result<Renown> {
+    let row: Option<(i32, i32, String)> = connection
+        .query_row(
+            "SELECT fame, notoriety, tags_json FROM social_renown WHERE char_id = ?1",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some((fame, notoriety, tags_json)) = row else {
+        return Ok(Renown::default());
+    };
+    let tags = serde_json::from_str::<Vec<RenownTagV1>>(&tags_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Renown {
+        fame,
+        notoriety,
+        tags,
+    })
+}
+
+fn load_social_relationships(connection: &Connection, char_id: &str) -> io::Result<Relationships> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT peer_char_id, relationship_type, since_tick, metadata_json
+            FROM social_relationships
+            WHERE char_id = ?1
+            ORDER BY peer_char_id ASC, relationship_type ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![char_id], |row| {
+            let kind_label: String = row.get(1)?;
+            let metadata_json: String = row.get(3)?;
+            let kind = parse_label::<RelationshipKindV1>(&kind_label).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let metadata = serde_json::from_str(&metadata_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(Relationship {
+                peer: row.get(0)?,
+                kind,
+                since_tick: sql_to_tick(row.get::<_, i64>(2)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })?,
+                metadata,
+            })
+        })
+        .map_err(io::Error::other)?;
+    let mut relationships = Relationships::default();
+    for row in rows {
+        relationships.edges.push(row.map_err(io::Error::other)?);
+    }
+    Ok(relationships)
+}
+
+fn load_social_exposure_log(connection: &Connection, char_id: &str) -> io::Result<ExposureLog> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT kind, witnesses_json, at_tick
+            FROM social_exposures
+            WHERE char_id = ?1
+            ORDER BY at_tick ASC, event_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![char_id], |row| {
+            let kind_label: String = row.get(0)?;
+            let witnesses_json: String = row.get(1)?;
+            let kind = parse_label::<ExposureKindV1>(&kind_label).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let witnesses = serde_json::from_str(&witnesses_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(ExposureEvent {
+                kind,
+                witnesses,
+                tick: sql_to_tick(row.get::<_, i64>(2)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })?,
+            })
+        })
+        .map_err(io::Error::other)?;
+    let mut exposure_log = ExposureLog::default();
+    for row in rows {
+        exposure_log.0.push(row.map_err(io::Error::other)?);
+    }
+    Ok(exposure_log)
+}
+
+fn persist_social_anonymity(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    anonymity: &Anonymity,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let mut exposed_to = anonymity.exposed_to.iter().cloned().collect::<Vec<_>>();
+    exposed_to.sort();
+    let exposed_to_json = serde_json::to_string(&exposed_to)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO social_anonymity (
+                char_id, displayed_name, exposed_to_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, 1, ?4)
+            ON CONFLICT(char_id) DO UPDATE SET
+                displayed_name = excluded.displayed_name,
+                exposed_to_json = excluded.exposed_to_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                char_id,
+                anonymity.displayed_name.as_deref(),
+                exposed_to_json,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_social_relationship(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    relationship: &Relationship,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let kind = enum_label(relationship.kind)?;
+    let metadata_json = serde_json::to_string(&relationship.metadata)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO social_relationships (
+                char_id, peer_char_id, relationship_type, since_tick, metadata_json,
+                schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+            ON CONFLICT(char_id, peer_char_id, relationship_type) DO UPDATE SET
+                since_tick = excluded.since_tick,
+                metadata_json = excluded.metadata_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                char_id,
+                relationship.peer,
+                kind,
+                tick_to_sql(relationship.since_tick)?,
+                metadata_json,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_social_exposure(
+    persistence: &PersistenceSettings,
+    exposure: &SocialExposureEvent,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let kind = enum_label(exposure.kind)?;
+    let witnesses_json = serde_json::to_string(&exposure.witnesses)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let event_id = social_exposure_event_id(exposure, witnesses_json.as_str());
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT OR IGNORE INTO social_exposures (
+                event_id, char_id, kind, witnesses_json, at_tick, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+            ",
+            params![
+                event_id,
+                exposure.actor,
+                kind,
+                witnesses_json,
+                tick_to_sql(exposure.tick)?,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_social_renown(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    renown: &Renown,
+) -> io::Result<()> {
+    let connection = open_social_connection(persistence)?;
+    let tags_json = serde_json::to_string(&renown.tags)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let wall_clock = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO social_renown (
+                char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, 1, ?5)
+            ON CONFLICT(char_id) DO UPDATE SET
+                fame = excluded.fame,
+                notoriety = excluded.notoriety,
+                tags_json = excluded.tags_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                char_id,
+                renown.fame,
+                renown.notoriety,
+                tags_json,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn social_exposure_event_id(exposure: &SocialExposureEvent, witnesses_json: &str) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        exposure.actor,
+        exposure.tick,
+        enum_label(exposure.kind).unwrap_or_else(|_| "unknown".to_string()),
+        exposure.zone.as_deref().unwrap_or_default(),
+        witnesses_json
+    )
+}
+
+fn enum_label<T>(value: T) -> io::Result<String>
+where
+    T: Serialize,
+{
+    serde_json::to_value(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "enum label must be a string"))
+}
+
+fn parse_label<T>(label: &str) -> io::Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_value(serde_json::Value::String(label.to_string()))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn tick_to_sql(tick: u64) -> io::Result<i64> {
+    i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn sql_to_tick(value: i64) -> io::Result<u64> {
+    u64::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn current_unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn publish_social_events(
@@ -430,10 +876,40 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: &Position) -> 
 mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
+    use crate::persistence::bootstrap_sqlite;
+    use crate::schema::social::RenownTagV1;
     use crate::social::events::PlayerChatCollected;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Update};
     use valence::prelude::{Events, Position};
     use valence::testing::create_mock_client;
+
+    fn unique_temp_dir(test_name: &str) -> PathBuf {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bong-social-{test_name}-{}-{unique_suffix}",
+            std::process::id()
+        ))
+    }
+
+    fn social_persistence(test_name: &str) -> (PersistenceSettings, PathBuf) {
+        let data_dir = unique_temp_dir(test_name);
+        let db_path = data_dir.join("bong.db");
+        bootstrap_sqlite(&db_path, &format!("social-{test_name}"))
+            .expect("sqlite bootstrap should succeed");
+        (
+            PersistenceSettings::with_paths(
+                db_path,
+                data_dir.join("deceased"),
+                format!("social-{test_name}"),
+            ),
+            data_dir,
+        )
+    }
 
     #[test]
     fn joined_client_gets_default_social_bundle() {
@@ -495,5 +971,83 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].actor, "char:alice");
         assert_eq!(collected[0].witnesses, vec!["char:bob"]);
+    }
+
+    #[test]
+    fn social_events_persist_and_reload_by_character_id() {
+        let (persistence, data_dir) = social_persistence("event-roundtrip");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialExposureEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_social_exposures,
+                apply_social_relationships,
+                apply_social_renown_deltas,
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let azure = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(azure).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            Anonymity::default(),
+            Renown::default(),
+            Relationships::default(),
+            ExposureLog::default(),
+        ));
+
+        app.world_mut().send_event(SocialExposureEvent {
+            actor: "char:azure".to_string(),
+            kind: ExposureKindV1::Chat,
+            witnesses: vec!["char:bob".to_string()],
+            tick: 42,
+            zone: Some("spawn".to_string()),
+        });
+        app.world_mut().send_event(SocialRelationshipEvent {
+            left: "char:azure".to_string(),
+            right: "char:rival".to_string(),
+            left_kind: RelationshipKindV1::Feud,
+            right_kind: RelationshipKindV1::Feud,
+            tick: 43,
+            metadata: serde_json::json!({ "place": "spawn" }),
+        });
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:azure".to_string(),
+            fame_delta: 3,
+            notoriety_delta: 5,
+            tags_added: vec![RenownTagV1 {
+                tag: "戮道者".to_string(),
+                weight: 9.0,
+                last_seen_tick: 44,
+                permanent: false,
+            }],
+            tick: 44,
+            reason: "test".to_string(),
+        });
+
+        app.update();
+
+        let loaded = load_social_components(&persistence, "char:azure")
+            .expect("persisted social components should reload");
+
+        assert!(loaded.anonymity.is_exposed_to("char:bob"));
+        assert_eq!(loaded.exposure_log.0.len(), 1);
+        assert_eq!(loaded.exposure_log.0[0].kind, ExposureKindV1::Chat);
+        assert_eq!(loaded.relationships.edges.len(), 1);
+        assert_eq!(loaded.relationships.edges[0].kind, RelationshipKindV1::Feud);
+        assert_eq!(loaded.relationships.edges[0].peer, "char:rival");
+        assert_eq!(loaded.relationships.edges[0].metadata["place"], "spawn");
+        assert_eq!(loaded.renown.fame, 3);
+        assert_eq!(loaded.renown.notoriety, 5);
+        assert_eq!(loaded.renown.tags[0].tag, "戮道者");
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 }
