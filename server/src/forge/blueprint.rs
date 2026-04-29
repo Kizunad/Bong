@@ -206,6 +206,55 @@ impl Blueprint {
     pub fn has_step(&self, kind: StepKind) -> bool {
         self.step_index(kind).is_some()
     }
+
+    pub fn validate_with(
+        &self,
+        minerals: &MineralRegistry,
+        station_tier: u8,
+    ) -> Result<(), ForgeValidationError> {
+        for step in &self.steps {
+            let StepSpec::Billet { profile } = step else {
+                continue;
+            };
+            for required in &profile.required {
+                let Some(entry) = minerals.get_by_str(required.material.as_str()) else {
+                    return Err(ForgeValidationError::UnknownMaterial {
+                        material: required.material.clone(),
+                    });
+                };
+                if entry.forge_tier_min == 0 {
+                    return Err(ForgeValidationError::NotForgeMetal {
+                        material: required.material.clone(),
+                    });
+                }
+                if station_tier < entry.forge_tier_min {
+                    return Err(ForgeValidationError::TierMismatch {
+                        material: required.material.clone(),
+                        material_name: entry.display_name_zh.to_string(),
+                        station_tier,
+                        required_tier: entry.forge_tier_min,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForgeValidationError {
+    UnknownMaterial {
+        material: String,
+    },
+    NotForgeMetal {
+        material: String,
+    },
+    TierMismatch {
+        material: String,
+        material_name: String,
+        station_tier: u8,
+        required_tier: u8,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -485,5 +534,37 @@ mod tests {
         let err = validate_forge_material(Path::new("bad.json"), "bad", "dan_sha", &minerals)
             .unwrap_err();
         assert!(matches!(err, BlueprintLoadError::InvalidMaterial { .. }));
+    }
+
+    #[test]
+    fn validate_with_rejects_station_tier_below_required_material() {
+        let minerals = crate::mineral::build_default_registry();
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("ling_feng_v0").expect("ling_feng fixture");
+        let err = bp.validate_with(&minerals, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ForgeValidationError::TierMismatch {
+                material,
+                station_tier: 1,
+                required_tier: 3,
+                ..
+            } if material == "sui_tie"
+        ));
+    }
+
+    #[test]
+    fn validate_with_accepts_tier_three_rare_metals() {
+        let minerals = crate::mineral::build_default_registry();
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let ling_feng = reg.get("ling_feng_v0").expect("ling_feng fixture");
+        ling_feng
+            .validate_with(&minerals, 3)
+            .expect("tier 3 station should accept sui_tie/rare metal blueprint");
+        assert_eq!(
+            minerals.get_by_str("ku_jin").unwrap().forge_tier_min,
+            3,
+            "plan-mineral-v2 P2: 稀铁炉可承接枯金"
+        );
     }
 }
