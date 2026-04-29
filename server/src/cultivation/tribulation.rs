@@ -51,6 +51,9 @@ const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
 const DUXU_QI_DRAIN_BASE: f64 = 35.0;
 const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
 const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
+const DUXU_KAITIAN_WAVE: u32 = 5;
+const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;
+const DUXU_FULL_QI_EPSILON: f64 = 0.001;
 const HALF_STEP_QI_MAX_MULTIPLIER: f64 = 1.10;
 const HALF_STEP_LIFESPAN_YEARS: u32 = 200;
 
@@ -60,6 +63,7 @@ struct DuXuWaveProfile {
     damage: f32,
     qi_drain: f64,
     qi_max_freeze_ratio: f64,
+    requires_full_resources: bool,
 }
 
 #[derive(Debug, Clone, Component)]
@@ -430,6 +434,17 @@ pub fn tribulation_aoe_system(
             if pos.get().distance(center) > TRIBULATION_DANGER_RADIUS {
                 continue;
             }
+            let is_tribulator = entity == tribulator_entity
+                || lifecycle
+                    .map(|lifecycle| state.is_primary_tribulator(&lifecycle.character_id))
+                    .unwrap_or(false);
+            if profile.requires_full_resources
+                && is_tribulator
+                && !has_full_tribulation_resources(&cultivation, &wounds)
+            {
+                failed.send(TribulationFailed { entity, wave });
+                continue;
+            }
             cultivation.qi_current = (cultivation.qi_current - profile.qi_drain).max(0.0);
             if profile.qi_max_freeze_ratio > 0.0 {
                 let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
@@ -454,10 +469,6 @@ pub fn tribulation_aoe_system(
             if !was_alive || wounds.health_current > 0.0 {
                 continue;
             }
-            let is_tribulator = entity == tribulator_entity
-                || lifecycle
-                    .map(|lifecycle| state.is_primary_tribulator(&lifecycle.character_id))
-                    .unwrap_or(false);
             if is_tribulator {
                 failed.send(TribulationFailed { entity, wave });
             } else {
@@ -487,7 +498,14 @@ fn du_xu_wave_profile(wave: u32) -> DuXuWaveProfile {
         } else {
             0.0
         },
+        requires_full_resources: wave == DUXU_KAITIAN_WAVE,
     }
+}
+
+fn has_full_tribulation_resources(cultivation: &Cultivation, wounds: &Wounds) -> bool {
+    let effective_qi_max = (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+    wounds.health_current + DUXU_FULL_HEALTH_EPSILON >= wounds.health_max
+        && cultivation.qi_current + DUXU_FULL_QI_EPSILON >= effective_qi_max
 }
 
 #[allow(clippy::type_complexity)]
@@ -1474,6 +1492,182 @@ mod tests {
             (cultivation.qi_max_frozen.expect("qi max should freeze") - expected_frozen).abs()
                 < f64::EPSILON
         );
+    }
+
+    #[test]
+    fn kaitian_lightning_fails_tribulator_without_full_health() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2100 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 99.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(5),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 5,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let failures = app.world().resource::<Events<TribulationFailed>>();
+        let emitted: Vec<_> = failures.get_reader().read(failures).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].wave, 5);
+        let wounds = app
+            .world()
+            .get::<Wounds>(entity)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 99.0);
+        assert!(wounds.entries.is_empty());
+    }
+
+    #[test]
+    fn kaitian_lightning_fails_tribulator_without_full_available_qi() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2100 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 189.0,
+                    qi_max: 210.0,
+                    qi_max_frozen: Some(20.0),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 100.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(5),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 5,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let failures = app.world().resource::<Events<TribulationFailed>>();
+        let emitted: Vec<_> = failures.get_reader().read(failures).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].wave, 5);
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 189.0);
+    }
+
+    #[test]
+    fn kaitian_lightning_hits_normally_when_tribulator_has_full_resources() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2100 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 190.0,
+                    qi_max: 210.0,
+                    qi_max_frozen: Some(20.0),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 200.0,
+                    health_max: 200.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(5),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 5,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().resource::<Events<TribulationFailed>>().len(), 0);
+        let wounds = app
+            .world()
+            .get::<Wounds>(entity)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 200.0 - DUXU_AOE_DAMAGE_BASE * 5.0);
+        assert_eq!(wounds.entries.len(), 1);
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 190.0 - DUXU_QI_DRAIN_BASE * 5.0);
     }
 
     #[test]
