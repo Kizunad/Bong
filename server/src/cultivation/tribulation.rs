@@ -1183,6 +1183,7 @@ pub fn tribulation_intercept_death_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn publish_tribulation_events(
     redis: Res<RedisBridgeResource>,
     mut announce: EventReader<TribulationAnnounce>,
