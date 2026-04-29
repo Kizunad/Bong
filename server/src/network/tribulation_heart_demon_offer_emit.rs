@@ -175,4 +175,27 @@ mod tests {
         );
         assert_eq!(tribulator_payloads[0].choices.len(), 3);
     }
+
+    #[test]
+    fn default_heart_demon_offer_keeps_steadfast_choice_available() {
+        let state = TribulationState {
+            kind: crate::cultivation::tribulation::TribulationKind::DuXu,
+            phase: crate::cultivation::tribulation::TribulationPhase::HeartDemon,
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: DUXU_HEART_DEMON_WAVE,
+            waves_total: 5,
+            started_tick: 1_000,
+            phase_started_tick: 1_200,
+            next_wave_tick: 1_500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        };
+
+        let offer = default_heart_demon_offer(Entity::PLACEHOLDER, &state);
+
+        assert!(offer.choices.iter().any(|choice| {
+            choice.category == "Composure" && choice.choice_id == "heart_demon_choice_0"
+        }));
+    }
 }
