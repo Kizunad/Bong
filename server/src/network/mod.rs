@@ -1,5 +1,6 @@
 pub mod agent_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod ascension_quota_emit;
 pub mod cast_emit;
 pub mod chat_collector;
 pub mod client_request_handler;
@@ -294,6 +295,8 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
             crate::cultivation::tribulation::publish_tribulation_events,
             tribulation_broadcast_emit::emit_tribulation_broadcast_payloads,
+            ascension_quota_emit::emit_ascension_quota_payloads
+                .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             vfx_event_emit::handle_vfx_debug_commands,

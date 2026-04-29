@@ -112,6 +112,7 @@ pub enum ServerDataType {
     ForgeOutcome,
     ForgeBlueprintBook,
     TribulationBroadcast,
+    AscensionQuota,
     HeartDemonOffer,
 }
 
@@ -252,6 +253,7 @@ pub enum ServerDataPayloadV1 {
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
     TribulationBroadcast(TribulationBroadcastV1),
+    AscensionQuota(AscensionQuotaV1),
     HeartDemonOffer(HeartDemonOfferV1),
 }
 
@@ -337,6 +339,24 @@ fn tribulation_broadcast_expires_at_ms(ttl_ms: u64) -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
         .saturating_add(ttl_ms)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AscensionQuotaV1 {
+    pub occupied_slots: u32,
+    pub quota_limit: u32,
+    pub available_slots: u32,
+}
+
+impl AscensionQuotaV1 {
+    pub fn new(occupied_slots: u32, quota_limit: u32) -> Self {
+        Self {
+            occupied_slots,
+            quota_limit,
+            available_slots: quota_limit.saturating_sub(occupied_slots),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -613,6 +633,10 @@ enum ServerDataPayloadWireV1 {
     TribulationBroadcast {
         #[serde(flatten)]
         data: TribulationBroadcastV1,
+    },
+    AscensionQuota {
+        #[serde(flatten)]
+        data: AscensionQuotaV1,
     },
     HeartDemonOffer {
         #[serde(flatten)]
@@ -1104,6 +1128,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TribulationBroadcast { data } => {
                 Ok(Self::TribulationBroadcast(data))
             }
+            ServerDataPayloadWireV1::AscensionQuota { data } => Ok(Self::AscensionQuota(data)),
             ServerDataPayloadWireV1::HeartDemonOffer { data } => Ok(Self::HeartDemonOffer(data)),
         }
     }
@@ -1382,6 +1407,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TribulationBroadcast(data) => {
                 Self::TribulationBroadcast { data: data.clone() }
             }
+            ServerDataPayloadV1::AscensionQuota(data) => Self::AscensionQuota { data: *data },
             ServerDataPayloadV1::HeartDemonOffer(data) => {
                 Self::HeartDemonOffer { data: data.clone() }
             }
@@ -1522,6 +1548,7 @@ impl ServerDataPayloadV1 {
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
             Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
+            Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
             Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
         }
     }
@@ -1623,6 +1650,7 @@ mod tests {
             ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
                 "Kiz", "warn", 12.0, -34.0, 60_000,
             )),
+            ServerDataPayloadV1::AscensionQuota(AscensionQuotaV1::new(1, 3)),
             ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
                 offer_id: "heart_demon:1:100".to_string(),
                 trigger_id: "heart_demon:1:100".to_string(),
@@ -1838,6 +1866,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.tribulation-broadcast.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.ascension-quota.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"

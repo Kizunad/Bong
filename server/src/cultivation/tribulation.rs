@@ -217,6 +217,11 @@ pub struct AscensionQuotaOpened {
     pub occupied_slots: u32,
 }
 
+#[derive(Debug, Clone, Event)]
+pub struct AscensionQuotaOccupied {
+    pub occupied_slots: u32,
+}
+
 /// 单波次通过（由战斗 plan 发送）。
 #[derive(Debug, Clone, Event)]
 pub struct TribulationWaveCleared {
@@ -840,6 +845,7 @@ pub fn tribulation_wave_system(
     mut commands: Commands,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut settled: EventWriter<TribulationSettled>,
+    mut quota_occupied: EventWriter<AscensionQuotaOccupied>,
 ) {
     for ev in cleared.read() {
         if let Ok((mut c, mut state, _, lifecycle, lifespan)) = players.get_mut(ev.entity) {
@@ -872,13 +878,19 @@ pub fn tribulation_wave_system(
                     if let Some(mut lifespan) = lifespan {
                         lifespan.apply_cap(LifespanCapTable::VOID);
                     }
-                    if let Err(error) =
-                        complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
+                    match complete_tribulation_ascension(&settings, lifecycle.character_id.as_str())
                     {
-                        tracing::warn!(
-                            "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
-                            ev.entity,
-                        );
+                        Ok(quota) => {
+                            quota_occupied.send(AscensionQuotaOccupied {
+                                occupied_slots: quota.occupied_slots,
+                            });
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "[bong][cultivation] failed to finalize tribulation ascension for {:?}: {error}",
+                                ev.entity,
+                            );
+                        }
                     }
                     // plan-skill-v1 §4：化虚 cap=10，全部 skill 解锁满级上限。
                     let new_cap = skill_cap_for_realm(Realm::Void);
@@ -2920,6 +2932,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOccupied>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(Update, tribulation_wave_system);
 

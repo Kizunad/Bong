@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "ascension_quota",
+  "occupied_slots": 1,
+  "quota_limit": 3,
+  "available_slots": 2
+}

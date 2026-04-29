@@ -1,5 +1,6 @@
 package com.bong.client.combat.handler;
 
+import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.combat.store.DamageFloaterStore;
 import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.combat.store.DerivedAttrsStore;
@@ -28,6 +29,7 @@ class CombatHandlersTest {
         TerminateStateStore.resetForTests();
         WoundsStore.resetForTests();
         TribulationBroadcastStore.resetForTests();
+        AscensionQuotaStore.resetForTests();
     }
 
     @Test
@@ -144,6 +146,19 @@ class CombatHandlersTest {
         new TribulationBroadcastHandler().handle(parse(json));
         assertTrue(TribulationBroadcastStore.snapshot().active());
         assertEquals("locked", TribulationBroadcastStore.snapshot().stage());
+    }
+
+    @Test
+    void ascensionQuotaPopulatesStore() {
+        String json = """
+            {"v":1,"type":"ascension_quota",
+             "occupied_slots":1,"quota_limit":3,"available_slots":2}""";
+        ServerDataDispatch dispatch = new AscensionQuotaHandler().handle(parse(json));
+        assertTrue(dispatch.handled());
+        AscensionQuotaStore.State state = AscensionQuotaStore.snapshot();
+        assertEquals(1, state.occupiedSlots());
+        assertEquals(3, state.quotaLimit());
+        assertEquals(2, state.availableSlots());
     }
 
     private static ServerDataEnvelope parse(String json) {

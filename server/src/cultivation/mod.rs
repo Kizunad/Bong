@@ -97,9 +97,9 @@ use self::tribulation::{
     heart_demon_timeout_system, record_tribulation_interceptor_system, start_du_xu_request_system,
     start_tribulation_system, tribulation_aoe_system, tribulation_escape_boundary_system,
     tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
-    tribulation_wave_system, AscensionQuotaOpened, HeartDemonChoiceSubmitted,
-    InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce, TribulationFailed,
-    TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
+    tribulation_wave_system, AscensionQuotaOccupied, AscensionQuotaOpened,
+    HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
@@ -145,6 +145,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TribulationFled>();
     app.add_event::<TribulationSettled>();
     app.add_event::<AscensionQuotaOpened>();
+    app.add_event::<AscensionQuotaOccupied>();
     app.add_event::<HeartDemonChoiceSubmitted>();
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
@@ -734,6 +735,7 @@ mod tests {
         app.insert_resource(settings.clone());
         app.add_event::<tribulation::TribulationWaveCleared>();
         app.add_event::<tribulation::TribulationSettled>();
+        app.add_event::<tribulation::AscensionQuotaOccupied>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_systems(
             Update,

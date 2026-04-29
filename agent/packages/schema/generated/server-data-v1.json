@@ -8115,6 +8115,39 @@
           "type": "number"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "occupied_slots",
+        "quota_limit",
+        "available_slots"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "ascension_quota",
+          "type": "string"
+        },
+        "occupied_slots": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quota_limit": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "available_slots": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
     }
   ]
 }

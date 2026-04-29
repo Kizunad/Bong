@@ -151,6 +151,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("forge_outcome"),
   Type.Literal("forge_blueprint_book"),
   Type.Literal("tribulation_broadcast"),
+  Type.Literal("ascension_quota"),
   Type.Literal("heart_demon_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
@@ -538,6 +539,20 @@ export type ServerDataTribulationBroadcastV1 = Static<
   typeof ServerDataTribulationBroadcastV1
 >;
 
+export const ServerDataAscensionQuotaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("ascension_quota"),
+    occupied_slots: Type.Integer({ minimum: 0 }),
+    quota_limit: Type.Integer({ minimum: 0 }),
+    available_slots: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAscensionQuotaV1 = Static<
+  typeof ServerDataAscensionQuotaV1
+>;
+
 export const HeartDemonOfferChoiceV1 = Type.Object(
   {
     choice_id: Type.String({ minLength: 1, maxLength: 128 }),
@@ -896,5 +911,6 @@ export const ServerDataV1 = Type.Union([
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
   ServerDataTribulationBroadcastV1,
+  ServerDataAscensionQuotaV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;
