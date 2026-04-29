@@ -444,6 +444,18 @@ export const SpiritNicheMarkCoordinateRequestV1 = Type.Object(
 );
 export type SpiritNicheMarkCoordinateRequestV1 = Static<typeof SpiritNicheMarkCoordinateRequestV1>;
 
+export const SparringInviteResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("sparring_invite_response"),
+    invite_id: Type.String({ minLength: 1 }),
+    accepted: Type.Boolean(),
+    timed_out: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+export type SparringInviteResponseRequestV1 = Static<typeof SparringInviteResponseRequestV1>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -600,6 +612,7 @@ export const ClientRequestV1 = Type.Union([
   SpiritNichePlaceRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
+  SparringInviteResponseRequestV1,
   LearnSkillScrollRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,

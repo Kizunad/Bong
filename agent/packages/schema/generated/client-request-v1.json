@@ -1763,6 +1763,36 @@
       "required": [
         "v",
         "type",
+        "invite_id",
+        "accepted"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "sparring_invite_response",
+          "type": "string"
+        },
+        "invite_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "timed_out": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "instance_id"
       ],
       "properties": {

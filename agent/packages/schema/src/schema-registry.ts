@@ -61,6 +61,7 @@ import {
   SetMeridianTargetRequestV1,
   SkillBarBindRequestV1,
   SkillBarCastRequestV1,
+  SparringInviteResponseRequestV1,
   StartExtractRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
@@ -282,6 +283,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestQuickSlotBindV1: QuickSlotBindRequestV1,
   clientRequestSkillBarCastV1: SkillBarCastRequestV1,
   clientRequestSkillBarBindV1: SkillBarBindRequestV1,
+  clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
@@ -554,6 +556,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataSocialRenownDeltaV1,
   "server-data-sparring-invite-v1.json":
     SCHEMA_REGISTRY.serverDataSparringInviteV1,
+  "client-request-sparring-invite-response-v1.json":
+    SCHEMA_REGISTRY.clientRequestSparringInviteResponseV1,
   "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,
   "play-sound-recipe-event-v1.json": SCHEMA_REGISTRY.playSoundRecipeEventV1,
   "stop-sound-recipe-event-v1.json": SCHEMA_REGISTRY.stopSoundRecipeEventV1,
