@@ -19,14 +19,28 @@ class TribulationBroadcastHudPlannerTest {
         TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
             true, "甲", "warn", 12, -34, 10_000L, false, 120
         ));
-        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(
+            800, 600, 1_000L, new TribulationBroadcastHudPlanner.ViewerPosition(-188, -34)
+        );
         assertFalse(cmds.isEmpty());
         boolean hasWarn = cmds.stream().anyMatch(c -> c.isText() && c.text().contains("甲"));
         assertTrue(hasWarn);
         boolean hasPositionAndDistance = cmds.stream().anyMatch(c -> c.isText()
             && c.text().contains("坐标 (12, -34)")
+            && c.text().contains("方位 东")
             && c.text().contains("距离 120 格"));
         assertTrue(hasPositionAndDistance);
+    }
+
+    @Test void directionLabelsUseEightWayCompass() {
+        TribulationBroadcastHudPlanner.ViewerPosition origin = new TribulationBroadcastHudPlanner.ViewerPosition(0, 0);
+
+        assertEquals("东", TribulationBroadcastHudPlanner.directionLabel(origin, 10, 0));
+        assertEquals("东南", TribulationBroadcastHudPlanner.directionLabel(origin, 10, 10));
+        assertEquals("南", TribulationBroadcastHudPlanner.directionLabel(origin, 0, 10));
+        assertEquals("西北", TribulationBroadcastHudPlanner.directionLabel(origin, -10, -10));
+        assertEquals("脚下", TribulationBroadcastHudPlanner.directionLabel(origin, 0, 0));
+        assertEquals("", TribulationBroadcastHudPlanner.directionLabel(null, 10, 0));
     }
 
     @Test void drawsLockedStage() {

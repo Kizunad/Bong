@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.store.TribulationBroadcastStore;
+import net.minecraft.client.MinecraftClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,15 @@ public final class TribulationBroadcastHudPlanner {
         int screenHeight,
         long nowMs
     ) {
+        return buildCommands(screenWidth, screenHeight, nowMs, currentViewerPosition());
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        int screenWidth,
+        int screenHeight,
+        long nowMs,
+        ViewerPosition viewerPosition
+    ) {
         List<HudRenderCommand> out = new ArrayList<>();
         TribulationBroadcastStore.State state = TribulationBroadcastStore.snapshot();
         if (!state.active() || state.expired(nowMs)) return out;
@@ -38,6 +48,10 @@ public final class TribulationBroadcastHudPlanner {
         String line = "\u26a1 " + stageLabel
             + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName())
             + " \u00b7 \u5750\u6807 (" + Math.round(state.worldX()) + ", " + Math.round(state.worldZ()) + ")";
+        String direction = directionLabel(viewerPosition, state.worldX(), state.worldZ());
+        if (!direction.isEmpty()) {
+            line += " \u00b7 \u65b9\u4f4d " + direction;
+        }
         if (state.spectateDistance() >= 0d) {
             line += " \u00b7 \u8ddd\u79bb " + Math.round(state.spectateDistance()) + " \u683c";
         }
@@ -58,5 +72,40 @@ public final class TribulationBroadcastHudPlanner {
             ));
         }
         return out;
+    }
+
+    static String directionLabel(ViewerPosition viewerPosition, double targetX, double targetZ) {
+        if (viewerPosition == null || !viewerPosition.finite()
+            || !Double.isFinite(targetX) || !Double.isFinite(targetZ)) {
+            return "";
+        }
+        double dx = targetX - viewerPosition.worldX();
+        double dz = targetZ - viewerPosition.worldZ();
+        if ((dx * dx + dz * dz) < 0.0001d) return "\u811a\u4e0b";
+
+        double degrees = Math.toDegrees(Math.atan2(dz, dx));
+        if (degrees < 0d) degrees += 360d;
+        String[] labels = {
+            "\u4e1c", "\u4e1c\u5357", "\u5357", "\u897f\u5357",
+            "\u897f", "\u897f\u5317", "\u5317", "\u4e1c\u5317"
+        };
+        int index = (int) Math.floor((degrees + 22.5d) / 45d) % labels.length;
+        return labels[index];
+    }
+
+    private static ViewerPosition currentViewerPosition() {
+        try {
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client == null || client.player == null) return null;
+            return new ViewerPosition(client.player.getX(), client.player.getZ());
+        } catch (RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
+    static record ViewerPosition(double worldX, double worldZ) {
+        boolean finite() {
+            return Double.isFinite(worldX) && Double.isFinite(worldZ);
+        }
     }
 }
