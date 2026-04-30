@@ -796,7 +796,7 @@ pub fn record_tribulation_interceptor_system(
         if state.kind != TribulationKind::DuXu
             || !matches!(
                 state.phase,
-                TribulationPhase::Lock | TribulationPhase::Wave(_)
+                TribulationPhase::Lock | TribulationPhase::Wave(_) | TribulationPhase::HeartDemon
             )
         {
             continue;
@@ -3387,6 +3387,68 @@ mod tests {
                 description: "test interception hit".to_string(),
             });
         }
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(victim)
+            .expect("tribulation should remain active");
+        assert_eq!(
+            state.participants,
+            vec!["offline:Victim".to_string(), "offline:Killer".to_string()]
+        );
+    }
+
+    #[test]
+    fn attacking_during_heart_demon_records_interceptor_participant() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, record_tribulation_interceptor_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Victim".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+        let interceptor = app
+            .world_mut()
+            .spawn((
+                Position::new([12.0, 66.0, 0.0]),
+                Lifecycle {
+                    character_id: "offline:Killer".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker: interceptor,
+            target: victim,
+            resolved_at_tick: 2130,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Cut,
+            damage: 12.0,
+            contam_delta: 0.0,
+            description: "test heart demon interception hit".to_string(),
+        });
         app.update();
 
         let state = app
