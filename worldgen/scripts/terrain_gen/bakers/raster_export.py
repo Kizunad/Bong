@@ -74,6 +74,7 @@ def export_rasters(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_tiles: list[dict[str, object]] = []
+    written_layer_names: set[str] = set()
     for tile in fields.tiles:
         tile_dir = output_dir / tile.tile.tile_id
         tile_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +94,7 @@ def export_rasters(
             else:
                 raise ValueError(f"unsupported raster layer '{layer_name}'")
             written_layers.append(layer_name)
+            written_layer_names.add(layer_name)
 
         manifest_tiles.append(
             {
@@ -132,7 +134,7 @@ def export_rasters(
                 "qi_vein_flow",
                 "realm_collapse_mask",
             )
-            if name in LAYER_REGISTRY
+            if name in written_layer_names
         ],
         "collapsed_zones": collapsed_zones_payload,
         "vertical_layers": [

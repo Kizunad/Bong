@@ -20,6 +20,7 @@ from scripts.terrain_gen.bakers.raster_export import (
     export_rasters,
 )
 from scripts.terrain_gen.fields import Bounds2D
+from scripts.terrain_gen.harness.raster_check import validate_rasters
 from scripts.terrain_gen.stitcher import build_generation_plan, synthesize_fields
 
 
@@ -117,6 +118,69 @@ class TerrainGenZoneOverlayTest(unittest.TestCase):
                     }
                 ],
             )
+            ok, message = validate_rasters(artifacts["raster_dir"])
+            self.assertTrue(ok, message)
+
+    def test_manifest_omits_realm_collapse_mask_without_collapsed_overlay(self) -> None:
+        zone = BlueprintZone(
+            name="spawn",
+            display_name="初醒原",
+            bounds_xz=Bounds2D(min_x=0, max_x=15, min_z=0, max_z=15),
+            center_xz=(8, 8),
+            size_xz=(16, 16),
+            spirit_qi=0.3,
+            danger_level=1,
+            worldgen=ZoneWorldgenConfig(
+                terrain_profile="spawn_plain",
+                shape="ellipse",
+                boundary=BoundarySpec(mode="soft", width=2),
+                height_model={"base": [66, 78], "peak": 84},
+                surface_palette=("grass_block", "dirt", "coarse_dirt", "gravel"),
+            ),
+        )
+        blueprint = WorldBlueprint(
+            version=1,
+            world_name="test_world",
+            spawn_zone="spawn",
+            bounds_xz=Bounds2D(min_x=0, max_x=15, min_z=0, max_z=15),
+            notes=(),
+            zones=(zone,),
+        )
+        profile_catalog = TerrainProfileCatalog(
+            version=1,
+            profiles={
+                "spawn_plain": TerrainProfileSpec(
+                    name="spawn_plain",
+                    boundary=BoundarySpec(mode="soft", width=2),
+                    height={"base": [66, 78], "peak": 84},
+                    surface=("grass_block", "dirt", "coarse_dirt", "gravel"),
+                    water={"level": "low", "coverage": 0.05},
+                    passability="high",
+                )
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            plan = build_generation_plan(
+                blueprint=blueprint,
+                profile_catalog=profile_catalog,
+                blueprint_path=Path("blueprint.json"),
+                profiles_path=Path("profiles.json"),
+                output_dir=output_dir,
+                tile_size=16,
+                zone_overlays=(),
+            )
+            plan.bake_plan = build_raster_bake_plan(plan, output_dir)
+            fields = synthesize_fields(plan)
+            artifacts = export_rasters(plan, fields)
+
+            self.assertNotIn("realm_collapse_mask", fields.layers)
+            manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
+            self.assertNotIn("realm_collapse_mask", manifest["semantic_layers"])
+            self.assertEqual(manifest["collapsed_zones"], [])
+            ok, message = validate_rasters(artifacts["raster_dir"])
+            self.assertTrue(ok, message)
 
     def test_load_zone_overlays_consumes_server_export_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
