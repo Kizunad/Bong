@@ -35,6 +35,7 @@ impl EnvLayerSampler for TerrainProvider {
 #[derive(Debug, Clone, Default)]
 pub struct DecorationManifest {
     by_name: HashMap<String, DecorationDescriptor>,
+    name_by_global_id: HashMap<u8, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,12 +47,16 @@ pub struct DecorationDescriptor {
 impl DecorationManifest {
     pub fn from_terrain_provider(terrain: &TerrainProvider) -> Self {
         let mut by_name = HashMap::new();
+        let mut name_by_global_id = HashMap::new();
         for decoration in terrain.decorations() {
             let primary_blocks = decoration
                 .blocks
                 .iter()
                 .filter_map(|block| decoration_block_state(block.as_str()))
                 .collect::<Vec<_>>();
+            if let Ok(global_id) = u8::try_from(decoration.global_id) {
+                name_by_global_id.insert(global_id, decoration.name.clone());
+            }
             by_name.insert(
                 decoration.name.clone(),
                 DecorationDescriptor {
@@ -60,18 +65,34 @@ impl DecorationManifest {
                 },
             );
         }
-        Self { by_name }
-    }
-
-    pub fn contains(&self, lock: DecorationLock) -> bool {
-        lock.names()
-            .into_iter()
-            .any(|name| self.by_name.contains_key(name))
+        Self {
+            by_name,
+            name_by_global_id,
+        }
     }
 
     #[allow(dead_code)]
     pub fn get(&self, name: &str) -> Option<&DecorationDescriptor> {
         self.by_name.get(name)
+    }
+
+    fn matches_global_id(&self, lock: DecorationLock, global_id: u8) -> bool {
+        let Some(name) = self.name_by_global_id.get(&global_id) else {
+            return false;
+        };
+        lock.names().into_iter().any(|candidate| candidate == name)
+    }
+
+    fn global_id_has_light_block(&self, global_id: u8) -> bool {
+        let Some(name) = self.name_by_global_id.get(&global_id) else {
+            return false;
+        };
+        self.by_name.get(name).is_some_and(|descriptor| {
+            descriptor
+                .primary_blocks
+                .iter()
+                .any(|block| is_light_block(*block))
+        })
     }
 }
 
@@ -131,8 +152,12 @@ pub fn check_env_lock(
             .active_events
             .iter()
             .any(|event| event == "portal_rift" || event == "tsy_entry"),
-        EnvLock::AdjacentDecoration { kind, .. } => manifest.contains(kind),
-        EnvLock::AdjacentLightBlock { .. } => column_has_light_block(terrain, world_x, world_z),
+        EnvLock::AdjacentDecoration { kind, radius } => {
+            adjacent_decoration(terrain, manifest, world_x, world_z, kind, radius)
+        }
+        EnvLock::AdjacentLightBlock { radius } => {
+            adjacent_light_block(terrain, manifest, world_x, world_z, radius)
+        }
         EnvLock::SnowSurface => {
             terrain.env_query_surface_y(world_x, world_z)
                 >= crate::world::terrain::broken_peaks::SNOW_LINE_Y
@@ -159,9 +184,70 @@ fn sample_at_least(
         .is_some_and(|value| value >= min)
 }
 
-fn column_has_light_block(terrain: &impl EnvLayerSampler, world_x: i32, world_z: i32) -> bool {
+fn adjacent_decoration(
+    terrain: &impl EnvLayerSampler,
+    manifest: &DecorationManifest,
+    world_x: i32,
+    world_z: i32,
+    lock: DecorationLock,
+    radius: u8,
+) -> bool {
+    any_column_in_radius(world_x, world_z, radius, |x, z| {
+        sample_flora_variant_id(terrain, x, z)
+            .is_some_and(|global_id| manifest.matches_global_id(lock, global_id))
+    })
+}
+
+fn adjacent_light_block(
+    terrain: &impl EnvLayerSampler,
+    manifest: &DecorationManifest,
+    world_x: i32,
+    world_z: i32,
+    radius: u8,
+) -> bool {
+    any_column_in_radius(world_x, world_z, radius, |x, z| {
+        is_light_block(terrain.env_surface_block(x, z))
+            || sample_flora_variant_id(terrain, x, z)
+                .is_some_and(|global_id| manifest.global_id_has_light_block(global_id))
+    })
+}
+
+fn any_column_in_radius(
+    world_x: i32,
+    world_z: i32,
+    radius: u8,
+    mut predicate: impl FnMut(i32, i32) -> bool,
+) -> bool {
+    let radius = i32::from(radius);
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            if predicate(world_x + dx, world_z + dz) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn sample_flora_variant_id(
+    terrain: &impl EnvLayerSampler,
+    world_x: i32,
+    world_z: i32,
+) -> Option<u8> {
+    let value = terrain.env_sample_layer(world_x, world_z, "flora_variant_id")?;
+    if !value.is_finite() {
+        return None;
+    }
+    let rounded = value.round();
+    if !(1.0..=f32::from(u8::MAX)).contains(&rounded) {
+        return None;
+    }
+    Some(rounded as u8)
+}
+
+fn is_light_block(block: BlockState) -> bool {
     matches!(
-        terrain.env_surface_block(world_x, world_z),
+        block,
         BlockState::SHROOMLIGHT
             | BlockState::AMETHYST_BLOCK
             | BlockState::AMETHYST_CLUSTER
@@ -193,6 +279,7 @@ mod tests {
     use super::*;
     use crate::botany::registry::{BotanyKindRegistry, BotanyPlantId};
     use crate::world::dimension::DimensionKind;
+    use std::collections::HashMap as StdHashMap;
     use valence::prelude::Position;
 
     struct MockTerrain {
@@ -200,10 +287,15 @@ mod tests {
         surface_y: i32,
         surface_block: BlockState,
         sky_island: Option<(f32, f32)>,
+        flora_by_pos: StdHashMap<(i32, i32), f32>,
+        surface_by_pos: StdHashMap<(i32, i32), BlockState>,
     }
 
     impl EnvLayerSampler for MockTerrain {
-        fn env_sample_layer(&self, _world_x: i32, _world_z: i32, layer_name: &str) -> Option<f32> {
+        fn env_sample_layer(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<f32> {
+            if layer_name == "flora_variant_id" {
+                return self.flora_by_pos.get(&(world_x, world_z)).copied();
+            }
             self.layers.get(layer_name).copied()
         }
 
@@ -211,8 +303,11 @@ mod tests {
             self.surface_y
         }
 
-        fn env_surface_block(&self, _world_x: i32, _world_z: i32) -> BlockState {
-            self.surface_block
+        fn env_surface_block(&self, world_x: i32, world_z: i32) -> BlockState {
+            self.surface_by_pos
+                .get(&(world_x, world_z))
+                .copied()
+                .unwrap_or(self.surface_block)
         }
 
         fn env_sky_island(&self, _world_x: i32, _world_z: i32) -> Option<(f32, f32)> {
@@ -226,6 +321,29 @@ mod tests {
             surface_y: 80,
             surface_block: BlockState::STONE,
             sky_island: None,
+            flora_by_pos: StdHashMap::new(),
+            surface_by_pos: StdHashMap::new(),
+        }
+    }
+
+    fn manifest_with_decorations(
+        entries: &[(u8, &'static str, Vec<BlockState>)],
+    ) -> DecorationManifest {
+        let mut by_name = HashMap::new();
+        let mut name_by_global_id = HashMap::new();
+        for (global_id, name, primary_blocks) in entries {
+            by_name.insert(
+                (*name).to_string(),
+                DecorationDescriptor {
+                    name: (*name).to_string(),
+                    primary_blocks: primary_blocks.clone(),
+                },
+            );
+            name_by_global_id.insert(*global_id, (*name).to_string());
+        }
+        DecorationManifest {
+            by_name,
+            name_by_global_id,
         }
     }
 
@@ -304,6 +422,8 @@ mod tests {
             surface_y: 80,
             surface_block: BlockState::GLOW_LICHEN,
             sky_island: None,
+            flora_by_pos: StdHashMap::new(),
+            surface_by_pos: StdHashMap::new(),
         };
         assert!(check_env_lock(
             EnvLock::AdjacentLightBlock { radius: 2 },
@@ -312,6 +432,98 @@ mod tests {
             &terrain,
             &zone(&[]),
             &DecorationManifest::default()
+        ));
+    }
+
+    #[test]
+    fn adjacent_decoration_lock_requires_matching_local_flora_variant_inside_radius() {
+        let mut terrain = mock_terrain("ruin_density", 0.0);
+        terrain.flora_by_pos.insert((2, 0), 7.0);
+        let manifest =
+            manifest_with_decorations(&[(7, "array_disc_remnant", vec![BlockState::ANDESITE])]);
+
+        assert!(check_env_lock(
+            EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant"),
+                radius: 2,
+            },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &manifest
+        ));
+        assert!(!check_env_lock(
+            EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant"),
+                radius: 1,
+            },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &manifest
+        ));
+    }
+
+    #[test]
+    fn adjacent_decoration_lock_does_not_pass_from_global_palette_only() {
+        let terrain = mock_terrain("ruin_density", 0.0);
+        let manifest =
+            manifest_with_decorations(&[(7, "array_disc_remnant", vec![BlockState::ANDESITE])]);
+
+        assert!(!check_env_lock(
+            EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant"),
+                radius: 8,
+            },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &manifest
+        ));
+    }
+
+    #[test]
+    fn adjacent_light_lock_uses_radius_for_surface_blocks() {
+        let mut terrain = mock_terrain("underground_tier", 1.0);
+        terrain
+            .surface_by_pos
+            .insert((0, 2), BlockState::SHROOMLIGHT);
+
+        assert!(check_env_lock(
+            EnvLock::AdjacentLightBlock { radius: 2 },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &DecorationManifest::default()
+        ));
+        assert!(!check_env_lock(
+            EnvLock::AdjacentLightBlock { radius: 1 },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &DecorationManifest::default()
+        ));
+    }
+
+    #[test]
+    fn adjacent_light_lock_accepts_light_decoration_inside_radius() {
+        let mut terrain = mock_terrain("underground_tier", 1.0);
+        terrain.flora_by_pos.insert((-1, 0), 9.0);
+        let manifest =
+            manifest_with_decorations(&[(9, "glowcap_cluster", vec![BlockState::SHROOMLIGHT])]);
+
+        assert!(check_env_lock(
+            EnvLock::AdjacentLightBlock { radius: 1 },
+            0,
+            0,
+            &terrain,
+            &zone(&[]),
+            &manifest
         ));
     }
 }
