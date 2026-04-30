@@ -3097,6 +3097,58 @@ mod tests {
     }
 
     #[test]
+    fn phase7_balance_quota_formula_is_players_per_50_with_hard_cap_3() {
+        let cases = [
+            (1, 1),
+            (50, 1),
+            (51, 1),
+            (99, 1),
+            (100, 2),
+            (149, 2),
+            (150, 3),
+            (500, 3),
+        ];
+        for (players, expected_limit) in cases {
+            assert_eq!(ascension_quota_limit(players), expected_limit);
+        }
+    }
+
+    #[test]
+    fn phase7_balance_three_wave_curve_fits_spirit_pool() {
+        let spirit_pool = 210.0;
+        let profiles = (1..=3).map(du_xu_wave_profile).collect::<Vec<_>>();
+        assert_eq!(profiles[0].damage, 18.0);
+        assert_eq!(profiles[1].damage, 36.0);
+        assert_eq!(profiles[2].damage, 54.0);
+        assert_eq!(profiles[0].qi_drain, 35.0);
+        assert_eq!(profiles[1].qi_drain, 70.0);
+        assert_eq!(profiles[2].qi_drain, 105.0);
+        assert_eq!(
+            profiles.iter().map(|profile| profile.damage).sum::<f32>(),
+            108.0
+        );
+        assert_eq!(
+            profiles.iter().map(|profile| profile.qi_drain).sum::<f64>(),
+            210.0
+        );
+        assert!(profiles.iter().map(|profile| profile.qi_drain).sum::<f64>() <= spirit_pool);
+    }
+
+    #[test]
+    fn phase7_balance_interception_window_matches_lock_and_heart_demon_timing() {
+        let windows = [DUXU_WAVE_COOLDOWN_TICKS, DUXU_HEART_DEMON_TIMEOUT_TICKS];
+        let radii = [
+            DUXU_LOCK_RADIUS_FINAL,
+            DUXU_LOCK_RADIUS_HARD,
+            TRIBULATION_DANGER_RADIUS,
+        ];
+
+        assert_eq!(windows, [15 * 20, 30 * 20]);
+        assert_eq!(radii, [10.0, 20.0, 100.0]);
+        assert!(radii.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
     fn lock_expiry_starts_first_wave_and_schedules_cooldown() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 900 });
