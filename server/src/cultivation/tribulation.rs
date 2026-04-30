@@ -293,19 +293,34 @@ pub fn start_du_xu_request_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn start_tribulation_system(
     settings: Res<PersistenceSettings>,
     mut events: EventReader<InitiateXuhuaTribulation>,
     mut announce: EventWriter<TribulationAnnounce>,
-    mut players: Query<(&Cultivation, &MeridianSystem, &Lifecycle, Option<&Username>)>,
+    mut players: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &Lifecycle,
+        Option<&Username>,
+        Option<&TribulationState>,
+    )>,
     player_count: Query<(), With<Client>>,
     mut commands: Commands,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
+    let mut accepted_this_tick = HashSet::new();
     for ev in events.read() {
-        if let Ok((c, meridians, lifecycle, username)) = players.get_mut(ev.entity) {
+        if let Ok((c, meridians, lifecycle, username, active)) = players.get_mut(ev.entity) {
+            if active.is_some() || accepted_this_tick.contains(&ev.entity) {
+                tracing::warn!(
+                    "[bong][cultivation] duplicate active tribulation start for {:?}, rejected",
+                    ev.entity,
+                );
+                continue;
+            }
             if c.realm != Realm::Spirit {
                 tracing::warn!(
                     "[bong][cultivation] {:?} tried to tribulate from {:?}, rejected",
@@ -386,6 +401,7 @@ pub fn start_tribulation_system(
                     duration_ticks: Some(14),
                 },
             ));
+            accepted_this_tick.insert(ev.entity);
         }
     }
 }
@@ -1611,6 +1627,62 @@ mod tests {
         assert_eq!(emitted[0].actor_name, "Azure");
         assert_eq!(emitted[0].epicenter, [12.0, 66.0, -8.0]);
         assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    #[test]
+    fn start_tribulation_system_dedupes_same_tick_internal_events() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("start-tribulation-dedupe");
+        app.insert_resource(settings);
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, start_tribulation_system);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([12.0, 66.0, -8.0]));
+
+        for _ in 0..2 {
+            app.world_mut().send_event(InitiateXuhuaTribulation {
+                entity,
+                waves_total: 3,
+                started_tick: 100,
+            });
+        }
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should start once");
+        assert_eq!(state.phase, TribulationPhase::Omen);
+        assert_eq!(state.started_tick, 100);
+        let announce = app.world().resource::<Events<TribulationAnnounce>>();
+        let emitted: Vec<_> = announce.get_reader().read(announce).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].actor_name, "Azure");
+        assert_eq!(app.world().resource::<Events<VfxEventRequest>>().len(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn collect_vfx_payloads(app: &mut App) -> Vec<VfxEventPayloadV1> {
