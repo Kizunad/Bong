@@ -19,6 +19,7 @@ const DEFAULT_SPAWN_PATROL_ANCHORS: [[f64; 3]; 1] = [[14.0, 66.0, 14.0]];
 const MAX_ZONE_DANGER_LEVEL: u8 = 5;
 const MIN_ZONE_SPIRIT_QI: f64 = -1.0;
 const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
+const COLLAPSED_ZONE_EVENT_NAME: &str = "realm_collapse";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
@@ -304,6 +305,10 @@ impl ZoneRegistry {
                         })?;
                     zone.spirit_qi = 0.0;
                     zone.danger_level = payload.danger_level;
+                    merge_overlay_events(
+                        &mut zone.active_events,
+                        vec![COLLAPSED_ZONE_EVENT_NAME.to_string()],
+                    );
                     merge_overlay_events(&mut zone.active_events, payload.active_events);
                     merge_overlay_blocked_tiles(&mut zone.blocked_tiles, payload.blocked_tiles);
                 }
@@ -925,7 +930,7 @@ mod zone_tests {
                     overlay_kind: "collapsed".to_string(),
                     payload_json: serde_json::json!({
                         "danger_level": 4,
-                        "active_events": ["realm_collapse"],
+                        "zone_status": "collapsed",
                         "blocked_tiles": [[1, 2], [3, 4]],
                     })
                     .to_string(),

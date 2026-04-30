@@ -1383,6 +1383,7 @@ pub(crate) fn persist_zone_collapsed_overlays(
                 zone_id: event.zone_name.clone(),
                 overlay_kind: "collapsed".to_string(),
                 payload_json: json!({
+                    "zone_status": "collapsed",
                     "danger_level": COLLAPSED_ZONE_DANGER_LEVEL,
                     "active_events": [EVENT_REALM_COLLAPSE],
                     "blocked_tiles": [],
@@ -2462,6 +2463,9 @@ mod events_tests {
             overlay.zone_id == DEFAULT_SPAWN_ZONE_NAME
                 && overlay.overlay_kind == "collapsed"
                 && overlay.payload_version == 1
+                && overlay
+                    .payload_json
+                    .contains("\"zone_status\":\"collapsed\"")
                 && overlay.payload_json.contains(EVENT_REALM_COLLAPSE)
         }));
     }
