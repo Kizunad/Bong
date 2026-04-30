@@ -63,3 +63,38 @@
 ## 进度日志
 
 - 2026-04-25：核对实装 —— schema (`Narration`/`NarrationV1` 含 scope+style)、agent 三 skill prompts (calamity/mutation/era 半文言半白话+预兆要求)、`narration-eval.ts` 风格评分（长度 100-200 + omen + 现代腔黑名单 + 风格关键词）、server `NarrationDedupeResource`（按 scope|target|style|text dedupe）、client `NarrationState` 按 style 分流 ChatHud + Toast 均已上线；§0/§3/§4 部分项勾选；§2 视角剪裁、§4 模板轮换、§4 LLM 去重 prompt 仍为待办；黑名单需补"恭喜/注意/警告/小心/xp/等级提升"中文条目。
+
+## Finish Evidence
+
+### 落地清单
+
+- §0 玩家视角 / §2 神识可感知范围：`agent/packages/tiandao/src/context.ts::perceptionEnvelopeBlock` 将每名玩家境界、位置、神识半径与可感类型注入三 Agent 上下文；`calamity.md` / `mutation.md` / `era.md` 明确生成前必须参考 `玩家可感知边界`，超出范围只能写远方异象、传闻或 NPC 口述。
+- §0 节奏 / 不打断战斗：`agent/packages/tiandao/src/arbiter.ts::applyNarrationScopeRules` + `isCombatTick` 对近期普通战斗 tick 抑制常规 narration，仅保留 `death_insight` 与 `era_decree`。
+- §2 视角剪裁与跨地域广播约束：`agent/packages/tiandao/src/arbiter.ts::isBroadcastAllowed` / `narrowBroadcastNarration` 将非渡虚劫、非时代法旨、非死亡遗念的 broadcast 自动收窄到 zone；`DUXU_EVENT_RE` 锁定渡虚劫 / 化虚级全服广播例外。
+- §2 匿名约束：`agent/packages/tiandao/src/arbiter.ts::redactPlayerNames` 在出 Arbiter 前把在线玩家名 / uuid 替换成 `某修士`；三 skill prompt 同步禁止主动暴露玩家名字。
+- §3 风格黑名单：`agent/packages/tiandao/src/narration-eval.ts::MODERN_SLANG_RE` 补入 `恭喜 / 注意 / 警告 / 小心 / xp / 等级提升`，覆盖 worldview §八 反例。
+- §4 模板轮换 / LLM 去重 prompt：`agent/packages/tiandao/src/world-model.ts::getRecentNarrations` 持久化近轮 narration 摘要，`agent/packages/tiandao/src/context.ts::recentNarrationsBlock` 注入 `近轮天道叙事`，要求本轮换物象、换句式，避免复用同义近句。
+- 已有跨端链路核验：server 侧 `server/src/schema/narration.rs::NarrationV1` / `server/src/network/mod.rs::NarrationDedupeResource` / `process_agent_narrations_with_dedupe` 负责 schema、scope 路由与重复抑制；client 侧 `client/src/main/java/com/bong/client/network/NarrationHandler.java` / `client/src/main/java/com/bong/client/state/NarrationState.java` 负责 ChatHud + toast 风格分流。
+
+### 关键 commit
+
+- `5bc978ca` 2026-05-01 `fix(agent): 扩展叙事现代提示黑名单`
+- `5b4466c4` 2026-05-01 `feat(agent): 收束叙事视角与广播节奏`
+- `5288cb44` 2026-05-01 `feat(agent): 注入叙事感知边界上下文`
+
+### 测试结果
+
+- `cd agent && npm run build`：通过；`@bong/schema` 与 `@bong/tiandao` TypeScript build 均成功。
+- `cd agent/packages/tiandao && npm test`：24 files / 184 tests passed。
+- `cd agent/packages/schema && npm test`：7 files / 224 tests passed。
+
+### 跨仓库核验
+
+- server：`NarrationV1`、`NarrationScope`、`NarrationStyle`、`NarrationDedupeResource`、`process_agent_narrations_with_dedupe`、`CH_AGENT_NARRATE`。
+- agent：`MODERN_SLANG_RE`、`perceptionEnvelopeBlock`、`recentNarrationsBlock`、`applyNarrationScopeRules`、`getRecentNarrations`、`calamity.md` / `mutation.md` / `era.md` narration 约束。
+- client：`NarrationHandler`、`NarrationState`、`BongToast`、`ServerDataRouter` 的 `narration` handler 注册。
+
+### 遗留 / 后续
+
+- 本 plan 不改 `docs/worldview.md` 与其他 docs；感知范围锚点沿用已归档 `plan-perception-v1.1` 和 `worldview.md §境界 / §八`。
+- 本 plan 不扩 IPC schema；叙事视角与节奏先在 agent prompt + Arbiter 约束层落地，后续若要按每条 narration 标注感知来源，可另立 schema plan。
