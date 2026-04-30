@@ -1499,10 +1499,12 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 mod tests {
     use super::*;
     use crate::combat::components::UnlockedStyles;
+    use crate::cultivation::components::Realm;
+    use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
         BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
-        ItemCategory, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
+        ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
     };
     use crate::skill::components::SkillSet;
     use valence::prelude::{
@@ -2112,6 +2114,91 @@ mod tests {
             has_inventory_durability_payload(&mut helper, 77),
             "targeted wear should reuse durability incremental payload"
         );
+    }
+
+    #[test]
+    fn apply_pill_during_tribulation_recovers_current_qi_only() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "huiyuan_pill".to_string(),
+            ItemTemplate {
+                id: "huiyuan_pill".to_string(),
+                display_name: "回元丹".to_string(),
+                category: ItemCategory::Pill,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Rare,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: Some(ItemEffect::QiRecovery { amount: 90.0 }),
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "huiyuan_pill".to_string(),
+                    display_name: "回元丹".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.1,
+                    rarity: ItemRarity::Rare,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                }),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 20.0,
+                    qi_max: 100.0,
+                    qi_max_frozen: Some(30.0),
+                    ..Cultivation::default()
+                },
+                PlayerState::default(),
+                TribulationState::restored(2, 5, 10),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(cultivation.qi_current, 70.0);
+        assert_eq!(cultivation.qi_max, 100.0);
+        assert_eq!(cultivation.qi_max_frozen, Some(30.0));
+        assert!(app.world().get::<TribulationState>(entity).is_some());
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(inventory.revision.0, 1);
     }
 
     #[test]
