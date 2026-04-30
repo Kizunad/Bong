@@ -557,7 +557,7 @@ impl ActiveEventsResource {
         layer_entity: Option<Entity>,
         mut commands: Option<&mut Commands>,
         player_positions: Option<&[(String, DVec3)]>,
-        collapse_targets: Option<&[(Entity, DVec3)]>,
+        collapse_targets: Option<&[(Entity, DimensionKind, DVec3)]>,
         mut death_events: Option<&mut EventWriter<DeathEvent>>,
         mut collapsed_events: Option<&mut EventWriter<ZoneCollapsedEvent>>,
         mut npc_spawn_budget: Option<usize>,
@@ -987,19 +987,23 @@ fn tick_active_events(
     mut death_events: EventWriter<DeathEvent>,
     mut collapsed_events: EventWriter<ZoneCollapsedEvent>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
-    players: Query<(Entity, &Username, &Position), With<Client>>,
-    npcs: Query<(Entity, &Position), With<NpcMarker>>,
+    players: Query<(Entity, &Username, &Position, Option<&CurrentDimension>), With<Client>>,
+    npcs: Query<(Entity, &Position, Option<&CurrentDimension>), With<NpcMarker>>,
 ) {
     let layer_entity = layers.iter().next();
     let mut player_positions = Vec::new();
     let mut collapse_targets = Vec::new();
-    for (entity, username, position) in &players {
+    for (entity, username, position, dimension) in &players {
         let pos = position.get();
         player_positions.push((canonical_player_id(username.0.as_str()), pos));
-        collapse_targets.push((entity, pos));
+        collapse_targets.push((entity, dimension.map(|dim| dim.0).unwrap_or_default(), pos));
     }
-    for (entity, position) in &npcs {
-        collapse_targets.push((entity, position.get()));
+    for (entity, position, dimension) in &npcs {
+        collapse_targets.push((
+            entity,
+            dimension.map(|dim| dim.0).unwrap_or_default(),
+            position.get(),
+        ));
     }
 
     let npc_spawn_budget = if let Some(registry) = npc_registry.as_deref_mut() {
@@ -1264,11 +1268,13 @@ fn realm_collapse_evacuation_reminder_message(zone_name: &str, remaining_ticks: 
 
 fn realm_collapse_entities_in_zone(
     zone: &Zone,
-    collapse_targets: &[(Entity, DVec3)],
+    collapse_targets: &[(Entity, DimensionKind, DVec3)],
 ) -> HashSet<Entity> {
     collapse_targets
         .iter()
-        .filter_map(|(entity, position)| zone.contains(*position).then_some(*entity))
+        .filter_map(|(entity, dimension, position)| {
+            (*dimension == zone.dimension && zone.contains(*position)).then_some(*entity)
+        })
         .collect()
 }
 
@@ -1276,15 +1282,17 @@ fn maybe_kill_new_realm_collapse_intruders(
     event: &mut ActiveEvent,
     zone: &Zone,
     tick: u64,
-    collapse_targets: &[(Entity, DVec3)],
+    collapse_targets: &[(Entity, DimensionKind, DVec3)],
     death_events: Option<&mut EventWriter<DeathEvent>>,
     recent_events: &mut Vec<GameEvent>,
 ) {
     let intruders = collapse_targets
         .iter()
         .copied()
-        .filter(|(entity, position)| {
-            zone.contains(*position) && !event.collapse.evacuee_entities.contains(entity)
+        .filter(|(entity, dimension, position)| {
+            *dimension == zone.dimension
+                && zone.contains(*position)
+                && !event.collapse.evacuee_entities.contains(entity)
         })
         .collect::<Vec<_>>();
 
@@ -1301,7 +1309,7 @@ fn maybe_kill_new_realm_collapse_intruders(
         return;
     };
 
-    for (entity, position) in intruders {
+    for (entity, _, position) in intruders {
         death_events.send(DeathEvent {
             target: entity,
             cause: "realm_collapse_entry_lock".to_string(),
@@ -1604,7 +1612,7 @@ fn collapse_zone(
     zone_registry: &mut ZoneRegistry,
     zone: &Zone,
     collapse_tick: u64,
-    collapse_targets: &[(Entity, DVec3)],
+    collapse_targets: &[(Entity, DimensionKind, DVec3)],
     death_events: &mut EventWriter<DeathEvent>,
 ) -> usize {
     let Some(active_zone) = zone_registry.find_zone_mut(zone.name.as_str()) else {
@@ -1624,10 +1632,10 @@ fn collapse_zone(
     }
 
     let mut killed = 0usize;
-    for (entity, position) in collapse_targets
+    for (entity, _, position) in collapse_targets
         .iter()
         .copied()
-        .filter(|(_, position)| zone.contains(*position))
+        .filter(|(_, dimension, position)| *dimension == zone.dimension && zone.contains(*position))
     {
         death_events.send(DeathEvent {
             target: entity,
@@ -1680,7 +1688,7 @@ mod events_tests {
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
     use crate::schema::vfx_event::VfxEventPayloadV1;
-    use crate::world::dimension::DimensionKind;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
     use crate::world::zone::Zone;
     use crate::world::zone::ZoneRegistry;
@@ -2147,6 +2155,14 @@ mod events_tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([10.0, 66.0, 10.0])))
             .id();
+        let other_dimension_npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Tsy),
+            ))
+            .id();
         let outsider = spawn_mock_player(&mut app, layer, "Far", [300.0, 66.0, 300.0]);
         let command = spawn_event_command("spawn", EVENT_REALM_COLLAPSE, 2);
 
@@ -2194,6 +2210,12 @@ mod events_tests {
         assert!(collected
             .iter()
             .any(|event| event.target == npc && event.cause == "realm_collapse"));
+        assert!(
+            !collected
+                .iter()
+                .any(|event| event.target == other_dimension_npc),
+            "realm_collapse must not kill entities at the same coordinates in another dimension"
+        );
         assert!(
             !collected.iter().any(|event| event.target == outsider),
             "realm_collapse must not kill entities outside zone bounds"
@@ -2364,6 +2386,11 @@ mod events_tests {
         app.update();
 
         let intruder = spawn_mock_player(&mut app, layer, "Intruder", [9.0, 66.0, 9.0]);
+        let other_dimension_intruder =
+            spawn_mock_player(&mut app, layer, "TsyIntruder", [9.0, 66.0, 9.0]);
+        app.world_mut()
+            .entity_mut(other_dimension_intruder)
+            .insert(CurrentDimension(DimensionKind::Tsy));
         app.update();
 
         let world = app.world();
@@ -2372,6 +2399,12 @@ mod events_tests {
         assert!(collected.iter().any(|event| {
             event.target == intruder && event.cause == "realm_collapse_entry_lock"
         }));
+        assert!(
+            !collected
+                .iter()
+                .any(|event| event.target == other_dimension_intruder),
+            "realm_collapse entry lock must not kill same-coordinate players in another dimension"
+        );
         assert!(
             !collected.iter().any(|event| {
                 event.target == evacuee && event.cause == "realm_collapse_entry_lock"
