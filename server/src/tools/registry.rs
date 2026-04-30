@@ -1,7 +1,18 @@
-use valence::prelude::{Entity, World};
+use valence::prelude::{Entity, EventWriter, World};
 
 use super::ToolKind;
-use crate::inventory::{PlayerInventory, EQUIP_SLOT_MAIN_HAND};
+use crate::inventory::{
+    inventory_item_by_instance_borrow, set_item_instance_durability,
+    InventoryDurabilityChangedEvent, InventoryDurabilityUpdate, PlayerInventory,
+    EQUIP_SLOT_MAIN_HAND,
+};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolDurabilityUseOutcome {
+    pub kind: ToolKind,
+    pub instance_id: u64,
+    pub update: InventoryDurabilityUpdate,
+}
 
 pub fn item_kind_to_tool(item_id: &str) -> Option<ToolKind> {
     match item_id {
@@ -23,7 +34,101 @@ pub fn main_hand_tool(player: Entity, world: &World) -> Option<ToolKind> {
 
 pub fn main_hand_tool_in_inventory(inventory: &PlayerInventory) -> Option<ToolKind> {
     let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND)?;
+    if item.durability <= 0.0 {
+        return None;
+    }
     item_kind_to_tool(item.template_id.as_str())
+}
+
+pub fn main_hand_tool_instance_in_inventory(
+    inventory: &PlayerInventory,
+) -> Option<(ToolKind, u64, f64)> {
+    let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND)?;
+    let kind = item_kind_to_tool(item.template_id.as_str())?;
+    (item.durability > 0.0).then_some((kind, item.instance_id, item.durability))
+}
+
+pub fn damage_main_hand_tool(
+    entity: Entity,
+    inventory: &mut PlayerInventory,
+    durability_events: &mut EventWriter<InventoryDurabilityChangedEvent>,
+    cost_ratio: f64,
+) -> Option<ToolDurabilityUseOutcome> {
+    if !cost_ratio.is_finite() || cost_ratio <= 0.0 {
+        return None;
+    }
+    let (kind, instance_id, current) = main_hand_tool_instance_in_inventory(inventory)?;
+    let next = (current - cost_ratio).clamp(0.0, 1.0);
+    if next >= current {
+        return None;
+    }
+    match set_item_instance_durability(inventory, instance_id, next) {
+        Ok(update) => {
+            durability_events.send(InventoryDurabilityChangedEvent {
+                entity,
+                revision: update.revision,
+                instance_id: update.instance_id,
+                durability: update.durability,
+            });
+            Some(ToolDurabilityUseOutcome {
+                kind,
+                instance_id,
+                update,
+            })
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][tools] failed to persist durability for tool instance {}: {}",
+                instance_id,
+                error
+            );
+            None
+        }
+    }
+}
+
+pub fn damage_tool_instance(
+    entity: Entity,
+    inventory: &mut PlayerInventory,
+    instance_id: u64,
+    durability_events: &mut EventWriter<InventoryDurabilityChangedEvent>,
+    cost_ratio: f64,
+) -> Option<ToolDurabilityUseOutcome> {
+    if !cost_ratio.is_finite() || cost_ratio <= 0.0 {
+        return None;
+    }
+    let item = inventory_item_by_instance_borrow(inventory, instance_id)?;
+    let kind = item_kind_to_tool(item.template_id.as_str())?;
+    if item.durability <= 0.0 {
+        return None;
+    }
+    let next = (item.durability - cost_ratio).clamp(0.0, 1.0);
+    if next >= item.durability {
+        return None;
+    }
+    match set_item_instance_durability(inventory, instance_id, next) {
+        Ok(update) => {
+            durability_events.send(InventoryDurabilityChangedEvent {
+                entity,
+                revision: update.revision,
+                instance_id: update.instance_id,
+                durability: update.durability,
+            });
+            Some(ToolDurabilityUseOutcome {
+                kind,
+                instance_id,
+                update,
+            })
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][tools] failed to persist durability for tool instance {}: {}",
+                instance_id,
+                error
+            );
+            None
+        }
+    }
 }
 
 pub fn has_required_tool(actual: Option<ToolKind>, required: Option<ToolKind>) -> bool {
@@ -40,7 +145,7 @@ mod tests {
     use std::collections::HashMap;
     use valence::prelude::App;
 
-    fn item(template_id: &str, instance_id: u64) -> ItemInstance {
+    fn item(template_id: &str, instance_id: u64, durability: f64) -> ItemInstance {
         ItemInstance {
             instance_id,
             template_id: template_id.to_string(),
@@ -52,7 +157,7 @@ mod tests {
             description: String::new(),
             stack_count: 1,
             spirit_quality: 0.0,
-            durability: 1.0,
+            durability,
             freshness: None,
             mineral_id: None,
             charges: None,
@@ -66,7 +171,7 @@ mod tests {
     fn inventory_with_main_hand(template_id: Option<&str>) -> PlayerInventory {
         let mut equipped = HashMap::new();
         if let Some(template_id) = template_id {
-            equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id, 42));
+            equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id, 42, 1.0));
         }
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -99,6 +204,19 @@ mod tests {
     fn non_tool_main_hand_returns_none() {
         let inventory = inventory_with_main_hand(Some("iron_sword"));
         assert_eq!(main_hand_tool_in_inventory(&inventory), None);
+    }
+
+    #[test]
+    fn broken_main_hand_tool_returns_none() {
+        let mut inventory = inventory_with_main_hand(Some("cao_lian"));
+        inventory
+            .equipped
+            .get_mut(EQUIP_SLOT_MAIN_HAND)
+            .expect("tool should be equipped")
+            .durability = 0.0;
+
+        assert_eq!(main_hand_tool_in_inventory(&inventory), None);
+        assert_eq!(main_hand_tool_instance_in_inventory(&inventory), None);
     }
 
     #[test]

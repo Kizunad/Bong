@@ -35,6 +35,32 @@ impl ToolKind {
             Self::BingJiaShouTao => "冰甲手套",
         }
     }
+
+    /// 凡器可临时用于战斗，但只是凡铁/木石档工具，倍率低于入门铁剑(1.2x)。
+    pub fn combat_damage_multiplier(self) -> f32 {
+        match self {
+            Self::CaiYaoDao => 1.08,
+            Self::BaoChu => 1.07,
+            Self::CaoLian => 1.10,
+            Self::DunQiJia => 1.02,
+            Self::GuaDao => 1.06,
+            Self::GuHaiQian => 1.05,
+            Self::BingJiaShouTao => 1.03,
+        }
+    }
+
+    /// 凡器统一按 100 次基础使用折算为 normalized durability。
+    pub fn durability_cost_ratio_per_use(self) -> f64 {
+        match self {
+            Self::CaiYaoDao
+            | Self::BaoChu
+            | Self::CaoLian
+            | Self::DunQiJia
+            | Self::GuaDao
+            | Self::GuHaiQian
+            | Self::BingJiaShouTao => 0.01,
+        }
+    }
 }
 
 pub const ALL_TOOL_KINDS: [ToolKind; 7] = [

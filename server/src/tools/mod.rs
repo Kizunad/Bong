@@ -10,7 +10,9 @@ pub use components::ToolTag;
 pub use kinds::{ToolKind, ALL_TOOL_KINDS};
 #[allow(unused_imports)]
 pub use registry::{
-    has_required_tool, item_kind_to_tool, main_hand_tool, main_hand_tool_in_inventory,
+    damage_main_hand_tool, damage_tool_instance, has_required_tool, item_kind_to_tool,
+    main_hand_tool, main_hand_tool_in_inventory, main_hand_tool_instance_in_inventory,
+    ToolDurabilityUseOutcome,
 };
 
 pub fn register(_app: &mut App) {}
@@ -41,5 +43,21 @@ mod tests {
             Some(ToolKind::DunQiJia)
         ));
         assert!(has_required_tool(None, None));
+    }
+
+    #[test]
+    fn tools_have_low_combat_multipliers_below_entry_sword() {
+        for kind in ALL_TOOL_KINDS {
+            let multiplier = kind.combat_damage_multiplier();
+            assert!(multiplier > 1.0, "{kind:?} should beat bare hands");
+            assert!(multiplier < 1.2, "{kind:?} should stay below iron sword");
+        }
+    }
+
+    #[test]
+    fn tools_have_standardized_durability_costs() {
+        for kind in ALL_TOOL_KINDS {
+            assert_eq!(kind.durability_cost_ratio_per_use(), 0.01);
+        }
     }
 }
