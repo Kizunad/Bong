@@ -475,6 +475,7 @@ fn required_tool_for(
 ) -> Option<crate::tools::ToolKind> {
     let kind = registry.get(plant_id)?;
     let spec = kind.v2_spec()?;
+    // 当前 required_tool 只存在于 WoundOnBareHand；新增带工具要求的 hazard variant 时必须扩展这里。
     spec.harvest_hazards.iter().find_map(|hazard| match hazard {
         super::registry::HarvestHazard::WoundOnBareHand { required_tool, .. } => *required_tool,
         _ => None,
@@ -807,51 +808,66 @@ mod tests {
 
     #[test]
     fn required_tool_harvest_ticks_tool_durability() {
-        let mut app = make_app_with_combat_events();
-        app.insert_resource(load_item_registry().expect("item registry should load"));
-        app.insert_resource(InventoryInstanceIdAllocator::default());
-        app.add_systems(Update, tick_harvest_sessions);
+        for (plant_id, tool_id) in [
+            (BotanyPlantId::XuanGenWei, "dun_qi_jia"),
+            (BotanyPlantId::XuanRongTai, "gua_dao"),
+            (BotanyPlantId::XuePoLian, "bing_jia_shou_tao"),
+            (BotanyPlantId::JiaoMaiTeng, "dun_qi_jia"),
+            (BotanyPlantId::LingJingXu, "gua_dao"),
+        ] {
+            let mut app = make_app_with_combat_events();
+            app.insert_resource(load_item_registry().expect("item registry should load"));
+            app.insert_resource(InventoryInstanceIdAllocator::default());
+            app.add_systems(Update, tick_harvest_sessions);
 
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let client_entity = app
-            .world_mut()
-            .spawn(client_bundle)
-            .insert(inventory_with_main_hand_tool(Some("dun_qi_jia")))
-            .insert(Cultivation::default())
-            .insert(Contamination::default())
-            .insert(Wounds::default())
-            .id();
-        let target = plant_entity(&mut app, "spawn");
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let client_entity = app
+                .world_mut()
+                .spawn(client_bundle)
+                .insert(inventory_with_main_hand_tool(Some(tool_id)))
+                .insert(Cultivation::default())
+                .insert(Contamination::default())
+                .insert(Wounds::default())
+                .id();
+            let target = plant_entity(&mut app, "spawn");
 
-        app.world_mut()
-            .resource_mut::<HarvestSessionStore>()
-            .upsert_session(HarvestSession {
-                player_id: "offline:Azure".to_string(),
-                client_entity,
-                target_entity: Some(target),
-                target_plant: BotanyPlantId::JiaoMaiTeng,
-                mode: BotanyHarvestMode::Manual,
-                started_at_tick: 0,
-                duration_ticks: 0,
-                phase: BotanyPhase::InProgress,
-                last_progress: 0.0,
-                origin_position: [10.0, 64.0, 10.0],
-            });
+            app.world_mut()
+                .resource_mut::<HarvestSessionStore>()
+                .upsert_session(HarvestSession {
+                    player_id: "offline:Azure".to_string(),
+                    client_entity,
+                    target_entity: Some(target),
+                    target_plant: plant_id,
+                    mode: BotanyHarvestMode::Manual,
+                    started_at_tick: 0,
+                    duration_ticks: 0,
+                    phase: BotanyPhase::InProgress,
+                    last_progress: 0.0,
+                    origin_position: [10.0, 64.0, 10.0],
+                });
 
-        app.update();
+            app.update();
 
-        let inventory = app.world().get::<PlayerInventory>(client_entity).unwrap();
-        let tool = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
-        assert!((tool.durability - 0.99).abs() < 1e-9);
+            let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+            let contamination = app.world().get::<Contamination>(client_entity).unwrap();
+            assert!(wounds.entries.is_empty(), "{plant_id:?} should avoid wound");
+            assert!(
+                contamination.entries.is_empty(),
+                "{plant_id:?} should avoid contamination"
+            );
+            let inventory = app.world().get::<PlayerInventory>(client_entity).unwrap();
+            let tool = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
+            assert!((tool.durability - 0.99).abs() < 1e-9);
 
-        let durability_events = app
-            .world()
-            .resource::<Events<InventoryDurabilityChangedEvent>>();
-        let events: Vec<_> = durability_events.iter_current_update_events().collect();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].entity, client_entity);
-        assert_eq!(events[0].instance_id, 9_001);
-        assert!((events[0].durability - 0.99).abs() < 1e-9);
+            let durability_events = app
+                .world()
+                .resource::<Events<InventoryDurabilityChangedEvent>>();
+            let events: Vec<_> = durability_events.iter_current_update_events().collect();
+            assert_eq!(events.len(), 1, "{plant_id:?} should tick tool durability");
+            assert_eq!(events[0].entity, client_entity);
+            assert_eq!(events[0].instance_id, 9_001);
+            assert!((events[0].durability - 0.99).abs() < 1e-9);
+        }
     }
 
     #[test]

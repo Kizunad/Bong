@@ -2,9 +2,8 @@ use valence::prelude::{Entity, EventWriter, World};
 
 use super::ToolKind;
 use crate::inventory::{
-    inventory_item_by_instance_borrow, set_item_instance_durability,
-    InventoryDurabilityChangedEvent, InventoryDurabilityUpdate, PlayerInventory,
-    EQUIP_SLOT_MAIN_HAND,
+    set_item_instance_durability, InventoryDurabilityChangedEvent, InventoryDurabilityUpdate,
+    PlayerInventory, EQUIP_SLOT_MAIN_HAND,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +39,7 @@ pub fn main_hand_tool_in_inventory(inventory: &PlayerInventory) -> Option<ToolKi
     item_kind_to_tool(item.template_id.as_str())
 }
 
-pub fn main_hand_tool_instance_in_inventory(
+fn main_hand_tool_instance_in_inventory(
     inventory: &PlayerInventory,
 ) -> Option<(ToolKind, u64, f64)> {
     let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND)?;
@@ -60,50 +59,6 @@ pub fn damage_main_hand_tool(
     let (kind, instance_id, current) = main_hand_tool_instance_in_inventory(inventory)?;
     let next = (current - cost_ratio).clamp(0.0, 1.0);
     if next >= current {
-        return None;
-    }
-    match set_item_instance_durability(inventory, instance_id, next) {
-        Ok(update) => {
-            durability_events.send(InventoryDurabilityChangedEvent {
-                entity,
-                revision: update.revision,
-                instance_id: update.instance_id,
-                durability: update.durability,
-            });
-            Some(ToolDurabilityUseOutcome {
-                kind,
-                instance_id,
-                update,
-            })
-        }
-        Err(error) => {
-            tracing::warn!(
-                "[bong][tools] failed to persist durability for tool instance {}: {}",
-                instance_id,
-                error
-            );
-            None
-        }
-    }
-}
-
-pub fn damage_tool_instance(
-    entity: Entity,
-    inventory: &mut PlayerInventory,
-    instance_id: u64,
-    durability_events: &mut EventWriter<InventoryDurabilityChangedEvent>,
-    cost_ratio: f64,
-) -> Option<ToolDurabilityUseOutcome> {
-    if !cost_ratio.is_finite() || cost_ratio <= 0.0 {
-        return None;
-    }
-    let item = inventory_item_by_instance_borrow(inventory, instance_id)?;
-    let kind = item_kind_to_tool(item.template_id.as_str())?;
-    if item.durability <= 0.0 {
-        return None;
-    }
-    let next = (item.durability - cost_ratio).clamp(0.0, 1.0);
-    if next >= item.durability {
         return None;
     }
     match set_item_instance_durability(inventory, instance_id, next) {

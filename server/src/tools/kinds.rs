@@ -49,8 +49,8 @@ impl ToolKind {
         }
     }
 
-    /// 凡器统一按 100 次基础使用折算为 normalized durability。
-    pub fn durability_cost_ratio_per_use(self) -> f64 {
+    /// 凡器统一按 100 次基础使用折算为 normalized durability（100 bp = 1%）。
+    pub fn durability_cost_basis_points_per_use(self) -> u16 {
         match self {
             Self::CaiYaoDao
             | Self::BaoChu
@@ -58,8 +58,12 @@ impl ToolKind {
             | Self::DunQiJia
             | Self::GuaDao
             | Self::GuHaiQian
-            | Self::BingJiaShouTao => 0.01,
+            | Self::BingJiaShouTao => 100,
         }
+    }
+
+    pub fn durability_cost_ratio_per_use(self) -> f64 {
+        f64::from(self.durability_cost_basis_points_per_use()) / 10_000.0
     }
 }
 

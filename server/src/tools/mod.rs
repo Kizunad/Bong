@@ -10,9 +10,8 @@ pub use components::ToolTag;
 pub use kinds::{ToolKind, ALL_TOOL_KINDS};
 #[allow(unused_imports)]
 pub use registry::{
-    damage_main_hand_tool, damage_tool_instance, has_required_tool, item_kind_to_tool,
-    main_hand_tool, main_hand_tool_in_inventory, main_hand_tool_instance_in_inventory,
-    ToolDurabilityUseOutcome,
+    damage_main_hand_tool, has_required_tool, item_kind_to_tool, main_hand_tool,
+    main_hand_tool_in_inventory, ToolDurabilityUseOutcome,
 };
 
 pub fn register(_app: &mut App) {}
@@ -57,6 +56,7 @@ mod tests {
     #[test]
     fn tools_have_standardized_durability_costs() {
         for kind in ALL_TOOL_KINDS {
+            assert_eq!(kind.durability_cost_basis_points_per_use(), 100);
             assert_eq!(kind.durability_cost_ratio_per_use(), 0.01);
         }
     }
