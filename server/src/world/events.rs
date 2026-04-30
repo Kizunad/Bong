@@ -56,7 +56,7 @@ const COLLAPSED_ZONE_DANGER_LEVEL: u8 = 5;
 pub(crate) const REALM_COLLAPSE_LOW_QI_THRESHOLD: f64 = 0.1;
 pub(crate) const REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS: u64 = 60 * 60 * 20;
 pub(crate) const REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS: u64 =
-    REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS;
+    REALM_COLLAPSE_EVACUATION_WINDOW_TICKS;
 pub(crate) const REALM_COLLAPSE_EVACUATION_WINDOW_TICKS: u64 = 10 * 60 * 20;
 pub(crate) const REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS: u64 = 60 * 20;
 pub(crate) const REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID: &str = "bong:realm_collapse_boundary";
@@ -1669,7 +1669,7 @@ mod events_tests {
         EVENT_THUNDER_TRIBULATION, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
         REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
         REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
-        REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS, TARGETED_LIGHTNING_VFX_EVENT_ID,
+        TARGETED_LIGHTNING_VFX_EVENT_ID,
     };
     use crate::combat::events::DeathEvent;
     use crate::npc::lifecycle::{NpcArchetype, NpcRegistry};
@@ -2481,7 +2481,8 @@ mod events_tests {
         assert_eq!(alerts.len(), 1);
         assert_eq!(
             alerts[0].duration_ticks,
-            REALM_COLLAPSE_MONITOR_EVENT_DURATION_TICKS
+            REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
+            "low-qi monitor should schedule the 10-minute evacuation window after the one-hour threshold"
         );
         let tribulation_events = events.drain_tribulation_events();
         assert_eq!(tribulation_events.len(), 1);
