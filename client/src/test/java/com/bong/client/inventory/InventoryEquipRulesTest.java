@@ -71,8 +71,19 @@ class InventoryEquipRulesTest {
         InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
 
         assertTrue(InventoryEquipRules.canEquip(tool, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertTrue(InventoryEquipRules.isTool(tool));
         assertFalse(InventoryEquipRules.canEquip(tool, EquipSlotType.CHEST, null, equipped()));
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(tool));
+    }
+
+    @Test
+    void quickEquipRoutesToolToMainHand() {
+        InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
+
+        assertEquals(
+            EquipSlotType.MAIN_HAND,
+            InventoryEquipRules.preferredWeaponQuickEquipSlot(tool, equipped(), slot -> true)
+        );
     }
 
     @Test
