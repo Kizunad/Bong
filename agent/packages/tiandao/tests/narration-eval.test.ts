@@ -71,6 +71,16 @@ describe("narration evaluation", () => {
     expect(score.score).toBeLessThan(0.5);
   });
 
+  it("penalizes worldview-forbidden game prompt wording", () => {
+    const score = scoreNarration(
+      padNarrationWindow("恭喜！注意！警告！小心，前方有危险怪物，xp 与等级提升都已触发。"),
+      "system_warning",
+    );
+
+    expect(score.noModernSlang).toBe(false);
+    expect(score.score).toBeLessThan(0.8);
+  });
+
   it("renders deterministic ASCII report from telemetry tick logs", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "tiandao-narration-eval-"));
     const logPath = join(tempDir, "tiandao.log");
