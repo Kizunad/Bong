@@ -18,6 +18,7 @@ use super::forge::{
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
 use super::lingtian::LingtianSessionDataV1;
 use super::narration::Narration;
+use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
 use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
     SkillScrollUsedPayloadV1, SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
@@ -125,6 +126,8 @@ pub enum ServerDataType {
     SocialRenownDelta,
     SparringInvite,
     TradeOffer,
+    RealmVisionParams,
+    SpiritualSenseTargets,
 }
 
 #[derive(Debug, Clone)]
@@ -280,6 +283,8 @@ pub enum ServerDataPayloadV1 {
     SocialRenownDelta(SocialRenownDeltaV1),
     SparringInvite(SparringInvitePayloadV1),
     TradeOffer(TradeOfferPayloadV1),
+    RealmVisionParams(RealmVisionParamsV1),
+    SpiritualSenseTargets(SpiritualSenseTargetsV1),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -623,6 +628,14 @@ enum ServerDataPayloadWireV1 {
     TradeOffer {
         #[serde(flatten)]
         offer: TradeOfferPayloadV1,
+    },
+    RealmVisionParams {
+        #[serde(flatten)]
+        params: RealmVisionParamsV1,
+    },
+    SpiritualSenseTargets {
+        #[serde(flatten)]
+        targets: SpiritualSenseTargetsV1,
     },
 }
 
@@ -1190,6 +1203,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             })),
             ServerDataPayloadWireV1::SparringInvite { invite } => Ok(Self::SparringInvite(invite)),
             ServerDataPayloadWireV1::TradeOffer { offer } => Ok(Self::TradeOffer(offer)),
+            ServerDataPayloadWireV1::RealmVisionParams { params } => {
+                Ok(Self::RealmVisionParams(params))
+            }
+            ServerDataPayloadWireV1::SpiritualSenseTargets { targets } => {
+                Ok(Self::SpiritualSenseTargets(targets))
+            }
         }
     }
 }
@@ -1524,6 +1543,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TradeOffer(offer) => Self::TradeOffer {
                 offer: offer.clone(),
             },
+            ServerDataPayloadV1::RealmVisionParams(params) => Self::RealmVisionParams {
+                params: params.clone(),
+            },
+            ServerDataPayloadV1::SpiritualSenseTargets(targets) => Self::SpiritualSenseTargets {
+                targets: targets.clone(),
+            },
         }
     }
 }
@@ -1689,6 +1714,8 @@ impl ServerDataPayloadV1 {
             Self::SocialRenownDelta(..) => ServerDataType::SocialRenownDelta,
             Self::SparringInvite(..) => ServerDataType::SparringInvite,
             Self::TradeOffer(..) => ServerDataType::TradeOffer,
+            Self::RealmVisionParams(..) => ServerDataType::RealmVisionParams,
+            Self::SpiritualSenseTargets(..) => ServerDataType::SpiritualSenseTargets,
         }
     }
 }
@@ -1801,6 +1828,28 @@ mod tests {
                 tint_rgb_secondary: None,
                 model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
             }]),
+            ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
+                fog_start: 30.0,
+                fog_end: 60.0,
+                fog_color_rgb: 0xB8B0A8,
+                fog_shape: super::super::realm_vision::FogShapeV1::Cylinder,
+                vignette_alpha: 0.55,
+                tint_color_argb: 0x0FF0EDE8,
+                particle_density: 0.0,
+                transition_ticks: 100,
+                server_view_distance_chunks: 4,
+                post_fx_sharpen: 0.0,
+            }),
+            ServerDataPayloadV1::SpiritualSenseTargets(SpiritualSenseTargetsV1 {
+                generation: 1,
+                entries: vec![super::super::realm_vision::SenseEntryV1 {
+                    kind: super::super::realm_vision::SenseKindV1::LivingQi,
+                    x: 8.0,
+                    y: 64.0,
+                    z: -4.0,
+                    intensity: 0.75,
+                }],
+            }),
         ];
 
         for payload in cases {
@@ -2057,6 +2106,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.trade-offer.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.realm-vision-params.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json"
             ),
         ];
 

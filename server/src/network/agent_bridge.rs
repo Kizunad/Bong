@@ -104,6 +104,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::SocialRenownDelta => "social_renown_delta",
         ServerDataType::SparringInvite => "sparring_invite",
         ServerDataType::TradeOffer => "trade_offer",
+        ServerDataType::RealmVisionParams => "realm_vision_params",
+        ServerDataType::SpiritualSenseTargets => "spiritual_sense_targets",
     }
 }
 
@@ -650,6 +652,14 @@ mod server_data_tests {
         assert_eq!(
             payload_type_label(ServerDataType::BotanySkill),
             "botany_skill"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::RealmVisionParams),
+            "realm_vision_params"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::SpiritualSenseTargets),
+            "spiritual_sense_targets"
         );
     }
 

@@ -22,6 +22,7 @@ import {
   InventorySnapshotV1,
 } from "./inventory.js";
 import { Narration } from "./narration.js";
+import { RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ExtractAbortedV1,
   ExtractCompletedV1,
@@ -55,6 +56,7 @@ import {
   SparringInvitePayloadV1,
   TradeOfferPayloadV1,
 } from "./social.js";
+import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
 import { PlayerPowerBreakdown, Vec3 } from "./world-state.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
@@ -169,6 +171,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("social_renown_delta"),
   Type.Literal("sparring_invite"),
   Type.Literal("trade_offer"),
+  Type.Literal("realm_vision_params"),
+  Type.Literal("spiritual_sense_targets"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -961,6 +965,30 @@ export const ServerDataTradeOfferV1 = Type.Object(
 );
 export type ServerDataTradeOfferV1 = Static<typeof ServerDataTradeOfferV1>;
 
+export const ServerDataRealmVisionParamsV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("realm_vision_params"),
+    ...RealmVisionParamsV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRealmVisionParamsV1 = Static<
+  typeof ServerDataRealmVisionParamsV1
+>;
+
+export const ServerDataSpiritualSenseTargetsV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spiritual_sense_targets"),
+    ...SpiritualSenseTargetsV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataSpiritualSenseTargetsV1 = Static<
+  typeof ServerDataSpiritualSenseTargetsV1
+>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -1014,5 +1042,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataSocialRenownDeltaV1,
   ServerDataSparringInviteV1,
   ServerDataTradeOfferV1,
+  ServerDataRealmVisionParamsV1,
+  ServerDataSpiritualSenseTargetsV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

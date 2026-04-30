@@ -8571,6 +8571,167 @@
           "type": "integer"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "fog_start",
+        "fog_end",
+        "fog_color_rgb",
+        "fog_shape",
+        "vignette_alpha",
+        "tint_color_argb",
+        "particle_density",
+        "transition_ticks",
+        "server_view_distance_chunks",
+        "post_fx_sharpen"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "realm_vision_params",
+          "type": "string"
+        },
+        "fog_start": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "fog_end": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "fog_color_rgb": {
+          "minimum": 0,
+          "maximum": 16777215,
+          "type": "integer"
+        },
+        "fog_shape": {
+          "anyOf": [
+            {
+              "const": "Cylinder",
+              "type": "string"
+            },
+            {
+              "const": "Sphere",
+              "type": "string"
+            }
+          ]
+        },
+        "vignette_alpha": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "tint_color_argb": {
+          "minimum": 0,
+          "maximum": 4294967295,
+          "type": "integer"
+        },
+        "particle_density": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "transition_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server_view_distance_chunks": {
+          "minimum": 2,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "post_fx_sharpen": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entries",
+        "generation"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spiritual_sense_targets",
+          "type": "string"
+        },
+        "entries": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "x",
+              "y",
+              "z",
+              "intensity"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "const": "LivingQi",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AmbientLeyline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CultivatorRealm",
+                    "type": "string"
+                  },
+                  {
+                    "const": "HeavenlyGaze",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CrisisPremonition",
+                    "type": "string"
+                  }
+                ]
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              },
+              "intensity": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              }
+            }
+          }
+        },
+        "generation": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
     }
   ]
 }

@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "spiritual_sense_targets",
+  "generation": 5,
+  "entries": [
+    { "kind": "LivingQi", "x": 18.5, "y": 64, "z": -12.25, "intensity": 0.7 },
+    { "kind": "AmbientLeyline", "x": -42, "y": 70, "z": 96, "intensity": 0.55 },
+    { "kind": "CultivatorRealm", "x": 122, "y": 67, "z": 31, "intensity": 0.64 },
+    { "kind": "HeavenlyGaze", "x": -260, "y": 118, "z": 480, "intensity": 0.9 },
+    { "kind": "CrisisPremonition", "x": 1800, "y": 82, "z": -300, "intensity": 0.72 }
+  ]
+}

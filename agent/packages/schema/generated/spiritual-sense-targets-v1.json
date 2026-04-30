@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entries",
+    "generation"
+  ],
+  "properties": {
+    "entries": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "x",
+          "y",
+          "z",
+          "intensity"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "LivingQi",
+                "type": "string"
+              },
+              {
+                "const": "AmbientLeyline",
+                "type": "string"
+              },
+              {
+                "const": "CultivatorRealm",
+                "type": "string"
+              },
+              {
+                "const": "HeavenlyGaze",
+                "type": "string"
+              },
+              {
+                "const": "CrisisPremonition",
+                "type": "string"
+              }
+            ]
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          },
+          "intensity": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          }
+        }
+      }
+    },
+    "generation": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

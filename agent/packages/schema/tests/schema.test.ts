@@ -35,6 +35,7 @@ import {
   NpcDeathV1,
   NpcSpawnedV1,
 } from "../src/npc.js";
+import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import { ServerDataV1 } from "../src/server-data.js";
 import {
@@ -58,6 +59,7 @@ import {
   SocialPactEventV1,
   SocialRenownDeltaV1,
 } from "../src/social.js";
+import { SpiritualSenseTargetsV1 } from "../src/spiritual-sense.js";
 import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
 import {
@@ -362,6 +364,46 @@ describe("sample files pass schema validation", () => {
     "server-data.social-renown-delta.sample.json",
     "server-data.sparring-invite.sample.json",
     "server-data.trade-offer.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  for (const sample of [
+    "realm-vision-awaken.sample.json",
+    "realm-vision-induce.sample.json",
+    "realm-vision-condense.sample.json",
+    "realm-vision-solidify.sample.json",
+    "realm-vision-spirit.sample.json",
+    "realm-vision-void.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(RealmVisionParamsV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  for (const sample of [
+    "spiritual-sense-induce.sample.json",
+    "spiritual-sense-condense.sample.json",
+    "spiritual-sense-solidify.sample.json",
+    "spiritual-sense-spirit.sample.json",
+    "spiritual-sense-void.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(SpiritualSenseTargetsV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  for (const sample of [
+    "server-data.realm-vision-params.sample.json",
+    "server-data.spiritual-sense-targets.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);
