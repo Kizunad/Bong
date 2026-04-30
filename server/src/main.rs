@@ -7,6 +7,8 @@ mod combat;
 #[allow(dead_code)]
 mod cultivation;
 #[allow(dead_code)]
+mod fauna;
+#[allow(dead_code)]
 mod forge;
 mod inventory;
 #[allow(dead_code)]
@@ -92,6 +94,7 @@ fn run_server() {
     skill::register(&mut app);
     tools::register(&mut app);
     cultivation::register(&mut app);
+    fauna::register(&mut app);
     alchemy::register(&mut app);
     audio::register(&mut app);
     combat::register(&mut app);

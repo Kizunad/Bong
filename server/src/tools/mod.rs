@@ -1,4 +1,3 @@
-pub mod butcher;
 pub mod components;
 pub mod kinds;
 pub mod registry;
@@ -14,9 +13,7 @@ pub use registry::{
     has_required_tool, item_kind_to_tool, main_hand_tool, main_hand_tool_in_inventory,
 };
 
-pub fn register(app: &mut App) {
-    app.add_event::<butcher::ButcherRequest>();
-}
+pub fn register(_app: &mut App) {}
 
 #[cfg(test)]
 mod tests {
