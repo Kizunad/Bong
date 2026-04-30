@@ -2,7 +2,7 @@
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
 # 上一次刷新：2026-04-30 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）+
-#   /plans-status 阶段级核验回扫 + skeleton 升 active 调研（plan-niche-defense-v1）。
+#   /plans-status 阶段级核验回扫 + 3 份 skeleton 升 active 调研（niche-defense-v1 / tools-v1 / lingtian-npc-v1）。
 #   - 8 份 plan 已归档迁入 finished：plan-player-animation-v1（PR #82）、plan-weapon-v1.1（PR #69/#80）、
 #     plan-mineral-v2（commit 00df063f）、plan-social-v1（PR #77）、plan-worldgen-anvil-export-v1（PR #79）、
 #     plan-combat-ui_impl（PR #20 + commit 62dd84b）、plan-particle-system-v1（PR #17 + commit 链）、
@@ -141,6 +141,16 @@ plans:
     blocking_on: []
     summary: "M0–M6 主链 ✅：MineralRegistry 18 种 / MineralOreNode / BlockBreakEvent drop / mineral_id NBT / forge blueprint 校验 / alchemy IngredientSpec / 耗尽持久化 / KarmaFlag bridge / 14 张 ore 改色全落地；炉品阶 runtime 校验已由 mineral-v2 收尾。"
 
+  - file: plan-tools-v1.md
+    group: cultivation-economy
+    title: "采集 / 加工凡器工具体系（7 件）"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-30"
+    pr_refs: []
+    blocking_on: ["plan-botany-v2 P0（HarvestHazard enum）", "plan-fauna-v1 P0（异兽骨 item）"]
+    summary: "2026-04-30 从 skeleton 升 active。P0 起手即在 server/src/inventory/mod.rs ItemCategory 加 Tool variant + parse_item_category 加 \"tool\" 分支，新建 server/src/tools/ 模块（kinds/components/registry），TOML 7 件凡器（cai_yao_dao / bao_chu / cao_lian / dun_qi_jia / gua_dao + 待 fauna 的 gu_hai_qian / bing_jia_shou_tao 占位）。worldview 锚点已修正（删除虚指 §三 末法命名原则，改 §四/§五/§十 实指）。P2 反向阻塞 botany-v2 WoundOnBareHand 真伤回填。"
+
   - file: plan-tribulation-v1.md
     group: cultivation-economy
     title: "天劫 — 渡虚劫 / 域崩 / 定向天罚"
@@ -183,6 +193,16 @@ plans:
     pr_refs: []
     blocking_on: ["plan-zhenfa-v1（P4 整合阶段；P0–P3 不阻塞）"]
     summary: "2026-04-30 从 skeleton 升 active。前置 social-v1 已埋好 SpiritNiche.defense_mode 字段 / SPIRIT_NICHE_RADIUS=5.0 / niche_breach 音效 ID；P0 起手即 DefenseModeId=String → DefenseModeConfig struct + 阵石 item toml + SpiritNicheActivateDefense ClientRequest。P2 IllusionTrap 需扩 StatusEffectKind::Disoriented，P3 声光暴露需扩 ExposureKindV1::ActiveDefenseTriggered。"
+
+  - file: plan-lingtian-npc-v1.md
+    group: gameplay-npc
+    title: "NPC 散修自主开荒-种植-收获 + 共享 zone 灵气账本"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-30"
+    pr_refs: []
+    blocking_on: ["ActiveLingtianSessions.by_player → by_actor 重构（P0 内含）", "NarrationKind 扩 npc_farm 类型"]
+    summary: "2026-04-30 从 skeleton 升 active。前置 lingtian-v1（P0–P5 全闭环）+ npc-ai-v1（finished，big-brain Rogue archetype 已落地）齐全。P0 起手两件：① server/src/lingtian/systems.rs 把 ActiveLingtianSessions.by_player 泛化为 by_actor（影响多模块，需小步 PR）；② server/src/npc/scattered_cultivator.rs 新建 ScatteredCultivator 组件 + FarmingTemperament enum，附加到 RogueBundle spawn。worldview 锚点（§十一/§十/§七/§八.1）正典直引但散修种田概念是推导，library peoples-XXXX 散修生计录待补。"
 
   # ============================================================
   # Group: infrastructure
@@ -292,16 +312,6 @@ plans:
     blocking_on: []
     summary: "骨架（本周新立，从 reminder.md 提炼）"
 
-  - file: plan-lingtian-npc-v1.md
-    group: skeleton
-    title: "灵田 NPC 行为扩展"
-    state: skeleton
-    percent: 5
-    last_updated: ""
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架（本周新立，从 reminder.md 提炼）"
-
   - file: plan-fauna-v1.md
     group: skeleton
     title: "妖兽骨系材料"
@@ -311,16 +321,6 @@ plans:
     pr_refs: []
     blocking_on: []
     summary: "骨架 144 行：噬元鼠/拟态灰烬蛛/异变缝合兽 drop 链 + 封灵骨币制作 + forge 正典化（yi_beast_bone → yi_shou_gu）+ shelflife 接入。"
-
-  - file: plan-tools-v1.md
-    group: skeleton
-    title: "采集 / 加工凡器工具体系（7 件）"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架 135 行（2026-04-29 立）：采药刀/刨锄/草镰/冰甲手套/骨骸钳/钝气夹/刮刀 7 件凡器；命名避用「灵*」词头；botany-v2 P4 WoundOnBareHand 真伤回填依本 plan P2。"
 
   # ============================================================
   # Group: worldgen（地形 / 世界生成）
