@@ -127,9 +127,50 @@ export const playerProfilesBlock: ContextBlock = {
   },
 };
 
+export const perceptionEnvelopeBlock: ContextBlock = {
+  name: "perception_envelope",
+  priority: 1,
+  required: true,
+  render({ state }) {
+    if (state.players.length === 0) return "";
+
+    const lines = state.players.map((player) => {
+      const profile = describePerceptionProfile(player.realm);
+      const [x, y, z] = player.pos;
+      return `- ${player.uuid}: ${player.realm} @ ${player.zone} (${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)})；${profile}`;
+    });
+
+    return [
+      "## 玩家可感知边界",
+      "叙事只能写玩家肉眼或神识可感之事；超出范围只能写作远方异象、传闻或 NPC 口述。",
+      "匿名：正文不要主动写玩家名，除非渡虚劫点名或死亡遗念。",
+      ...lines,
+    ].join("\n");
+  },
+};
+
 function formatRenownTags(tags: NonNullable<PlayerProfile["social"]>["renown"]["top_tags"]): string {
   if (tags.length === 0) return "";
   return `(${tags.map((tag) => tag.tag).join("/")})`;
+}
+
+function describePerceptionProfile(realm: string): string {
+  switch (realm) {
+    case "Awaken":
+      return "凡眼近距，只能感到灵气浓淡；不可直叙墙后/远处细节";
+    case "Induce":
+      return "神识 50m，可感 LivingQi；远处战斗只能作风声/兽鸣";
+    case "Condense":
+      return "神识约 200m，可感 LivingQi + AmbientLeyline；可写区域灵气精确波动";
+    case "Solidify":
+      return "神识约 500m，可感 LivingQi + AmbientLeyline + CultivatorRealm；只写境界段，不写具体数值";
+    case "Spirit":
+      return "神识约 1000m，可感天道注意力与危机预警；可写危机方位，不剧透全貌";
+    case "Void":
+      return "神识三圈：500m 明察，2000m 只感修士/战斗/灵气波动，外圈仅感渡虚劫/时代法旨等大事";
+    default:
+      return "境界未知，按凡眼近距处理；不可直叙远处细节";
+  }
 }
 
 export const recentEventsBlock: ContextBlock = {
@@ -298,12 +339,13 @@ export const CALAMITY_RECIPE: ContextRecipe = {
   blocks: [
     { ...keyPlayerBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
-    { ...recentEventsBlock, priority: 2, required: true },
-    { ...balanceBlock, priority: 3, required: false },
-    { ...recentNarrationsBlock, priority: 4, required: false },
-    { ...peerDecisionsBlock, priority: 5, required: false },
-    { ...chatSignalsBlock, priority: 6, required: false },
-    { ...worldSnapshotBlock, priority: 7, required: false },
+    { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...recentEventsBlock, priority: 3, required: true },
+    { ...balanceBlock, priority: 4, required: false },
+    { ...recentNarrationsBlock, priority: 5, required: false },
+    { ...peerDecisionsBlock, priority: 6, required: false },
+    { ...chatSignalsBlock, priority: 7, required: false },
+    { ...worldSnapshotBlock, priority: 8, required: false },
   ],
 };
 
@@ -313,11 +355,12 @@ export const MUTATION_RECIPE: ContextRecipe = {
   blocks: [
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
-    { ...balanceBlock, priority: 2, required: false },
-    { ...recentNarrationsBlock, priority: 3, required: false },
-    { ...peerDecisionsBlock, priority: 4, required: false },
-    { ...chatSignalsBlock, priority: 5, required: false },
-    { ...recentEventsBlock, priority: 6, required: false },
+    { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...balanceBlock, priority: 3, required: false },
+    { ...recentNarrationsBlock, priority: 4, required: false },
+    { ...peerDecisionsBlock, priority: 5, required: false },
+    { ...chatSignalsBlock, priority: 6, required: false },
+    { ...recentEventsBlock, priority: 7, required: false },
   ],
 };
 
@@ -328,12 +371,13 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
-    { ...balanceBlock, priority: 3, required: false },
-    { ...recentNarrationsBlock, priority: 4, required: false },
-    { ...playerProfilesBlock, priority: 5, required: true },
-    { ...recentEventsBlock, priority: 6, required: true },
-    { ...keyPlayerBlock, priority: 7, required: false },
-    { ...chatSignalsBlock, priority: 8, required: false },
+    { ...perceptionEnvelopeBlock, priority: 3, required: true },
+    { ...balanceBlock, priority: 4, required: false },
+    { ...recentNarrationsBlock, priority: 5, required: false },
+    { ...playerProfilesBlock, priority: 6, required: true },
+    { ...recentEventsBlock, priority: 7, required: true },
+    { ...keyPlayerBlock, priority: 8, required: false },
+    { ...chatSignalsBlock, priority: 9, required: false },
   ],
 };
 

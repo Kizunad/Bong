@@ -8,6 +8,7 @@ import {
   createContextInput,
   chatSignalsBlock,
   keyPlayerBlock,
+  perceptionEnvelopeBlock,
   peerDecisionsBlock,
   recentNarrationsBlock,
   worldSnapshotBlock,
@@ -271,6 +272,24 @@ describe("context with task-21 world model blocks", () => {
     expect(text).toContain("必须换物象、换句式");
   });
 
+  it("renders per-player perception envelope for viewpoint clipping", () => {
+    const state = createState({
+      tick: 10,
+      players: [
+        createPlayer("Novice", { realm: "Induce", pos: [1.2, 64, -4.8] }),
+        createPlayer("VoidWalker", { realm: "Void", zone: "blood_valley", pos: [100, 70, 200] }),
+      ],
+    });
+
+    const text = perceptionEnvelopeBlock.render(createContextInput(state));
+
+    expect(text).toContain("## 玩家可感知边界");
+    expect(text).toContain("叙事只能写玩家肉眼或神识可感之事");
+    expect(text).toContain("offline:Novice: Induce @ starter_zone (1,64,-5)；神识 50m");
+    expect(text).toContain("offline:VoidWalker: Void @ blood_valley (100,70,200)；神识三圈");
+    expect(text).toContain("匿名：正文不要主动写玩家名");
+  });
+
   it("renders world trend, balance, and key-player blocks from the shared world model", () => {
     const { model, state } = createSeededWorldModel();
     const input = createContextInput(state, [], 1_710_000_123, {
@@ -318,10 +337,12 @@ describe("context with task-21 world model blocks", () => {
     );
 
     expect(calamityContext).toContain("## 关键人物");
+    expect(calamityContext).toContain("## 玩家可感知边界");
     expect(calamityContext).toContain("## 天道平衡态");
     expect(calamityContext).toContain("## 近轮天道叙事");
     expect(calamityContext).toContain("## 其他天道意志");
     expect(eraContext).toContain("## 当前时代");
+    expect(eraContext).toContain("## 玩家可感知边界");
     expect(eraContext).toContain("## 世界趋势 (最近 10 轮)");
     expect(eraContext).toContain("## 近轮天道叙事");
     expect(eraContext).toContain("## 其他天道意志");
