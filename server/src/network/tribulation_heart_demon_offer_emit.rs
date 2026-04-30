@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{Client, Entity, EventReader, Query, With};
 
 use crate::cultivation::tribulation::{
-    PendingHeartDemonOffer, TribulationState, TribulationWaveCleared,
-    DUXU_HEART_DEMON_TIMEOUT_TICKS, DUXU_HEART_DEMON_WAVE,
+    PendingHeartDemonOffer, TribulationPhase, TribulationState, TribulationWaveCleared,
+    DUXU_HEART_DEMON_TIMEOUT_TICKS,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
@@ -20,12 +20,12 @@ pub fn emit_heart_demon_offer_payloads(
     mut cleared: EventReader<TribulationWaveCleared>,
 ) {
     for ev in cleared.read() {
-        if ev.wave != DUXU_HEART_DEMON_WAVE {
-            continue;
-        }
         let Ok((state, pregen)) = tribulations.get(ev.entity) else {
             continue;
         };
+        if !matches!(state.phase, TribulationPhase::HeartDemon) {
+            continue;
+        }
         let payload = ServerDataV1::new(ServerDataPayloadV1::HeartDemonOffer(
             heart_demon_offer_for_client(ev.entity, state, pregen),
         ));
@@ -133,6 +133,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
+    use crate::cultivation::tribulation::DUXU_HEART_DEMON_WAVE;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
@@ -212,6 +213,44 @@ mod tests {
             format!("heart_demon:{}:1000", tribulator.index())
         );
         assert_eq!(tribulator_payloads[0].choices.len(), 3);
+    }
+
+    #[test]
+    fn heart_demon_offer_is_sent_for_early_inserted_phase() {
+        let mut app = App::new();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, emit_heart_demon_offer_payloads);
+
+        let (tribulator, mut tribulator_helper) = spawn_mock_client(&mut app, "Azure");
+        app.world_mut()
+            .entity_mut(tribulator)
+            .insert(TribulationState {
+                kind: crate::cultivation::tribulation::TribulationKind::DuXu,
+                phase: crate::cultivation::tribulation::TribulationPhase::HeartDemon,
+                epicenter: [0.0, 64.0, 0.0],
+                wave_current: 2,
+                waves_total: 5,
+                started_tick: 1_000,
+                phase_started_tick: 1_200,
+                next_wave_tick: 1_500,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            });
+        app.world_mut().send_event(TribulationWaveCleared {
+            entity: tribulator,
+            wave: 2,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_heart_demon_offers(&mut tribulator_helper);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(
+            payloads[0].trigger_id,
+            format!("heart_demon:{}:1000", tribulator.index())
+        );
     }
 
     #[test]

@@ -58,6 +58,7 @@ pub const DUXU_OMEN_CLOUD_VFX_EVENT_ID: &str = "bong:tribulation_omen_cloud";
 const DUXU_DEFAULT_WAVES: u32 = 3;
 const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
 const DUXU_QI_DRAIN_BASE: f64 = 35.0;
+const DUXU_CHAIN_LIGHTNING_WAVE: u32 = 2;
 const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
 const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
 pub const DUXU_HEART_DEMON_WAVE: u32 = 4;
@@ -425,13 +426,14 @@ pub fn tribulation_phase_tick_system(
         Entity,
         &mut TribulationState,
         Option<&HeartDemonResolution>,
+        Option<&PendingHeartDemonOffer>,
         Option<&Lifecycle>,
         Option<&Username>,
     )>,
     mut locked: EventWriter<TribulationLocked>,
     mut cleared: EventWriter<TribulationWaveCleared>,
 ) {
-    for (entity, mut state, heart_demon, lifecycle, username) in &mut query {
+    for (entity, mut state, heart_demon, pregen, lifecycle, username) in &mut query {
         match state.phase {
             TribulationPhase::Omen
                 if clock.tick.saturating_sub(state.phase_started_tick) >= DUXU_OMEN_TICKS =>
@@ -460,16 +462,70 @@ pub fn tribulation_phase_tick_system(
                 begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
             TribulationPhase::Wave(_) if clock.tick >= state.next_wave_tick && !state.failed => {
-                let next_wave = state.wave_current.saturating_add(1);
-                begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
+                let next_wave = next_tribulation_wave(&state, heart_demon.is_some());
+                if should_enter_heart_demon_phase(entity, &state, heart_demon, pregen, next_wave) {
+                    let event_wave = if next_wave == DUXU_HEART_DEMON_WAVE {
+                        DUXU_HEART_DEMON_WAVE
+                    } else {
+                        state.wave_current
+                    };
+                    begin_heart_demon_phase(
+                        &mut state,
+                        entity,
+                        event_wave,
+                        clock.tick,
+                        &mut cleared,
+                    );
+                } else {
+                    begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
+                }
             }
             TribulationPhase::HeartDemon if heart_demon.is_some() => {
-                let next_wave = state.wave_current.saturating_add(1);
+                let next_wave = next_tribulation_wave(&state, true);
                 begin_tribulation_wave(&mut state, entity, next_wave, clock.tick, &mut cleared);
             }
             _ => {}
         }
     }
+}
+
+fn next_tribulation_wave(state: &TribulationState, heart_demon_resolved: bool) -> u32 {
+    let next_wave = state.wave_current.saturating_add(1);
+    if heart_demon_resolved
+        && state.waves_total >= DUXU_KAITIAN_WAVE
+        && next_wave == DUXU_HEART_DEMON_WAVE
+    {
+        DUXU_KAITIAN_WAVE
+    } else {
+        next_wave
+    }
+}
+
+fn should_enter_heart_demon_phase(
+    entity: Entity,
+    state: &TribulationState,
+    heart_demon: Option<&HeartDemonResolution>,
+    pregen: Option<&PendingHeartDemonOffer>,
+    next_wave: u32,
+) -> bool {
+    if heart_demon.is_some() || state.waves_total < DUXU_HEART_DEMON_WAVE {
+        return false;
+    }
+    if next_wave == DUXU_HEART_DEMON_WAVE {
+        return true;
+    }
+    state.wave_current >= DUXU_CHAIN_LIGHTNING_WAVE
+        && pending_heart_demon_offer_matches(entity, state, pregen)
+}
+
+fn pending_heart_demon_offer_matches(
+    entity: Entity,
+    state: &TribulationState,
+    pregen: Option<&PendingHeartDemonOffer>,
+) -> bool {
+    pregen.is_some_and(|offer| {
+        offer.trigger_id == heart_demon_trigger_id(entity.index(), state.started_tick)
+    })
 }
 
 fn begin_tribulation_wave(
@@ -482,14 +538,26 @@ fn begin_tribulation_wave(
     if wave == 0 || wave > state.waves_total {
         return;
     }
-    state.phase = if wave == DUXU_HEART_DEMON_WAVE {
-        TribulationPhase::HeartDemon
-    } else {
-        TribulationPhase::Wave(wave)
-    };
+    state.phase = TribulationPhase::Wave(wave);
     state.phase_started_tick = tick;
     state.next_wave_tick = tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
     cleared.send(TribulationWaveCleared { entity, wave });
+}
+
+fn begin_heart_demon_phase(
+    state: &mut TribulationState,
+    entity: Entity,
+    event_wave: u32,
+    tick: u64,
+    cleared: &mut EventWriter<TribulationWaveCleared>,
+) {
+    state.phase = TribulationPhase::HeartDemon;
+    state.phase_started_tick = tick;
+    state.next_wave_tick = tick.saturating_add(DUXU_WAVE_COOLDOWN_TICKS);
+    cleared.send(TribulationWaveCleared {
+        entity,
+        wave: event_wave,
+    });
 }
 
 #[allow(clippy::type_complexity)]
@@ -794,7 +862,7 @@ fn heart_demon_outcome_for_choice(choice_idx: Option<u32>) -> HeartDemonOutcome 
 
 fn du_xu_wave_profile(wave: u32) -> DuXuWaveProfile {
     DuXuWaveProfile {
-        strikes: if wave == 2 {
+        strikes: if wave == DUXU_CHAIN_LIGHTNING_WAVE {
             DUXU_CHAIN_LIGHTNING_STRIKES
         } else {
             1
@@ -1285,7 +1353,7 @@ pub fn publish_tribulation_events(
         let actor_name = username
             .map(|name| name.0.clone())
             .or_else(|| char_id.clone());
-        let phase = if ev.wave == DUXU_HEART_DEMON_WAVE {
+        let phase = if matches!(state.phase, TribulationPhase::HeartDemon) {
             TribulationPhaseV1::HeartDemon
         } else {
             TribulationPhaseV1::Wave { wave: ev.wave }
@@ -2176,6 +2244,200 @@ mod tests {
         let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].wave, 4);
+    }
+
+    #[test]
+    fn pregen_offer_inserts_heart_demon_after_chain_lightning_without_consuming_wave() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1500 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 5,
+                    started_tick: 100,
+                    phase_started_tick: 1200,
+                    next_wave_tick: 1500,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                PendingHeartDemonOffer {
+                    trigger_id: String::new(),
+                    payload: HeartDemonOfferV1 {
+                        offer_id: "heart-demon-pregen".to_string(),
+                        trigger_id: String::new(),
+                        trigger_label: "心魔照见".to_string(),
+                        realm_label: "渡虚劫 · 心魔".to_string(),
+                        composure: 0.7,
+                        quota_remaining: 1,
+                        quota_total: 1,
+                        expires_at_ms: 1,
+                        choices: Vec::new(),
+                    },
+                },
+            ))
+            .id();
+        let trigger_id = format!("heart_demon:{}:100", entity.index());
+        {
+            let mut offer = app
+                .world_mut()
+                .get_mut::<PendingHeartDemonOffer>(entity)
+                .expect("pregen offer should attach");
+            offer.trigger_id = trigger_id.clone();
+            offer.payload.trigger_id = trigger_id;
+        }
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::HeartDemon);
+        assert_eq!(state.wave_current, 2);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 2);
+    }
+
+    #[test]
+    fn heart_demon_still_falls_back_to_fourth_slot_when_pregen_is_absent() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2100 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(3),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 3,
+                waves_total: 5,
+                started_tick: 0,
+                phase_started_tick: 1800,
+                next_wave_tick: 2100,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::HeartDemon);
+        assert_eq!(state.wave_current, 3);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 4);
+    }
+
+    #[test]
+    fn resolved_early_heart_demon_continues_next_combat_wave() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1810 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 5,
+                    started_tick: 100,
+                    phase_started_tick: 1500,
+                    next_wave_tick: 1800,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                HeartDemonResolution {
+                    outcome: HeartDemonOutcome::Steadfast,
+                    choice_idx: Some(0),
+                    tick: 1510,
+                    next_wave_multiplier: 1.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Wave(3));
+        assert_eq!(state.wave_current, 2);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, 3);
+    }
+
+    #[test]
+    fn resolved_heart_demon_after_soul_devouring_skips_original_heart_demon_slot() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 2110 });
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_systems(Update, tribulation_phase_tick_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 3,
+                    waves_total: 5,
+                    started_tick: 100,
+                    phase_started_tick: 1800,
+                    next_wave_tick: 2100,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+                HeartDemonResolution {
+                    outcome: HeartDemonOutcome::Steadfast,
+                    choice_idx: Some(0),
+                    tick: 1810,
+                    next_wave_multiplier: 1.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(entity)
+            .expect("tribulation should remain active");
+        assert_eq!(state.phase, TribulationPhase::Wave(DUXU_KAITIAN_WAVE));
+        assert_eq!(state.wave_current, 3);
+        let events = app.world().resource::<Events<TribulationWaveCleared>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].wave, DUXU_KAITIAN_WAVE);
     }
 
     #[test]
