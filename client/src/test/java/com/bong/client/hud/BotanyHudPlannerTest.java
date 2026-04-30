@@ -172,6 +172,33 @@ public class BotanyHudPlannerTest {
     }
 
     @Test
+    void botanyV2PlantKindUsesGeneratedItemIcon() {
+        HarvestSessionViewModel session = HarvestSessionViewModel.create(
+            "session-v2",
+            "plant-v2",
+            "负元蕨",
+            "fu_yuan_jue",
+            BotanyHarvestMode.MANUAL,
+            0.3,
+            true,
+            false,
+            false,
+            false,
+            "",
+            10L
+        );
+        BotanySkillViewModel skill = BotanySkillViewModel.create(2, 40, 100, 3);
+
+        List<HudRenderCommand> commands = BotanyHudPlanner.buildCommands(session, skill, FIXED_WIDTH, 960, 540);
+
+        assertTrue(
+            commands.stream().anyMatch(cmd -> cmd.isTexturedRect()
+                && cmd.texturePath().equals("bong-client:textures/gui/items/fu_yuan_jue.png")),
+            "botany v2 plant kind should emit TEXTURED_RECT with generated item icon path"
+        );
+    }
+
+    @Test
     void unknownPlantKindFallsBackToColorBlockThumbnail() {
         HarvestSessionViewModel session = HarvestSessionViewModel.create(
             "session-1",
