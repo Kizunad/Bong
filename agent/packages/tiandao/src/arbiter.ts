@@ -9,8 +9,10 @@ import type { AgentDecision } from "./parse.js";
 import type { CurrentEra } from "./world-model.js";
 
 const MAX_NARRATIONS_PER_TICK = 10;
+const MAX_RECENT_COMBAT_EVENT_AGE_TICKS = 100;
 const SPIRIT_QI_CONSERVATION_EPSILON = 0.01;
 const GLOBAL_ERA_TARGETS = new Set(["all_zones", "all", "global", "全局"]);
+const DUXU_EVENT_RE = /(?:du_?xu|xuhua|void|渡虚|化虚)/iu;
 
 const SOURCE_PRIORITY: Record<string, number> = {
   calamity: 1,
@@ -61,6 +63,8 @@ export class Arbiter {
     const flattened = this.flattenCommands(decisions);
     const narrations = decisions
       .flatMap(({ decision }) => decision.narrations)
+      .map((narration) => this.applyNarrationScopeRules(narration))
+      .filter((narration): narration is Narration => narration !== null)
       .slice(0, MAX_NARRATIONS_PER_TICK);
 
     const constrained = flattened.commands.filter((tagged) => this.passesHardConstraints(tagged));
@@ -156,6 +160,99 @@ export class Arbiter {
     }
 
     return playerPower >= NEWBIE_POWER_THRESHOLD;
+  }
+
+  private applyNarrationScopeRules(narration: Narration): Narration | null {
+    if (this.isCombatTick() && narration.kind !== "death_insight" && narration.style !== "era_decree") {
+      return null;
+    }
+
+    const sanitized = this.redactPlayerNames(narration);
+    if (sanitized.scope === "broadcast") {
+      if (!this.isBroadcastAllowed(sanitized)) {
+        return this.narrowBroadcastNarration(sanitized);
+      }
+      return sanitized;
+    }
+
+    if (sanitized.scope === "zone" && sanitized.target && !this.hasZone(sanitized.target)) {
+      return null;
+    }
+
+    if (sanitized.scope === "player" && sanitized.target && !this.hasPlayer(sanitized.target)) {
+      return null;
+    }
+
+    return sanitized;
+  }
+
+  private isBroadcastAllowed(narration: Narration): boolean {
+    if (narration.style === "era_decree") {
+      return true;
+    }
+
+    if (narration.kind === "death_insight") {
+      return true;
+    }
+
+    return this.hasDuxuSignal(narration);
+  }
+
+  private narrowBroadcastNarration(narration: Narration): Narration | null {
+    const explicitZoneTarget = narration.target && this.hasZone(narration.target) ? narration.target : null;
+    const activeZoneTarget = this.findActiveEventZone();
+    const populatedZoneTarget = this.findMostPopulatedZone();
+    const target = explicitZoneTarget ?? activeZoneTarget ?? populatedZoneTarget;
+
+    if (!target) {
+      return null;
+    }
+
+    return {
+      ...narration,
+      scope: "zone",
+      target,
+    };
+  }
+
+  private hasDuxuSignal(narration: Narration): boolean {
+    if (DUXU_EVENT_RE.test(narration.text)) {
+      return true;
+    }
+
+    return this.state.recent_events.some((event) => {
+      const values = [event.type, event.target, event.zone, ...Object.values(event.details ?? {})];
+      return values.some((value) => typeof value === "string" && DUXU_EVENT_RE.test(value));
+    });
+  }
+
+  private redactPlayerNames(narration: Narration): Narration {
+    let text = narration.text;
+    for (const player of this.state.players) {
+      if (player.name.trim().length === 0) {
+        continue;
+      }
+      text = replaceAllLiteral(text, player.name, "某修士");
+      text = replaceAllLiteral(text, player.uuid, "某修士");
+    }
+
+    if (text === narration.text) {
+      return narration;
+    }
+
+    return {
+      ...narration,
+      text,
+    };
+  }
+
+  private isCombatTick(): boolean {
+    return this.state.recent_events.some((event) => {
+      if (this.state.tick - event.tick > MAX_RECENT_COMBAT_EVENT_AGE_TICKS) {
+        return false;
+      }
+      return event.type === "player_kill_npc" || event.type === "player_kill_player";
+    });
   }
 
   private materializeEraCommand(
@@ -423,6 +520,19 @@ export class Arbiter {
     return this.state.zones.some((zone) => zone.name === zoneName);
   }
 
+  private hasPlayer(playerId: string): boolean {
+    return this.state.players.some((player) => player.uuid === playerId || player.name === playerId);
+  }
+
+  private findActiveEventZone(): string | null {
+    return this.state.zones.find((zone) => zone.active_events.length > 0)?.name ?? null;
+  }
+
+  private findMostPopulatedZone(): string | null {
+    const zones = [...this.state.zones].sort((left, right) => right.player_count - left.player_count);
+    return zones[0]?.name ?? null;
+  }
+
   private getPlayerPower(targetPlayer: string): number | null {
     const byUuid = this.state.players.find((player) => player.uuid === targetPlayer);
     if (byUuid) {
@@ -473,6 +583,10 @@ function getStringParam(params: Record<string, unknown>, key: string): string | 
 
 function isGlobalEraTarget(target: string): boolean {
   return GLOBAL_ERA_TARGETS.has(target.trim().toLowerCase());
+}
+
+function replaceAllLiteral(text: string, needle: string, replacement: string): string {
+  return text.split(needle).join(replacement);
 }
 
 function buildModifyZoneParams(

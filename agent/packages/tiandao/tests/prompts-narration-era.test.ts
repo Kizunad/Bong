@@ -24,6 +24,10 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(calamityPrompt).toContain("约 100-200 个中文字符");
     expect(calamityPrompt).toContain("当前因果/触发缘由");
     expect(calamityPrompt).toContain("对下一轮或下一步的暗示");
+    expect(calamityPrompt).toContain("只叙述玩家可感知之事");
+    expect(calamityPrompt).toContain("仅\"渡虚劫/化虚\"级事件允许 `scope:\"broadcast\"`");
+    expect(calamityPrompt).toContain("普通战斗 tick 保持沉默");
+    expect(calamityPrompt).toContain("近轮天道叙事");
     expect(calamityPrompt).toContain("只输出**单个合法 JSON 对象**");
     expect(calamityPrompt).toContain("工具是可选的");
 
@@ -31,6 +35,10 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(mutationPrompt).toContain("约 100-200 个中文字符");
     expect(mutationPrompt).toContain("本轮变化的当前成因");
     expect(mutationPrompt).toContain("对下一轮或后续演化的预兆");
+    expect(mutationPrompt).toContain("只叙述玩家可感知之事");
+    expect(mutationPrompt).toContain("区域灵气/地脉变化默认 `scope:\"zone\"`");
+    expect(mutationPrompt).toContain("普通战斗 tick 保持沉默");
+    expect(mutationPrompt).toContain("近轮天道叙事");
     expect(mutationPrompt).toContain("只输出**单个合法 JSON 对象**");
     expect(mutationPrompt).toContain("工具是可选的");
   });
@@ -43,6 +51,9 @@ describe("Tiandao prompts narration era coverage", () => {
     expect(eraPrompt).toContain("约 100-200 个中文字符");
     expect(eraPrompt).toContain("当下时代转折的成因/大势");
     expect(eraPrompt).toContain("对下一轮或后势的预兆");
+    expect(eraPrompt).toContain("只有时代更替、渡虚劫/化虚这类全服可感的大事才可 `scope:\"broadcast\"`");
+    expect(eraPrompt).toContain("不主动暴露玩家名字");
+    expect(eraPrompt).toContain("近轮天道叙事");
     expect(eraPrompt).toContain("只输出**单个合法 JSON 对象**");
     expect(eraPrompt).toContain("默认不使用工具");
     expect(eraPrompt).toContain("默认无工具");

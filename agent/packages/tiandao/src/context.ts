@@ -181,6 +181,24 @@ export const peerDecisionsBlock: ContextBlock = {
   },
 };
 
+export const recentNarrationsBlock: ContextBlock = {
+  name: "recent_narrations",
+  priority: 3,
+  required: false,
+  render({ worldModel }) {
+    const narrations = worldModel?.getRecentNarrations(6) ?? [];
+    if (narrations.length === 0) {
+      return "";
+    }
+
+    const lines = narrations.map((narration) => {
+      const target = narration.target ? ` target=${narration.target}` : "";
+      return `- ${narration.displayName}: ${narration.scope}${target} ${narration.style}「${narration.text}」`;
+    });
+    return `## 近轮天道叙事\n${lines.join("\n")}\n要求：本轮若要叙事，必须换物象、换句式，不要复用上述文本或同义近句。`;
+  },
+};
+
 export const worldTrendBlock: ContextBlock = {
   name: "world_trend",
   priority: 3,
@@ -282,9 +300,10 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...recentEventsBlock, priority: 2, required: true },
     { ...balanceBlock, priority: 3, required: false },
-    { ...peerDecisionsBlock, priority: 4, required: false },
-    { ...chatSignalsBlock, priority: 5, required: false },
-    { ...worldSnapshotBlock, priority: 6, required: false },
+    { ...recentNarrationsBlock, priority: 4, required: false },
+    { ...peerDecisionsBlock, priority: 5, required: false },
+    { ...chatSignalsBlock, priority: 6, required: false },
+    { ...worldSnapshotBlock, priority: 7, required: false },
   ],
 };
 
@@ -295,9 +314,10 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...balanceBlock, priority: 2, required: false },
-    { ...peerDecisionsBlock, priority: 3, required: false },
-    { ...chatSignalsBlock, priority: 4, required: false },
-    { ...recentEventsBlock, priority: 5, required: false },
+    { ...recentNarrationsBlock, priority: 3, required: false },
+    { ...peerDecisionsBlock, priority: 4, required: false },
+    { ...chatSignalsBlock, priority: 5, required: false },
+    { ...recentEventsBlock, priority: 6, required: false },
   ],
 };
 
@@ -309,10 +329,11 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
     { ...balanceBlock, priority: 3, required: false },
-    { ...playerProfilesBlock, priority: 4, required: true },
-    { ...recentEventsBlock, priority: 5, required: true },
-    { ...keyPlayerBlock, priority: 6, required: false },
-    { ...chatSignalsBlock, priority: 7, required: false },
+    { ...recentNarrationsBlock, priority: 4, required: false },
+    { ...playerProfilesBlock, priority: 5, required: true },
+    { ...recentEventsBlock, priority: 6, required: true },
+    { ...keyPlayerBlock, priority: 7, required: false },
+    { ...chatSignalsBlock, priority: 8, required: false },
   ],
 };
 

@@ -491,4 +491,117 @@ describe("Arbiter", () => {
     expect(peak?.params["spirit_qi_delta"]).toBeCloseTo(-0.05, 6);
     expect(result.currentEra?.name).toBe("霜息纪");
   });
+
+  it("narrows non-du-xu broadcast narrations to a perceived zone and redacts player names", () => {
+    const result = runMerge([
+      {
+        source: "calamity",
+        decision: {
+          commands: [],
+          narrations: [
+            {
+              scope: "broadcast",
+              text: "TestPlayer 在谷口招来兽鸣，风色已乱，下一轮草木将先低伏。",
+              style: "system_warning",
+            },
+          ],
+          reasoning: "local omen",
+        },
+      },
+    ]);
+
+    expect(result.narrations).toEqual([
+      {
+        scope: "zone",
+        target: "starter_zone",
+        text: "某修士 在谷口招来兽鸣，风色已乱，下一轮草木将先低伏。",
+        style: "system_warning",
+      },
+    ]);
+  });
+
+  it("keeps du-xu and era broadcasts but drops unknown direct perception targets", () => {
+    const result = runMerge([
+      {
+        source: "era",
+        decision: {
+          commands: [],
+          narrations: [
+            {
+              scope: "broadcast",
+              text: "此间有修士渡虚劫，天地为之色变，旁观者自求多福。",
+              style: "system_warning",
+            },
+            {
+              scope: "broadcast",
+              text: "天道昭告：霜息纪将起，灵机渐冷，后势未明。",
+              style: "era_decree",
+            },
+            {
+              scope: "player",
+              target: "offline:missing",
+              text: "远处地脉忽动，你却不该直接知道。",
+              style: "perception",
+            },
+          ],
+          reasoning: "scope rules",
+        },
+      },
+    ]);
+
+    expect(result.narrations.map((narration) => narration.scope)).toEqual(["broadcast", "broadcast"]);
+    expect(result.narrations[0]?.text).toContain("渡虚劫");
+    expect(result.narrations[1]?.style).toBe("era_decree");
+  });
+
+  it("suppresses regular narrations during recent combat ticks without dropping death insights", () => {
+    const state = createTestWorldState();
+    state.tick = 200;
+    state.recent_events = [
+      {
+        type: "player_kill_npc",
+        tick: 180,
+        player: "offline:test-player",
+        zone: "starter_zone",
+      },
+    ];
+
+    const result = runMerge(
+      [
+        {
+          source: "mutation",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "草木忽低，风色渐乱，下一轮地脉还有余震。",
+                style: "perception",
+              },
+              {
+                scope: "player",
+                target: "offline:test-player",
+                text: "死意贴着神识而过，遗念未散，下一息仍会回望此处。",
+                style: "perception",
+                kind: "death_insight",
+              },
+            ],
+            reasoning: "combat pacing",
+          },
+        },
+      ],
+      state,
+    );
+
+    expect(result.narrations).toEqual([
+      {
+        scope: "player",
+        target: "offline:test-player",
+        text: "死意贴着神识而过，遗念未散，下一息仍会回望此处。",
+        style: "perception",
+        kind: "death_insight",
+      },
+    ]);
+  });
 });
