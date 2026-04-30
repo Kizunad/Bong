@@ -13,7 +13,7 @@ $EDITOR scripts/images/.env   # 至少填 OPENAI_API_KEY（fallback 用）
 
 # 2. 生图
 python scripts/images/gen.py "a cracked iron sword with glowing runes" \
-    --name iron_sword                                      # 物品图标（默认画风）
+    --name iron_sword --transparent                       # 物品图标（透明背景）
 
 python scripts/images/gen.py "a horizontal streak of sword qi" \
     --name sword_qi_trail --style particle --transparent \
@@ -27,7 +27,7 @@ python scripts/images/gen.py "four-corner sumi-e ink splashes, center transparen
 
 | 档 | 用途 | 背景默认 | 后处理 |
 |----|------|---------|--------|
-| `item`（默认） | 物品图标（武器、药材、符牌…） | `solid black/white/magenta` | `remove_bg.py` 抠图 |
+| `item`（默认） | 物品图标（武器、药材、符牌…） | `--transparent` 真 alpha | 直接接入；旧纯色图可用 `remove_bg.py` 抠图 |
 | `particle` | MC 粒子 / VFX 贴图 | 纯黑 `#000000` | `lum_to_alpha.py` 亮度转 alpha |
 | `hud` | HUD overlay（水墨边框等） | `--transparent` 真 alpha | 走 `scripts/images/*.py` 清边缘白雾 |
 

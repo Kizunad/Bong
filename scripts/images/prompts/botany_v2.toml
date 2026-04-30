@@ -1,0 +1,69 @@
+# plan-botany-v2 §1.5 — 17 item icon prompts locked before batch generation.
+
+[[icon]]
+id = "fu_yuan_jue"
+prompt = "dark purple reverse-breathing fern frond, vein pattern like a small inward vortex, dry salt-waste edges, compact medicinal herb bundle"
+
+[[icon]]
+id = "bai_yan_peng"
+prompt = "pale saltbush sprig with gray-white crystal grains on thin leaves, fragile dry wasteland medicinal herb"
+
+[[icon]]
+id = "duan_ji_ci"
+prompt = "blood-dark thorn cluster wrapped around a broken spear shard, rusted battlefield metal flecks, resentful red glint"
+
+[[icon]]
+id = "xue_se_mai_cao"
+prompt = "two-phase vein grass bundle, one half red day leaf and one half blue-green night leaf, corrupted battlefield herb with split stem"
+
+[[icon]]
+id = "yun_ding_lan"
+prompt = "silver-white orchid from a floating cloud peak, light translucent petals and shallow roots, airy sacred herb"
+
+[[icon]]
+id = "xuan_gen_wei"
+prompt = "hanging green root vine coiled into an icon, crystal tips at the roots, floating island underside herb with sharp siphon fibers"
+
+[[icon]]
+id = "ying_yuan_gu"
+prompt = "warm orange glowing abyss mushroom cap, tiny luminous gills, dark cave medicinal fungus, emissive core"
+
+[[icon]]
+id = "xuan_rong_tai"
+prompt = "black velvet moss pad with faint silver rim light, soft dense texture, abyss middle-tier thermal moss"
+
+[[icon]]
+id = "yuan_ni_hong_yu"
+prompt = "red jade fern leaf under a small black mud-tree fragment, glossy precious herb, deep abyss gemstone plant"
+
+[[icon]]
+id = "jing_xin_zao"
+prompt = "cyan algae rosette from a spirit well heart, wet translucent strands and soft teal glow, water-pulse medicinal herb"
+
+[[icon]]
+id = "xue_po_lian"
+prompt = "snow-white lotus with frost-blue rim and ice crystals, high snowline frozen herb"
+
+[[icon]]
+id = "jiao_mai_teng"
+prompt = "charred black vine coil with orange ember core running through it, rift valley fire-vein herb, scorched medicinal tendril"
+
+[[icon]]
+id = "lie_yuan_tai"
+prompt = "purple-black moss clinging to a tiny dimensional rift shard, violet crack light, abyss portal medicinal moss"
+
+[[icon]]
+id = "ming_gu_gu"
+prompt = "bone-white mushroom with gray marrow veins, silent battlefield fungus, low-pressure abyss herb"
+
+[[icon]]
+id = "bei_wen_zhi"
+prompt = "gray-blue ganoderma with purple inscription veins across the cap, ruined sect array remnant herb, carved glyph glow"
+
+[[icon]]
+id = "ling_jing_xu"
+prompt = "purple crystal tendrils curled around a small ancient qi pillar shard, luminous violet facets, TSY crater herb"
+
+[[icon]]
+id = "mao_xin_wei"
+prompt = "warm yellow thatch-heart vetch sprig, dry cottage straw texture with gentle golden remnant light, hermitage medicinal herb"
