@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.store.TribulationBroadcastStore;
 import com.bong.client.combat.store.TribulationStateStore;
+import com.bong.client.state.PlayerStateStore;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.ArrayList;
@@ -49,9 +50,14 @@ public final class TribulationBroadcastHudPlanner {
         String line = "\u26a1 " + stageLabel
             + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName())
             + " \u00b7 \u5750\u6807 (" + Math.round(state.worldX()) + ", " + Math.round(state.worldZ()) + ")";
-        String progress = progressLabel(TribulationStateStore.snapshot());
+        TribulationStateStore.State tribulationState = TribulationStateStore.snapshot();
+        String progress = progressLabel(tribulationState);
         if (!progress.isEmpty()) {
             line += " \u00b7 " + progress;
+        }
+        String viewerRole = viewerRoleLabel(tribulationState, PlayerStateStore.snapshot().playerId());
+        if (!viewerRole.isEmpty()) {
+            line += " \u00b7 " + viewerRole;
         }
         String direction = directionLabel(viewerPosition, state.worldX(), state.worldZ());
         if (!direction.isEmpty()) {
@@ -96,6 +102,15 @@ public final class TribulationBroadcastHudPlanner {
             phase += phase.isEmpty() ? "\u540d\u989d\u5df2\u6ee1" : " \u00b7 \u540d\u989d\u5df2\u6ee1";
         }
         return phase;
+    }
+
+    static String viewerRoleLabel(TribulationStateStore.State state, String localPlayerId) {
+        if (state == null || !state.active()) return "";
+        String normalizedLocal = localPlayerId == null ? "" : localPlayerId.trim();
+        if (normalizedLocal.isEmpty()) return "\u89c2\u6218\u8005";
+        if (normalizedLocal.equals(state.charId())) return "\u6e21\u52ab\u8005\u672c\u4eba";
+        if (state.participants().contains(normalizedLocal)) return "\u622a\u80e1\u8005";
+        return "\u89c2\u6218\u8005";
     }
 
     static String directionLabel(ViewerPosition viewerPosition, double targetX, double targetZ) {

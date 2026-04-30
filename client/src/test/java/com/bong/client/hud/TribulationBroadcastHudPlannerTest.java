@@ -2,6 +2,8 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.store.TribulationBroadcastStore;
 import com.bong.client.combat.store.TribulationStateStore;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.PlayerStateViewModel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -13,6 +15,7 @@ class TribulationBroadcastHudPlannerTest {
     @AfterEach void tearDown() {
         TribulationBroadcastStore.resetForTests();
         TribulationStateStore.resetForTests();
+        PlayerStateStore.resetForTests();
     }
 
     @Test void hiddenWhenInactive() {
@@ -98,5 +101,39 @@ class TribulationBroadcastHudPlannerTest {
         );
 
         assertEquals("心魔劫 4/5", TribulationBroadcastHudPlanner.progressLabel(state));
+    }
+
+    @Test void marksLocalPrimaryTribulator() {
+        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
+            true, "Azure", "striking", 0, 0, 10_000L, false, 0
+        ));
+        TribulationStateStore.replace(new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "wave", 0, 0,
+            2, 5, 100, 200, 300, false, false, List.of("offline:Azure"), ""
+        ));
+        PlayerStateStore.replace(playerState("offline:Azure"));
+
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+
+        assertTrue(cmds.stream().anyMatch(c -> c.isText() && c.text().contains("渡劫者本人")));
+    }
+
+    @Test void marksLocalInterceptorAndSpectator() {
+        TribulationStateStore.State state = new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "wave", 0, 0,
+            2, 5, 100, 200, 300, false, false,
+            List.of("offline:Azure", "offline:Beryl"), ""
+        );
+
+        assertEquals("截胡者", TribulationBroadcastHudPlanner.viewerRoleLabel(state, "offline:Beryl"));
+        assertEquals("观战者", TribulationBroadcastHudPlanner.viewerRoleLabel(state, "offline:Cedar"));
+        assertEquals("观战者", TribulationBroadcastHudPlanner.viewerRoleLabel(state, ""));
+    }
+
+    private static PlayerStateViewModel playerState(String playerId) {
+        return PlayerStateViewModel.create(
+            "Spirit", playerId, 80.0, 100.0, 0.0, 0.5,
+            PlayerStateViewModel.PowerBreakdown.empty(), "green_cloud_peak", "青云峰", 0.8
+        );
     }
 }
