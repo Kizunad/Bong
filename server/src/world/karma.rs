@@ -6,11 +6,13 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, BlockPos, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, BlockPos, Position, Query, Res, ResMut, Resource, Username};
 
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
-
-use crate::world::dimension::DimensionKind;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 pub const KARMA_WEIGHT_MIN: f32 = 0.0;
 pub const KARMA_WEIGHT_MAX: f32 = 1.0;
@@ -21,6 +23,7 @@ pub const QI_DENSITY_CELL_SIZE: i32 = 16;
 pub const TARGETED_CALAMITY_BASE_PROBABILITY: f32 = 0.05;
 pub const TARGETED_CALAMITY_MAX_PROBABILITY: f32 = 0.30;
 pub const TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD: f32 = 0.80;
+pub const VOID_REALM_KARMA_WEIGHT_FLOOR: f32 = 0.20;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TargetedCalamityRoll {
@@ -72,6 +75,34 @@ impl KarmaWeightStore {
         entry.last_position = [position.x, position.y, position.z];
         entry.last_tick = tick;
         entry.weight = (entry.weight + normalized_delta).clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
+    }
+
+    pub fn mark_player_floor(
+        &mut self,
+        player_id: impl Into<String>,
+        zone: Option<String>,
+        position: BlockPos,
+        weight_floor: f32,
+        tick: u64,
+    ) {
+        let player_id = player_id.into();
+        let normalized_floor = weight_floor.clamp(KARMA_WEIGHT_MIN, KARMA_WEIGHT_MAX);
+        let entry = self
+            .by_player
+            .entry(player_id.clone())
+            .or_insert_with(|| KarmaWeightEntry {
+                player_id,
+                zone: zone.clone(),
+                weight: KARMA_WEIGHT_MIN,
+                last_position: [position.x, position.y, position.z],
+                last_tick: tick,
+                decay_checkpoint_tick: tick,
+            });
+        decay_entry_to(entry, tick);
+        entry.zone = zone;
+        entry.last_position = [position.x, position.y, position.z];
+        entry.last_tick = tick;
+        entry.weight = entry.weight.max(normalized_floor);
     }
 
     pub fn weight_for_player(&self, player_id: &str) -> f32 {
@@ -228,6 +259,65 @@ pub fn karma_weight_decay_tick(
     store.decay_to(clock.tick);
 }
 
+#[allow(clippy::type_complexity)]
+pub fn void_realm_karma_pressure_tick(
+    clock: Res<CultivationClock>,
+    mut store: Option<ResMut<KarmaWeightStore>>,
+    cultivators: Query<(
+        &Cultivation,
+        Option<&Username>,
+        Option<&LifeRecord>,
+        &Position,
+        Option<&CurrentDimension>,
+    )>,
+    zones: Option<Res<ZoneRegistry>>,
+) {
+    let Some(store) = store.as_deref_mut() else {
+        return;
+    };
+
+    for (cultivation, username, life_record, position, current_dimension) in &cultivators {
+        if cultivation.realm != Realm::Void {
+            continue;
+        }
+        let Some(player_id) = void_pressure_player_id(username, life_record) else {
+            continue;
+        };
+        let dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let position_vec = position.get();
+        let zone_name = zones.as_deref().and_then(|registry| {
+            registry
+                .find_zone(dimension, position_vec)
+                .map(|zone| zone.name.clone())
+        });
+
+        store.mark_player_floor(
+            player_id,
+            zone_name,
+            block_pos_from_position(position),
+            VOID_REALM_KARMA_WEIGHT_FLOOR,
+            clock.tick,
+        );
+    }
+}
+
+fn void_pressure_player_id(
+    username: Option<&Username>,
+    life_record: Option<&LifeRecord>,
+) -> Option<String> {
+    username
+        .map(|name| name.0.clone())
+        .or_else(|| life_record.map(|life| life.character_id.clone()))
+        .filter(|id| !id.trim().is_empty())
+}
+
+fn block_pos_from_position(position: &Position) -> BlockPos {
+    let p = position.get();
+    BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32)
+}
+
 fn targeted_calamity_roll_value(seed: u64) -> f32 {
     const ROLL_BUCKETS: u64 = 10_000;
     (splitmix64(seed) % ROLL_BUCKETS) as f32 / ROLL_BUCKETS as f32
@@ -243,6 +333,7 @@ fn splitmix64(seed: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::{App, Update};
 
     #[test]
     fn karma_weight_accumulates_and_clamps_per_player() {
@@ -259,6 +350,17 @@ mod tests {
         assert_eq!(entry.last_tick, 11);
         assert_eq!(entry.decay_checkpoint_tick, 11);
         assert_eq!(store.weight_for_zone("spawn"), KARMA_WEIGHT_MAX);
+    }
+
+    #[test]
+    fn karma_weight_floor_refreshes_without_lowering_existing_pressure() {
+        let mut store = KarmaWeightStore::default();
+        let pos = BlockPos::new(1, 64, 2);
+
+        store.mark_player("Azure", Some("spawn".to_string()), pos, 0.80, 10);
+        store.mark_player_floor("Azure", Some("spawn".to_string()), pos, 0.20, 11);
+
+        assert!(store.weight_for_player("Azure") > 0.79);
     }
 
     #[test]
@@ -282,6 +384,80 @@ mod tests {
         store.decay_to(10);
 
         assert_eq!(store.weight_for_player("Azure"), after_first);
+    }
+
+    fn setup_void_pressure_app(now: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: now });
+        app.insert_resource(KarmaWeightStore::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, void_realm_karma_pressure_tick);
+        app
+    }
+
+    #[test]
+    fn void_realm_cultivator_refreshes_hidden_karma_pressure_floor() {
+        let mut app = setup_void_pressure_app(42);
+        app.world_mut().spawn((
+            Cultivation {
+                realm: Realm::Void,
+                ..Default::default()
+            },
+            Username("Azure".to_string()),
+            Position::new([8.8, 66.2, 8.1]),
+        ));
+
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        let entry = weights
+            .entry_for_player("Azure")
+            .expect("Void cultivator should refresh hidden karma pressure");
+        assert_eq!(entry.weight, VOID_REALM_KARMA_WEIGHT_FLOOR);
+        assert_eq!(entry.zone.as_deref(), Some("spawn"));
+        assert_eq!(entry.last_position, [8, 66, 8]);
+        assert_eq!(entry.last_tick, 42);
+    }
+
+    #[test]
+    fn non_void_cultivator_does_not_refresh_karma_pressure() {
+        let mut app = setup_void_pressure_app(42);
+        app.world_mut().spawn((
+            Cultivation {
+                realm: Realm::Spirit,
+                ..Default::default()
+            },
+            Username("Azure".to_string()),
+            Position::new([8.0, 66.0, 8.0]),
+        ));
+
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        assert!(weights.entry_for_player("Azure").is_none());
+    }
+
+    #[test]
+    fn void_realm_pressure_floor_does_not_accumulate_each_tick() {
+        let mut app = setup_void_pressure_app(42);
+        app.world_mut().spawn((
+            Cultivation {
+                realm: Realm::Void,
+                ..Default::default()
+            },
+            Username("Azure".to_string()),
+            Position::new([8.0, 66.0, 8.0]),
+        ));
+
+        app.update();
+        app.world_mut().resource_mut::<CultivationClock>().tick = 43;
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        assert_eq!(
+            weights.weight_for_player("Azure"),
+            VOID_REALM_KARMA_WEIGHT_FLOOR
+        );
     }
 
     #[test]

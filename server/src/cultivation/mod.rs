@@ -115,7 +115,7 @@ use crate::player::state::{
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
-use crate::world::karma::karma_weight_decay_tick;
+use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -184,6 +184,7 @@ pub fn register(app: &mut App) {
             // plan §11-5 业力
             karma_decay_tick,
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
+            void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
         ),
     );
     app.add_systems(
