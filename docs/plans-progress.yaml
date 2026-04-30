@@ -186,13 +186,13 @@ plans:
 
   - file: plan-niche-defense-v1.md
     group: gameplay-npc
-    title: "灵龛主动防御（阵石升级 → 反击 + 暴露代价）"
+    title: "灵龛抄家防守体系（守家傀儡 + 阵法陷阱 + 守宅道伥 三档）"
     state: active-design
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["plan-zhenfa-v1（P4 整合阶段；P0–P3 不阻塞）"]
-    summary: "2026-04-30 从 skeleton 升 active。前置 social-v1 已埋好 SpiritNiche.defense_mode 字段 / SPIRIT_NICHE_RADIUS=5.0 / niche_breach 音效 ID；P0 起手即 DefenseModeId=String → DefenseModeConfig struct + 阵石 item toml + SpiritNicheActivateDefense ClientRequest。P2 IllusionTrap 需扩 StatusEffectKind::Disoriented，P3 声光暴露需扩 ExposureKindV1::ActiveDefenseTriggered。"
+    blocking_on: ["plan-fauna-v1 P0（异变兽骨 / 道伥残骸）", "plan-zhenfa-v1 P1（阵石）", "worldview §七 道伥绑定章节扩展（P2 前置）", "worldview §六.2 异种染色小节扩展（P5 正典化）"]
+    summary: "2026-04-30 重写。核心隐喻从'激光炮塔反击'转向'抄家防守'——让抄家慢/亏/留痕。三档独立守家载体（傀儡/陷阱/道伥）+ 龛侵色染色 + 物品异体残留 + 一生记录联动。仇家 NPC 来源（worldview §十一 散修翻脸 + §九 食腐者）。P0 守家傀儡最简档；P1 陷阱+染色；P2 道伥（需先扩 worldview §七）；P3 残留+生平卷；P4 perception 追凶+NPC 抄家；P5 worldview §六.2 染色谱扩异种染色小节。"
 
   - file: plan-lingtian-npc-v1.md
     group: gameplay-npc
