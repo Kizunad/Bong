@@ -82,4 +82,38 @@ mod tests {
 
         run_update(&mut app);
     }
+
+    #[test]
+    fn spawn_ignores_executor_without_player_components() {
+        let mut app = setup_app();
+        let entity = app.world_mut().spawn_empty().id();
+        send(&mut app, entity, SpawnCmd::Spawn);
+
+        run_update(&mut app);
+
+        assert!(
+            app.world().get::<Position>(entity).is_none(),
+            "entity without player components should not be mutated by /spawn"
+        );
+    }
+
+    #[test]
+    fn spawn_handles_multiple_executors_in_one_tick() {
+        let mut app = setup_app();
+        let alice = spawn_test_client(&mut app, "Alice", [1.0, 2.0, 3.0]);
+        let bob = spawn_test_client(&mut app, "Bob", [-8.0, 90.0, 42.0]);
+        send(&mut app, alice, SpawnCmd::Spawn);
+        send(&mut app, bob, SpawnCmd::Spawn);
+
+        run_update(&mut app);
+
+        assert_eq!(
+            app.world().get::<Position>(alice).unwrap().get().to_array(),
+            crate::player::spawn_position()
+        );
+        assert_eq!(
+            app.world().get::<Position>(bob).unwrap().get().to_array(),
+            crate::player::spawn_position()
+        );
+    }
 }

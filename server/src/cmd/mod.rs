@@ -21,6 +21,7 @@ mod tests {
     use crate::world::tsy_dev_command::TsySpawnRequested;
     use valence::command::CommandRegistry;
     use valence::prelude::App;
+    use valence::protocol::packets::play::command_tree_s2c::{NodeData, Parser, StringArg};
 
     fn setup_registry_app() -> App {
         let mut app = App::new();
@@ -81,6 +82,58 @@ mod tests {
                 literals.contains(command),
                 "expected command tree to contain /{command}, got {literals:?}"
             );
+        }
+    }
+
+    #[test]
+    fn command_registry_matches_frozen_executable_paths() {
+        let app = setup_registry_app();
+        let registry = app.world().resource::<CommandRegistry>();
+
+        assert_eq!(
+            executable_paths(registry),
+            registry_pin::COMMAND_TREE_PATHS,
+            "brigadier executable command tree changed; update registry_pin intentionally"
+        );
+    }
+
+    fn executable_paths(registry: &CommandRegistry) -> Vec<String> {
+        let mut paths = Vec::new();
+        let mut stack = vec![(registry.graph.root, Vec::<String>::new())];
+
+        while let Some((node, path)) = stack.pop() {
+            let node_data = &registry.graph.graph[node];
+            if node_data.executable && !path.is_empty() {
+                paths.push(path.join(" "));
+            }
+
+            let mut children = registry.graph.graph.neighbors(node).collect::<Vec<_>>();
+            children.sort_by_key(|child| child.index());
+            for child in children.into_iter().rev() {
+                let mut child_path = path.clone();
+                match &registry.graph.graph[child].data {
+                    NodeData::Root => {}
+                    NodeData::Literal { name } => child_path.push(name.clone()),
+                    NodeData::Argument { name, parser, .. } => {
+                        child_path.push(format!("<{}:{}>", name, parser_label(parser)));
+                    }
+                }
+                stack.push((child, child_path));
+            }
+        }
+
+        paths.sort_unstable();
+        paths
+    }
+
+    fn parser_label(parser: &Parser) -> String {
+        match parser {
+            Parser::Float { .. } => "float".to_string(),
+            Parser::Double { .. } => "double".to_string(),
+            Parser::String(StringArg::SingleWord) => "string".to_string(),
+            Parser::String(StringArg::QuotablePhrase) => "phrase".to_string(),
+            Parser::String(StringArg::GreedyPhrase) => "greedy".to_string(),
+            other => format!("{other:?}"),
         }
     }
 }

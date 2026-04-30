@@ -95,4 +95,40 @@ mod tests {
 
         run_update(&mut app);
     }
+
+    #[test]
+    fn zone_names_lists_registry_entries_in_order() {
+        let registry = ZoneRegistry {
+            zones: vec![
+                crate::world::zone::Zone {
+                    name: "spawn".to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
+                    bounds: (
+                        valence::prelude::DVec3::new(0.0, 0.0, 0.0),
+                        valence::prelude::DVec3::new(1.0, 1.0, 1.0),
+                    ),
+                    spirit_qi: 0.9,
+                    danger_level: 0,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                crate::world::zone::Zone {
+                    name: "north_wastes".to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
+                    bounds: (
+                        valence::prelude::DVec3::new(2.0, 0.0, 0.0),
+                        valence::prelude::DVec3::new(3.0, 1.0, 1.0),
+                    ),
+                    spirit_qi: -0.4,
+                    danger_level: 2,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        assert_eq!(zone_names(Some(&registry)), "spawn, north_wastes");
+    }
 }
