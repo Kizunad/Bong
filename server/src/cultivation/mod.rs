@@ -56,7 +56,10 @@ use valence::prelude::{
     Update, Username, Without,
 };
 
-use self::breakthrough::{breakthrough_system, BreakthroughOutcome, BreakthroughRequest};
+use self::breakthrough::{
+    breakthrough_system, rapid_breakthrough_karma_mark_system, BreakthroughOutcome,
+    BreakthroughRequest,
+};
 use self::color::{qi_color_evolution_tick, PracticeLog};
 use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
@@ -112,6 +115,7 @@ use crate::player::state::{
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
+use crate::world::karma::karma_weight_decay_tick;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -162,6 +166,7 @@ pub fn register(app: &mut App) {
             lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
             breakthrough_system.after(meridian_open_tick),
+            rapid_breakthrough_karma_mark_system.after(breakthrough_system),
             forging_system.after(breakthrough_system),
             // 稳态演化
             qi_color_evolution_tick,
@@ -178,6 +183,7 @@ pub fn register(app: &mut App) {
             on_player_terminated,
             // plan §11-5 业力
             karma_decay_tick,
+            karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
         ),
     );
     app.add_systems(

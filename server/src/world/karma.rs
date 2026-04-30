@@ -6,7 +6,9 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, BlockPos, Resource};
+use valence::prelude::{bevy_ecs, BlockPos, Res, ResMut, Resource};
+
+use crate::cultivation::tick::CultivationClock;
 
 use crate::world::dimension::DimensionKind;
 
@@ -35,6 +37,7 @@ pub struct KarmaWeightEntry {
     pub weight: f32,
     pub last_position: [i32; 3],
     pub last_tick: u64,
+    pub decay_checkpoint_tick: u64,
 }
 
 #[derive(Debug, Default, Resource)]
@@ -62,7 +65,9 @@ impl KarmaWeightStore {
                 weight: KARMA_WEIGHT_MIN,
                 last_position: [position.x, position.y, position.z],
                 last_tick: tick,
+                decay_checkpoint_tick: tick,
             });
+        decay_entry_to(entry, tick);
         entry.zone = zone;
         entry.last_position = [position.x, position.y, position.z];
         entry.last_tick = tick;
@@ -95,17 +100,22 @@ impl KarmaWeightStore {
         self.by_player.get(player_id)
     }
 
-    #[allow(dead_code)] // 后续统一 world tick 接入衰减；当前仅测试覆盖。
-    pub fn decay(&mut self, ticks: u64) {
-        if ticks == 0 {
-            return;
-        }
-        let amount = KARMA_WEIGHT_DECAY_PER_TICK * ticks as f32;
+    pub fn decay_to(&mut self, tick: u64) {
         self.by_player.retain(|_, entry| {
-            entry.weight = (entry.weight - amount).max(KARMA_WEIGHT_MIN);
+            decay_entry_to(entry, tick);
             entry.weight > KARMA_WEIGHT_MIN
         });
     }
+}
+
+fn decay_entry_to(entry: &mut KarmaWeightEntry, tick: u64) {
+    let ticks = tick.saturating_sub(entry.decay_checkpoint_tick);
+    if ticks == 0 {
+        return;
+    }
+    let amount = KARMA_WEIGHT_DECAY_PER_TICK * ticks as f32;
+    entry.weight = (entry.weight - amount).max(KARMA_WEIGHT_MIN);
+    entry.decay_checkpoint_tick = tick;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -208,6 +218,16 @@ pub fn targeted_calamity_event_hit(effective_probability: f32, seed: u64) -> (f3
     (roll_value, roll_value < probability)
 }
 
+pub fn karma_weight_decay_tick(
+    clock: Res<CultivationClock>,
+    mut store: Option<ResMut<KarmaWeightStore>>,
+) {
+    let Some(store) = store.as_deref_mut() else {
+        return;
+    };
+    store.decay_to(clock.tick);
+}
+
 fn targeted_calamity_roll_value(seed: u64) -> f32 {
     const ROLL_BUCKETS: u64 = 10_000;
     (splitmix64(seed) % ROLL_BUCKETS) as f32 / ROLL_BUCKETS as f32
@@ -237,6 +257,7 @@ mod tests {
         assert_eq!(entry.zone.as_deref(), Some("spawn"));
         assert_eq!(entry.last_position, [1, 64, 2]);
         assert_eq!(entry.last_tick, 11);
+        assert_eq!(entry.decay_checkpoint_tick, 11);
         assert_eq!(store.weight_for_zone("spawn"), KARMA_WEIGHT_MAX);
     }
 
@@ -245,10 +266,22 @@ mod tests {
         let mut store = KarmaWeightStore::default();
         store.mark_player("Azure", None, BlockPos::new(0, 64, 0), 0.01, 1);
 
-        store.decay(30 * 24 * 60 * 60 * 20);
+        store.decay_to(1 + 30 * 24 * 60 * 60 * 20);
 
         assert_eq!(store.weight_for_player("Azure"), 0.0);
         assert!(store.entry_for_player("Azure").is_none());
+    }
+
+    #[test]
+    fn karma_weight_decay_to_only_applies_elapsed_ticks_once() {
+        let mut store = KarmaWeightStore::default();
+        store.mark_player("Azure", None, BlockPos::new(0, 64, 0), 0.50, 1);
+
+        store.decay_to(10);
+        let after_first = store.weight_for_player("Azure");
+        store.decay_to(10);
+
+        assert_eq!(store.weight_for_player("Azure"), after_first);
     }
 
     #[test]
