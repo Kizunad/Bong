@@ -50,6 +50,15 @@ export interface PeerDecisionSummary {
   narrationCount: number;
 }
 
+export interface RecentNarrationSummary {
+  agentName: string;
+  displayName: string;
+  scope: AgentDecision["narrations"][number]["scope"];
+  target?: string;
+  style: AgentDecision["narrations"][number]["style"];
+  text: string;
+}
+
 export interface KeyPlayerSummary {
   uuid: string;
   name: string;
@@ -336,6 +345,31 @@ export class WorldModel {
         commandCount: decision.commands.length,
         narrationCount: decision.narrations.length,
       }));
+  }
+
+  getRecentNarrations(limit = 6): RecentNarrationSummary[] {
+    const boundedLimit = Math.max(0, Math.trunc(limit));
+    if (boundedLimit === 0) {
+      return [];
+    }
+
+    const entries: RecentNarrationSummary[] = [];
+    for (const [agentName, decision] of [...this.lastDecisions.entries()].sort(([left], [right]) =>
+      compareAgentNames(left, right),
+    )) {
+      for (const narration of decision.narrations) {
+        entries.push({
+          agentName,
+          displayName: AGENT_DISPLAY_NAMES[agentName] ?? `${agentName} Agent`,
+          scope: narration.scope,
+          target: narration.target,
+          style: narration.style,
+          text: narration.text,
+        });
+      }
+    }
+
+    return entries.slice(-boundedLimit);
   }
 
   private applySnapshot(snapshot: Partial<WorldModelSnapshot>): void {
@@ -665,6 +699,7 @@ function cloneDecision(decision: AgentDecision): AgentDecision {
       target: narration.target,
       text: narration.text,
       style: narration.style,
+      kind: narration.kind,
     })),
     reasoning: decision.reasoning,
   };
@@ -827,11 +862,13 @@ function sanitizeDecision(decision: unknown): AgentDecision | null {
     const target = narration.target;
     const text = narration.text;
     const style = narration.style;
+    const kind = narration.kind;
     if (
       typeof scope !== "string" ||
       (target !== undefined && typeof target !== "string") ||
       typeof text !== "string" ||
-      typeof style !== "string"
+      typeof style !== "string" ||
+      (kind !== undefined && typeof kind !== "string")
     ) {
       continue;
     }
@@ -841,6 +878,7 @@ function sanitizeDecision(decision: unknown): AgentDecision | null {
       target,
       text,
       style: style as AgentDecision["narrations"][number]["style"],
+      kind: kind as AgentDecision["narrations"][number]["kind"],
     });
   }
 
