@@ -60,6 +60,9 @@ public class ServerDataRouterTest {
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
+            // plan-perception-v1.1 §4 server-authoritative vision/sense push.
+            "realm_vision_params",
+            "spiritual_sense_targets",
             // plan-tsy-extract-v1 §4.1 撤离点 / 撤离进度 HUD 推送。
             "rift_portal_state",
             "rift_portal_removed",

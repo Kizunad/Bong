@@ -63,6 +63,8 @@ public final class ServerDataRouter {
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
+        RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
+        SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
         ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
         SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
         com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
@@ -107,6 +109,8 @@ public final class ServerDataRouter {
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
+        handlers.put("realm_vision_params", realmVisionParamsHandler);
+        handlers.put("spiritual_sense_targets", spiritualSenseTargetsHandler);
         handlers.put("rift_portal_state", extractServerDataHandler);
         handlers.put("rift_portal_removed", extractServerDataHandler);
         handlers.put("extract_started", extractServerDataHandler);
