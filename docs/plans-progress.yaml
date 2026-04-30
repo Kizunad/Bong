@@ -2,7 +2,7 @@
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
 # 上一次刷新：2026-04-30 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）+
-#   /plans-status 阶段级核验回扫。
+#   /plans-status 阶段级核验回扫 + skeleton 升 active 调研（plan-niche-defense-v1）。
 #   - 8 份 plan 已归档迁入 finished：plan-player-animation-v1（PR #82）、plan-weapon-v1.1（PR #69/#80）、
 #     plan-mineral-v2（commit 00df063f）、plan-social-v1（PR #77）、plan-worldgen-anvil-export-v1（PR #79）、
 #     plan-combat-ui_impl（PR #20 + commit 62dd84b）、plan-particle-system-v1（PR #17 + commit 链）、
@@ -173,6 +173,16 @@ plans:
     pr_refs: []
     blocking_on: ["plan-particle-system-v1"]
     summary: "Phase 0 服务端推送通道已就绪（ServerDataPayloadV1），其余全为模板态：无 BackgroundRenderer Mixin、无视距表推送、无 PerceptionHudRenderer，仓库内 perception 字样均指 NarrationStyle/InsightCategory，与本 plan 无关。"
+
+  - file: plan-niche-defense-v1.md
+    group: gameplay-npc
+    title: "灵龛主动防御（阵石升级 → 反击 + 暴露代价）"
+    state: active-design
+    percent: 5
+    last_updated: "2026-04-30"
+    pr_refs: []
+    blocking_on: ["plan-zhenfa-v1（P4 整合阶段；P0–P3 不阻塞）"]
+    summary: "2026-04-30 从 skeleton 升 active。前置 social-v1 已埋好 SpiritNiche.defense_mode 字段 / SPIRIT_NICHE_RADIUS=5.0 / niche_breach 音效 ID；P0 起手即 DefenseModeId=String → DefenseModeConfig struct + 阵石 item toml + SpiritNicheActivateDefense ClientRequest。P2 IllusionTrap 需扩 StatusEffectKind::Disoriented，P3 声光暴露需扩 ExposureKindV1::ActiveDefenseTriggered。"
 
   # ============================================================
   # Group: infrastructure
