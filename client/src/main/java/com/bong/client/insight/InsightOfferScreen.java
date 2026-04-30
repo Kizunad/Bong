@@ -35,6 +35,7 @@ import java.util.function.LongSupplier;
  */
 public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     static final Text TITLE = Text.literal("◇ 心 有 所 感 ◇");
+    static final String HEART_DEMON_TRIGGER_PREFIX = "heart_demon:";
 
     private static final int CARD_WIDTH = 150;
     private static final int CARD_HEIGHT = 200;
@@ -92,7 +93,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         panel.horizontalAlignment(HorizontalAlignment.CENTER);
 
         // ── 顶部：标题 + trigger label ──
-        panel.child(coloredLabel(TITLE.getString(), COLOR_TITLE));
+        panel.child(coloredLabel(screenTitle(offer), COLOR_TITLE));
         panel.child(coloredLabel("【触发】" + offer.triggerLabel(), COLOR_TRIGGER));
 
         // ── 元信息 ──
@@ -101,8 +102,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         headerHolder.child(coloredLabel("境界: " + offer.realmLabel(), COLOR_META));
         headerHolder.child(coloredLabel(
             String.format(Locale.ROOT, "心境: %.2f", offer.composure()), COLOR_META));
-        headerHolder.child(coloredLabel(
-            "剩余顿悟额度: " + offer.quotaRemaining() + "/" + offer.quotaTotal(), COLOR_META));
+        headerHolder.child(coloredLabel(metaQuotaLabel(offer), COLOR_META));
         panel.child(headerHolder);
 
         // ── 倒计时 ──
@@ -169,7 +169,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout box = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         box.surface(Surface.PANEL_INSET);
         box.padding(Insets.of(6, 6, 14, 14));
-        box.child(Components.label(Text.literal("[ 心未契机 ]  拒绝, 不消耗额度")
+        box.child(Components.label(Text.literal(declineLabel(offer))
             .formatted(Formatting.ITALIC))
             .color(Color.ofArgb(COLOR_DECLINE)));
         box.mouseDown().subscribe((mouseX, mouseY, button) -> {
@@ -200,7 +200,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
 
     private io.wispforest.owo.ui.component.LabelComponent buildTimerLabel(long secondsLeft) {
         int color = secondsLeft <= 10 ? COLOR_TIMER_LOW : COLOR_TIMER_OK;
-        String text = "⏳ " + secondsLeft + "s";
+        String text = timerLabel(offer, secondsLeft);
         return Components.label(Text.literal(text)).color(Color.ofArgb(color));
     }
 
@@ -259,11 +259,12 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     public static RenderContent describe(InsightOfferViewModel offer) {
         Objects.requireNonNull(offer, "offer");
         List<String> lines = new ArrayList<>();
-        lines.add("◇ 心 有 所 感 ◇");
+        lines.add(screenTitle(offer));
         lines.add("【触发】" + offer.triggerLabel());
         lines.add("境界: " + offer.realmLabel());
         lines.add(String.format(Locale.ROOT, "心境: %.2f", offer.composure()));
-        lines.add("剩余顿悟额度: " + offer.quotaRemaining() + "/" + offer.quotaTotal());
+        lines.add(metaQuotaLabel(offer));
+        lines.add(timerLabel(offer, Math.max(0L, offer.remainingMillis(System.currentTimeMillis()) / 1000L)));
         for (InsightChoice c : offer.choices()) {
             lines.add("[" + c.category().code() + "] " + c.title());
             lines.add("    效果: " + c.effectSummary());
@@ -272,8 +273,38 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
                 lines.add("    → " + c.styleHint());
             }
         }
-        lines.add("[ 心未契机 ]");
+        lines.add(declineShortLabel(offer));
         return new RenderContent(lines);
+    }
+
+    private static boolean isHeartDemon(InsightOfferViewModel offer) {
+        return offer.triggerId().startsWith(HEART_DEMON_TRIGGER_PREFIX);
+    }
+
+    private static String screenTitle(InsightOfferViewModel offer) {
+        return isHeartDemon(offer) ? "◇ 心 魔 劫 ◇" : TITLE.getString();
+    }
+
+    private static String metaQuotaLabel(InsightOfferViewModel offer) {
+        return isHeartDemon(offer)
+            ? "心魔抉择: " + offer.choices().size() + " 项"
+            : "剩余顿悟额度: " + offer.quotaRemaining() + "/" + offer.quotaTotal();
+    }
+
+    private static String timerLabel(InsightOfferViewModel offer, long secondsLeft) {
+        return isHeartDemon(offer)
+            ? "心魔倒计时: " + secondsLeft + "s（超时默认执念）"
+            : "⏳ " + secondsLeft + "s";
+    }
+
+    private static String declineLabel(InsightOfferViewModel offer) {
+        return isHeartDemon(offer)
+            ? "[ 不作答 ]  交由心魔拖入执念"
+            : "[ 心未契机 ]  拒绝, 不消耗额度";
+    }
+
+    private static String declineShortLabel(InsightOfferViewModel offer) {
+        return isHeartDemon(offer) ? "[ 不作答 ]" : "[ 心未契机 ]";
     }
 
     InsightOfferViewModel offer() {

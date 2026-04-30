@@ -49,11 +49,31 @@ class InsightOfferViewModelTest {
         assertEquals("【触发】首次突破到引气境", content.lines().get(1));
         assertEquals("境界: 引气境 (3 正经)", content.lines().get(2));
         assertEquals("剩余顿悟额度: 2/2", content.lines().get(4));
+        assertTrue(content.lines().get(5).startsWith("⏳ "));
         assertTrue(content.lines().contains("[E] 下次冲关稳"));
         assertTrue(content.lines().contains("[C] 闭关心如止"));
         assertTrue(content.lines().contains("[G] 灵气浓淡可见"));
         assertTrue(content.lines().stream().anyMatch(l -> l.contains("✦ 你已知冲关时神识凝聚的诀窍")));
         assertEquals("[ 心未契机 ]", content.lines().get(content.lines().size() - 1));
+    }
+
+    @Test
+    void describeRendersHeartDemonSpecificCopy() {
+        InsightOfferScreen.RenderContent content = InsightOfferScreen.describe(
+            MockInsightOfferData.heartDemonOffer());
+
+        assertEquals("◇ 心 魔 劫 ◇", content.lines().get(0));
+        assertEquals("【触发】心魔劫临身", content.lines().get(1));
+        assertEquals("境界: 渡虚劫 · 心魔", content.lines().get(2));
+        assertEquals("心魔抉择: 3 项", content.lines().get(4));
+        assertTrue(content.lines().get(5).startsWith("心魔倒计时: "));
+        assertTrue(content.lines().get(5).contains("超时默认执念"));
+        assertTrue(content.lines().contains("[C] 守本心"));
+        assertTrue(content.lines().contains("[E] 斩执念"));
+        assertTrue(content.lines().contains("[G] 无解"));
+        assertEquals("[ 不作答 ]", content.lines().get(content.lines().size() - 1));
+        assertFalse(content.lines().stream().anyMatch(l -> l.contains("顿悟额度")));
+        assertFalse(content.lines().stream().anyMatch(l -> l.contains("心未契机")));
     }
 
     @Test
