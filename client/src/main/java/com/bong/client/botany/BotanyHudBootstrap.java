@@ -37,6 +37,7 @@ public final class BotanyHudBootstrap {
 
     static void resetOnDisconnect() {
         HarvestSessionStore.clearOnDisconnect();
+        BotanyPlantRenderProfileStore.clearOnDisconnect();
         com.bong.client.skill.SkillSetStore.clearOnDisconnect();
         com.bong.client.skill.SkillMilestoneStore.clearOnDisconnect();
         com.bong.client.skill.SkillRecentEventStore.clearOnDisconnect();

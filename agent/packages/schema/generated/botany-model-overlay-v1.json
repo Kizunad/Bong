@@ -1,0 +1,16 @@
+{
+  "anyOf": [
+    {
+      "const": "none",
+      "type": "string"
+    },
+    {
+      "const": "emissive",
+      "type": "string"
+    },
+    {
+      "const": "dual_phase",
+      "type": "string"
+    }
+  ]
+}

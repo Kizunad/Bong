@@ -5,6 +5,7 @@ import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.botany.BotanyHudBootstrap;
+import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
@@ -65,6 +66,7 @@ public class BongClient implements ClientModInitializer {
         BongAnimCommand.register();
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
+        BotanyPlantRenderBootstrap.register();
         BotanyHudBootstrap.register();
         SpiritNicheRevealBootstrap.register();
         SparringInviteScreenBootstrap.register();

@@ -5688,6 +5688,13 @@
         "detail": {
           "type": "string"
         },
+        "hazard_hints": {
+          "type": "array",
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
         "target_pos": {
           "type": "array",
           "items": [
@@ -5704,6 +5711,74 @@
           "additionalItems": false,
           "minItems": 3,
           "maxItems": 3
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "profiles"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "botany_plant_v2_render_profiles",
+          "type": "string"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "plant_id",
+              "base_mesh_ref",
+              "tint_rgb",
+              "model_overlay"
+            ],
+            "properties": {
+              "plant_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "base_mesh_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "tint_rgb": {
+                "minimum": 0,
+                "maximum": 16777215,
+                "type": "integer"
+              },
+              "tint_rgb_secondary": {
+                "minimum": 0,
+                "maximum": 16777215,
+                "type": "integer"
+              },
+              "model_overlay": {
+                "anyOf": [
+                  {
+                    "const": "none",
+                    "type": "string"
+                  },
+                  {
+                    "const": "emissive",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dual_phase",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
         }
       }
     },

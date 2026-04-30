@@ -140,6 +140,9 @@ import {
   ServerDataDeathScreenV1,
   ServerDataTerminateScreenV1,
   ServerDataBotanyHarvestProgressV1,
+  BotanyModelOverlayV1,
+  BotanyPlantV2RenderProfileV1,
+  ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataBotanySkillV1,
   ServerDataExtractAbortedV1,
   ServerDataExtractCompletedV1,
@@ -298,6 +301,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestStartExtractV1: StartExtractRequestV1,
   clientRequestCancelExtractV1: CancelExtractRequestV1,
   serverDataBotanyHarvestProgressV1: ServerDataBotanyHarvestProgressV1,
+  botanyModelOverlayV1: BotanyModelOverlayV1,
+  botanyPlantV2RenderProfileV1: BotanyPlantV2RenderProfileV1,
+  serverDataBotanyPlantV2RenderProfilesV1: ServerDataBotanyPlantV2RenderProfilesV1,
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataDeathScreenV1: ServerDataDeathScreenV1,
   serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
@@ -518,6 +524,11 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.clientRequestCancelExtractV1,
   "server-data-botany-harvest-progress-v1.json":
     SCHEMA_REGISTRY.serverDataBotanyHarvestProgressV1,
+  "botany-model-overlay-v1.json": SCHEMA_REGISTRY.botanyModelOverlayV1,
+  "botany-plant-v2-render-profile-v1.json":
+    SCHEMA_REGISTRY.botanyPlantV2RenderProfileV1,
+  "server-data-botany-plant-v2-render-profiles-v1.json":
+    SCHEMA_REGISTRY.serverDataBotanyPlantV2RenderProfilesV1,
   "server-data-botany-skill-v1.json":
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
   "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,

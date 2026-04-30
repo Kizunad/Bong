@@ -474,6 +474,23 @@ mod tests {
     }
 
     #[test]
+    fn ling_feng_accepts_botany_v2_carriers() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("ling_feng_v0").unwrap();
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("ling_feng first step should be billet");
+        };
+        assert!(profile
+            .optional_carriers
+            .iter()
+            .any(|carrier| { carrier.material == "xuan_gen_wei" && carrier.unlocks_tier == 3 }));
+        assert!(profile
+            .optional_carriers
+            .iter()
+            .any(|carrier| { carrier.material == "yuan_ni_hong_yu" && carrier.unlocks_tier == 4 }));
+    }
+
+    #[test]
     fn duplicate_insert_errors() {
         let mut reg = BlueprintRegistry::new();
         let bp = Blueprint {

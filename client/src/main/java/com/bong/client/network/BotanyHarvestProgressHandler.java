@@ -7,6 +7,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class BotanyHarvestProgressHandler implements ServerDataHandler {
     @Override
@@ -33,6 +35,7 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
             readOptionalBoolean(payload, "interrupted") == Boolean.TRUE,
             readOptionalBoolean(payload, "completed") == Boolean.TRUE,
             readOptionalString(payload, "detail"),
+            readHazardHints(payload),
             readOptionalDoubleTriple(payload, "target_pos"),
             System.currentTimeMillis()
         );
@@ -94,5 +97,25 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
             out[i] = el.getAsDouble();
         }
         return out;
+    }
+
+    private static List<String> readHazardHints(JsonObject object) {
+        List<String> hints = new ArrayList<>();
+        String single = readOptionalString(object, "hazard_hint");
+        if (single != null && !single.isBlank()) {
+            hints.add(single);
+        }
+        JsonElement element = object.get("hazard_hints");
+        if (element != null && element.isJsonArray()) {
+            for (JsonElement item : element.getAsJsonArray()) {
+                if (item != null && item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
+                    String value = item.getAsString();
+                    if (!value.isBlank()) {
+                        hints.add(value);
+                    }
+                }
+            }
+        }
+        return List.copyOf(hints);
     }
 }

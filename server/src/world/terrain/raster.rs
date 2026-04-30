@@ -510,6 +510,17 @@ impl TerrainProvider {
             .and_then(|o| o.as_ref())
     }
 
+    #[allow(dead_code)]
+    pub fn decorations(&self) -> impl Iterator<Item = &Decoration> {
+        self.decoration_palette.iter().filter_map(Option::as_ref)
+    }
+
+    #[allow(dead_code)]
+    pub fn decoration_by_name(&self, name: &str) -> Option<&Decoration> {
+        self.decorations()
+            .find(|decoration| decoration.name == name)
+    }
+
     /// Total number of decorations in the global palette.
     #[allow(dead_code)]
     pub fn decoration_count(&self) -> usize {
@@ -612,6 +623,55 @@ impl TerrainProvider {
             tsy_origin_id: read_optional_u8(&tile.tsy_origin_id, index, 0),
             tsy_depth_tier: read_optional_u8(&tile.tsy_depth_tier, index, 0),
         }
+    }
+
+    pub fn sample_layer(&self, world_x: i32, world_z: i32, layer_name: &str) -> Option<f32> {
+        let (tile, index) = self.tile_and_index(world_x, world_z)?;
+        match layer_name {
+            "height" => Some(read_f32(&tile.height, index)),
+            "water_level" => Some(read_f32(&tile.water_level, index)),
+            "feature_mask" => Some(read_f32(&tile.feature_mask, index)),
+            "boundary_weight" => Some(read_f32(&tile.boundary_weight, index)),
+            "rift_axis_sdf" => read_optional_f32_strict(&tile.rift_axis_sdf, index),
+            "rim_edge_mask" => read_optional_f32_strict(&tile.rim_edge_mask, index),
+            "cave_mask" => read_optional_f32_strict(&tile.cave_mask, index),
+            "ceiling_height" => read_optional_f32_strict(&tile.ceiling_height, index),
+            "entrance_mask" => read_optional_f32_strict(&tile.entrance_mask, index),
+            "fracture_mask" => read_optional_f32_strict(&tile.fracture_mask, index),
+            "neg_pressure" => read_optional_f32_strict(&tile.neg_pressure, index),
+            "ruin_density" => read_optional_f32_strict(&tile.ruin_density, index),
+            "qi_density" => read_optional_f32_strict(&tile.qi_density, index),
+            "mofa_decay" => read_optional_f32_strict(&tile.mofa_decay, index),
+            "qi_vein_flow" => read_optional_f32_strict(&tile.qi_vein_flow, index),
+            "sky_island_mask" => read_optional_f32_strict(&tile.sky_island_mask, index),
+            "sky_island_base_y" => read_optional_f32_strict(&tile.sky_island_base_y, index),
+            "sky_island_thickness" => read_optional_f32_strict(&tile.sky_island_thickness, index),
+            "underground_tier" => {
+                read_optional_u8_strict(&tile.underground_tier, index).map(f32::from)
+            }
+            "cavern_floor_y" => read_optional_f32_strict(&tile.cavern_floor_y, index),
+            "flora_density" => read_optional_f32_strict(&tile.flora_density, index),
+            "flora_variant_id" => {
+                read_optional_u8_strict(&tile.flora_variant_id, index).map(f32::from)
+            }
+            "fossil_bbox" => read_optional_u8_strict(&tile.fossil_bbox, index).map(f32::from),
+            "anomaly_intensity" => read_optional_f32_strict(&tile.anomaly_intensity, index),
+            "anomaly_kind" => read_optional_u8_strict(&tile.anomaly_kind, index).map(f32::from),
+            "tsy_presence" => read_optional_u8_strict(&tile.tsy_presence, index).map(f32::from),
+            "tsy_origin_id" => read_optional_u8_strict(&tile.tsy_origin_id, index).map(f32::from),
+            "tsy_depth_tier" => read_optional_u8_strict(&tile.tsy_depth_tier, index).map(f32::from),
+            _ => None,
+        }
+    }
+
+    fn tile_and_index(&self, world_x: i32, world_z: i32) -> Option<(&TileFields, usize)> {
+        let tile_x = world_x.div_euclid(self.tile_size);
+        let tile_z = world_z.div_euclid(self.tile_size);
+        let tile = self.tiles.get(&(tile_x, tile_z))?;
+        let local_x = world_x.rem_euclid(self.tile_size) as usize;
+        let local_z = world_z.rem_euclid(self.tile_size) as usize;
+        let index = local_z * self.tile_size as usize + local_x;
+        Some((tile, index))
     }
 }
 
@@ -721,6 +781,14 @@ fn read_optional_u8(bytes: &Option<Mmap>, index: usize, fallback: u8) -> u8 {
         .as_ref()
         .map(|mmap| read_u8(mmap, index))
         .unwrap_or(fallback)
+}
+
+fn read_optional_f32_strict(bytes: &Option<Mmap>, index: usize) -> Option<f32> {
+    bytes.as_ref().map(|mmap| read_f32(mmap, index))
+}
+
+fn read_optional_u8_strict(bytes: &Option<Mmap>, index: usize) -> Option<u8> {
+    bytes.as_ref().map(|mmap| read_u8(mmap, index))
 }
 
 fn block_state_from_name(name: &str) -> Result<BlockState, String> {

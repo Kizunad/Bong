@@ -1,0 +1,186 @@
+[[item]]
+id = "fu_yuan_jue"
+name = "负元蕨"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.10
+rarity = "rare"
+spirit_quality_initial = 0.55
+description = "北荒负灵域里的暗紫蕨叶，叶脉会顺着天地倒吸一同呼吸。"
+
+[[item]]
+id = "bai_yan_peng"
+name = "白盐蓬"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.07
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "灰白盐晶附在细叶上，日照下才肯把零散灵气逼成盐粒。"
+
+[[item]]
+id = "duan_ji_ci"
+name = "断戟刺"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.11
+rarity = "rare"
+spirit_quality_initial = 0.50
+description = "扎在古战场金属遗物缝里的暗血荆刺，采下时仍有怨念回响。"
+
+[[item]]
+id = "xue_se_mai_cao"
+name = "血色脉草"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.08
+rarity = "rare"
+spirit_quality_initial = 0.48
+description = "昼夜两相的古战场脉草，日叶可清浊，夜叶则近毒。"
+
+[[item]]
+id = "yun_ding_lan"
+name = "云顶兰"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.70
+description = "浮岛顶面开放的银白兰草，根浅而轻，离开高空气流便散。"
+
+[[item]]
+id = "xuan_gen_wei"
+name = "悬根薇"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.16
+rarity = "uncommon"
+spirit_quality_initial = 0.62
+description = "从浮岛底面垂落的翠绿藤薇，根尖有虹吸沉积出的锐晶。"
+
+[[item]]
+id = "ying_yuan_gu"
+name = "萤渊菇"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.09
+rarity = "uncommon"
+spirit_quality_initial = 0.58
+description = "深穴浅层的暖橙发光菇，须借邻近光源才能维持菌丝循环。"
+
+[[item]]
+id = "xuan_rong_tai"
+name = "玄绒苔"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.06
+rarity = "rare"
+spirit_quality_initial = 0.52
+description = "深渊二层温差带里的漆黑绒苔，银光只在掌心靠近时浮出。"
+
+[[item]]
+id = "yuan_ni_hong_yu"
+name = "渊泥红玉"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.18
+rarity = "epic"
+spirit_quality_initial = 1.0
+description = "共生于渊泥黑树伞下的玉红蕨体，灵质极高，也最经不起磨损。"
+
+[[item]]
+id = "jing_xin_zao"
+name = "井心藻"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.04
+rarity = "epic"
+spirit_quality_initial = 0.72
+description = "灵泉眼吐纳开期才肯舒展的翠青藻，合期采之会被井口反吸。"
+
+[[item]]
+id = "xue_po_lian"
+name = "雪魄莲"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.06
+rarity = "epic"
+spirit_quality_initial = 0.86
+description = "雪线以上冻结灵气的霜白莲，手温稍近便会化作雾。"
+
+[[item]]
+id = "jiao_mai_teng"
+name = "焦脉藤"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.20
+rarity = "rare"
+spirit_quality_initial = 0.50
+description = "血谷裂隙火脉旁的焦黑藤蔓，藤芯像未熄的橙红炭线。"
+
+[[item]]
+id = "lie_yuan_tai"
+name = "裂渊苔"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.35
+description = "坍缩渊裂缝口的紫黑苔，靠两界压差泵出的微弱流维生。"
+
+[[item]]
+id = "ming_gu_gu"
+name = "冥骨菇"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.10
+rarity = "rare"
+spirit_quality_initial = 0.40
+description = "坍缩渊战场沉淀里的骨白蘑菇，低负压把怨念凝成菌伞。"
+
+[[item]]
+id = "bei_wen_zhi"
+name = "碑文芝"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.09
+rarity = "rare"
+spirit_quality_initial = 0.42
+description = "宗门遗迹残阵旁长出的灰青灵芝，菌丝里夹着紫色断纹。"
+
+[[item]]
+id = "ling_jing_xu"
+name = "灵晶须"
+category = "herb"
+grid_w = 1
+grid_h = 2
+base_weight = 0.14
+rarity = "rare"
+spirit_quality_initial = 0.50
+description = "大能陨坑晶柱漏点上缠出的紫晶须，能暂补上古器物的损耗。"
+
+[[item]]
+id = "mao_xin_wei"
+name = "茅心薇"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.07
+rarity = "uncommon"
+spirit_quality_initial = 0.38
+description = "隐居茅舍残痕里生出的暖黄小薇，带一点近代高手留下的温润残灵。"

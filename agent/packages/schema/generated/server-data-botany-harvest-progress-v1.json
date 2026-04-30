@@ -73,6 +73,13 @@
     "detail": {
       "type": "string"
     },
+    "hazard_hints": {
+      "type": "array",
+      "items": {
+        "maxLength": 500,
+        "type": "string"
+      }
+    },
     "target_pos": {
       "type": "array",
       "items": [

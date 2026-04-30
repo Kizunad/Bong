@@ -2,7 +2,7 @@
 """Bong 图像生成统一入口。
 
 两个 backend：
-- **cliproxy**（默认） —— 走自建 CLIProxyAPI `/v1/responses` + image_generation 工具（SSE）。
+- **cliproxy**（默认） —— `gpt-image-2` 走 `/v1/images/generations`；其余走自建 CLIProxyAPI `/v1/responses` + image_generation 工具（SSE）。
 - **openai** —— 直连 OpenAI `/v1/images/generations`（`gpt-image-1.5`）。
 
 默认 `--backend auto` 优先 cliproxy；网络错误 / 空返回时自动 fallback 到 openai
@@ -11,7 +11,7 @@
 用法（最常用）：
 
     # 直接 prompt（物品画风）
-    python scripts/images/gen.py "a cracked iron sword with glowing runes" --name iron_sword
+    python scripts/images/gen.py "a cracked iron sword with glowing runes" --name iron_sword --transparent
 
     # 从已有的 *_prompt.md 读取
     python scripts/images/gen.py --prompt-file local_images/毒蛊飞针_prompt.md
@@ -27,7 +27,7 @@
 环境（`scripts/images/.env`，拷贝 `.env.example` 起步）：
     CLIPROXY_API_KEY    默认 "kiz"
     CLIPROXY_BASE_URL   默认 https://cliproxy.kizunadesu.cc
-    CLIPROXY_MODEL      默认 gpt-image-1536x1024
+    CLIPROXY_MODEL      默认 gpt-image-2
     OPENAI_API_KEY      openai 直连 / fallback 必需
     OPENAI_BASE_URL     默认 https://api.openai.com/v1
     OPENAI_ORG_ID       可选
@@ -292,6 +292,62 @@ def generate_openai(
     return images
 
 
+def generate_cliproxy_images(
+    prompt: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    size: str,
+    quality: str,
+    output_format: str,
+    background: str,
+    n: int,
+    moderation: str,
+) -> list[bytes]:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": n,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+        "background": background,
+        "moderation": moderation,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/v1/images/generations",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": CLIPROXY_FAKE_UA,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        if resp.status != 200:
+            raise urllib.error.URLError(f"cliproxy status {resp.status}")
+        data = json.loads(resp.read())
+
+    images: list[bytes] = []
+    for item in data.get("data", []):
+        b64 = item.get("b64_json")
+        if not b64:
+            continue
+        images.append(base64.b64decode(b64))
+
+    usage = data.get("usage", {})
+    if usage:
+        print(
+            f"  usage: input={usage.get('input_tokens')} "
+            f"output={usage.get('output_tokens')} "
+            f"total={usage.get('total_tokens')}",
+            file=sys.stderr,
+        )
+    return images
+
+
 # -------- dispatch -----------------------------------------------------------
 
 
@@ -319,6 +375,11 @@ def dispatch(
             f"bg={background} fmt={output_format} n={n}",
             file=sys.stderr,
         )
+        if model == "gpt-image-2":
+            return generate_cliproxy_images(
+                prompt, key or "", base, model, size, quality,
+                output_format, background, n, moderation,
+            )
         return generate_cliproxy(
             prompt, key or "", base, model or "", size, quality,
             output_format, background, n, moderation, verbose,

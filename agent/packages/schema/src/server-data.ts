@@ -129,6 +129,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
   Type.Literal("botany_harvest_progress"),
+  Type.Literal("botany_plant_v2_render_profiles"),
   Type.Literal("botany_skill"),
   Type.Literal("alchemy_furnace"),
   Type.Literal("alchemy_session"),
@@ -371,6 +372,7 @@ export const ServerDataBotanyHarvestProgressV1 = Type.Object(
     interrupted: Type.Boolean(),
     completed: Type.Boolean(),
     detail: Type.String(),
+    hazard_hints: Type.Optional(Type.Array(Type.String({ maxLength: 500 }))),
     // plan §1.3 投影锚定：目标植物世界坐标，client 侧做 world→screen 投影定位浮窗。
     // 省略时 client 回退到准星右侧锚点。
     target_pos: Type.Optional(
@@ -381,6 +383,39 @@ export const ServerDataBotanyHarvestProgressV1 = Type.Object(
 );
 export type ServerDataBotanyHarvestProgressV1 = Static<
   typeof ServerDataBotanyHarvestProgressV1
+>;
+
+export const BotanyModelOverlayV1 = Type.Union([
+  Type.Literal("none"),
+  Type.Literal("emissive"),
+  Type.Literal("dual_phase"),
+]);
+export type BotanyModelOverlayV1 = Static<typeof BotanyModelOverlayV1>;
+
+export const BotanyPlantV2RenderProfileV1 = Type.Object(
+  {
+    plant_id: Type.String({ minLength: 1 }),
+    base_mesh_ref: Type.String({ minLength: 1 }),
+    tint_rgb: Type.Integer({ minimum: 0, maximum: 0xffffff }),
+    tint_rgb_secondary: Type.Optional(Type.Integer({ minimum: 0, maximum: 0xffffff })),
+    model_overlay: BotanyModelOverlayV1,
+  },
+  { additionalProperties: false },
+);
+export type BotanyPlantV2RenderProfileV1 = Static<
+  typeof BotanyPlantV2RenderProfileV1
+>;
+
+export const ServerDataBotanyPlantV2RenderProfilesV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("botany_plant_v2_render_profiles"),
+    profiles: Type.Array(BotanyPlantV2RenderProfileV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBotanyPlantV2RenderProfilesV1 = Static<
+  typeof ServerDataBotanyPlantV2RenderProfilesV1
 >;
 
 export const ServerDataBotanySkillV1 = Type.Object(
@@ -939,6 +974,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
   ServerDataBotanyHarvestProgressV1,
+  ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataBotanySkillV1,
   ServerDataAlchemyFurnaceV1,
   ServerDataAlchemySessionV1,
