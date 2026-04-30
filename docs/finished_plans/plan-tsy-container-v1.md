@@ -820,5 +820,5 @@ P4 plan 的 `NpcDrops` 配置文件要能写 `key_stone_casket` 等钥匙 templa
 
 ### 遗留 / 后续
 
+- 迁移注释（plan-server-cmd-system-v1，2026-05-01）：历史 `!tsy-spawn` 调试命令已迁移为 Valence brigadier `/tsy_spawn <family_id>`；正文保留历史记录不重写。
 - 实机搜刮联调与文档自审清单未跑（plan §11 进度日志 2026-04-27 自报"剩余 ~5%"），交后续 smoke 验证；worldgen 自动 spawn 容器 / 封灵匣 / 容器贴图等独立 plan 未启动（详见 §8 非目标表）
-
