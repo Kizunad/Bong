@@ -52,8 +52,8 @@ pub mod topology;
 pub mod tribulation;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Res,
-    Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or, Query,
+    Res, Update, Username, Without,
 };
 
 use self::breakthrough::{
@@ -102,8 +102,8 @@ use self::tribulation::{
     tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
     tribulation_wave_system, AscensionQuotaOccupied, AscensionQuotaOpened,
     HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationFled, TribulationLocked, TribulationSettled, TribulationState,
-    TribulationWaveCleared,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationOriginDimension,
+    TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -115,6 +115,7 @@ use crate::player::state::{
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
+use crate::world::dimension::CurrentDimension;
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
 pub fn register(app: &mut App) {
@@ -235,11 +236,15 @@ pub fn register(app: &mut App) {
     );
 }
 
-type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
+type CultivationAttachFilter = (
+    Or<(Added<Client>, Added<CurrentDimension>)>,
+    Without<Cultivation>,
+);
 type CultivationAttachQueryItem<'a> = (
     Entity,
     &'a Username,
     Option<&'a PlayerState>,
+    Option<&'a CurrentDimension>,
     Option<&'a LifespanComponent>,
 );
 
@@ -249,7 +254,7 @@ fn attach_cultivation_to_joined_clients(
     player_persistence: Option<Res<PlayerStatePersistence>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, restored_lifespan) in &joined_clients {
+    for (entity, username, player_state, current_dimension, restored_lifespan) in &joined_clients {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,
@@ -376,13 +381,20 @@ fn attach_cultivation_to_joined_clients(
             }
         };
         let restored_tribulation = active_tribulation.as_ref().map(|record| {
-            TribulationState::restored(
-                record
-                    .wave_current
-                    .saturating_add(1)
-                    .min(record.waves_total),
-                record.waves_total,
-                record.started_tick,
+            (
+                TribulationState::restored(
+                    record
+                        .wave_current
+                        .saturating_add(1)
+                        .min(record.waves_total),
+                    record.waves_total,
+                    record.started_tick,
+                ),
+                TribulationOriginDimension(
+                    current_dimension
+                        .map(|current_dimension| current_dimension.0)
+                        .unwrap_or_default(),
+                ),
             )
         });
         if restored_tribulation.is_some() {
@@ -473,6 +485,7 @@ mod tests {
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
     use crate::skill::events::SkillCapChanged;
+    use crate::world::dimension::DimensionKind;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
 
@@ -647,6 +660,68 @@ mod tests {
         assert_eq!(tribulation.wave_current, 3);
         assert_eq!(tribulation.waves_total, 5);
         assert_eq!(tribulation.started_tick, 1440);
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("tribulation origin dimension should restore");
+        assert_eq!(origin.0, DimensionKind::Overworld);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn joined_clients_restore_active_tribulation_origin_dimension() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-tribulation-restore-dim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                wave_current: 2,
+                waves_total: 5,
+                started_tick: 1440,
+            },
+        )
+        .expect("active tribulation should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                CurrentDimension(DimensionKind::Tsy),
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("tribulation origin dimension should restore");
+        assert_eq!(origin.0, DimensionKind::Tsy);
 
         let _ = std::fs::remove_dir_all(temp_root);
     }

@@ -104,6 +104,18 @@ fn tribulation_dimension_for_participant(
         .unwrap_or(DimensionKind::Overworld)
 }
 
+#[derive(Debug, Clone, Copy, Component)]
+pub struct TribulationOriginDimension(pub DimensionKind);
+
+fn active_tribulation_dimension(
+    origin_dimension: Option<&TribulationOriginDimension>,
+    current_dimension: Option<&CurrentDimension>,
+) -> DimensionKind {
+    origin_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or_else(|| tribulation_dimension_for_participant(current_dimension))
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct PendingHeartDemonOffer {
     pub trigger_id: String,
@@ -326,6 +338,7 @@ pub fn start_tribulation_system(
         &Lifecycle,
         Option<&Username>,
         Option<&TribulationState>,
+        Option<&CurrentDimension>,
     )>,
     player_count: Query<(), With<Client>>,
     mut commands: Commands,
@@ -334,7 +347,9 @@ pub fn start_tribulation_system(
 ) {
     let mut accepted_this_tick = HashSet::new();
     for ev in events.read() {
-        if let Ok((c, meridians, lifecycle, username, active)) = players.get_mut(ev.entity) {
+        if let Ok((c, meridians, lifecycle, username, active, current_dimension)) =
+            players.get_mut(ev.entity)
+        {
             if active.is_some() || accepted_this_tick.contains(&ev.entity) {
                 tracing::warn!(
                     "[bong][cultivation] duplicate active tribulation start for {:?}, rejected",
@@ -365,6 +380,7 @@ pub fn start_tribulation_system(
                 .map(|quota| quota.occupied_slots)
                 .unwrap_or(0);
             let quota_limit = ascension_quota_limit(player_count.iter().count());
+            let origin_dimension = tribulation_dimension_for_participant(current_dimension);
             let state = TribulationState {
                 kind: TribulationKind::DuXu,
                 phase: TribulationPhase::Omen,
@@ -394,7 +410,9 @@ pub fn start_tribulation_system(
                     ev.entity,
                 );
             }
-            commands.entity(ev.entity).insert(state);
+            commands
+                .entity(ev.entity)
+                .insert((state, TribulationOriginDimension(origin_dimension)));
             announce.send(TribulationAnnounce {
                 entity: ev.entity,
                 char_id: lifecycle.character_id.clone(),
@@ -577,6 +595,7 @@ pub fn tribulation_aoe_system(
         &TribulationState,
         Option<&HeartDemonResolution>,
         Option<&CurrentDimension>,
+        Option<&TribulationOriginDimension>,
     )>,
     mut targets: Query<(
         Entity,
@@ -589,14 +608,20 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
 ) {
-    for (tribulator_entity, state, heart_demon, tribulator_dimension) in &tribulations {
+    for (tribulator_entity, state, heart_demon, tribulator_dimension, origin_dimension) in
+        &tribulations
+    {
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
         if clock.tick != state.phase_started_tick {
             continue;
         }
-        let tribulation_dimension = tribulation_dimension_for_participant(tribulator_dimension);
+        let tribulation_dimension =
+            active_tribulation_dimension(origin_dimension, tribulator_dimension);
+        if tribulation_dimension_for_participant(tribulator_dimension) != tribulation_dimension {
+            continue;
+        }
         let center =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
         let profile = du_xu_wave_profile(wave);
@@ -907,11 +932,17 @@ fn has_full_tribulation_resources(cultivation: &Cultivation, wounds: &Wounds) ->
 #[allow(clippy::type_complexity)]
 pub fn record_tribulation_interceptor_system(
     mut combat_events: EventReader<CombatEvent>,
-    mut tribulators: Query<(&mut TribulationState, &Lifecycle, Option<&CurrentDimension>)>,
+    mut tribulators: Query<(
+        &mut TribulationState,
+        &Lifecycle,
+        Option<&CurrentDimension>,
+        Option<&TribulationOriginDimension>,
+    )>,
     actors: Query<(&Lifecycle, &Position, Option<&CurrentDimension>)>,
 ) {
     for event in combat_events.read() {
-        let Ok((mut state, target_lifecycle, target_dimension)) = tribulators.get_mut(event.target)
+        let Ok((mut state, target_lifecycle, target_dimension, origin_dimension)) =
+            tribulators.get_mut(event.target)
         else {
             continue;
         };
@@ -940,8 +971,10 @@ pub fn record_tribulation_interceptor_system(
         {
             continue;
         }
-        if tribulation_dimension_for_participant(attacker_dimension)
-            != tribulation_dimension_for_participant(target_dimension)
+        let tribulation_dimension =
+            active_tribulation_dimension(origin_dimension, target_dimension);
+        if tribulation_dimension_for_participant(target_dimension) != tribulation_dimension
+            || tribulation_dimension_for_participant(attacker_dimension) != tribulation_dimension
         {
             continue;
         }
@@ -1044,6 +1077,7 @@ pub fn tribulation_wave_system(
                 state.phase = TribulationPhase::Settle;
                 commands.entity(ev.entity).remove::<(
                     TribulationState,
+                    TribulationOriginDimension,
                     HeartDemonResolution,
                     PendingHeartDemonOffer,
                 )>();
@@ -1119,6 +1153,7 @@ pub fn tribulation_failure_system(
         }
         commands.entity(ev.entity).remove::<(
             TribulationState,
+            TribulationOriginDimension,
             HeartDemonResolution,
             PendingHeartDemonOffer,
         )>();
@@ -1182,16 +1217,47 @@ pub fn tribulation_escape_boundary_system(
         &Lifecycle,
         Option<&mut Wounds>,
         &mut TribulationState,
+        Option<&CurrentDimension>,
+        Option<&TribulationOriginDimension>,
         Option<&mut LifeRecord>,
     )>,
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
 ) {
-    for (entity, position, mut cultivation, meridians, lifecycle, wounds, mut state, life_record) in
-        &mut players
+    for (
+        entity,
+        position,
+        mut cultivation,
+        meridians,
+        lifecycle,
+        wounds,
+        mut state,
+        current_dimension,
+        origin_dimension,
+        life_record,
+    ) in &mut players
     {
         if state.kind != TribulationKind::DuXu || matches!(state.phase, TribulationPhase::Omen) {
+            continue;
+        }
+        let tribulation_dimension =
+            active_tribulation_dimension(origin_dimension, current_dimension);
+        if tribulation_dimension_for_participant(current_dimension) != tribulation_dimension {
+            settle_fled_tribulation(
+                entity,
+                clock.tick,
+                &settings,
+                &mut commands,
+                &mut cultivation,
+                meridians,
+                lifecycle,
+                wounds,
+                &mut state,
+                life_record,
+                &mut settled,
+                &mut fled,
+            );
             continue;
         }
         let center =
@@ -1263,6 +1329,7 @@ fn settle_fled_tribulation(
     });
     commands.entity(entity).remove::<(
         TribulationState,
+        TribulationOriginDimension,
         HeartDemonResolution,
         PendingHeartDemonOffer,
     )>();
@@ -1326,6 +1393,7 @@ pub fn tribulation_intercept_death_system(
         });
         commands.entity(death.target).remove::<(
             TribulationState,
+            TribulationOriginDimension,
             HeartDemonResolution,
             PendingHeartDemonOffer,
         )>();
@@ -1666,6 +1734,7 @@ mod tests {
         app.world_mut()
             .spawn((
                 Position::new(pos),
+                CurrentDimension(DimensionKind::Overworld),
                 Cultivation {
                     realm: Realm::Spirit,
                     qi_current: 200.0,
@@ -1826,6 +1895,7 @@ mod tests {
                     ..Default::default()
                 },
                 all_meridians_open(),
+                CurrentDimension(DimensionKind::Tsy),
                 Lifecycle {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
@@ -1851,6 +1921,11 @@ mod tests {
             .expect("tribulation should start once");
         assert_eq!(state.phase, TribulationPhase::Omen);
         assert_eq!(state.started_tick, 100);
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("tribulation should remember origin dimension");
+        assert_eq!(origin.0, DimensionKind::Tsy);
         let announce = app.world().resource::<Events<TribulationAnnounce>>();
         let emitted: Vec<_> = announce.get_reader().read(announce).cloned().collect();
         assert_eq!(emitted.len(), 1);
@@ -4487,6 +4562,106 @@ mod tests {
                 .expect("active tribulation query should succeed")
                 .is_none(),
             "fled tribulation should clear active row"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn changing_dimension_during_lock_flees_even_inside_radius() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("dimension-fled");
+        let char_id = "offline:Azure";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                wave_current: 1,
+                waves_total: 3,
+                started_tick: 80,
+            },
+        )
+        .expect("active tribulation should persist before flee");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 345 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, tribulation_escape_boundary_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                TribulationOriginDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 160.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds {
+                    health_current: 40.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Lock,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 1,
+                    waves_total: 3,
+                    started_tick: 80,
+                    phase_started_tick: 300,
+                    next_wave_tick: 360,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<TribulationState>(entity).is_none());
+        assert!(app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .is_none());
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.realm, Realm::Spirit);
+        assert_eq!(cultivation.qi_current, 0.0);
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].result.outcome, DuXuOutcomeV1::Fled);
+        let fled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationFled>>()
+            .drain()
+            .collect();
+        assert_eq!(fled.len(), 1);
+        assert_eq!(fled[0].entity, entity);
+        assert_eq!(fled[0].tick, 345);
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "dimension flee should clear active row"
         );
 
         let _ = fs::remove_dir_all(root);
