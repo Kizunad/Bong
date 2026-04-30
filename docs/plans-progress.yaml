@@ -143,13 +143,13 @@ plans:
 
   - file: plan-tools-v1.md
     group: cultivation-economy
-    title: "采集 / 加工凡器工具体系（7 件）"
+    title: "采集 / 加工凡器工具体系（7 件 = §四 暗器流凡铁档的工具化）"
     state: active-design
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["plan-botany-v2 P0（HarvestHazard enum）", "plan-fauna-v1 P0（异兽骨 item）"]
-    summary: "2026-04-30 从 skeleton 升 active。P0 起手即在 server/src/inventory/mod.rs ItemCategory 加 Tool variant + parse_item_category 加 \"tool\" 分支，新建 server/src/tools/ 模块（kinds/components/registry），TOML 7 件凡器（cai_yao_dao / bao_chu / cao_lian / dun_qi_jia / gua_dao + 待 fauna 的 gu_hai_qian / bing_jia_shou_tao 占位）。worldview 锚点已修正（删除虚指 §三 末法命名原则，改 §四/§五/§十 实指）。P2 反向阻塞 botany-v2 WoundOnBareHand 真伤回填。"
+    blocking_on: ["plan-botany-v2 P4（WoundOnBareHand 反向依赖；P0 不阻塞）", "plan-fauna-v1 P0（异兽骨 item，2 件工具材料阻塞，5 件不阻塞）"]
+    summary: "2026-04-30 重写。核心认知：凡器不是新概念——worldview §四 暗器流'凡铁/木石（劣质）'档已是凡器档位。本 plan 把这条线索工具化落地：7 件初版工具 + ToolKind enum + 主手识别 helper；空手采高阶植物的真伤口完全沿用 §四 既有 6 档伤口模型（LACERATION/FRACTURE）+ §四 异体排斥，无新代码新概念。P0 起手：ItemCategory::Tool variant + 新建 server/src/tools/ 模块 + 7 件 toml。P5 可选正典化 worldview §四 加'凡器与凡夫战力'小节。"
 
   - file: plan-tribulation-v1.md
     group: cultivation-economy
@@ -196,13 +196,13 @@ plans:
 
   - file: plan-lingtian-npc-v1.md
     group: gameplay-npc
-    title: "NPC 散修自主开荒-种植-收获 + 共享 zone 灵气账本"
+    title: "NPC 散修种田 = 末法残土生态的压力指示器（§七/§八 触发器）"
     state: active-design
     percent: 5
     last_updated: "2026-04-30"
     pr_refs: []
-    blocking_on: ["ActiveLingtianSessions.by_player → by_actor 重构（P0 内含）", "NarrationKind 扩 npc_farm 类型"]
-    summary: "2026-04-30 从 skeleton 升 active。前置 lingtian-v1（P0–P5 全闭环）+ npc-ai-v1（finished，big-brain Rogue archetype 已落地）齐全。P0 起手两件：① server/src/lingtian/systems.rs 把 ActiveLingtianSessions.by_player 泛化为 by_actor（影响多模块，需小步 PR）；② server/src/npc/scattered_cultivator.rs 新建 ScatteredCultivator 组件 + FarmingTemperament enum，附加到 RogueBundle spawn。worldview 锚点（§十一/§十/§七/§八.1）正典直引但散修种田概念是推导，library peoples-XXXX 散修生计录待补。"
+    blocking_on: ["lingtian-v1 prep PR（ActiveLingtianSessions.by_player → by_actor 重构，独立 PR 不在本 plan 范围）"]
+    summary: "2026-04-30 重写。核心认知：散修种田不是机械 NPC 刷资源，而是 worldview §七（散修利己主义者 + 没灵龛 + 寻路追踪灵气浓度）/ §八（灵物密度阈值触发天道注视）闭环的实例化。散修主动迁徙到玩家高灵气区扎根 → 推高 ZonePressure → 触发道伥刷新 / 灵气归零 / 天劫——形成玩家 vs 散修 vs 天道三方博弈。本 plan 不创新机制只让 worldview 文字变成可观测 entity 行为。P0 起手两件（lingtian by_actor 重构是前置 PR + ScatteredCultivator 组件）；P3 玩家-散修博弈接 niche-defense P4 NPC 抄家来源。"
 
   # ============================================================
   # Group: infrastructure
