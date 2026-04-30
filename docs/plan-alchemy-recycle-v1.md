@@ -3,9 +3,11 @@
 **炼丹废料反哺灵田**。把 alchemy 失败丹 / 药渣 / 炮制下脚料导回 lingtian 作为新的 `ReplenishSource` 一档，闭合"种田 → 加工 → 炼丹 → 废料 → 补灵 → 再种田"的资源循环。废料补灵 effect 介于 LingShui 和 Zone 之间（量小、便宜、有副作用风险）。
 
 **世界观锚点**：
-- `worldview.md §十` 灵气零和——废料里残存的灵气仍然属于"已从 zone 取出"的部分，反哺 plot 不无中生有
-- `worldview.md §十二` 末法噬蚀——废料若不在 72h 内反哺会被天地噬散（鼓励快速循环）
-- `worldview.md §六` 真元只有染色谱——废料携带"杂染"（多色混合），可能给 plot 带来污染累积（接 plan-cultivation 污染）
+- `worldview.md §十 资源与匮乏 / 灵气是零和的`——废料里残存的灵气仍然属于"已从 zone 取出"的部分，反哺 plot 不无中生有（SPIRIT_QI_TOTAL=100 物理事实）
+- **末法噬蚀**：废料 72h 内反哺否则被天地噬散——锚点是 `plan-shelflife-v1` 的衰减机制 + `worldview.md §十 灵气是零和的` 派生（**不是 worldview §十二**——§十二 是死亡 / 重生 / 寿元章，与废料保鲜无关）
+- **plot 级杂染（不是真元染色）**：本 plan §3 `dye_contamination` 是 **plot 级灵气污染**（接 `worldview.md §四 战斗系统 / 异体排斥`：异种真元在容器内形成污染累积），**不是** `worldview.md §六 真元染色`（§六 染色明文与"污染"是隔离的两层概念："染色是功法特征 / 污染是战斗机制 / 两者各走各的路"）
+
+> **注**：§六 真元染色与异体污染在 worldview 是被明确隔离的——本 plan §3 `dye_contamination` 命名上易混淆，应理解为"plot 级灵气污染"（沿用 §四 异体排斥逻辑），与玩家身上的真元染色（§六）无关。
 
 **library 锚点**：待写 `crafting-XXXX 末法循环录`（药渣还田的传统智慧 / 杂染风险警示）
 

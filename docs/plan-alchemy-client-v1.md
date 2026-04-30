@@ -2,7 +2,9 @@
 
 **炼丹系统 Fabric 客户端全接入**。plan-alchemy-v1 server 侧（P0–P5 + §1.2 放置炉）已闭环；本 plan 补全客户端拦截放置、多炉 session 路由、owo-lib 炉 UI 屏幕、agent schema 对齐、配方材料名正典化、炸炉结算 + skill XP 钩子，形成完整玩家端炼丹链路。
 
-**世界观锚点**：`worldview.md §七 丹道/炼丹` · `worldview.md §六.1 染色谱`（丹毒色：圆润/锐利/暴烈 = Mellow/Sharp/Violent）· `worldview.md §九 情报换命`（丹方残卷是顶级情报资产）
+**世界观锚点**：`worldview.md §六 个性与差异化 / 真元染色 / 染色谱`（炼丹师 → 温润色；丹毒色对应代码 `ColorKind::Mellow / Sharp / Violent / Turbid` 与 worldview "温润色 / 锋锐色 / 暴烈色 / 浊乱色"对位）· `worldview.md §八 天道行为准则 / 灵物密度阈值`（高级炼丹炉触发天道注视：line ~604）· `worldview.md §九 经济与交易 / 顶级资产`（丹方残卷是顶级情报资产，"情报换命"）
+
+> **注**：worldview 无独立"丹道/炼丹"章节——炼丹相关内容散落 §六 染色谱（炼丹师真元温润色）+ §八 天道运维（炼丹炉聚灵触发天道）+ §九 顶级资产（丹方残卷情报）。本 plan 整合三处线索，不是单一锚点。
 
 **library 锚点**：`docs/library/ecology/末法药材十七种.json`（正典药材名 ci_she_hao / ning_mai_cao / chi_sui_cao / hui_yuan_zhi 等）· `docs/library/ecology/辛草试毒录.json`（辛度 → 丹毒色对照）· 待写 `crafting-XXXX 炉火诀`（炼丹炉操作规程 / 炸炉反噬逻辑）
 

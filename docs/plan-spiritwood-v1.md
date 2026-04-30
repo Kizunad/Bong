@@ -2,7 +2,9 @@
 
 **灵木材料体系**。灵木（`ling_mu`）是末法残土最顶级的真元载体之一，与异兽骨骼并列——"飞 50 格保留 80% 真元"。server 侧已有 `MegaTreeKind::SpiritWood`（spawn 区唯一地标级巨树），但其木料至今没有对应 item、没有 forge/weapon 集成，`ling_wood` 在 plan-forge-v1 中仍是占位名。本 plan 补全灵木 item 体系、采集流程、forge/weapon 载体用途、封灵匣制作，正典化占位名为 `ling_mu`。
 
-**世界观锚点**：`worldview.md §四 暗器流载体`（"异变兽骨/灵木（优良）：飞 50 格保留 80% 真元"）· `worldview.md §十 资源与匮乏`（"载体材料：异兽骨骼、灵木 | 高 | 器修/暗器流核心耗材"）· `worldview.md §十 封灵匣/负灵袋`（灵木 + 异兽骨骼编制保养容器，炼器流专属饭碗）· `worldview.md §七 末法约束`（灵木生长极慢，砍倒即永久消失，是稀缺资源）
+**世界观锚点**：`worldview.md §四 战斗系统 / 暗器流载体`（"异变兽骨/灵木（优良）：飞 50 格保留 80% 真元"）· `worldview.md §十 资源与匮乏 / 资源表`（"载体材料：异兽骨骼、灵木 | 高 | 器修/暗器流核心耗材"）· `worldview.md §十六.三 封灵匣/负灵袋`（灵木 + 异兽骨骼编制保养容器，炼器流专属饭碗）
+
+> **注**：本 plan §0/§3 "灵木砍倒即永久消失" 是 plan 自定的稀缺约束——worldview 当前**无此明文**（§七 是动态生物生态非末法约束章；§十 仅标"稀缺度高"）。建议升 active 后通过独立 PR 在 worldview §十 资源与匮乏末尾补"稀缺资源永久消耗"小节正典化（**严禁本 plan 自动改 worldview**）。
 
 **library 锚点**：`docs/library/ecology/ecology-0002 末法药材十七种.json`（夜枯藤章节提到灵气吸附植物体系，灵木属高阶节点）· 待写 `crafting-XXXX 灵木解析`（灵木采集禁忌 / 锯解方法 / 品阶鉴别，anchor worldview §四 + §十）
 

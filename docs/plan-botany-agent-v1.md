@@ -2,7 +2,7 @@
 
 **植物生态快照接入天道 agent**。plan-botany-v1（✅）已实装 server 侧每 600 tick（~30s）发布 `BotanyEcologySnapshotV1` 到 `bong:botany/ecology` channel，`@bong/schema` TypeBox 和 Rust schema 均已就绪；但天道 tiandao agent 尚未订阅该 channel，也无处理逻辑。本 plan 补全 tiandao 订阅、生态数据摄取、天道灵气重分配决策、稀有变种 narrative 埋点。
 
-**世界观锚点**：`worldview.md §七 灵气是零和的`（天道缓慢重分配灵气，从死域向无人区转移——生态快照是天道感知的数据源）· `worldview.md §七 天道察觉`（植物密度过高/灵气透支 = 天道"注意到"的信号之一）· `worldview.md §七 天道叙事风格`（暗语式提示，不是直白通知）
+**世界观锚点**：`worldview.md §十 资源与匮乏 / 灵气是零和的`（line ~666：天道缓慢重分配灵气，从死域向无人区转移——生态快照是天道感知的数据源）· `worldview.md §八 天道行为准则 / 灵物密度阈值`（line ~602-606：植物密度过高 / 灵气透支 = 天道"注视"的信号之一，触发灵气归零或刷高阶道伥）· `worldview.md §八 天道行为准则 / 天道叙事的语调`（line ~620-638：暗语式提示"冷漠 + 古意 + 嘲讽"，不是直白通知）
 
 **library 锚点**：`docs/library/ecology/末法药材十七种.json`（Thunder / Tainted 变种的物理解释 + 采集风险）· `docs/library/ecology/辛草试毒录.json`（稀有变种辛度暴增 → 丹毒加重，值得天道关注）
 
