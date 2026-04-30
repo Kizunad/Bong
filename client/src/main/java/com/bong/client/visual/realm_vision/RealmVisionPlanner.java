@@ -9,7 +9,7 @@ public final class RealmVisionPlanner {
             return null;
         }
         long tickElapsed = tick > state.startedAtTick() ? tick - state.startedAtTick() : 0L;
-        int elapsed = Math.max(state.elapsedTicks(), (int) Math.min(Integer.MAX_VALUE, tickElapsed));
+        int elapsed = (int) Math.min(Integer.MAX_VALUE, tickElapsed);
         return RealmVisionInterpolator.interpolate(
             state.previous(),
             state.current(),

@@ -55,7 +55,6 @@ public class BongHud {
         long nowMillis = System.currentTimeMillis();
 
         // Tick cast-state + defense-window expiries so they self-clear each frame.
-        com.bong.client.visual.realm_vision.RealmVisionStateStore.tick();
         CastStateStore.tick(nowMillis);
         DefenseWindowStore.tick(nowMillis);
         com.bong.client.tsy.ExtractStateStore.tick(nowMillis);

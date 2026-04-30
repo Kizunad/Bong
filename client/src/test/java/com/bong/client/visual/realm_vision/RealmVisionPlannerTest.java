@@ -26,4 +26,18 @@ class RealmVisionPlannerTest {
         );
         assertEquals(80.0, RealmVisionPlanner.plan(state, 100).fogStart());
     }
+
+    @Test
+    void planIgnoresFrameAdvancedElapsedTicks() {
+        RealmVisionCommand oldCommand = new RealmVisionCommand(30.0, 60.0, 0, FogShape.CYLINDER, 0.5, 0, 0, 0);
+        RealmVisionState state = new RealmVisionState(
+            new RealmVisionCommand(130.0, 160.0, 0xFFFFFF, FogShape.SPHERE, 0.0, 0, 1, 1),
+            oldCommand,
+            100,
+            90,
+            50,
+            8
+        );
+        assertEquals(40.0, RealmVisionPlanner.plan(state, 60).fogStart());
+    }
 }
