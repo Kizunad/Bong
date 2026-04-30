@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::Resource;
 
 use super::plant_kind::{PlantId, PlantKind};
+use crate::tools::ToolKind;
 use crate::world::zone::{BotanyZoneTag, Zone};
 
 const DEFAULT_PLANTS_PATH: &str = "assets/botany/plants.toml";
@@ -183,7 +184,7 @@ const ENV_XUAN_GEN_WEI: &[EnvLock] = &[EnvLock::SkyIslandMask {
 }];
 const HAZARD_XUAN_GEN_WEI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
     wound: WoundLevel::Laceration,
-    required_tool: None,
+    required_tool: Some(ToolKind::DunQiJia),
 }];
 const ENV_YING_YUAN_GU: &[EnvLock] = &[
     EnvLock::UndergroundTier { tier: 1 },
@@ -202,7 +203,7 @@ const HAZARD_YING_YUAN_GU: &[HarvestHazard] = &[
 const ENV_XUAN_RONG_TAI: &[EnvLock] = &[EnvLock::UndergroundTier { tier: 2 }];
 const HAZARD_XUAN_RONG_TAI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
     wound: WoundLevel::Abrasion,
-    required_tool: None,
+    required_tool: Some(ToolKind::GuaDao),
 }];
 const ENV_YUAN_NI_HONG_YU: &[EnvLock] = &[
     EnvLock::UndergroundTier { tier: 3 },
@@ -229,7 +230,7 @@ const HAZARD_JING_XIN_ZAO: &[HarvestHazard] = &[HarvestHazard::SeasonRequired {
 const ENV_XUE_PO_LIAN: &[EnvLock] = &[EnvLock::SnowSurface, EnvLock::QiVeinFlow { min: 0.3 }];
 const HAZARD_XUE_PO_LIAN: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
     wound: WoundLevel::Laceration,
-    required_tool: None,
+    required_tool: Some(ToolKind::BingJiaShouTao),
 }];
 const ENV_JIAO_MAI_TENG: &[EnvLock] = &[
     EnvLock::FractureMask { min: 0.4 },
@@ -239,8 +240,8 @@ const ENV_JIAO_MAI_TENG: &[EnvLock] = &[
     },
 ];
 const HAZARD_JIAO_MAI_TENG: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
-    wound: WoundLevel::Laceration,
-    required_tool: None,
+    wound: WoundLevel::Fracture,
+    required_tool: Some(ToolKind::DunQiJia),
 }];
 const ENV_LIE_YUAN_TAI: &[EnvLock] = &[EnvLock::PortalRiftActive];
 const HAZARD_LIE_YUAN_TAI: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
@@ -284,7 +285,7 @@ const ENV_LING_JING_XU: &[EnvLock] = &[
 const HAZARD_LING_JING_XU: &[HarvestHazard] = &[
     HarvestHazard::WoundOnBareHand {
         wound: WoundLevel::Abrasion,
-        required_tool: None,
+        required_tool: Some(ToolKind::GuaDao),
     },
     HarvestHazard::DispersalOnFail {
         dispersal_chance: 0.6,
@@ -526,6 +527,7 @@ pub enum EnvLock {
 pub enum WoundLevel {
     Abrasion,
     Laceration,
+    Fracture,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -542,7 +544,7 @@ pub enum HarvestHazard {
     },
     WoundOnBareHand {
         wound: WoundLevel,
-        required_tool: Option<&'static str>,
+        required_tool: Option<ToolKind>,
     },
     DispersalOnFail {
         dispersal_chance: f32,

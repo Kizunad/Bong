@@ -5,7 +5,7 @@ use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, R
 use crate::combat::components::Wounds;
 use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::skill_cap_for_realm;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Contamination, Cultivation};
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
@@ -38,6 +38,7 @@ type HarvestHazardQuery<'w, 's> = Query<
     (
         Option<&'static mut Cultivation>,
         Option<&'static SkillSet>,
+        Option<&'static mut Contamination>,
         Option<&'static mut Wounds>,
     ),
     With<valence::prelude::Client>,
@@ -130,10 +131,14 @@ pub fn complete_harvest_for_player(
 
     let receipt =
         add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?;
+    let actual_tool = crate::tools::main_hand_tool_in_inventory(&inventory);
 
     let mut herbalism_quality_bonus = 0.0;
-    if let Ok((cultivation, skill_set, wounds)) = harvest_hazards.get_mut(session.client_entity) {
+    if let Ok((cultivation, skill_set, contamination, wounds)) =
+        harvest_hazards.get_mut(session.client_entity)
+    {
         let mut cultivation = cultivation;
+        let mut contamination = contamination;
         let mut wounds = wounds;
         herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
             cultivation.as_deref(),
@@ -143,7 +148,9 @@ pub fn complete_harvest_for_player(
             session.target_plant,
             kind_registry,
             cultivation.as_deref_mut(),
+            contamination.as_deref_mut(),
             wounds.as_deref_mut(),
+            actual_tool,
             now_tick,
         );
     }
@@ -516,11 +523,11 @@ pub fn detect_non_session_trample(
 mod tests {
     use super::*;
     use crate::botany::components::PlantLifecycleClock;
-    use crate::combat::components::{BodyPart, WoundKind};
-    use crate::cultivation::components::{Cultivation, Realm};
+    use crate::combat::components::{BodyPart, WoundKind, Wounds};
+    use crate::cultivation::components::{Contamination, Cultivation, Realm};
     use crate::inventory::{
         load_item_registry, ContainerState, InventoryInstanceIdAllocator, InventoryRevision,
-        PlayerInventory, MAIN_PACK_CONTAINER_ID,
+        ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
     };
     use crate::player::gameplay::GameplayTick;
     use crate::skill::components::{SkillEntry, SkillSet};
@@ -571,6 +578,39 @@ mod tests {
             bone_coins: 0,
             max_weight: 999.0,
         }
+    }
+
+    fn tool_item(template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id: 9_001,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
+    fn inventory_with_main_hand_tool(template_id: Option<&str>) -> PlayerInventory {
+        let mut inventory = empty_inventory_8x8();
+        if let Some(template_id) = template_id {
+            inventory
+                .equipped
+                .insert(EQUIP_SLOT_MAIN_HAND.to_string(), tool_item(template_id));
+        }
+        inventory
     }
 
     fn make_app_with_combat_events() -> App {
@@ -633,6 +673,8 @@ mod tests {
                 realm: Realm::Awaken,
                 ..Default::default()
             })
+            .insert(Contamination::default())
+            .insert(Wounds::default())
             .insert(skill_set)
             .id();
         let target = plant_entity(&mut app, "spawn");
@@ -684,6 +726,93 @@ mod tests {
             "harvested spirit_quality should use effective herbalism Lv.3, got {} expected {}",
             harvested.instance.spirit_quality,
             expected
+        );
+    }
+
+    #[test]
+    fn required_tool_harvest_avoids_bare_hand_wound() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory_with_main_hand_tool(Some("dun_qi_jia")))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: "offline:Azure".to_string(),
+                client_entity,
+                target_entity: Some(target),
+                target_plant: BotanyPlantId::JiaoMaiTeng,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 0,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [10.0, 64.0, 10.0],
+            });
+
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+        let contamination = app.world().get::<Contamination>(client_entity).unwrap();
+        assert!(wounds.entries.is_empty());
+        assert!(contamination.entries.is_empty());
+    }
+
+    #[test]
+    fn wrong_tool_harvest_triggers_bare_hand_wound_and_contamination() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory_with_main_hand_tool(Some("cai_yao_dao")))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: "offline:Azure".to_string(),
+                client_entity,
+                target_entity: Some(target),
+                target_plant: BotanyPlantId::JiaoMaiTeng,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 0,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [10.0, 64.0, 10.0],
+            });
+
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+        let contamination = app.world().get::<Contamination>(client_entity).unwrap();
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].kind, WoundKind::Concussion);
+        assert_eq!(contamination.entries.len(), 1);
+        assert_eq!(
+            contamination.entries[0].attacker_id.as_deref(),
+            Some("botany_v2_hazard")
         );
     }
 

@@ -3,7 +3,8 @@ use valence::prelude::{Entity, Position, Query, Res, With};
 use super::components::{HarvestSessionStore, Plant};
 use super::registry::{BotanyKindRegistry, HarvestHazard, WoundLevel};
 use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
+use crate::tools::{has_required_tool, ToolKind};
 
 pub fn hazard_hints_for_kind(
     kind_id: super::registry::BotanyPlantId,
@@ -29,7 +30,7 @@ pub fn hazard_hints_for_kind(
                 required_tool: Some(tool),
                 ..
             } => {
-                format!("需工具 {tool}，否则受伤")
+                format!("需工具 {}，否则受伤", tool.display_name())
             }
             HarvestHazard::DispersalOnFail { dispersal_chance } => {
                 format!("失败散气 {:.0}%", dispersal_chance * 100.0)
@@ -107,7 +108,9 @@ pub fn apply_completion_hazards(
     kind_id: super::registry::BotanyPlantId,
     registry: &BotanyKindRegistry,
     cultivation: Option<&mut Cultivation>,
+    contamination: Option<&mut Contamination>,
     wounds: Option<&mut Wounds>,
+    actual_tool: Option<ToolKind>,
     now_tick: u64,
 ) {
     let Some(kind) = registry.get(kind_id) else {
@@ -117,6 +120,7 @@ pub fn apply_completion_hazards(
         return;
     };
     let mut cultivation = cultivation;
+    let mut contamination = contamination;
     let mut wounds = wounds;
     for hazard in spec.harvest_hazards {
         match hazard {
@@ -128,9 +132,9 @@ pub fn apply_completion_hazards(
             }
             HarvestHazard::WoundOnBareHand {
                 wound,
-                required_tool: Some(_),
+                required_tool,
                 ..
-            } => {
+            } if !has_required_tool(actual_tool, *required_tool) => {
                 if let Some(wounds) = wounds.as_deref_mut() {
                     wounds.entries.push(Wound {
                         location: BodyPart::ArmR,
@@ -139,6 +143,14 @@ pub fn apply_completion_hazards(
                         bleeding_per_sec: 0.0,
                         created_at_tick: now_tick,
                         inflicted_by: Some("botany_v2_hazard".to_string()),
+                    });
+                }
+                if let Some(contamination) = contamination.as_deref_mut() {
+                    contamination.entries.push(ContamSource {
+                        amount: contamination_amount(*wound),
+                        color: ColorKind::Insidious,
+                        attacker_id: Some("botany_v2_hazard".to_string()),
+                        introduced_at: now_tick,
                     });
                 }
             }
@@ -151,6 +163,7 @@ fn wound_kind(wound: WoundLevel) -> WoundKind {
     match wound {
         WoundLevel::Abrasion => WoundKind::Blunt,
         WoundLevel::Laceration => WoundKind::Cut,
+        WoundLevel::Fracture => WoundKind::Concussion,
     }
 }
 
@@ -158,6 +171,15 @@ fn wound_severity(wound: WoundLevel) -> f32 {
     match wound {
         WoundLevel::Abrasion => 0.12,
         WoundLevel::Laceration => 0.28,
+        WoundLevel::Fracture => 0.45,
+    }
+}
+
+fn contamination_amount(wound: WoundLevel) -> f64 {
+    match wound {
+        WoundLevel::Abrasion => 0.1,
+        WoundLevel::Laceration => 0.2,
+        WoundLevel::Fracture => 0.3,
     }
 }
 
@@ -217,7 +239,7 @@ mod tests {
         let registry = BotanyKindRegistry::default();
         assert_eq!(
             failure_dispersal_chance(BotanyPlantId::JiaoMaiTeng, &registry),
-            1.0
+            0.0
         );
     }
 
