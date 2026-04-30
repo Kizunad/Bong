@@ -16,6 +16,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "zones",
 ];
 
+#[cfg(test)]
 pub const COMMAND_TREE_PATHS: &[&str] = &[
     "bong breakthrough",
     "bong combat <target:string> <qi_invest:double>",
