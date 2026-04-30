@@ -22,6 +22,7 @@ public class PlayerStateHandlerTest {
 
         assertTrue(dispatch.handled());
         assertTrue(dispatch.chatMessages().isEmpty());
+        assertEquals("", playerState.playerId());
         assertEquals("Induce", playerState.realm());
         assertEquals(78.0, playerState.spiritQiCurrent(), 0.0001);
         assertEquals(100.0, playerState.spiritQiMax(), 0.0001);
@@ -40,7 +41,7 @@ public class PlayerStateHandlerTest {
     @Test
     void acceptsLegacySpiritQiAliasAndViewModelClampRules() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
-            {"v":1,"type":"player_state","realm":" Condense ","spirit_qi":150.0,
+            {"v":1,"type":"player_state","player":" offline:Azure ","realm":" Condense ","spirit_qi":150.0,
              "karma":2.0,"composite_power":-1.0,
               "breakdown":{"combat":1.4,"wealth":-0.5,"social":0.2,"territory":2.0},
               "zone":" azure_peak ","zone_spirit_qi":1.6}
@@ -49,6 +50,7 @@ public class PlayerStateHandlerTest {
         PlayerStateViewModel playerState = dispatch.playerStateViewModel().orElseThrow();
 
         assertTrue(dispatch.handled());
+        assertEquals("offline:Azure", playerState.playerId());
         assertEquals("Condense", playerState.realm());
         assertEquals(150.0, playerState.spiritQiMax(), 0.0001);
         assertEquals(150.0, playerState.spiritQiCurrent(), 0.0001);

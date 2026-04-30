@@ -55,6 +55,7 @@ public final class PlayerStateHandler implements ServerDataHandler {
 
         PlayerStateViewModel playerStateViewModel = PlayerStateViewModel.create(
             realm,
+            readOptionalString(payload, "player"),
             spiritQiCurrent,
             readOptionalDouble(payload, "spirit_qi_max", Double.NaN),
             karma,
