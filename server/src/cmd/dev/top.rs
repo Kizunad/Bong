@@ -89,4 +89,39 @@ mod tests {
 
         assert_eq!(y, 12.0);
     }
+
+    #[test]
+    fn top_is_noop_for_missing_executor() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TopCmd>>>()
+            .send(CommandResultEvent {
+                result: TopCmd::Top,
+                executor: valence::prelude::Entity::PLACEHOLDER,
+                modifiers: Default::default(),
+            });
+
+        run_update(&mut app);
+    }
+
+    #[test]
+    fn top_handles_multiple_executors_in_one_tick() {
+        let mut app = setup_app();
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let bob = spawn_test_client(&mut app, "Bob", [-8.0, 10.0, 42.0]);
+        for player in [alice, bob] {
+            app.world_mut()
+                .resource_mut::<Events<CommandResultEvent<TopCmd>>>()
+                .send(CommandResultEvent {
+                    result: TopCmd::Top,
+                    executor: player,
+                    modifiers: Default::default(),
+                });
+        }
+
+        run_update(&mut app);
+
+        assert_eq!(app.world().get::<Position>(alice).unwrap().get().y, 90.0);
+        assert_eq!(app.world().get::<Position>(bob).unwrap().get().y, 34.0);
+    }
 }

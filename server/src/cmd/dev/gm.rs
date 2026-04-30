@@ -112,6 +112,18 @@ mod tests {
     }
 
     #[test]
+    fn gm_modes_map_to_expected_labels_and_game_modes() {
+        for (mode, label, game_mode) in [
+            (GmMode::Creative, "Creative", GameMode::Creative),
+            (GmMode::Adventure, "Adventure", GameMode::Adventure),
+            (GmMode::Spectator, "Spectator", GameMode::Spectator),
+        ] {
+            assert_eq!(mode.label(), label);
+            assert_eq!(mode.as_game_mode(), game_mode);
+        }
+    }
+
+    #[test]
     fn gm_command_sets_game_mode() {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<GmCmd>>();

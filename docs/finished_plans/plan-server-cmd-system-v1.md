@@ -142,3 +142,38 @@
 - **handler 拿不到 `&mut World`**：Valence command handler 是 Bevy system 形式，依赖 `SystemParam` 注入资源/事件 writer。已现有 `DebugCombatCommand` 等 event-based 模式可复用，无技术阻碍
 - **`/tpzone` 动态候选**：当前 `/tpzone` 候选来自 `ZoneRegistry`（运行时数据），不是静态 enum。若 `valence_command` 不支持动态 suggestion provider，候选退化成 `String` 自由输入（不影响功能，仅 Tab 体验降级）
 - **P2 是否纳入**：取决于是否一次性清理硬解析。建议 P0/P1 完成验收后再决定
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 Valence 命令框架接入**：`server/Cargo.toml` 已接入 `valence_command` / `valence_command_macros`（rev `2b705351`）；`server/src/cmd/mod.rs` 统一注册命令模块；`server/src/cmd/ping.rs` 提供 `/ping` 与 pong handler；`server/src/main.rs` 已调用 `cmd::register(&mut app)`。
+- **P1 dev 命令迁移**：11 条 legacy `!xxx` 已迁移到扁平 slash 命令，文件为 `server/src/cmd/dev/{spawn,top,zones,gm,health,stamina,tptree,tpzone,shrine,wound,tsy_spawn,npc_scenario}.rs`；`server/src/cmd/dev/mod.rs` 聚合注册；`server/src/network/chat_collector.rs` 已移除硬解析 dev handler，仅丢弃已知 legacy `!` 命令并提示迁移。
+- **P2 产品命令迁移**：`server/src/cmd/gameplay/mod.rs` 注册 `/bong combat <target> <qi_invest>`、`/bong gather <resource>`、`/bong breakthrough`；`server/src/cmd/gameplay/{combat,gather,breakthrough}.rs` 复用 `GameplayActionQueue` 语义。
+- **P3 测试饱和 + 命令树冻结**：`server/src/cmd/registry_pin.rs` 冻结 root command 清单与 executable path fixture；`server/src/cmd/mod.rs` 测试覆盖 Valence `CommandRegistry` 与 `CommandTreeS2c` packet root literals；`server/src/cmd/dev/*.rs` 内联测试覆盖 parser、状态前置和 handler 副作用。
+- **P4 文档同步**：`CLAUDE.md` / `README.md` 无 `!xxx` 残留；`docs/plan-tsy-zone-v1.md` 已不再是 active plan；已按授权在 `docs/finished_plans/{plan-tsy-v1.md,plan-tsy-zone-v1.md,plan-tsy-zone-followup-v1.md,plan-tsy-container-v1.md}` 追加 `!tsy-spawn` → `/tsy_spawn <family_id>` 迁移注释，正文历史记录不重写。
+
+### 关键 commit
+
+- `162bc974` (2026-04-28) — `feat(server): 迁移调试命令到原生命令树`，主实现落地 `server/src/cmd/`、`server/Cargo.toml` 与 `chat_collector` 清理。
+- `475bf76a` (2026-05-01) — `test(cmd): 冻结 brigadier 命令树覆盖`，补齐 dev 命令测试和 executable path fixture。
+- `4ed0ed53` (2026-05-01) — `docs(cmd): 标注 TSY 调试命令迁移`，给归档 TSY plan 追加迁移注释。
+- `9b393dc9` (2026-05-01) — `fix(cmd): 限定命令树 fixture 为测试常量`，修复 clippy dead_code。
+- `dbea9ea9` (2026-05-01) — `test(cmd): 覆盖 brigadier 命令树 packet`，补 `CommandTreeS2c` 协议层 root literal 覆盖。
+
+### 测试结果
+
+- `cd server && cargo test cmd::` — 69 passed；覆盖 `/ping`、dev 命令、`/bong` gameplay 命令、registry pin 与 packet root literal。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — 通过；最终 `cargo test` 1872 passed, 0 failed, 0 ignored。
+
+### 跨仓库核验
+
+- **server**：`PingCmd` / `SpawnCmd` / `TopCmd` / `ZonesCmd` / `GmCmd` / `HealthCmd` / `StaminaCmd` / `TptreeCmd` / `TpzoneCmd` / `ShrineCmd` / `WoundCmd` / `TsySpawnCmd` / `NpcScenarioCmd` / `BongCmd`；`registry_pin::COMMAND_NAMES`；`registry_pin::COMMAND_TREE_PATHS`；`CommandTreeS2c` packet root literal 测试；`LEGACY_BANG_COMMANDS` migration notice。
+- **agent**：无代码改动；命令迁移不改变 Redis IPC schema 或 agent contract。
+- **client**：无代码改动；Fabric 微端通过原版协议消费 Valence `Commands` packet，Tab 补全无需自定义 payload。
+- **worldgen**：无代码改动。
+
+### 遗留 / 后续
+
+- 本自动消费环境未启动真人 MC 客户端做 `/p<TAB>` 手测；已用 Valence `CommandRegistry` 和 `CommandTreeS2c` packet 测试锁定服务端命令树输出。
+- `/tpzone <zone>` 仍为 `String` 自由输入，未接动态 suggestion provider；这与本 plan 风险项一致，不影响命令执行。
