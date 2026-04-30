@@ -248,12 +248,20 @@ pub fn resolve_attack_intents(
         let defender_damage_multiplier = defender_attrs
             .map(|attrs| attrs.defense_power)
             .unwrap_or(1.0);
-        // plan-weapon-v1 §6.1：查 attacker 的 Weapon component 得伤害倍率。
-        // 无武器(赤手) → 1.0 基线;有武器 → attack × quality × durability。
-        let weapon_multiplier: f32 = weapons
-            .get(intent.attacker)
-            .map(|w| w.damage_multiplier())
-            .unwrap_or(1.0);
+        // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
+        let mut hit_tool: Option<crate::tools::ToolKind> = None;
+        let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
+            Ok(weapon) => weapon.damage_multiplier(),
+            Err(_) => {
+                hit_tool = inventories
+                    .get(intent.attacker)
+                    .ok()
+                    .and_then(crate::tools::main_hand_tool_in_inventory);
+                hit_tool
+                    .map(crate::tools::ToolKind::combat_damage_multiplier)
+                    .unwrap_or(1.0)
+            }
+        };
         let damage = (hit_qi
             * ATTACK_QI_DAMAGE_FACTOR
             * damage_multiplier
@@ -369,6 +377,17 @@ pub fn resolve_attack_intents(
                     instance_id,
                     template_id,
                 });
+            }
+        }
+
+        if let Some(tool) = hit_tool {
+            if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
+                crate::tools::damage_main_hand_tool(
+                    intent.attacker,
+                    &mut inventory,
+                    &mut durability_changed_tx,
+                    tool.durability_cost_ratio_per_use(),
+                );
             }
         }
 
@@ -2938,6 +2957,282 @@ mod tests {
             (iron_sword_damage - unarmed_damage * 1.2).abs() < 0.001,
             "expected full-durability iron_sword to land exactly at 1.2x baseline"
         );
+    }
+
+    #[test]
+    fn tool_main_hand_deals_low_damage_above_unarmed_below_entry_sword() {
+        for (index, tool_kind) in crate::tools::ALL_TOOL_KINDS.into_iter().enumerate() {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 1430 });
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<WeaponBroken>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+            app.add_systems(
+                Update,
+                (
+                    crate::combat::status::attribute_aggregate_tick,
+                    resolve_attack_intents,
+                ),
+            );
+
+            let z = (index as f64) * 3.0;
+            let unarmed = spawn_player(
+                &mut app,
+                "BareHandBaseline",
+                [0.0, 64.0, z],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let tool_user = spawn_player(
+                &mut app,
+                "ToolUser",
+                [0.0, 64.0, z + 1.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            app.world_mut()
+                .entity_mut(tool_user)
+                .insert(PlayerInventory {
+                    revision: InventoryRevision(1),
+                    containers: vec![ContainerState {
+                        id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                        name: "主背包".to_string(),
+                        rows: 5,
+                        cols: 7,
+                        items: vec![],
+                    }],
+                    equipped: std::collections::HashMap::from([(
+                        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                        ItemInstance {
+                            instance_id: 130 + index as u64,
+                            template_id: tool_kind.item_id().to_string(),
+                            display_name: tool_kind.display_name().to_string(),
+                            grid_w: 1,
+                            grid_h: 2,
+                            weight: 0.9,
+                            rarity: crate::inventory::ItemRarity::Common,
+                            description: String::new(),
+                            stack_count: 1,
+                            spirit_quality: 0.0,
+                            durability: 1.0,
+                            freshness: None,
+                            mineral_id: None,
+                            charges: None,
+                            forge_quality: None,
+                            forge_color: None,
+                            forge_side_effects: Vec::new(),
+                            forge_achieved_tier: None,
+                        },
+                    )]),
+                    hotbar: Default::default(),
+                    bone_coins: 0,
+                    max_weight: 50.0,
+                });
+            let unarmed_target = spawn_player(
+                &mut app,
+                "BareHandTarget",
+                [1.0, 64.0, z],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let tool_target = spawn_player(
+                &mut app,
+                "ToolTarget",
+                [1.0, 64.0, z + 1.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+
+            app.update();
+
+            app.world_mut().send_event(AttackIntent {
+                attacker: unarmed,
+                target: Some(unarmed_target),
+                issued_at_tick: 1429,
+                reach: FIST_REACH,
+                qi_invest: 10.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+            app.world_mut().send_event(AttackIntent {
+                attacker: tool_user,
+                target: Some(tool_target),
+                issued_at_tick: 1429,
+                reach: FIST_REACH,
+                qi_invest: 10.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+
+            app.update();
+
+            let combat_events = app.world().resource::<Events<CombatEvent>>();
+            let events: Vec<_> = combat_events.iter_current_update_events().collect();
+            assert_eq!(events.len(), 2, "{tool_kind:?} should emit two hits");
+            let unarmed_damage = events[0].damage;
+            let tool_damage = events[1].damage;
+            assert!(
+                tool_damage > unarmed_damage,
+                "{tool_kind:?} should beat bare hands"
+            );
+            assert!(
+                tool_damage < unarmed_damage * 1.2,
+                "{tool_kind:?} should stay below entry iron sword"
+            );
+            assert!(
+                (tool_damage - unarmed_damage * tool_kind.combat_damage_multiplier()).abs() < 0.001,
+                "{tool_kind:?} should use its ToolKind multiplier"
+            );
+
+            let inventory = app.world().get::<PlayerInventory>(tool_user).unwrap();
+            assert_eq!(
+                inventory
+                    .equipped
+                    .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                    .unwrap()
+                    .durability,
+                0.99,
+                "{tool_kind:?} hit should tick durability"
+            );
+            let durability_events = app
+                .world()
+                .resource::<Events<InventoryDurabilityChangedEvent>>();
+            let events: Vec<_> = durability_events.iter_current_update_events().collect();
+            assert_eq!(
+                events.len(),
+                1,
+                "{tool_kind:?} should emit one durability event"
+            );
+            assert_eq!(events[0].entity, tool_user);
+            assert_eq!(events[0].instance_id, 130 + index as u64);
+            assert_eq!(events[0].durability, 0.99);
+        }
+    }
+
+    #[test]
+    fn broken_tool_main_hand_uses_unarmed_baseline() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1431 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::status::attribute_aggregate_tick,
+                resolve_attack_intents,
+            ),
+        );
+
+        let broken_tool_user = spawn_player(
+            &mut app,
+            "BrokenToolUser",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(broken_tool_user)
+            .insert(PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: vec![ContainerState {
+                    id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![],
+                }],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    ItemInstance {
+                        instance_id: 131,
+                        template_id: "cao_lian".to_string(),
+                        display_name: "草镰".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 0.9,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 0.0,
+                        durability: 0.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                    },
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            });
+        let unarmed = spawn_player(
+            &mut app,
+            "UnarmedPeer",
+            [0.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let broken_tool_target = spawn_player(
+            &mut app,
+            "BrokenToolTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let unarmed_target = spawn_player(
+            &mut app,
+            "UnarmedPeerTarget",
+            [1.0, 64.0, 2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.update();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: broken_tool_user,
+            target: Some(broken_tool_target),
+            issued_at_tick: 1430,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.world_mut().send_event(AttackIntent {
+            attacker: unarmed,
+            target: Some(unarmed_target),
+            issued_at_tick: 1430,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        let events: Vec<_> = combat_events.iter_current_update_events().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].damage, events[1].damage);
+
+        let durability_events = app
+            .world()
+            .resource::<Events<InventoryDurabilityChangedEvent>>();
+        assert_eq!(durability_events.iter_current_update_events().count(), 0);
     }
 
     // 耐久归零后 Weapon component 被移除 + WeaponBroken 事件发出。

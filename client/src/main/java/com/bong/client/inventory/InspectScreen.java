@@ -2126,6 +2126,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void quickEquipFromGrid(InventoryItem item) {
         if (!InventoryEquipRules.isWeapon(item)
             && !InventoryEquipRules.isHoe(item)
+            && !InventoryEquipRules.isTool(item)
             && !InventoryEquipRules.isTreasure(item)) {
             return;
         }
