@@ -2512,7 +2512,8 @@ fn validate_move_semantics(
                         item.template_id
                     ));
                 }
-                if template.weapon_spec.is_some()
+                if (template.weapon_spec.is_some()
+                    || matches!(template.category, ItemCategory::Tool))
                     && inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND)
                     && !from_two_hand
                 {
@@ -3927,6 +3928,56 @@ cols = 4
                 .map(|item| item.template_id.as_str()),
             Some("dun_qi_jia")
         );
+    }
+
+    #[test]
+    fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
+        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            ItemInstance {
+                instance_id: 77,
+                template_id: "wooden_staff".to_string(),
+                display_name: "木杖".to_string(),
+                grid_w: 1,
+                grid_h: 3,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect_err("tool should conflict with occupied two_hand");
+
+        assert!(error.contains("two_hand slot is occupied"));
     }
 
     #[test]
