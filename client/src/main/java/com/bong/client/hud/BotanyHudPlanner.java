@@ -258,10 +258,14 @@ public final class BotanyHudPlanner {
             textX, y + 18, TEXT_MUTED
         ));
 
+        String hazardLine = session.hazardHints().isEmpty()
+            ? "采后灵气随你离 zone（plan §2 零和）"
+            : "! " + session.hazardHints().get(0);
+        int hazardColor = session.hazardHints().isEmpty() ? TEXT_HINT : TEXT_WARNING;
         out.add(HudRenderCommand.text(
             HudRenderLayer.BOTANY,
-            HudTextHelper.clipToWidth("采后灵气随你离 zone（plan §2 零和）", textRightLimit, widthMeasurer),
-            textX, y + 32, TEXT_HINT
+            HudTextHelper.clipToWidth(hazardLine, textRightLimit, widthMeasurer),
+            textX, y + 32, hazardColor
         ));
     }
 

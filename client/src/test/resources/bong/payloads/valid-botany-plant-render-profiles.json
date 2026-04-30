@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "type": "botany_plant_v2_render_profiles",
+  "profiles": [
+    {
+      "plant_id": "ying_yuan_gu",
+      "base_mesh_ref": "red_mushroom",
+      "tint_rgb": 16752704,
+      "model_overlay": "emissive"
+    },
+    {
+      "plant_id": "yuan_ni_hong_yu",
+      "base_mesh_ref": "crimson_fungus",
+      "tint_rgb": 15086110,
+      "tint_rgb_secondary": 5993309,
+      "model_overlay": "dual_phase"
+    }
+  ]
+}

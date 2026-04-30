@@ -30,6 +30,7 @@ public class ServerDataRouterTest {
             "dropped_loot_sync",
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
+            "botany_plant_v2_render_profiles",
             "botany_skill",
             // Combat UI handlers (plan-combat-ui §U1–U7).
             "combat_event",
