@@ -342,4 +342,88 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.llmFailures).toBe(1);
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
+
+  it("keeps LLM targeted calamity narration zone-scoped", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llm: LlmClient = {
+      async chat() {
+        return JSON.stringify({
+          text: "spawn 近来灰云低伏，丹火无端多灭了两次。",
+          style: "narration",
+        });
+      },
+    };
+    const runtime = new TribulationNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "targeted",
+        phase: { kind: "omen" },
+        zone: "spawn",
+        epicenter: [8, 66, 8],
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "zone",
+      target: "spawn",
+      text: "spawn 近来灰云低伏，丹火无端多灭了两次。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(0);
+    expect(runtime.stats.fallbackUsed).toBe(0);
+  });
+
+  it("falls back when LLM targeted calamity narration leaks hidden mechanics", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llm: LlmClient = {
+      async chat() {
+        return JSON.stringify({
+          text: "spawn 的劫气权重升高，定向天罚概率已经改变。",
+          style: "narration",
+        });
+      },
+    };
+    const runtime = new TribulationNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "targeted",
+        phase: { kind: "omen" },
+        zone: "spawn",
+        epicenter: [8, 66, 8],
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "zone",
+      target: "spawn",
+      text: "spawn 近日运道不佳，灵机一动便多一分折耗。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(0);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
 });

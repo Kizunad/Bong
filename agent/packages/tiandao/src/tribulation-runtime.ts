@@ -65,6 +65,14 @@ function actorLabel(payload: TribulationEventV1): string {
   return payload.actor_name ?? payload.char_id ?? payload.result?.char_id ?? "某人";
 }
 
+function narrationScope(payload: TribulationEventV1): Narration["scope"] {
+  return payload.kind === "targeted" ? "zone" : "broadcast";
+}
+
+function narrationDeliveryTarget(payload: TribulationEventV1): string {
+  return payload.kind === "targeted" ? (payload.zone ?? "unknown") : narrationTarget(payload);
+}
+
 function fallbackNarration(payload: TribulationEventV1): Narration {
   if (payload.kind === "zone_collapse") {
     const zone = payload.zone ?? "无名之地";
@@ -162,9 +170,13 @@ function parseNarrationContent(content: string, payload: TribulationEventV1): Na
     }
 
     const first = parsed as { text: string; style: Narration["style"] };
+    if (payload.kind === "targeted" && leaksTargetedCalamity(trimmed)) {
+      return fallbackNarration(payload);
+    }
+
     const narration: Narration = {
-      scope: "broadcast",
-      target: narrationTarget(payload),
+      scope: narrationScope(payload),
+      target: narrationDeliveryTarget(payload),
       text: first.text,
       style: first.style,
     };
@@ -176,6 +188,10 @@ function parseNarrationContent(content: string, payload: TribulationEventV1): Na
   } catch {
     return fallbackNarration(payload);
   }
+}
+
+function leaksTargetedCalamity(content: string): boolean {
+  return /劫气|定向天罚|概率|查询|权重|karma|targeted/i.test(content);
 }
 
 export class TribulationNarrationRuntime {
