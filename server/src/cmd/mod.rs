@@ -21,7 +21,9 @@ mod tests {
     use crate::world::tsy_dev_command::TsySpawnRequested;
     use valence::command::CommandRegistry;
     use valence::prelude::App;
-    use valence::protocol::packets::play::command_tree_s2c::{NodeData, Parser, StringArg};
+    use valence::protocol::packets::play::command_tree_s2c::{
+        CommandTreeS2c, NodeData, Parser, StringArg,
+    };
 
     fn setup_registry_app() -> App {
         let mut app = App::new();
@@ -94,6 +96,29 @@ mod tests {
             executable_paths(registry),
             registry_pin::COMMAND_TREE_PATHS,
             "brigadier executable command tree changed; update registry_pin intentionally"
+        );
+    }
+
+    #[test]
+    fn command_tree_packet_contains_pinned_root_literals() {
+        let app = setup_registry_app();
+        let registry = app.world().resource::<CommandRegistry>();
+        let packet = CommandTreeS2c::from(registry.graph.clone());
+        let root = &packet.commands[packet.root_index.0 as usize];
+        let mut roots = root
+            .children
+            .iter()
+            .filter_map(|child| match &packet.commands[child.0 as usize].data {
+                NodeData::Literal { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        roots.sort_unstable();
+
+        assert_eq!(
+            roots,
+            registry_pin::COMMAND_NAMES,
+            "wire CommandTreeS2c root literals changed; update registry_pin intentionally"
         );
     }
 
