@@ -13,6 +13,7 @@ public final class PerceptionEdgeRenderer {
         if (out == null || indicators == null || indicators.isEmpty()) {
             return;
         }
+        // Spiritual sense v1.1 only draws off-screen edge markers; in-FOV targets remain visual-only.
         for (EdgeIndicatorCmd indicator : PerceptionEdgeProjector.capPerDirection(indicators)) {
             out.add(HudRenderCommand.edgeIndicator(
                 HudRenderLayer.SPIRITUAL_SENSE,

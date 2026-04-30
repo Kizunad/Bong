@@ -29,4 +29,13 @@ class PerceptionEdgeRendererTest {
         int high = PerceptionEdgeRenderer.colorFor(SenseKind.LIVING_QI, 1.0) >>> 24;
         assertTrue(high > low);
     }
+
+    @Test
+    void skipsInFovIndicatorsByContract() {
+        List<HudRenderCommand> out = new ArrayList<>();
+        PerceptionEdgeRenderer.append(out, List.of(
+            new EdgeIndicatorCmd(160, 90, SenseKind.LIVING_QI, 0.8, false, DirectionBucket.TOP)
+        ));
+        assertEquals(0, out.size());
+    }
 }

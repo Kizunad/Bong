@@ -98,7 +98,9 @@ use self::realm_vision::push::{
     push_initial_realm_vision, push_realm_vision_on_breakthrough, push_realm_vision_on_revive,
 };
 use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
-use self::spiritual_sense::push::{push_spiritual_sense_targets, SpiritualSensePushState};
+use self::spiritual_sense::push::{
+    cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
+};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
@@ -193,6 +195,7 @@ pub fn register(app: &mut App) {
             push_realm_vision_on_revive.after(on_player_revived),
             view_distance_ramp_system,
             push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
+            cleanup_spiritual_sense_push_state,
         ),
     );
     app.add_systems(
