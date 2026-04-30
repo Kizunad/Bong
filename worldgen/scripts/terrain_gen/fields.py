@@ -104,6 +104,11 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   redstone_ore) 由此 kind 在 server 区分。
     "mineral_density":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "mineral_kind":         LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    # --- structure layers ---
+    # fossil_bbox: 0 none, 1 whalefall outer ribs/periphery, 2 mineral-rich core.
+    # The manifest also exports fossil_bboxes metadata so Rust can materialize
+    # center/periphery mineral anchors without re-parsing blueprint POIs.
+    "fossil_bbox":          LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
     # --- anomaly layers (event hooks for Agent / blood moon / rift systems) ---
     # anomaly_intensity: [0,1] strength of local reality-warp. Agent / event
     #   system spawns themed mobs / visual FX when intensity > threshold.

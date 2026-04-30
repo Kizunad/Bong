@@ -12,13 +12,17 @@
 //! 由 inventory 侧的 listener 把 mineral_id 序列化到新建 InventoryItem 的 NBT。
 
 use valence::prelude::{
-    Commands, DiggingEvent, DiggingState, EventReader, EventWriter, Query, ResMut,
+    Commands, DiggingEvent, DiggingState, EventReader, EventWriter, Query, Res, ResMut,
 };
 
 use super::components::{MineralOreIndex, MineralOreNode};
-use super::events::{KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent};
+use super::events::{
+    KarmaFlagIntent, MineralDropEvent, MineralExhaustedEvent, MineralFeedbackEvent,
+};
+use super::registry::MineralRegistry;
 use super::types::MineralRarity;
 use crate::combat::components::Lifecycle;
+use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND};
 use crate::social::{block_break_is_protected_by_registered_spirit_niche, SpiritNicheRegistry};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
@@ -50,6 +54,9 @@ pub fn handle_block_break_for_mineral(
     mut drop_events: EventWriter<MineralDropEvent>,
     mut exhausted_events: EventWriter<MineralExhaustedEvent>,
     mut karma_events: EventWriter<KarmaFlagIntent>,
+    mut feedback_events: EventWriter<MineralFeedbackEvent>,
+    registry: Res<MineralRegistry>,
+    inventories: Query<&PlayerInventory>,
     lifecycles: Query<&Lifecycle>,
     spirit_niches: Option<valence::prelude::Res<SpiritNicheRegistry>>,
 ) {
@@ -100,6 +107,38 @@ pub fn handle_block_break_for_mineral(
         };
 
         let mineral_id = node.mineral_id;
+        let Some(entry) = registry.get(mineral_id) else {
+            tracing::warn!(
+                target: "bong::mineral",
+                "MineralOreNode carries unregistered mineral_id {} at {:?}",
+                mineral_id,
+                event.position
+            );
+            feedback_events.send(MineralFeedbackEvent::unknown_for_forge(event.client));
+            continue;
+        };
+
+        let held_tier = inventories
+            .get(event.client)
+            .ok()
+            .and_then(equipped_pickaxe_tier)
+            .unwrap_or(0);
+        if held_tier < entry.pickaxe_tier_min {
+            feedback_events.send(MineralFeedbackEvent::pickaxe_tier_mismatch(
+                event.client,
+                pickaxe_tier_name(held_tier),
+                entry.display_name_zh,
+                entry.pickaxe_tier_min,
+            ));
+            tracing::debug!(
+                target: "bong::mineral",
+                "pickaxe tier {held_tier} < required {} for {} at {:?}",
+                entry.pickaxe_tier_min,
+                entry.canonical_name,
+                event.position
+            );
+            continue;
+        }
 
         drop_events.send(MineralDropEvent {
             player: event.client,
@@ -129,10 +168,92 @@ pub fn handle_block_break_for_mineral(
     }
 }
 
+pub fn equipped_pickaxe_tier(inventory: &PlayerInventory) -> Option<u8> {
+    inventory
+        .equipped
+        .get(EQUIP_SLOT_MAIN_HAND)
+        .or_else(|| inventory.equipped.get(EQUIP_SLOT_TWO_HAND))
+        .and_then(pickaxe_tier_from_item)
+}
+
+pub fn pickaxe_tier_from_item(item: &ItemInstance) -> Option<u8> {
+    let id = item.template_id.as_str();
+    if id.contains("wooden_pickaxe") || id.contains("golden_pickaxe") {
+        Some(1)
+    } else if id.contains("stone_pickaxe") || id.contains("fan_iron_pickaxe") {
+        Some(2)
+    } else if id.contains("iron_pickaxe") || id.contains("ling_iron_pickaxe") {
+        Some(3)
+    } else if id.contains("diamond_pickaxe")
+        || id.contains("netherite_pickaxe")
+        || id.contains("yi_pickaxe")
+    {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+fn pickaxe_tier_name(tier: u8) -> &'static str {
+    match tier {
+        1 => "凡镐",
+        2 => "石镐",
+        3 => "铁镐",
+        4..=u8::MAX => "遗镐",
+        0 => "空手",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::MineralId;
     use super::*;
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemRarity, PlacedItemState, MAIN_PACK_CONTAINER_ID,
+    };
+    use std::collections::HashMap;
+
+    fn item(template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id: 1,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+        }
+    }
+
+    fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
+        let mut equipped = HashMap::new();
+        equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id));
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: MAIN_PACK_CONTAINER_ID.to_string(),
+                rows: 1,
+                cols: 1,
+                items: Vec::<PlacedItemState>::new(),
+            }],
+            equipped,
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 10.0,
+        }
+    }
 
     #[test]
     fn karma_probability_zero_for_low_tier() {
@@ -152,5 +273,46 @@ mod tests {
         assert_eq!(karma_probability(MineralId::SuiTie.rarity()), 0.15);
         assert_eq!(karma_probability(MineralId::KuJin.rarity()), 0.30);
         assert_eq!(karma_probability(MineralId::LingShiYi.rarity()), 0.30);
+    }
+
+    #[test]
+    fn pickaxe_tier_from_vanilla_item_ids() {
+        assert_eq!(
+            pickaxe_tier_from_item(&item("minecraft:wooden_pickaxe")),
+            Some(1)
+        );
+        assert_eq!(pickaxe_tier_from_item(&item("stone_pickaxe")), Some(2));
+        assert_eq!(
+            pickaxe_tier_from_item(&item("minecraft:iron_pickaxe")),
+            Some(3)
+        );
+        assert_eq!(pickaxe_tier_from_item(&item("netherite_pickaxe")), Some(4));
+        assert_eq!(pickaxe_tier_from_item(&item("iron_sword")), None);
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_reads_main_hand() {
+        let inv = inventory_with_main_hand("minecraft:iron_pickaxe");
+        assert_eq!(equipped_pickaxe_tier(&inv), Some(3));
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_reads_two_hand_when_main_hand_empty() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_sword");
+        inv.equipped.clear();
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            item("minecraft:diamond_pickaxe"),
+        );
+
+        assert_eq!(equipped_pickaxe_tier(&inv), Some(4));
+    }
+
+    #[test]
+    fn equipped_pickaxe_tier_does_not_fall_back_to_hotbar() {
+        let mut inv = inventory_with_main_hand("minecraft:iron_sword");
+        inv.hotbar[0] = Some(item("minecraft:netherite_pickaxe"));
+
+        assert_eq!(equipped_pickaxe_tier(&inv), None);
     }
 }

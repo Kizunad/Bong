@@ -22,6 +22,7 @@ pub mod inventory_snapshot_emit;
 pub mod npc_event_bridge;
 pub mod quickslot_config_emit;
 pub mod redis_bridge;
+pub mod resourcepack;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
@@ -249,6 +250,8 @@ pub fn register(app: &mut App) {
     app.insert_resource(NarrationDedupeResource::default());
     app.insert_resource(WorldModelMirrorReconcileState::default());
     app.insert_resource(combat_bridge::CombatSummaryAccumulator::default());
+    app.insert_resource(resourcepack::ResourcePackConfig::default());
+    app.insert_resource(resourcepack::ResourcePackStatusStore::default());
 
     app.add_systems(Startup, bootstrap_world_model_runtime_mirror_system);
 
@@ -297,6 +300,13 @@ pub fn register(app: &mut App) {
         Update,
         techniques_snapshot_emit::emit_join_techniques_snapshot_payloads
             .after(crate::player::attach_player_state_to_joined_clients),
+    );
+    app.add_systems(
+        Update,
+        (
+            resourcepack::prompt_resource_pack_on_join.after(send_welcome_payload_on_join),
+            resourcepack::record_resource_pack_status,
+        ),
     );
     app.add_systems(
         Update,

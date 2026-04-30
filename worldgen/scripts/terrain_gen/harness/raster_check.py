@@ -11,6 +11,7 @@ Catches known data integrity issues before they reach the Rust server:
 - underground_tier outside {0,1,2,3}
 - cavern_floor_y outside [-64, 64] when tier > 0
 - anomaly_kind outside {0..5} or present without anomaly_intensity
+- fossil_bbox outside {0,1,2} or manifest fossil_bboxes with no raster cells
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
     area = tile_size * tile_size
     errors: list[str] = []
     warnings: list[str] = []
+    fossil_cell_count = 0
 
     for tile_info in tiles:
         tile_dir = raster_path / tile_info["dir"]
@@ -135,6 +137,17 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                                 f"intensity (zones={zones})"
                             )
                             break
+
+        fossil_file = tile_dir / "fossil_bbox.bin"
+        if fossil_file.exists():
+            raw = fossil_file.read_bytes()
+            if len(raw) == area:
+                f_max = max(raw)
+                if f_max > 2:
+                    errors.append(
+                        f"{tile_id}: fossil_bbox max={f_max} > 2 (zones={zones})"
+                    )
+                fossil_cell_count += sum(1 for value in raw if value > 0)
 
         # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
         # qi_vein_flow likewise. These are narrative-facing so out-of-range
@@ -252,6 +265,19 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
         # 5. 三层 AABB Y 区间不 overlap — 此校验需读 blueprint 而非 raster；
         #    blueprint loader 一致性校验里做（cross_manifest_check.py 后续接入）。
     else:
+        fossil_bboxes = manifest.get("fossil_bboxes", [])
+        if fossil_bboxes and fossil_cell_count == 0:
+            errors.append("overworld manifest declares fossil_bboxes but fossil_bbox rasters are empty")
+        if fossil_cell_count > 0 and not fossil_bboxes:
+            warnings.append("fossil_bbox raster cells present without manifest.fossil_bboxes metadata")
+        for bbox in fossil_bboxes:
+            bbox_cell_count = _count_fossil_cells_in_bbox(raster_path, tiles, tile_size, bbox)
+            if bbox_cell_count == 0:
+                errors.append(
+                    "manifest fossil_bbox "
+                    f"{bbox.get('name', '<unnamed>')} has no raster cells inside its AABB"
+                )
+
         # 6. 每个 kind=rift_portal direction=entry POI 必须带 family_id + target_family_pos_xyz
         for poi in manifest.get("pois", []):
             if poi["kind"] != "rift_portal":
@@ -310,3 +336,40 @@ def _read_float_layer(path: Path, expected_count: int) -> list[float] | None:
         return list(struct.unpack(f"<{expected_count}f", raw))
     except OSError:
         return None
+
+
+def _count_fossil_cells_in_bbox(
+    raster_path: Path,
+    tiles: list[dict],
+    tile_size: int,
+    bbox: dict,
+) -> int:
+    min_x = int(bbox["min_x"])
+    max_x = int(bbox["max_x"])
+    min_z = int(bbox["min_z"])
+    max_z = int(bbox["max_z"])
+    count = 0
+    for tile_info in tiles:
+        if "fossil_bbox" not in tile_info.get("layers", []):
+            continue
+        tile_x = int(tile_info["tile_x"])
+        tile_z = int(tile_info["tile_z"])
+        tile_min_x = tile_x * tile_size
+        tile_min_z = tile_z * tile_size
+        tile_max_x = tile_min_x + tile_size - 1
+        tile_max_z = tile_min_z + tile_size - 1
+        if tile_max_x < min_x or tile_min_x > max_x or tile_max_z < min_z or tile_min_z > max_z:
+            continue
+        raw = (raster_path / tile_info["dir"] / "fossil_bbox.bin").read_bytes()
+        if len(raw) != tile_size * tile_size:
+            continue
+        for local_z in range(tile_size):
+            world_z = tile_min_z + local_z
+            if world_z < min_z or world_z > max_z:
+                continue
+            row_offset = local_z * tile_size
+            for local_x in range(tile_size):
+                world_x = tile_min_x + local_x
+                if min_x <= world_x <= max_x and raw[row_offset + local_x] > 0:
+                    count += 1
+    return count

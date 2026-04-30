@@ -22,7 +22,8 @@ use valence::prelude::{
 use crate::mineral::{MineralOreIndex, MineralOreNode};
 use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
 
-pub use raster::{raster_dir_from_manifest_path, TerrainProvider, TerrainProviders};
+#[allow(unused_imports)]
+pub use raster::{raster_dir_from_manifest_path, FossilBbox, TerrainProvider, TerrainProviders};
 
 const WORLD_HEIGHT: u32 = 512;
 pub const MIN_Y: i32 = -64;

@@ -16,6 +16,7 @@ from ..profiles import (
     list_profile_generators,
 )
 from ..profiles.base import DecorationSpec, EcologySpec
+from ..structures.whale_fossil import fossil_bboxes_for_zone
 
 BIOME_PALETTE = (
     "minecraft:plains",
@@ -107,6 +108,7 @@ def export_rasters(
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
+    fossil_bboxes = _collect_fossil_bboxes(plan.blueprint_zones)
 
     manifest = {
         "version": 1,
@@ -151,6 +153,8 @@ def export_rasters(
         },
         "profiles_ecology": ecology_payload,
         "global_decoration_palette": global_decoration_palette,
+        "structure_layers": [name for name in ("fossil_bbox",) if name in LAYER_REGISTRY],
+        "fossil_bboxes": fossil_bboxes,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
@@ -162,6 +166,8 @@ def export_rasters(
             "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
             "Anomaly: anomaly_intensity (0..1) + anomaly_kind (uint8 from anomaly_kinds map).",
             "  Event systems trigger themed spawns / FX when intensity > 0.3.",
+            "Structure: fossil_bbox (0 none, 1 outer, 2 core) marks whalefall fossils;",
+            "  manifest.fossil_bboxes carries AABB metadata for mineral anchor materialization.",
             "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
         ],
     }
@@ -195,6 +201,13 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     for zone in zones:
         for poi in zone.pois:
             payload.append(_poi_dict(zone.name, poi))
+    return payload
+
+
+def _collect_fossil_bboxes(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        payload.extend(fossil_bboxes_for_zone(zone))
     return payload
 
 

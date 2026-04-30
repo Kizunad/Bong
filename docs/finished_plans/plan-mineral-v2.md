@@ -152,24 +152,34 @@
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：forge / alchemy chat emit 接入点（`forge/blueprint.rs:346` + `alchemy/recipe.rs`）+ 4 个 `message_id` pin 测试
-  - P1：`MineralRegistry::pickaxe_tier_min` + `MiningSession` Component + `bong:mining_progress` 通道 + tier 校验
-  - P2：`furnace_tier` 字段在 `core.toml` + `ForgeBlueprint::validate_with` 扩展
-  - P3：4 份 alchemy recipe JSON（jie_du_dan / zhu_sha 增强 / xiong_huang 占位 / xie_fen 占位）
-  - P4：`register_production_profiles` 注册四档 + drop → freshness 实体填充链路
-  - P5：`ResourcePackPrompt` 接入 + pack zip CI 脚本 + sha1 校验（如启用）
-  - P6：`whale_fossil.py` + raster `fossil_bbox` channel + `mineral_anchor` 接入（如启用）
+  - P0：forge / alchemy / mineral runtime 接入 `MineralFeedbackEvent`，新增 `mineral.invalid_for_*`、`mineral.unknown_id`、`mineral.pickaxe_tier_too_low` 等 chat feedback。
+  - P1：`pickaxe_tier_min` 进入默认矿物注册表；`MiningSession` / `MiningProgress` schema / tier gate 落地。
+  - P2：`Blueprint::validate_with(&MineralRegistry, station_tier)` 校验主材矿物与炉阶，forge runtime 反馈失败原因。
+  - P3：炼丹配方接入 `mineral_id` 实战校验，补 `jie_du_dan` / `xiong_huang` / `xie_fen` / `zhu_sha` 相关 recipe JSON。
+  - P4：灵石四档 freshness profile 进入 `DecayProfileRegistry`，drop → inventory grant 时按 profile 初始化 freshness。
+  - P5：Valence `Client::set_resource_pack` join hook、拒绝/失败降级记录、pack zip 与 sha1 构建脚本落地。
+  - P6：`whale_fossil.py` 独立 structure generator、`fossil_bbox` uint8 raster channel、manifest `fossil_bboxes`、Rust raster 读取与 `spawn_mineral_anchor_nodes` 富集物化落地。
 - 关键 commit：
+  - `0c11d469` 矿物 v2：补齐挖矿反馈与镐阶门槛
+  - `76f1a9bf` 矿物 v2：校验锻造主材炉阶
+  - `36001478` 矿物 v2：接入炼丹矿物辅料
+  - `db100fdf` 矿物 v2：注册灵石鲜度曲线
+  - `6b39e905` 矿物 v2：接入资源包推送
+  - `2f5e2ba5` 矿物 v2：接入鲸落化石矿脉
 - 测试结果：
+  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过（最终 `1786 passed; 0 failed`）。
+  - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` 通过。
+  - resourcepack：`bash scripts/build-resourcepack.sh` 通过，`bong-mineral-v1.zip.sha1 = 3723e0156118023c9206d7605666bb90b23bc10d`。
+  - worldgen：`python3 -m scripts.terrain_gen --tile-size 512 --backend raster` 通过；`validate_rasters("generated/terrain-gen/rasters")` 通过（183 tiles）。
+  - whale_fossil smoke：`python3 -m scripts.terrain_gen.structures.whale_fossil` 通过（仅 runpy 重复导入 warning，无失败）。
 - 跨仓库核验：
-  - server：`MineralRegistry.pickaxe_tier_min` / `MiningSession` / `register_production_profiles` / `ForgeBlueprint::validate_with` 扩展
-  - agent：mineral chat message_id 模板 / processing 联动 schema
-  - client：ResourcePack 接受 / 拒绝行为；HUD mining progress
-  - worldgen：`fossil_bbox` raster channel（如 P6 落地）
+  - server：`MineralRegistry.pickaxe_tier_min` / `MiningSession` / `register_production_profiles` / `Blueprint::validate_with` / `ResourcePackConfig` / `TerrainProvider.fossil_bboxes` 已核验。
+  - agent：本 plan 未改 agent；server 侧沿既有 chat/server-data schema 输出，未新增 agent contract。
+  - client：资源包资产由 server prompt 推送；客户端拒绝 / 失败降级为 vanilla 贴图，不阻断 gameplay。
+  - worldgen：`fossil_bbox` raster channel + manifest `fossil_bboxes` 经 full raster export 和 `raster_check` 核验。
 - 遗留 / 后续：
-  - `xiong_huang` / `xie_fen` 配方（依负灵域 / 魔修支线 plan，可能滑 v3）
-  - CustomModelData 跨 biome 切贴图（v1 §4.3 末行延后项）
+  - `xiong_huang` / `xie_fen` 暂以占位配方接线，具体产地与魔修支线留给负灵域 / 魔修后续 plan。
+  - CustomModelData 跨 biome 切贴图未进 v2，保留为 v1 §4.3 末行延后项。
+  - P1 当前落地为 tier gate + session primitive + progress schema，完整长按挖矿 UI/真元消耗可由后续 gameplay plan 深化。
   - 采矿 session 真元消耗（§10 开放问题）

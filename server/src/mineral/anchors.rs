@@ -12,7 +12,7 @@ use super::persistence::ExhaustedMineralsLog;
 use super::registry::MineralRegistry;
 use super::types::MineralId;
 use crate::world::dimension::DimensionKind;
-use crate::world::terrain::TerrainProviders;
+use crate::world::terrain::{FossilBbox, TerrainProvider, TerrainProviders};
 
 const DEFAULT_ANCHORS_PATH: &str = "../worldgen/blueprint/mineral_anchors.json";
 const MIN_WORLD_Y: i32 = -64;
@@ -70,13 +70,13 @@ pub fn spawn_mineral_anchor_nodes(
     mut index: ResMut<MineralOreIndex>,
     providers: Option<Res<TerrainProviders>>,
 ) {
-    if providers.is_none() {
+    let Some(providers) = providers else {
         tracing::info!(
             target: "bong::mineral",
             "skipping mineral anchor materialization: raster terrain provider is not loaded"
         );
         return;
-    }
+    };
 
     let anchors = match load_mineral_anchors(&config.path, &registry) {
         Ok(anchors) => anchors,
@@ -115,11 +115,106 @@ pub fn spawn_mineral_anchor_nodes(
         }
     }
 
+    let fossil_spawned = spawn_fossil_mineral_nodes(
+        &mut commands,
+        &providers.overworld,
+        &exhausted_positions,
+        index.as_mut(),
+    );
+    spawned += fossil_spawned;
+
     tracing::info!(
         target: "bong::mineral",
-        "materialized {spawned} mineral ore nodes from {} anchor(s)",
-        anchors.len()
+        "materialized {spawned} mineral ore nodes from {} anchor(s) and {} whalefall fossil node(s)",
+        anchors.len(),
+        fossil_spawned
     );
+}
+
+fn spawn_fossil_mineral_nodes(
+    commands: &mut Commands,
+    terrain: &TerrainProvider,
+    exhausted_positions: &HashSet<(MineralId, BlockPos)>,
+    index: &mut MineralOreIndex,
+) -> usize {
+    let mut spawned = 0usize;
+    for fossil in terrain.fossil_bboxes() {
+        for (mineral_id, pos) in fossil_mineral_positions(fossil, terrain) {
+            if exhausted_positions.contains(&(mineral_id, pos))
+                || index.lookup(DimensionKind::Overworld, pos).is_some()
+            {
+                continue;
+            }
+            let entity = commands.spawn(MineralOreNode::new(mineral_id, pos)).id();
+            index.insert(DimensionKind::Overworld, pos, entity);
+            spawned += 1;
+        }
+    }
+    spawned
+}
+
+fn fossil_mineral_positions(
+    fossil: &FossilBbox,
+    terrain: &TerrainProvider,
+) -> Vec<(MineralId, BlockPos)> {
+    let masks = (fossil.min_x..=fossil.max_x).step_by(4).flat_map(|x| {
+        (fossil.min_z..=fossil.max_z)
+            .step_by(4)
+            .map(move |z| (x, z, terrain.sample_fossil_bbox(x, z)))
+    });
+    fossil_mineral_positions_from_masks(fossil, masks)
+}
+
+fn fossil_mineral_positions_from_masks(
+    fossil: &FossilBbox,
+    masks: impl IntoIterator<Item = (i32, i32, u8)>,
+) -> Vec<(MineralId, BlockPos)> {
+    let mut candidates = Vec::new();
+    let max_units = if fossil.max_units == 0 {
+        180
+    } else {
+        fossil.max_units
+    } as usize;
+    for (x, z, mask) in masks {
+        if mask == 0 {
+            continue;
+        }
+        let mineral_id = fossil_mineral_for_mask(mask, stable_fossil_hash(fossil, x, z));
+        let y_offset = (stable_fossil_hash(fossil, z, x) % 9) as i32 - 4;
+        let pos = BlockPos::new(x, fossil.center_y + y_offset, z);
+        candidates.push((stable_pos_hash(pos, mineral_id), mineral_id, pos));
+    }
+    candidates.sort_by_key(|(hash, _, _)| *hash);
+    candidates
+        .into_iter()
+        .take(max_units)
+        .map(|(_, mineral_id, pos)| (mineral_id, pos))
+        .collect()
+}
+
+fn fossil_mineral_for_mask(mask: u8, hash: u64) -> MineralId {
+    if mask >= 2 {
+        match hash % 10 {
+            0 => MineralId::LingShiYi,
+            1 | 2 => MineralId::LingShiShang,
+            3 | 4 => MineralId::LingJing,
+            _ => MineralId::SuiTie,
+        }
+    } else if hash % 3 == 0 {
+        MineralId::LingJing
+    } else {
+        MineralId::YuSui
+    }
+}
+
+fn stable_fossil_hash(fossil: &FossilBbox, x: i32, z: i32) -> u64 {
+    let mut value = 0xcbf29ce484222325u64;
+    for byte in fossil.name.as_bytes() {
+        value = (value ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+    }
+    value ^= (x as i64 as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    value ^= (z as i64 as u64).wrapping_mul(0xbf58476d1ce4e5b9);
+    splitmix64(value)
 }
 
 pub fn load_mineral_anchors(
@@ -274,6 +369,49 @@ mod tests {
             let dz = pos.z - anchor.center.z;
             assert!(dx * dx + dy * dy + dz * dz <= anchor.radius * anchor.radius);
         }
+    }
+
+    #[test]
+    fn fossil_core_and_outer_masks_use_expected_mineral_sets() {
+        for hash in 0..30 {
+            assert!(matches!(
+                fossil_mineral_for_mask(2, hash),
+                MineralId::SuiTie
+                    | MineralId::LingJing
+                    | MineralId::LingShiShang
+                    | MineralId::LingShiYi
+            ));
+            assert!(matches!(
+                fossil_mineral_for_mask(1, hash),
+                MineralId::YuSui | MineralId::LingJing
+            ));
+        }
+    }
+
+    #[test]
+    fn fossil_candidates_are_deterministically_limited() {
+        let fossil = FossilBbox {
+            zone: "north_wastes".into(),
+            name: "鲸坠骸骨".into(),
+            center_xz: [0, 0],
+            center_y: 76,
+            min_x: -16,
+            max_x: 16,
+            min_z: -16,
+            max_z: 16,
+            max_units: 7,
+        };
+        let points = (-16..=16)
+            .step_by(4)
+            .flat_map(|x| (-16..=16).step_by(4).map(move |z| (x, z, 2)))
+            .collect::<Vec<_>>();
+
+        let first = fossil_mineral_positions_from_masks(&fossil, points.iter().copied());
+        let second = fossil_mineral_positions_from_masks(&fossil, points.iter().copied());
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 7);
+        assert!(first.iter().all(|(_, pos)| pos.y >= 72 && pos.y <= 80));
     }
 
     #[test]

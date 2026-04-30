@@ -5,6 +5,7 @@ import numpy as np
 from ..blueprint import BlueprintZone
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..structures.whale_fossil import rasterize_whale_fossil_mask
 from .base import (
     DecorationSpec,
     EcologySpec,
@@ -58,6 +59,7 @@ class WastePlateauGenerator(TerrainProfileGenerator):
         "mofa_decay",
         "flora_density",
         "flora_variant_id",
+        "fossil_bbox",
     )
     ecology = EcologySpec(
         decorations=WASTE_PLATEAU_DECORATIONS,
@@ -96,6 +98,7 @@ def fill_waste_plateau_tile(
             "mofa_decay",
             "flora_density",
             "flora_variant_id",
+            "fossil_bbox",
         ),
     )
     stone_id = palette.ensure("stone")
@@ -165,9 +168,15 @@ def fill_waste_plateau_tile(
         surface_id,
     )
 
+    fossil_bbox = rasterize_whale_fossil_mask(zone, wx, wz)
+    surface_id = np.where(fossil_bbox > 0, bone_block_id, surface_id)
+
     feature_mask = np.minimum(
         1.0,
-        plateau * 0.28 + neg_pressure * 0.95 + np.maximum(0.0, -fracture) * 0.4,
+        plateau * 0.28
+        + neg_pressure * 0.95
+        + np.maximum(0.0, -fracture) * 0.4
+        + (fossil_bbox > 0) * 0.45,
     )
 
     # 北荒：死域。灵气极低（vein 无），末法极高（neg_pressure 点内趋近 1.0）
@@ -195,6 +204,7 @@ def fill_waste_plateau_tile(
     buffer.layers["ruin_density"] = np.round(ruin_density, 3).ravel()
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["fossil_bbox"] = fossil_bbox.ravel().astype(np.uint8)
 
     # --- Flora: 1 whalefall_rib_tree / 2 dust_thorn / 3 null_pressure_rock /
     # 4 ancient_ruin_fragment ---
@@ -216,7 +226,7 @@ def fill_waste_plateau_tile(
     flora_density = np.where(ruin_band, np.maximum(flora_density, 0.45), flora_density)
 
     # Rare whalefall rib trees on crown center
-    whalefall_band = (crown > 0.6) & (scarp > 0.3)
+    whalefall_band = ((crown > 0.6) & (scarp > 0.3)) | (fossil_bbox > 0)
     flora_variant = np.where(whalefall_band, 1, flora_variant)
     flora_density = np.where(whalefall_band, np.maximum(flora_density, 0.18), flora_density)
 

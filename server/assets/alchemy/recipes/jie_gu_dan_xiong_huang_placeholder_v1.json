@@ -1,0 +1,32 @@
+{
+  "id": "jie_gu_dan_xiong_huang_placeholder_v1",
+  "name": "解蛊丹（雄黄占位）",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "jie_gu_rui", "count": 2 },
+      { "material": "xiong_huang_aux", "count": 1, "mineral_id": "xiong_huang" }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.55,
+    "target_duration_ticks": 160,
+    "qi_cost": 18.0,
+    "tolerance": { "temp_band": 0.08, "duration_band": 18 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "jie_gu_dan_placeholder", "quality": 1.0, "toxin_amount": -0.30, "toxin_color": "Mellow" },
+    "good": { "pill": "jie_gu_dan_placeholder", "quality": 0.7, "toxin_amount": -0.20, "toxin_color": "Mellow" },
+    "flawed": { "pill": "jie_gu_dan_placeholder_flawed", "quality": 0.4, "toxin_amount": 0.20, "toxin_color": "Turbid" },
+    "waste": null,
+    "explode": { "damage": 16.0, "meridian_crack": 0.10 }
+  },
+  "flawed_fallback": {
+    "pill": "jie_gu_dan_placeholder_flawed",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "gu_poison_system_pending", "duration_s": 0, "weight": 1 }
+    ]
+  }
+}

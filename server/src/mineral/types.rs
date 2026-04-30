@@ -183,10 +183,11 @@ impl MineralId {
         }
     }
 
-    /// 凡铁炉=1，灵铁炉=2，稀铁炉=3。0 表示该 mineral 不入炉（如丹砂、灵石、灵晶）。
+    /// 凡铁炉=1，灵铁炉=2，稀铁炉=3。遗品金属仍由稀铁炉起步承接，
+    /// 0 表示该 mineral 不入炉（如丹砂、灵石、灵晶）。
     pub fn forge_tier_min(self) -> u8 {
         match self.category() {
-            MineralCategory::Metal => self.rarity().tier(),
+            MineralCategory::Metal => self.rarity().tier().min(3),
             _ => 0,
         }
     }
@@ -241,7 +242,7 @@ mod tests {
         assert_eq!(MineralId::FanTie.forge_tier_min(), 1);
         assert_eq!(MineralId::ZaGang.forge_tier_min(), 2);
         assert_eq!(MineralId::SuiTie.forge_tier_min(), 3);
-        assert_eq!(MineralId::KuJin.forge_tier_min(), 4);
+        assert_eq!(MineralId::KuJin.forge_tier_min(), 3);
         // 非金属不入炉
         assert_eq!(MineralId::DanSha.forge_tier_min(), 0);
         assert_eq!(MineralId::LingShiFan.forge_tier_min(), 0);
