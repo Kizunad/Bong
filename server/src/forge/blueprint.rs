@@ -435,10 +435,21 @@ mod tests {
         let reg =
             BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
                 .expect("assets/forge/blueprints should load");
-        assert_eq!(reg.len(), 3, "expected 3 test blueprints");
+        assert_eq!(reg.len(), 10, "expected 3 weapon + 7 tool blueprints");
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
         assert!(reg.get("ling_feng_v0").is_some());
+        for id in [
+            "tool_cai_yao_dao_v0",
+            "tool_bao_chu_v0",
+            "tool_cao_lian_v0",
+            "tool_dun_qi_jia_v0",
+            "tool_gua_dao_v0",
+            "tool_gu_hai_qian_v0",
+            "tool_bing_jia_shou_tao_v0",
+        ] {
+            assert!(reg.get(id).is_some(), "missing tool blueprint `{id}`");
+        }
     }
 
     #[test]
@@ -488,6 +499,38 @@ mod tests {
             .optional_carriers
             .iter()
             .any(|carrier| { carrier.material == "yuan_ni_hong_yu" && carrier.unlocks_tier == 4 }));
+    }
+
+    #[test]
+    fn tool_blueprints_are_single_step_fanqi_outputs() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+
+        for (id, item_id) in [
+            ("tool_cai_yao_dao_v0", "cai_yao_dao"),
+            ("tool_bao_chu_v0", "bao_chu"),
+            ("tool_cao_lian_v0", "cao_lian"),
+            ("tool_dun_qi_jia_v0", "dun_qi_jia"),
+            ("tool_gua_dao_v0", "gua_dao"),
+            ("tool_gu_hai_qian_v0", "gu_hai_qian"),
+            ("tool_bing_jia_shou_tao_v0", "bing_jia_shou_tao"),
+        ] {
+            let bp = reg.get(id).unwrap_or_else(|| panic!("missing {id}"));
+            assert_eq!(
+                bp.steps.len(),
+                1,
+                "tool blueprint `{id}` should be one-step"
+            );
+            assert_eq!(bp.steps[0].kind(), StepKind::Billet);
+            assert_eq!(bp.tier_cap, 1);
+            assert_eq!(
+                bp.outcomes
+                    .good
+                    .as_ref()
+                    .map(|outcome| outcome.weapon.as_str()),
+                Some(item_id),
+                "tool blueprint `{id}` should produce `{item_id}`"
+            );
+        }
     }
 
     #[test]

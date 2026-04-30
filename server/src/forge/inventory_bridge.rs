@@ -55,9 +55,11 @@ pub fn forge_outcome_to_inventory(
             );
             continue;
         };
-        if template.weapon_spec.is_none() {
+        if template.weapon_spec.is_none()
+            && !matches!(template.category, crate::inventory::ItemCategory::Tool)
+        {
             tracing::warn!(
-                "[bong][forge] outcome for session {:?} references non-weapon item `{}`; inventory grant skipped",
+                "[bong][forge] outcome for session {:?} references non-craftable item `{}`; inventory grant skipped",
                 event.session,
                 template_id
             );
@@ -175,6 +177,15 @@ mod tests {
         ItemTemplate {
             weapon_spec: None,
             category: ItemCategory::Misc,
+            ..weapon_template(id)
+        }
+    }
+
+    fn tool_template(id: &str) -> ItemTemplate {
+        ItemTemplate {
+            weapon_spec: None,
+            category: ItemCategory::Tool,
+            grid_h: 1,
             ..weapon_template(id)
         }
     }
@@ -329,7 +340,25 @@ mod tests {
     }
 
     #[test]
-    fn outcome_rejects_non_weapon_template() {
+    fn outcome_good_gives_tool_without_weapon_stats() {
+        let mut templates = HashMap::new();
+        templates.insert("cai_yao_dao".to_string(), tool_template("cai_yao_dao"));
+        let mut app = app_with_templates(templates);
+        let caster = app.world_mut().spawn(empty_inventory()).id();
+
+        app.world_mut()
+            .send_event(outcome(caster, ForgeBucket::Good, Some("cai_yao_dao")));
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        let item = &inventory.containers[0].items[0].instance;
+        assert_eq!(item.template_id, "cai_yao_dao");
+        assert_eq!(item.forge_quality, Some(0.93));
+        assert_eq!(item.forge_achieved_tier, Some(2));
+    }
+
+    #[test]
+    fn outcome_rejects_non_weapon_non_tool_template() {
         let mut templates = HashMap::new();
         templates.insert("ling_wood".to_string(), misc_template("ling_wood"));
         let mut app = app_with_templates(templates);
