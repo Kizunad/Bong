@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Iterable
 import numpy as np
 
 if TYPE_CHECKING:
-    from .blueprint import BlueprintZone
+    from .blueprint import BlueprintZone, ZoneOverlaySpec
 
 DEFAULT_FIELD_LAYERS = (
     "height",
@@ -72,6 +72,10 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "qi_density":       LayerSpec(safe_default=0.12, blend_mode="lerp",     export_type="float32"),
     "mofa_decay":       LayerSpec(safe_default=0.40, blend_mode="lerp",     export_type="float32"),
     "qi_vein_flow":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # realm_collapse_mask: 1 means the runtime zone overlay marked this area as
+    #   ZoneStatus::Collapsed.  Consumers should preserve physical structures
+    #   but disable qi-dependent functionality inside the marked columns.
+    "realm_collapse_mask": LayerSpec(safe_default=0.0, blend_mode="maximum", export_type="uint8"),
     # --- vertical-dimension layers ---
     # sky_island_mask: 该列上空是否存在浮岛 (0~1). profile 写入浮岛核心强度，
     #   stitcher `maximum`+weight 让边界自然消退 → 浮岛视觉上边缘逐渐变薄。
@@ -267,6 +271,7 @@ class TerrainGenerationPlan:
     tiles: list[WorldTile]
     wilderness: WildernessFieldPlan
     blueprint_zones: list["BlueprintZone"]
+    zone_overlays: list["ZoneOverlaySpec"]
     zone_plans: list[ZoneFieldPlan]
     stitch_strategy: str
     bake_plan: BakePlan | None = None

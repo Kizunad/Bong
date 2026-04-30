@@ -79,6 +79,15 @@ class WorldBlueprint:
 
 
 @dataclass(frozen=True)
+class ZoneOverlaySpec:
+    zone_id: str
+    overlay_kind: str
+    payload: dict[str, Any]
+    payload_version: int
+    since_wall: int
+
+
+@dataclass(frozen=True)
 class TerrainProfileSpec:
     name: str
     boundary: BoundarySpec
@@ -199,6 +208,32 @@ def load_blueprint(path: Path) -> WorldBlueprint:
         notes=tuple(str(item) for item in world_raw.get("notes", [])),
         zones=tuple(zones),
     )
+
+
+def load_zone_overlays(path: Path | None) -> tuple[ZoneOverlaySpec, ...]:
+    if path is None:
+        return ()
+
+    with path.open(encoding="utf-8") as handle:
+        raw = json.load(handle)
+
+    overlay_raw = raw if isinstance(raw, list) else raw.get("zone_overlays", [])
+    overlays: list[ZoneOverlaySpec] = []
+    for item in overlay_raw:
+        payload = item.get("payload", None)
+        if payload is None:
+            payload_json = str(item.get("payload_json", "{}"))
+            payload = json.loads(payload_json)
+        overlays.append(
+            ZoneOverlaySpec(
+                zone_id=str(item["zone_id"]),
+                overlay_kind=str(item["overlay_kind"]),
+                payload=dict(payload),
+                payload_version=int(item.get("payload_version", 1)),
+                since_wall=int(item.get("since_wall", 0)),
+            )
+        )
+    return tuple(overlays)
 
 
 def load_profile_catalog(path: Path) -> TerrainProfileCatalog:
