@@ -24,6 +24,12 @@ export const CHANNELS = {
   /** Agent → Server: 顿悟候选（plan-cultivation §5.5） (Pub/Sub) */
   INSIGHT_OFFER: "bong:insight_offer",
 
+  /** Server → Agent: 心魔劫预生成请求（plan-tribulation §2.4） (Pub/Sub) */
+  HEART_DEMON_REQUEST: "bong:heart_demon_request",
+
+  /** Agent → Server: 心魔劫预生成选项（plan-tribulation §2.4） (Pub/Sub) */
+  HEART_DEMON_OFFER: "bong:heart_demon_offer",
+
   /** Server → Agent: 突破事件（plan-cultivation §6.1） (Pub/Sub) */
   BREAKTHROUGH_EVENT: "bong:breakthrough_event",
 
@@ -106,6 +112,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.AGENT_WORLD_MODEL,
   CHANNELS.INSIGHT_REQUEST,
   CHANNELS.INSIGHT_OFFER,
+  CHANNELS.HEART_DEMON_REQUEST,
+  CHANNELS.HEART_DEMON_OFFER,
   CHANNELS.BREAKTHROUGH_EVENT,
   CHANNELS.FORGE_EVENT,
   CHANNELS.CULTIVATION_DEATH,

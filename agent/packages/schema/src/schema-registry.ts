@@ -113,6 +113,10 @@ import {
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
+import {
+  HeartDemonOfferDraftV1,
+  HeartDemonPregenRequestV1,
+} from "./heart-demon.js";
 import { NarrationV1 } from "./narration.js";
 import {
   DuXuOutcomeV1,
@@ -212,6 +216,8 @@ export const SCHEMA_REGISTRY = {
   clientPayloadPlayerStateV1: PlayerStatePayloadV1,
   insightRequestV1: InsightRequestV1,
   insightOfferV1: InsightOfferV1,
+  heartDemonPregenRequestV1: HeartDemonPregenRequestV1,
+  heartDemonOfferDraftV1: HeartDemonOfferDraftV1,
   breakthroughEventV1: BreakthroughEventV1,
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
@@ -393,6 +399,9 @@ export const GENERATED_SCHEMA_FILES = {
   "client-payload-player-state-v1.json": SCHEMA_REGISTRY.clientPayloadPlayerStateV1,
   "insight-request-v1.json": SCHEMA_REGISTRY.insightRequestV1,
   "insight-offer-v1.json": SCHEMA_REGISTRY.insightOfferV1,
+  "heart-demon-pregen-request-v1.json":
+    SCHEMA_REGISTRY.heartDemonPregenRequestV1,
+  "heart-demon-offer-draft-v1.json": SCHEMA_REGISTRY.heartDemonOfferDraftV1,
   "breakthrough-event-v1.json": SCHEMA_REGISTRY.breakthroughEventV1,
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,

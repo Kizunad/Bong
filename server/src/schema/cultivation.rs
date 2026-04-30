@@ -117,6 +117,19 @@ pub struct InsightChoiceV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartDemonPregenRequestV1 {
+    pub trigger_id: String,
+    pub character_id: String,
+    pub actor_name: String,
+    pub realm: String,
+    pub qi_color_state: QiColorStateV1,
+    pub recent_biography: Vec<String>,
+    pub composure: f64,
+    pub started_tick: u64,
+    pub waves_total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreakthroughEventV1 {
     pub kind: String, // Started/Succeeded/Failed
     pub from_realm: String,

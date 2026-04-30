@@ -317,6 +317,11 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        crate::cultivation::tribulation::publish_heart_demon_pregen_requests
+            .after(crate::cultivation::tribulation::start_tribulation_system),
+    );
+    app.add_systems(
+        Update,
         tribulation_state_emit::emit_tribulation_state_payloads
             .after(crate::cultivation::tribulation::tribulation_wave_system),
     );
@@ -1302,6 +1307,35 @@ fn process_redis_inbound(
                     choices,
                 });
             }
+            RedisInbound::HeartDemonOffer(offer) => {
+                tracing::info!(
+                    "[bong][network] heart_demon_offer_received trigger_id={} choices={}",
+                    offer.trigger_id,
+                    offer.choices.len()
+                );
+                let Some((entity, _, _, _)) = clients.iter_mut().find(|(entity, _, _, _)| {
+                    let Some((entity_index, started_tick)) =
+                        parse_heart_demon_trigger_id(&offer.trigger_id)
+                    else {
+                        return false;
+                    };
+                    entity.index() == entity_index
+                        && heart_demon_trigger_id_for_entity(entity.index(), started_tick)
+                            == offer.trigger_id
+                }) else {
+                    tracing::warn!(
+                        "[bong][network] heart demon offer trigger_id={:?} has no connected target; dropping",
+                        offer.trigger_id
+                    );
+                    continue;
+                };
+                commands.entity(entity).insert(
+                    crate::cultivation::tribulation::PendingHeartDemonOffer {
+                        trigger_id: offer.trigger_id.clone(),
+                        payload: offer,
+                    },
+                );
+            }
         }
     }
 
@@ -1310,6 +1344,21 @@ fn process_redis_inbound(
             "[bong][network] redis inbound drain hit budget {REDIS_INBOUND_DRAIN_BUDGET}; remaining messages will be handled next tick"
         );
     }
+}
+
+fn parse_heart_demon_trigger_id(trigger_id: &str) -> Option<(u32, u64)> {
+    let mut parts = trigger_id.split(':');
+    let prefix = parts.next()?;
+    let entity_index = parts.next()?.parse().ok()?;
+    let started_tick = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || prefix != "heart_demon" {
+        return None;
+    }
+    Some((entity_index, started_tick))
+}
+
+fn heart_demon_trigger_id_for_entity(entity_index: u32, started_tick: u64) -> String {
+    format!("heart_demon:{entity_index}:{started_tick}")
 }
 
 fn process_agent_world_model_envelope(
@@ -1961,6 +2010,7 @@ pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::server_data::{HeartDemonOfferChoiceV1, HeartDemonOfferV1};
     use crossbeam_channel::{bounded, unbounded, Receiver};
     use std::time::Duration;
     use valence::testing::create_mock_client;
@@ -2025,6 +2075,67 @@ mod tests {
             .expect("drain should return immediately when channel is empty");
 
         assert_eq!(drained, 0);
+    }
+
+    #[test]
+    fn parse_heart_demon_trigger_id_requires_current_format() {
+        assert_eq!(
+            parse_heart_demon_trigger_id("heart_demon:42:1200"),
+            Some((42, 1200))
+        );
+        assert_eq!(
+            parse_heart_demon_trigger_id("heart_demon:demon:42:1200"),
+            None
+        );
+        assert_eq!(parse_heart_demon_trigger_id("insight:42:1200"), None);
+    }
+
+    #[test]
+    fn process_redis_inbound_caches_heart_demon_offer_for_matching_client() {
+        let (tx_outbound, _rx_outbound) = unbounded();
+        let (tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(CommandExecutorResource::default());
+        app.insert_resource(NarrationDedupeResource::default());
+        app.add_event::<crate::cultivation::insight::InsightOffer>();
+        app.add_systems(Update, process_redis_inbound);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let offer = HeartDemonOfferV1 {
+            offer_id: format!("heart_demon:{}:1000", entity.index()),
+            trigger_id: format!("heart_demon:{}:1000", entity.index()),
+            trigger_label: "心魔照见".to_string(),
+            realm_label: "渡虚劫 · 心魔".to_string(),
+            composure: 0.6,
+            quota_remaining: 1,
+            quota_total: 1,
+            expires_at_ms: 123,
+            choices: vec![HeartDemonOfferChoiceV1 {
+                choice_id: "heart_demon_choice_0".to_string(),
+                category: "Composure".to_string(),
+                title: "守本心".to_string(),
+                effect_summary: "稳住心神，回复少量当前真元".to_string(),
+                flavor: "旧事浮起，仍可不逐影。".to_string(),
+                style_hint: "稳妥".to_string(),
+            }],
+        };
+
+        tx_inbound
+            .send(RedisInbound::HeartDemonOffer(offer.clone()))
+            .expect("heart demon offer should enqueue");
+        app.update();
+
+        let cached = app
+            .world()
+            .get::<crate::cultivation::tribulation::PendingHeartDemonOffer>(entity)
+            .expect("matching heart demon offer should be cached on client entity");
+        assert_eq!(cached.trigger_id, offer.trigger_id);
+        assert_eq!(cached.payload.choices[0].choice_id, "heart_demon_choice_0");
     }
 
     mod world_state_tests {

@@ -11,20 +11,23 @@ use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING,
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FORGE_EVENT,
-    CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_PLAYER_CHAT, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK,
-    CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
+    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_PLAYER_CHAT, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
-    BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, InsightOfferV1, InsightRequestV1,
+    BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, HeartDemonPregenRequestV1,
+    InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{AgingEventV1, DuoSheEventV1, LifespanEventV1};
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
+use crate::schema::server_data::HeartDemonOfferV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
@@ -43,6 +46,7 @@ pub enum RedisInbound {
     AgentNarration(NarrationV1),
     AgentWorldModel(AgentWorldModelEnvelopeV1),
     InsightOffer(InsightOfferV1),
+    HeartDemonOffer(HeartDemonOfferV1),
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +63,7 @@ pub enum RedisOutbound {
     ForgeOutcome(ForgeOutcomePayloadV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
+    HeartDemonRequest(HeartDemonPregenRequestV1),
     DeathInsight(DeathInsightRequestV1),
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
@@ -381,6 +386,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::HeartDemonRequest(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize HeartDemonPregenRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_HEART_DEMON_REQUEST,
+                payload,
+            })
+        }
         RedisOutbound::DeathInsight(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
@@ -622,7 +638,7 @@ async fn connect_bridge_session(
 
     subscribe_inbound_channels(&mut pubsub).await?;
     tracing::info!(
-        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_AGENT_WORLD_MODEL}, {CH_INSIGHT_OFFER}"
+        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_AGENT_WORLD_MODEL}, {CH_INSIGHT_OFFER}, {CH_HEART_DEMON_OFFER}"
     );
 
     let tx_to_game_clone = tx_to_game.clone();
@@ -651,6 +667,11 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .subscribe(CH_INSIGHT_OFFER)
         .await
         .map_err(|error| format!("failed to subscribe to {CH_INSIGHT_OFFER}: {error}"))?;
+
+    pubsub
+        .subscribe(CH_HEART_DEMON_OFFER)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_HEART_DEMON_OFFER}: {error}"))?;
 
     Ok(())
 }
@@ -773,6 +794,11 @@ async fn run_subscriber_task(
                         offer.trigger_id,
                         offer.choices.len()
                     ),
+                    RedisInbound::HeartDemonOffer(offer) => tracing::info!(
+                        "[bong][redis] received heart demon offer: trigger={} ({} choices)",
+                        offer.trigger_id,
+                        offer.choices.len()
+                    ),
                 }
 
                 if tx_to_game.send(inbound).is_err() {
@@ -846,6 +872,12 @@ fn parse_inbound_message(
                 ValidationError::new(format!("failed to deserialize InsightOfferV1: {error}"))
             })?;
             Ok(Some(RedisInbound::InsightOffer(offer)))
+        }
+        CH_HEART_DEMON_OFFER => {
+            let offer = serde_json::from_value::<HeartDemonOfferV1>(value).map_err(|error| {
+                ValidationError::new(format!("failed to deserialize HeartDemonOfferV1: {error}"))
+            })?;
+            Ok(Some(RedisInbound::HeartDemonOffer(offer)))
         }
         _ => Ok(None),
     }
@@ -1269,6 +1301,39 @@ mod redis_bridge_tests {
         .expect("death payload should serialize");
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_heart_demon_requests_on_dedicated_channel() {
+        let command = prepare_outbound_command(RedisOutbound::HeartDemonRequest(
+            HeartDemonPregenRequestV1 {
+                trigger_id: "heart_demon:1:1000".into(),
+                character_id: "offline:Azure".into(),
+                actor_name: "Azure".into(),
+                realm: "Spirit".into(),
+                qi_color_state: crate::schema::cultivation::QiColorStateV1 {
+                    main: "Mellow".into(),
+                    secondary: None,
+                    is_chaotic: false,
+                    is_hunyuan: false,
+                },
+                recent_biography: vec!["t240:reach:Spirit".into()],
+                composure: 0.7,
+                started_tick: 1000,
+                waves_total: 5,
+            },
+        ))
+        .expect("heart demon request should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_HEART_DEMON_REQUEST);
+                let v: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(v["trigger_id"], "heart_demon:1:1000");
+                assert_eq!(v["recent_biography"][0], "t240:reach:Spirit");
+            }
             other => panic!("expected publish, got {other:?}"),
         }
     }
@@ -1747,6 +1812,30 @@ mod redis_bridge_tests {
             parse_inbound_message(CH_AGENT_COMMAND, arbiter_agent_command)
                 .expect("arbiter command payload should pass"),
             Some(RedisInbound::AgentCommand(_))
+        ));
+
+        let heart_demon_offer = r#"{
+            "offer_id": "heart_demon:1:1000",
+            "trigger_id": "heart_demon:1:1000",
+            "trigger_label": "心魔照见",
+            "realm_label": "渡虚劫 · 心魔",
+            "composure": 0.7,
+            "quota_remaining": 1,
+            "quota_total": 1,
+            "expires_at_ms": 123,
+            "choices": [{
+                "choice_id": "heart_demon_choice_0",
+                "category": "Composure",
+                "title": "守本心",
+                "effect_summary": "稳住心神，回复少量当前真元",
+                "flavor": "旧事浮起，仍可守心。",
+                "style_hint": "稳妥"
+            }]
+        }"#;
+        assert!(matches!(
+            parse_inbound_message(CH_HEART_DEMON_OFFER, heart_demon_offer)
+                .expect("heart demon offer payload should pass"),
+            Some(RedisInbound::HeartDemonOffer(_))
         ));
 
         let invalid_spawn_npc = r#"{

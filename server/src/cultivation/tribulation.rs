@@ -24,6 +24,10 @@ use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
+use crate::schema::cultivation::{
+    color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
+};
+use crate::schema::server_data::HeartDemonOfferV1;
 use crate::schema::tribulation::{
     DuXuOutcomeV1, DuXuResultV1, TribulationEventV1, TribulationPhaseV1,
 };
@@ -32,7 +36,7 @@ use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 
 use super::breakthrough::skill_cap_for_realm;
-use super::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
     complete_tribulation_ascension, delete_active_tribulation, load_ascension_quota,
@@ -88,6 +92,12 @@ pub struct TribulationState {
     pub participants: Vec<String>,
     pub failed: bool,
     pub half_step_on_success: bool,
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct PendingHeartDemonOffer {
+    pub trigger_id: String,
+    pub payload: HeartDemonOfferV1,
 }
 
 #[derive(Debug, Clone, Copy, Component)]
@@ -195,6 +205,7 @@ pub struct TribulationAnnounce {
     pub actor_name: String,
     pub epicenter: [f64; 3],
     pub waves_total: u32,
+    pub started_tick: u64,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -382,6 +393,7 @@ pub fn start_tribulation_system(
                     .unwrap_or_else(|| lifecycle.character_id.clone()),
                 epicenter: [p.x, p.y, p.z],
                 waves_total: ev.waves_total.clamp(1, DUXU_MAX_WAVES),
+                started_tick: ev.started_tick,
             });
             tracing::info!(
                 "[bong][cultivation] {:?} initiated tribulation ({} waves)",
@@ -934,9 +946,11 @@ pub fn tribulation_wave_system(
                     },
                 });
                 state.phase = TribulationPhase::Settle;
-                commands
-                    .entity(ev.entity)
-                    .remove::<(TribulationState, HeartDemonResolution)>();
+                commands.entity(ev.entity).remove::<(
+                    TribulationState,
+                    HeartDemonResolution,
+                    PendingHeartDemonOffer,
+                )>();
                 tracing::info!(
                     "[bong][cultivation] {:?} settled DuXu as {:?} after {} waves",
                     ev.entity,
@@ -1007,9 +1021,11 @@ pub fn tribulation_failure_system(
                 },
             });
         }
-        commands
-            .entity(ev.entity)
-            .remove::<(TribulationState, HeartDemonResolution)>();
+        commands.entity(ev.entity).remove::<(
+            TribulationState,
+            HeartDemonResolution,
+            PendingHeartDemonOffer,
+        )>();
     }
 }
 
@@ -1149,9 +1165,11 @@ fn settle_fled_tribulation(
         entity,
         tick: fled_tick,
     });
-    commands
-        .entity(entity)
-        .remove::<(TribulationState, HeartDemonResolution)>();
+    commands.entity(entity).remove::<(
+        TribulationState,
+        HeartDemonResolution,
+        PendingHeartDemonOffer,
+    )>();
 }
 
 #[allow(clippy::type_complexity)]
@@ -1210,9 +1228,11 @@ pub fn tribulation_intercept_death_system(
                 waves_survived: state.wave_current,
             },
         });
-        commands
-            .entity(death.target)
-            .remove::<(TribulationState, HeartDemonResolution)>();
+        commands.entity(death.target).remove::<(
+            TribulationState,
+            HeartDemonResolution,
+            PendingHeartDemonOffer,
+        )>();
     }
 }
 
@@ -1310,6 +1330,66 @@ pub fn publish_tribulation_events(
         let _ = redis
             .tx_outbound
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+    }
+}
+
+const HEART_DEMON_RECENT_BIO_N: usize = 12;
+
+#[allow(clippy::type_complexity)]
+pub fn publish_heart_demon_pregen_requests(
+    redis: Res<RedisBridgeResource>,
+    mut announce: EventReader<TribulationAnnounce>,
+    players: Query<(Option<&Cultivation>, Option<&QiColor>, Option<&LifeRecord>)>,
+) {
+    for ev in announce.read() {
+        if ev.waves_total < DUXU_HEART_DEMON_WAVE {
+            continue;
+        }
+        let (cultivation, qi_color, life_record) =
+            players.get(ev.entity).unwrap_or((None, None, None));
+        let payload = HeartDemonPregenRequestV1 {
+            trigger_id: heart_demon_trigger_id(ev.entity.index(), ev.started_tick),
+            character_id: ev.char_id.clone(),
+            actor_name: ev.actor_name.clone(),
+            realm: cultivation
+                .map(|cultivation| realm_to_string(cultivation.realm).to_string())
+                .unwrap_or_else(|| realm_to_string(Realm::Spirit).to_string()),
+            qi_color_state: qi_color_state_for_request(qi_color),
+            recent_biography: life_record
+                .map(|record| {
+                    record
+                        .recent_summary(HEART_DEMON_RECENT_BIO_N)
+                        .iter()
+                        .map(|entry| format!("{entry:?}"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            composure: cultivation
+                .map(|cultivation| cultivation.composure)
+                .unwrap_or(0.5),
+            started_tick: ev.started_tick,
+            waves_total: ev.waves_total,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(crate::network::redis_bridge::RedisOutbound::HeartDemonRequest(payload));
+    }
+}
+
+fn heart_demon_trigger_id(entity_index: u32, started_tick: u64) -> String {
+    format!("heart_demon:{entity_index}:{started_tick}")
+}
+
+fn qi_color_state_for_request(qi_color: Option<&QiColor>) -> QiColorStateV1 {
+    let default_qi_color = QiColor::default();
+    let qi_color = qi_color.unwrap_or(&default_qi_color);
+    QiColorStateV1 {
+        main: color_kind_to_string(qi_color.main).to_string(),
+        secondary: qi_color
+            .secondary
+            .map(|color| color_kind_to_string(color).to_string()),
+        is_chaotic: qi_color.is_chaotic,
+        is_hunyuan: qi_color.is_hunyuan,
     }
 }
 
@@ -1709,6 +1789,7 @@ mod tests {
             actor_name: "Azure".to_string(),
             epicenter: [12.0, 66.0, -8.0],
             waves_total: 3,
+            started_tick: 0,
         });
 
         app.update();

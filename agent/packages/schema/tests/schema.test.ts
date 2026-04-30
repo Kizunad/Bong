@@ -10,6 +10,10 @@ import {
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
+import {
+  HeartDemonOfferDraftV1,
+  HeartDemonPregenRequestV1,
+} from "../src/heart-demon.js";
 import { validateBiographyEntryV1Contract } from "../src/biography.js";
 import {
   AgingEventV1,
@@ -276,6 +280,43 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.heart-demon-offer.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts heart demon pregen request and offer draft", () => {
+    const request = {
+      trigger_id: "heart_demon:1:1000",
+      character_id: "offline:Azure",
+      actor_name: "Azure",
+      realm: "Spirit",
+      qi_color_state: { main: "Mellow", is_chaotic: false, is_hunyuan: false },
+      recent_biography: ["t240:reach:Spirit"],
+      composure: 0.7,
+      started_tick: 1000,
+      waves_total: 5,
+    };
+    const draft = {
+      offer_id: "heart_demon:1:1000",
+      trigger_id: "heart_demon:1:1000",
+      trigger_label: "心魔劫临身",
+      realm_label: "渡虚劫 · 心魔",
+      composure: 0.7,
+      quota_remaining: 1,
+      quota_total: 1,
+      expires_at_ms: 123,
+      choices: [
+        {
+          choice_id: "heart_demon_choice_0",
+          category: "Composure",
+          title: "守本心",
+          effect_summary: "稳住心神，回复少量当前真元",
+          flavor: "旧事浮起，仍可守心。",
+          style_hint: "稳妥",
+        },
+      ],
+    };
+
+    expect(validate(HeartDemonPregenRequestV1, request).ok).toBe(true);
+    expect(validate(HeartDemonOfferDraftV1, draft).ok).toBe(true);
   });
 
   it("server-data.tribulation-broadcast.sample.json", () => {

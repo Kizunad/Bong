@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{Client, Entity, EventReader, Query, With};
 
 use crate::cultivation::tribulation::{
-    TribulationState, TribulationWaveCleared, DUXU_HEART_DEMON_TIMEOUT_TICKS, DUXU_HEART_DEMON_WAVE,
+    PendingHeartDemonOffer, TribulationState, TribulationWaveCleared,
+    DUXU_HEART_DEMON_TIMEOUT_TICKS, DUXU_HEART_DEMON_WAVE,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
@@ -15,18 +16,18 @@ const MILLIS_PER_TICK: u64 = 50;
 
 pub fn emit_heart_demon_offer_payloads(
     mut clients: Query<(Entity, &mut Client), With<Client>>,
-    tribulations: Query<&TribulationState>,
+    tribulations: Query<(&TribulationState, Option<&PendingHeartDemonOffer>)>,
     mut cleared: EventReader<TribulationWaveCleared>,
 ) {
     for ev in cleared.read() {
         if ev.wave != DUXU_HEART_DEMON_WAVE {
             continue;
         }
-        let Ok(state) = tribulations.get(ev.entity) else {
+        let Ok((state, pregen)) = tribulations.get(ev.entity) else {
             continue;
         };
         let payload = ServerDataV1::new(ServerDataPayloadV1::HeartDemonOffer(
-            default_heart_demon_offer(ev.entity, state),
+            heart_demon_offer_for_client(ev.entity, state, pregen),
         ));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -44,10 +45,43 @@ pub fn emit_heart_demon_offer_payloads(
     }
 }
 
+fn heart_demon_offer_for_client(
+    entity: Entity,
+    state: &TribulationState,
+    pregen: Option<&PendingHeartDemonOffer>,
+) -> HeartDemonOfferV1 {
+    let expected_trigger_id = heart_demon_trigger_id(entity.index(), state.started_tick);
+    pregen
+        .filter(|offer| offer.trigger_id == expected_trigger_id)
+        .filter(|offer| heart_demon_offer_passes_server_guard(&offer.payload))
+        .map(|offer| offer.payload.clone())
+        .unwrap_or_else(|| default_heart_demon_offer(entity, state))
+}
+
+fn heart_demon_offer_passes_server_guard(offer: &HeartDemonOfferV1) -> bool {
+    let expected = [
+        ("heart_demon_choice_0", "Composure"),
+        ("heart_demon_choice_1", "Breakthrough"),
+        ("heart_demon_choice_2", "Perception"),
+    ];
+    offer.choices.len() >= expected.len()
+        && offer
+            .choices
+            .iter()
+            .zip(expected)
+            .all(|(choice, (choice_id, category))| {
+                choice.choice_id == choice_id
+                    && choice.category == category
+                    && !choice.title.trim().is_empty()
+                    && !choice.effect_summary.trim().is_empty()
+                    && !choice.flavor.trim().is_empty()
+            })
+}
+
 fn default_heart_demon_offer(entity: Entity, state: &TribulationState) -> HeartDemonOfferV1 {
     HeartDemonOfferV1 {
-        offer_id: format!("heart_demon:{}:{}", entity.index(), state.started_tick),
-        trigger_id: format!("heart_demon:{}:{}", entity.index(), state.started_tick),
+        offer_id: heart_demon_trigger_id(entity.index(), state.started_tick),
+        trigger_id: heart_demon_trigger_id(entity.index(), state.started_tick),
         trigger_label: "心魔劫临身".to_string(),
         realm_label: "渡虚劫 · 心魔".to_string(),
         composure: 0.5,
@@ -82,6 +116,10 @@ fn default_heart_demon_offer(entity: Entity, state: &TribulationState) -> HeartD
             },
         ],
     }
+}
+
+fn heart_demon_trigger_id(entity_index: u32, started_tick: u64) -> String {
+    format!("heart_demon:{entity_index}:{started_tick}")
 }
 
 fn now_ms() -> u64 {
@@ -197,5 +235,112 @@ mod tests {
         assert!(offer.choices.iter().any(|choice| {
             choice.category == "Composure" && choice.choice_id == "heart_demon_choice_0"
         }));
+    }
+
+    #[test]
+    fn pregen_heart_demon_offer_is_used_when_trigger_matches() {
+        let entity = Entity::from_raw(1);
+        let state = TribulationState {
+            kind: crate::cultivation::tribulation::TribulationKind::DuXu,
+            phase: crate::cultivation::tribulation::TribulationPhase::HeartDemon,
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: DUXU_HEART_DEMON_WAVE,
+            waves_total: 5,
+            started_tick: 1_000,
+            phase_started_tick: 1_200,
+            next_wave_tick: 1_500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        };
+        let pregen = PendingHeartDemonOffer {
+            trigger_id: format!("heart_demon:{}:1000", entity.index()),
+            payload: HeartDemonOfferV1 {
+                offer_id: "agent-offer".to_string(),
+                trigger_id: format!("heart_demon:{}:1000", entity.index()),
+                trigger_label: "心魔照见".to_string(),
+                realm_label: "渡虚劫 · 心魔".to_string(),
+                composure: 0.8,
+                quota_remaining: 1,
+                quota_total: 1,
+                expires_at_ms: 1,
+                choices: vec![
+                    HeartDemonOfferChoiceV1 {
+                        choice_id: "heart_demon_choice_0".to_string(),
+                        category: "Composure".to_string(),
+                        title: "记起旧愿".to_string(),
+                        effect_summary: "稳住心神，回复少量当前真元".to_string(),
+                        flavor: "旧愿照见，仍可守心。".to_string(),
+                        style_hint: "稳妥".to_string(),
+                    },
+                    HeartDemonOfferChoiceV1 {
+                        choice_id: "heart_demon_choice_1".to_string(),
+                        category: "Breakthrough".to_string(),
+                        title: "斩旧影".to_string(),
+                        effect_summary: "若斩错心魔，将损当前真元并强化下一道开天雷".to_string(),
+                        flavor: "刀锋照见自己的影。".to_string(),
+                        style_hint: "冒险".to_string(),
+                    },
+                    HeartDemonOfferChoiceV1 {
+                        choice_id: "heart_demon_choice_2".to_string(),
+                        category: "Perception".to_string(),
+                        title: "无解".to_string(),
+                        effect_summary: "承认无解，不得增益也不受真元惩罚".to_string(),
+                        flavor: "此题无门。".to_string(),
+                        style_hint: "止损".to_string(),
+                    },
+                ],
+            },
+        };
+
+        let offer = heart_demon_offer_for_client(entity, &state, Some(&pregen));
+
+        assert_eq!(offer.offer_id, "agent-offer");
+        assert_eq!(offer.choices[0].title, "记起旧愿");
+    }
+
+    #[test]
+    fn malformed_pregen_offer_falls_back_to_default_choices() {
+        let entity = Entity::from_raw(1);
+        let state = TribulationState {
+            kind: crate::cultivation::tribulation::TribulationKind::DuXu,
+            phase: crate::cultivation::tribulation::TribulationPhase::HeartDemon,
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: DUXU_HEART_DEMON_WAVE,
+            waves_total: 5,
+            started_tick: 1_000,
+            phase_started_tick: 1_200,
+            next_wave_tick: 1_500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        };
+        let pregen = PendingHeartDemonOffer {
+            trigger_id: format!("heart_demon:{}:1000", entity.index()),
+            payload: HeartDemonOfferV1 {
+                offer_id: "bad-agent-offer".to_string(),
+                trigger_id: format!("heart_demon:{}:1000", entity.index()),
+                trigger_label: "心魔照见".to_string(),
+                realm_label: "渡虚劫 · 心魔".to_string(),
+                composure: 0.8,
+                quota_remaining: 1,
+                quota_total: 1,
+                expires_at_ms: 1,
+                choices: vec![HeartDemonOfferChoiceV1 {
+                    choice_id: "heart_demon_choice_1".to_string(),
+                    category: "Breakthrough".to_string(),
+                    title: "错位执念".to_string(),
+                    effect_summary: "错误顺序".to_string(),
+                    flavor: "这会把坚心入口挤掉。".to_string(),
+                    style_hint: "坏".to_string(),
+                }],
+            },
+        };
+
+        let offer = heart_demon_offer_for_client(entity, &state, Some(&pregen));
+
+        assert_ne!(offer.offer_id, "bad-agent-offer");
+        assert_eq!(offer.choices[0].choice_id, "heart_demon_choice_0");
+        assert_eq!(offer.choices[0].category, "Composure");
     }
 }

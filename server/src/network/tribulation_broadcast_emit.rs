@@ -210,6 +210,7 @@ mod tests {
             actor_name: "Azure".to_string(),
             epicenter: [0.0, 66.0, 0.0],
             waves_total: 3,
+            started_tick: 0,
         });
 
         app.update();
@@ -244,6 +245,7 @@ mod tests {
             actor_name: "Azure".to_string(),
             epicenter: [301.0, 66.0, -301.0],
             waves_total: 3,
+            started_tick: 0,
         });
 
         app.update();
