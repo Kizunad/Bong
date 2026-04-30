@@ -456,14 +456,14 @@ pub struct WeaponBrokenV1 {
 
 | Phase | 内容 | 工作量（天） | 依赖 |
 |---|---|---|---|
-| **W0 plan 文档** | 本文档 | 1 | — |
+| **W0 plan 文档** ✅ | 本文档 | 1 | — |
 | **W1 Weapon component + schema** ✅ | §1.3 + §8.2 `WeaponEquippedV1` + `WeaponBroken` 事件 + TOML 扩展 | 1 | — |
-| **W2 装备/卸下 gameplay** | inventory-v1 `InventoryMoveRequest` 处理 filling + §2 状态机 | 1.5 | W1 + inv-v1 P2 |
-| **W3 Mixin 关原生 UI** | §4.2 + §4.4 两个 Mixin + InspectScreen 背包 tab 接管 | 1 | — |
-| **W4 BongHotbarHudPlanner** | §4.3 自定义 hotbar 渲染替代原生 | 1.5 | W3 |
-| **W5 主手 3D 渲染** | §5 SML 依赖接入（build.gradle + Modrinth maven）+ HeldItemRenderer Mixin + 2-3 把武器 OBJ（Tripo→Blockbench→OBJ 试点管线） | 2.5 | W1 |
-| **W6 战斗加成 + 耐久** | §6 resolve 插桩 + §6.3 WeaponBroken 处理 | 1 | W1 + W5 |
-| **W8 武器物品清单 + 资源** | §10 7 把武器 TOML + 7 贴图（1×1 纯色）+ 3-7 OBJ 模型（Tripo→Blockbench→OBJ）| 2 | W5 |
+| **W2 装备/卸下 gameplay** ✅ | inventory-v1 `InventoryMoveRequest` 处理 filling + §2 状态机 | 1.5 | W1 + inv-v1 P2 |
+| **W3 Mixin 关原生 UI** ✅ | §4.2 + §4.4 两个 Mixin + InspectScreen 背包 tab 接管 | 1 | — |
+| **W4 BongHotbarHudPlanner** ✅ | §4.3 自定义 hotbar 渲染替代原生 | 1.5 | W3 |
+| **W5 主手 3D 渲染** ✅ | §5 SML 依赖接入（build.gradle + Modrinth maven）+ HeldItemRenderer Mixin + 2-3 把武器 OBJ（Tripo→Blockbench→OBJ 试点管线） | 2.5 | W1 |
+| **W6 战斗加成 + 耐久** ✅ | §6 resolve 插桩 + §6.3 WeaponBroken 处理 | 1 | W1 + W5 |
+| **W8 武器物品清单 + 资源** ✅ | §10 7 把武器 TOML + 7 贴图（1×1 纯色）+ 3-7 OBJ 模型（Tripo→Blockbench→OBJ）| 2 | W5 |
 
 **MVP 路径**（W1 + W2 + W3 + W5（仅 1 把占位模型）+ W6）：≈ 7 天
 
@@ -531,3 +531,47 @@ pub struct WeaponBrokenV1 {
 
 - 2026-04-25：W1 数据模型落地确认（combat/weapon.rs 495 行 + client weapon 4 文件）
 - 2026-04-23：PR #41 合并（merge commit 7bbf5bf6）—— client 收口武器模型注册与贴图资源（feat 63ec9f07）/ 对齐破损掉地与法宝装备校验（fix 98fc144c）/ server 放宽破损武器掉地对注册表的测试依赖（fix a7c28e4b）；W1+W2 数据模型 + client 渲染骨架 + 装备槽 closure 已闭环。
+- 2026-04-30：实地核验确认 W2–W8 全部代码落地（commit 链 a8c2f1a8 / 6675900a / a424a9e8 / e92d63e4 / 3cac6240 / f0e658ac），原文档表格仅 W1 标 ✅ 是文档维护滞后；本次补全 ✅ 标记并归档 `docs/finished_plans/`。补完工作（v1.1 schema/channel/伤害/持久化/资源对齐）已由 `plan-weapon-v1.1.md` 收口归档（PR #69 / #80）。
+
+---
+
+## Finish Evidence
+
+**归档时间**：2026-04-30
+
+### 落地清单
+
+| 阶段 | 关键交付（实际路径） |
+|---|---|
+| **W1** Weapon component + schema | `server/src/combat/weapon.rs`（507 行：`Weapon` struct / `WeaponKind` / `base_attack` / `qi_cost_mul`）；`server/src/schema/combat_hud.rs`（`WeaponEquippedV1` / `WeaponBrokenV1`）；`server/assets/items/weapons.toml`（7 条 `[[item]]`） |
+| **W2** 装备/卸下 gameplay | `server/src/network/weapon_equipped_emit.rs` emit；`PlayerInventory.equipped.main_hand` Weapon component 插入/移除 |
+| **W3** Mixin 关原生 UI | `client/.../mixin/MixinMinecraftClient.java`（拦 `InventoryScreen` 重定向 InspectScreen）；`client/.../mixin/MixinInGameHud.java` 注释明确"W4 接管原生 hotbar" |
+| **W4** BongHotbarHudPlanner | `client/.../hud/WeaponHotbarHudPlanner.java`；`BongHudOrchestrator.java:131` 调用注册 |
+| **W5** 主手 3D 渲染 | `client/.../mixin/MixinHeldItemRenderer.java` + `client/.../weapon/WeaponRenderBootstrap.java` + `client/.../weapon/BongWeaponModelRegistry.java`；`BongClient.java` 注册调用；Special Model Loader 依赖接入 build.gradle |
+| **W6** 战斗加成 + 耐久 | `weapon.rs::attack_multiplier = max(1.0, base_attack/10.0)`；`combat/resolve.rs` weapon 加成插桩；`WeaponBroken` 事件链 |
+| **W8** 武器物品清单 + 资源 | `server/assets/items/weapons.toml` 7 条；`client/.../resources/assets/bong/models/weapon/` 12 个 OBJ/MTL 模型目录（含 iron_sword / spirit_sword / bronze_saber / hand_wrap / crystal_shard_dagger / bone_dagger / cracked_heart / wooden_staff / flying_sword_feixuan / placeholder_sword / rusted_blade / wooden_totem，覆盖并超出 7 把要求） |
+
+### 关键 commit
+
+- `a8c2f1a8` W2a 装备 emit
+- `6675900a` W2b 卸下流程
+- `a424a9e8` W5-W8 武器资产管线（OBJ/MTL/SML）
+- `e92d63e4` 打通武器耐久掉落与法宝装备同步
+- `3cac6240` test(client): 固化武器资源路径契约（`BongWeaponModelRegistryTest`）
+- `f0e658ac` fix(server): 提升铁剑伤害验收倍率
+- PR #41 主体合并（merge commit `7bbf5bf6`）
+
+### 跨仓库核验
+
+- **server**：`combat::weapon::Weapon` / `WeaponKind` / `WeaponBroken` event；`schema::combat_hud::{WeaponEquippedV1, WeaponBrokenV1}`；`network::weapon_equipped_emit`
+- **agent**：schema TypeBox `agent/packages/schema/src/combat_hud.ts` 双端对齐
+- **client**：`mixin/{MixinHeldItemRenderer, MixinInGameHud, MixinMinecraftClient}`；`weapon/{WeaponRenderBootstrap, BongWeaponModelRegistry}`；`hud/WeaponHotbarHudPlanner`；`BongWeaponModelRegistryTest` 路径契约固化
+- **资产**：12 个 weapon model 目录 + 7 条 weapons.toml 条目
+
+### 遗留 / 后续
+
+- **§5.2 第三人称（他人持握）**：MVP 明确不做，留 `plan-forge-v2` 或后续武器迭代处理
+- **§5.3.Y 路径 Y（poly_mesh + GeckoLib fork）**：跨资产评估钩子，留 `plan-armor-v1` / `plan-monster-v1` 启动时重评估
+- **§12.2 开放问题 4-7**：tier 2+ 内置 Technique → `plan-skill-v1`（已归档）；双武器并持 v1 已允许；Bow ranged 留后续；AI 资源管线 ≥20 件资产时抽 `plan-asset-pipeline-v1`
+- **W7 缺位**：原表格无 W7（W6 后跳到 W8），不影响交付完整性
+- **v1.1 补完**：schema / channel / 伤害验收 / 持久化 / 资源已由 `plan-weapon-v1.1.md` 收口（PR #69 / #80），已归档

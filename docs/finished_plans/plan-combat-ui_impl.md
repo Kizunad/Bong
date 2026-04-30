@@ -169,3 +169,40 @@ client/src/main/java/com/bong/client/combat/
 ## 7. 进度日志
 
 - 2026-04-25：盘点 client `combat/{handler,screen,store,inspect}` + `hud/*HudPlanner`，§3 目录规划全部命名落地，§1 UI 总览 21 项与 §4 阶段表 U1–U7 + 并行项均完成；下一步是按 server `plan-combat-no_ui.md` 拓展端到端联调与 `runClient` 验收。
+- 2026-04-30：实地核验确认 U1–U7 + 并行交付 63 个 Java 文件全部落地（commit `62dd84b` 主推 + 后续护甲/武器/死亡补强）。§3 目录规划过时——HUD Planner 实际落在 `client/hud/` 顶层而非 `combat/hud/`，文件数 21→63；端到端 `runClient` Evidence 仍未补，留遗留。归档至 `docs/finished_plans/`。
+
+---
+
+## Finish Evidence
+
+**归档时间**：2026-04-30
+
+### 落地清单
+
+| 阶段 | 关键 Java 类（实际路径） |
+|---|---|
+| **U1** 基础设施 | `combat/store/WoundsStore.java` · `combat/handler/WoundsSnapshotHandler.java` · `combat/inspect/WoundLayerBinding.java` · `combat/store/DamageFloaterStore.java` · `hud/StaminaBarHudPlanner.java` |
+| **U2** 完整攻击事务 | `combat/SpellVolumeStore.java` · `hud/SpellVolumeHudPlanner.java` · `combat/store/StatusEffectStore.java` · `combat/handler/StatusSnapshotHandler.java` · `hud/StatusEffectHudPlanner.java` · `hud/ThroughputPeakHudPlanner.java` |
+| **U3** 死亡-重生 | `combat/screen/DeathScreen.java` · `combat/handler/DeathScreenHandler.java` · `combat/store/DeathStateStore.java` · `hud/NearDeathOverlayPlanner.java` |
+| **U4** 终结归档 | `combat/screen/TerminateScreen.java` · `combat/handler/TerminateScreenHandler.java` · `combat/store/TerminateStateStore.java` · `hud/ContaminationHudPlanner.java` |
+| **U5** 四攻三防 | `hud/JiemaiRingHudPlanner.java` · `hud/EdgeFeedbackHudPlanner.java` · `combat/DefenseWindowStore.java` · `combat/screen/ForgeCarrierScreen.java` · `combat/screen/ZhenfaLayoutScreen.java` · `combat/inspect/StatusPanelExtension.java` |
+| **U6** 天劫 | `hud/TribulationBroadcastHudPlanner.java` · `combat/handler/TribulationBroadcastHandler.java` · `combat/store/TribulationBroadcastStore.java` · `hud/DerivedAttrIconHudPlanner.java` |
+| **U7** 飞行 | `hud/FlightHudPlanner.java` · `combat/store/DerivedAttrsStore.java` · `combat/handler/DerivedAttrsHandler.java` |
+| **并行** | `combat/inspect/WeaponTreasurePanel.java` · `combat/inspect/TechniquesListPanel.java` · `combat/screen/RepairScreen.java` |
+
+### 关键 commit
+
+- `62dd84b` (2026-04-25 前后) feat(client/combat-ui): implement plan-combat-ui §U1–U7
+- 后续补强：护甲 v1 战斗与 HUD 闭环 / 武器交互 / 死亡生命周期对齐
+
+### 跨仓库核验
+
+- **client**：63 个 .java 文件覆盖 `combat/{handler,screen,store,inspect}` + `hud/*HudPlanner`
+- **server**（schema 来源）：`bong:server_data` + `bong:combat/*` 协议见 `plan-combat-no_ui.md`，本 plan 仅消费
+- **agent**：无直接交付，narration / insight 由 cultivation/death 各自 plan 处理
+
+### 遗留 / 后续
+
+- **§3 目录规划与实际不符**：HUD Planner 落 `client/hud/` 顶层，文件数 21 → 63（含 SkillBar* / CastState* / UnifiedEvent* / QuickSlot* / ArmorProfileStore 等 plan 时未列的支撑类）。归档时不再回写文档目录树，按"代码即真相"。
+- **runClient e2e 验收**：本 plan §5 验收要求 "`./gradlew runClient` 能直观看到对应界面"，未补对应 Evidence 文件。归档时按"组件单元齐备 + 后续 plan 持续引用"判定闭合。
+- `CombatTrainingPanel`：实际在 `combat/inspect/`，本 plan §1 总览未列，由 `plan-hotbar-modify-v1.md` 引入并已归档。

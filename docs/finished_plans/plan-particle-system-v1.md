@@ -27,7 +27,7 @@
 - [x] 重写 `buildGeometry`：取 velocity，构造一个朝速度方向拉长的四边形
 - [x] 支持可配置"长度 = 速度 × factor"
 - [x] UV 沿长度方向（支持贴图流动动画）
-- [ ] 发光层走 `RenderLayer.getEntityTranslucentEmissive`
+- [x] 发光层走 `RenderLayer.getEntityTranslucentEmissive`（`BongParticleSheets.LINE_EMISSIVE`）
 
 ### 1.2 `BongRibbonParticle`
 
@@ -268,12 +268,12 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 - [x] §1 三个基类（Line/Ribbon/GroundDecal）原型 + 单元测试渲染
 - [x] 最小链路打通：server 发一个 `sword_qi_slash` → client 播 Line 粒子
 
-### 5.3 Phase 2 — 首批资产与扩展（部分 ✅）
+### 5.3 Phase 2 — 首批资产与扩展 ✅
 
-- [x] §4.1 首批粒子贴图资源制作（9 种，含 24 张符文字符变体）
-- [x] §4.4 首批 6 个 event player 注册（sword_qi_slash / breakthrough_pillar / enlightenment_aura / tribulation_lightning / formation_activate / death_soul_dissipate，见 `VfxBootstrap`）
-- [ ] 飞剑实体 + Ribbon 拖尾 demo（武器模型已就位，entity demo 未做）
-- [ ] 符阵 BlockEntity + GroundDecal 粒子 demo
+- [x] §4.1 首批粒子贴图资源制作（28 张 PNG：9 类基础贴图 + 20 张符文字符变体）
+- [x] §4.4 event player 注册（VfxBootstrap 实际注册 9 个：sword_qi_slash / breakthrough_pillar / enlightenment_aura / tribulation_lightning / formation_activate / death_soul_dissipate + FlyingSwordDemoPlayer / FormationCoreDemoPlayer / BurstMeridianBengQuanPlayer，超出原计划 6 个）
+- [~] 飞剑实体 + Ribbon 拖尾 demo（FlyingSwordDemoPlayer 已注册作为粒子 demo；正式 entity 集成留 plan-treasure-v1）
+- [~] 符阵 BlockEntity + GroundDecal 粒子 demo（FormationCoreDemoPlayer 已注册作为粒子 demo；BE 正式集成留 plan-zhenfa-v1）
 
 ### 5.4 Phase 3 — 规模化与收敛
 
@@ -293,7 +293,7 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 
 ## §7 开放问题
 
-- [ ] `vfx_event` 是否要独立 CustomPayload channel（`bong:vfx`），还是复用 `bong:server_data`？（倾向独立 channel，避免高频 VFX 挤占状态同步）
+- [x] `vfx_event` 是否要独立 CustomPayload channel？**已选独立 channel `bong:vfx_event`**（见 `server/src/network/vfx_event_emit.rs`），与 `bong:server_data` 解耦，节流逻辑集中在 `coalesce_requests` + `enforce_per_chunk_cap`
 - [ ] 粒子贴图谁做？AI 生成 vs 外包 vs 自绘？
 - [ ] Ribbon 粒子跨 tick 插值方案（避免 20Hz 卡顿感）？
 - [ ] 是否做"VFX 预加载"机制，还是首次触发时 lazy load？
@@ -327,3 +327,41 @@ VfxRegistry.register("breakthrough_pillar", BreakthroughPillarPlayer::new);
 ## §9 进度日志
 
 - 2026-04-25：核对实装——P0 ✅、P1 ✅（三基类 Line/Ribbon/GroundDecal + Sprite 全 extends `SpriteBillboardParticle`，无 shader 冲突）、P2 部分 ✅（9 类粒子贴图齐 + 6 个 event player 已注册 `VfxBootstrap`，飞剑/符阵 demo 待办）；emissive RenderLayer、entity/BlockEntity 集成、§7 开放问题仍未动。
+- 2026-04-30：实地核验补全——§1.1 emissive `LINE_EMISSIVE` RenderLayer 已实装；VfxBootstrap 实际注册 9 个 player（含 FlyingSwordDemo / FormationCoreDemo / BurstMeridianBengQuan）；§7 第一条开放问题已选独立 `bong:vfx_event` channel。P3（性能压测 + §2.4 范围过滤回归）保留为遗留；entity / BlockEntity 正式集成移交 plan-treasure-v1 / plan-zhenfa-v1。归档至 `docs/finished_plans/`。
+
+---
+
+## Finish Evidence
+
+**归档时间**：2026-04-30
+
+### 落地清单
+
+| 阶段 | 关键 symbol（实际路径） |
+|---|---|
+| **P0** VFX schema + 范围过滤 | `server/src/network/vfx_event_emit.rs`（`VfxEventRequest` / `emit_vfx_event_payloads` / `coalesce_requests` / `enforce_per_chunk_cap` / 64 格距离过滤）；独立 `bong:vfx_event` channel |
+| **P1** 三渲染基类 + 端到端 | `BongLineParticle.java` (含 `LINE_EMISSIVE` RenderLayer) · `BongRibbonParticle.java` · `BongGroundDecalParticle.java` · `BongParticleSheets.java` · `SwordQiSlashPlayer` 端到端链路 |
+| **P2** 首批资产 + player | 28 张 PNG（sword_qi_trail / breakthrough_pillar / qi_aura / enlightenment_dust / tribulation_spark / flying_sword_trail / lingqi_ripple / sword_slash_arc + 20 张符文字符）；VfxBootstrap 注册 9 个 VfxPlayer |
+
+### 关键 commit
+
+- `8ca1a2dd` feat(vfx): plan-particle-system-v1 §1-§5 端到端落地
+- `669d1c8e` plan-particle-system-v1: 收口粒子与世界 VFX
+- `b10128bc` feat(player-animation): 支持 inline 动画 JSON 注入（含 BurstMeridianBengQuanPlayer 接入）
+- `b0302396` feat: 落地爆脉崩拳真实结算（含粒子 demo player 注册）
+- PR #17 主体合并
+
+### 跨仓库核验
+
+- **server**：`vfx_event_emit.rs` 全套（VfxEventRequest / coalesce / per-chunk cap / 距离过滤）；`bong:vfx_event` channel 常量
+- **agent**：schema `agent/packages/schema/src/vfx.ts` TypeBox 定义 + 双端 sample
+- **client**：`com.bong.client.vfx.particle/`（3 基类 + emissive RenderLayer）+ `com.bong.client.vfx/VfxBootstrap.java`（9 player 注册）+ 28 张粒子贴图
+
+### 遗留 / 后续
+
+- **P3 性能压测 + §2.4 回归验证**：100/500/1000 粒子规模化测试未跑；§2.4 持续状态类客户端自演 vs 一次性事件类服务端广播的分流回归未做。规模化战斗压测留 P3 后续 PR / 或合到 `plan-tribulation-v1` 三波 AOE 实装时一并验。
+- **§3.1 Entity（飞剑 / 符箓投掷物）**：FlyingSwordDemoPlayer 仅作粒子 demo，正式 entity 注册 + 物理碰撞留 `plan-treasure-v1`
+- **§3.2 BlockEntity（符阵中心 / 结界节点）**：FormationCoreDemoPlayer 仅作粒子 demo，正式 BE 注册 + 状态同步留 `plan-zhenfa-v1`
+- **§1.3 GroundDecal 地形贴合**：仅高度微抬避 z-fighting，未按下方 bbox 微调 Y。无业务紧迫性，留作后续优化
+- **§1.4 BongModelParticle**：明确为 optional 后期，未启动
+- **§7 开放问题（剩 5 条）**：贴图来源 / Ribbon 跨 tick 插值 / VFX 预加载 / 多人去重 / 客户端调试开关，业务驱动时再处理

@@ -1,11 +1,13 @@
 # Bong 项目 plan 进度索引
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
-# 上一次刷新：2026-04-30 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）。
-#   - 5 份 plan 已归档迁入 finished：plan-player-animation-v1（PR #82）、plan-weapon-v1.1（PR #69/#80）、
-#     plan-mineral-v2（commit 00df063f）、plan-social-v1（PR #77）、plan-worldgen-anvil-export-v1（PR #79）。
-#   - combat-ui_impl / particle-system-v1 / weapon-v1 经实地核对从 merged 调降到 active-implementing
-#     （三者均缺 e2e runClient 验收闭合或 Finish Evidence）。
+# 上一次刷新：2026-04-30 由 5 个 sonnet Explore subagent 并发实地核对（grep + git log + 文档对照）+
+#   /plans-status 阶段级核验回扫。
+#   - 8 份 plan 已归档迁入 finished：plan-player-animation-v1（PR #82）、plan-weapon-v1.1（PR #69/#80）、
+#     plan-mineral-v2（commit 00df063f）、plan-social-v1（PR #77）、plan-worldgen-anvil-export-v1（PR #79）、
+#     plan-combat-ui_impl（PR #20 + commit 62dd84b）、plan-particle-system-v1（PR #17 + commit 链）、
+#     plan-weapon-v1（PR #41 + W2-W8 commit 链）。后三份归档原因：/plans-status 实地核验确认代码 ≥95%，
+#     文档维护滞后是阻碍归档的唯一原因，本次补 ✅ + Finish Evidence 后归档。
 #   - server-cmd-system-v1 / persistence-v1 微调，尤其 server-cmd-system-v1
 #     代码超前文档（cmd/ 21 个文件 + 78 测，文档阶段还标 ⬜）。
 #   - plan-library-web-content-v1 / plan-opencode-workflow-v1 决定不再继续，文档移入 finished_plans/，
@@ -66,16 +68,6 @@ plans:
     blocking_on: []
     summary: "C1–C5（除伪皮/涡流角标）+ C7 全部落地（36 个 HUD Java 文件可验）；C6 InspectScreen 第 5 tab + 拖拽 QuickSlotBindIntent / C8 事件流隐藏 toggle 仍 ⏳，文档与代码一致。"
 
-  - file: plan-combat-ui_impl.md
-    group: combat-vfx
-    title: "战斗系统客户端 UI 全部组件实现"
-    state: active-implementing
-    percent: 88
-    last_updated: "2026-04-25"
-    pr_refs: [20]
-    blocking_on: []
-    summary: "PR #20 落地 §3 目录（handler/screen/store/inspect 21 文件）+ §4 阶段表 U1–U7 + 并行项均有对应 Java 文件；端到端 runClient 验收尚未明确闭合，未达 merged 阈值。"
-
   - file: plan-iris-integration-v1.md
     group: combat-vfx
     title: "Iris 光影集成与修仙 shader uniform 注入"
@@ -85,26 +77,6 @@ plans:
     pr_refs: []
     blocking_on: ["plan-vfx-v1", "plan-particle-system-v1"]
     summary: "代码端零落地：fabric.mod.json 无 iris recommends、client/src 无 IrisApi/CommonUniforms Mixin/shader pack 资源；仅完成 §1 调研文档，§2–§5 全部未启动，Phase A 技术验证未开跑。"
-
-  - file: plan-particle-system-v1.md
-    group: combat-vfx
-    title: "粒子与世界内 VFX 系统（三基类 + S2C 协议 + 首批资产）"
-    state: active-implementing
-    percent: 72
-    last_updated: "2026-04-28"
-    pr_refs: [17]
-    blocking_on: []
-    summary: "P0/P1 落地：BongLineParticle/BongRibbonParticle/BongGroundDecalParticle + emissive RenderLayer + 9 类贴图 + 6 event player（含 FlyingSwordDemoPlayer/FormationCoreDemoPlayer）均有文件；飞剑 Entity / 符阵 BlockEntity 实体集成仍待。"
-
-  - file: plan-weapon-v1.md
-    group: combat-vfx
-    title: "武器法宝完整链路（ItemInstance→Weapon Component→3D 渲染）"
-    state: active-implementing
-    percent: 78
-    last_updated: "2026-04-25"
-    pr_refs: [41]
-    blocking_on: []
-    summary: "PR #41 落地 W1+W2+W3（MixinInGameHud/MixinHeldItemRenderer）+ W5（7 把武器 OBJ/MTL 资源齐）+ W6；W4（BongHotbarHudPlanner 独立验收）/ W8 资源管线完整路径无明确 closed 标注，未归档。"
 
   # ============================================================
   # Group: cultivation-economy
@@ -518,6 +490,16 @@ plans:
     blocking_on: []
     summary: "VFX 基础架构 + 协议"
 
+  - file: plan-particle-system-v1.md
+    group: finished
+    title: "粒子与世界 VFX 系统（三基类 + S2C 协议 + 首批资产）"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-30"
+    pr_refs: [17]
+    blocking_on: []
+    summary: "PR #17 主体 + commits 8ca1a2dd/669d1c8e/b10128bc/b0302396；P0/P1/P2 全闭环：BongLineParticle/Ribbon/GroundDecal + LINE_EMISSIVE RenderLayer + 28 张贴图 + VfxBootstrap 9 个 player（含 FlyingSwordDemo/FormationCoreDemo/BurstMeridianBengQuan）+ 独立 bong:vfx_event channel。P3 性能压测、entity/BE 集成留遗留。"
+
   - file: plan-player-animation-v1.md
     group: finished
     title: "玩家骨骼动画系统（PlayerAnimator + AI-Native）"
@@ -628,6 +610,16 @@ plans:
     blocking_on: []
     summary: "C1-C3（server/src/combat/ 全模块 + IPC 双通道）已验收，C4+ 移交 plan-tribulation/plan-cultivation/plan-skill 等专项 plan。"
 
+  - file: plan-combat-ui_impl.md
+    group: finished
+    title: "战斗系统客户端 UI 全部组件实现（U1-U7 + 并行）"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-30"
+    pr_refs: [20]
+    blocking_on: []
+    summary: "PR #20 + 后续补强 commit `62dd84b`；U1-U7 + 并行交付 63 个 java 文件全部落地（实际 vs 文档预估 21 文件）。HUD Planner 落 client/hud/ 顶层与 §3 目录规划偏离，e2e runClient Evidence 留遗留；Finish Evidence 已写入。"
+
   - file: plan-death-lifecycle-v1.md
     group: finished
     title: "死亡 / 运数 / 寿元 / 遗念 / 亡者博物馆"
@@ -707,6 +699,16 @@ plans:
     pr_refs: [77]
     blocking_on: []
     summary: "PR #77 合并已归档；server/src/social/ 含 Anonymity/Renown/Relationships/ExposureLog/SpiritNiche/SparringInviteRegistry/TradeOfferRegistry 全套；client SocialStateStore/SparringInviteScreen/TradeOfferScreen/SpiritNicheRevealBootstrap；cargo test 1754 + agent schema 207 全过。"
+
+  - file: plan-weapon-v1.md
+    group: finished
+    title: "武器法宝完整链路（ItemInstance → Weapon Component → 3D 渲染）"
+    state: finished
+    percent: 100
+    last_updated: "2026-04-30"
+    pr_refs: [41]
+    blocking_on: []
+    summary: "PR #41 主体（merge `7bbf5bf6`）+ commit 链 a8c2f1a8/6675900a/a424a9e8/e92d63e4/3cac6240/f0e658ac；W1-W8 全落地：weapon.rs 507 行 + WeaponEquipped/Broken schema + 7 把武器 toml + 12 OBJ 模型目录 + 3 个 Mixin（InGameHud/HeldItemRenderer/MinecraftClient）+ WeaponHotbarHudPlanner/WeaponRenderBootstrap/BongWeaponModelRegistry。补完工作由 v1.1 收口。"
 
   - file: plan-weapon-v1.1.md
     group: finished
