@@ -267,11 +267,15 @@ pub fn start_du_xu_request_system(
         Option<&LifeRecord>,
     )>,
 ) {
+    let mut accepted_this_tick = HashSet::new();
     for request in requests.read() {
         let Ok((cultivation, meridians, active, life_record)) = players.get(request.entity) else {
             continue;
         };
-        if active.is_some() || !du_xu_prereqs_met(cultivation, meridians) {
+        if active.is_some()
+            || accepted_this_tick.contains(&request.entity)
+            || !du_xu_prereqs_met(cultivation, meridians)
+        {
             tracing::warn!(
                 "[bong][cultivation] start_du_xu rejected entity={:?} realm={:?} opened_meridians={}",
                 request.entity,
@@ -285,6 +289,7 @@ pub fn start_du_xu_request_system(
             waves_total: du_xu_waves_total(request.requested_at_tick, life_record),
             started_tick: request.requested_at_tick,
         });
+        accepted_this_tick.insert(request.entity);
     }
 }
 
@@ -1913,6 +1918,40 @@ mod tests {
 
         let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
         assert!(events.get_reader().read(events).next().is_none());
+    }
+
+    #[test]
+    fn start_du_xu_request_dedupes_same_tick_duplicate_requests() {
+        let mut app = App::new();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+            ))
+            .id();
+
+        for _ in 0..2 {
+            app.world_mut().send_event(StartDuXuRequest {
+                entity,
+                requested_at_tick: 100,
+            });
+        }
+        app.update();
+
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].entity, entity);
+        assert_eq!(emitted[0].started_tick, 100);
     }
 
     #[test]
