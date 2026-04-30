@@ -54,7 +54,23 @@ export interface HeartDemonRuntimeStats {
 }
 
 function defaultSystemPrompt(): string {
-  return readFileSync(resolve(__dirname, "skills", "heart-demon.md"), "utf-8");
+  return readSkillPrompt("heart-demon.md");
+}
+
+function readSkillPrompt(fileName: string): string {
+  const candidates = [
+    resolve(__dirname, "skills", fileName),
+    resolve(__dirname, "../src/skills", fileName),
+  ];
+  let lastError: unknown;
+  for (const path of candidates) {
+    try {
+      return readFileSync(path, "utf-8");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 export function fallbackHeartDemonOffer(
@@ -91,13 +107,18 @@ export function applyHeartDemonArbiter(
   const choices = HEART_DEMON_CANONICAL_CHOICES.map((canonical, index) => {
     const proposed = byId.get(canonical.choice_id);
     const fallbackChoice = fallback.choices[index];
+    const title = cleanText(proposed?.title, fallbackChoice.title, 64);
+    const flavor = cleanText(proposed?.flavor, fallbackChoice.flavor, 500);
+    const styleHint = cleanText(proposed?.style_hint, canonical.style_hint, 64);
+    const useFallbackText =
+      canonical.kind === "steadfast" && leaksSteadfastTrap(`${title}\n${flavor}\n${styleHint}`);
     return {
       choice_id: canonical.choice_id,
       category: canonical.category,
-      title: cleanText(proposed?.title, fallbackChoice.title, 64),
+      title: useFallbackText ? fallbackChoice.title : title,
       effect_summary: canonical.effect_summary,
-      flavor: cleanText(proposed?.flavor, fallbackChoice.flavor, 500),
-      style_hint: cleanText(proposed?.style_hint, canonical.style_hint, 64),
+      flavor: useFallbackText ? fallbackChoice.flavor : flavor,
+      style_hint: useFallbackText ? fallbackChoice.style_hint : styleHint,
     };
   });
 
@@ -109,7 +130,7 @@ export function applyHeartDemonArbiter(
     composure: clamp01(offer.composure),
     quota_remaining: 1,
     quota_total: 1,
-    expires_at_ms: offer.expires_at_ms > 0 ? offer.expires_at_ms : fallback.expires_at_ms,
+    expires_at_ms: fallback.expires_at_ms,
     choices,
   };
 }
@@ -175,6 +196,10 @@ function cleanText(value: string | undefined, fallback: string, maxLength: numbe
   const trimmed = value?.trim();
   if (!trimmed) return fallback;
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function leaksSteadfastTrap(content: string): boolean {
+  return /陷阱|必死|无解|失败|扣|淘汰|惩罚|吞没|不可达/.test(content);
 }
 
 function clamp01(value: number): number {

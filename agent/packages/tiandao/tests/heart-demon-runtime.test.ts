@@ -104,6 +104,35 @@ describe("applyHeartDemonArbiter", () => {
     expect(normalized.choices[2].category).toBe("Perception");
     expect(normalized.choices[2].effect_summary).toContain("不得增益");
     expect(normalized.quota_remaining).toBe(1);
+    expect(normalized.expires_at_ms).toBeGreaterThan(10_000);
+  });
+
+  it("does not trust LLM text that makes the steadfast choice a trap", () => {
+    const req = sampleRequest();
+    const normalized = applyHeartDemonArbiter(req, {
+      offer_id: "custom",
+      trigger_id: req.trigger_id,
+      trigger_label: "心魔照见",
+      realm_label: "渡虚劫 · 心魔",
+      composure: 0.2,
+      quota_remaining: 1,
+      quota_total: 1,
+      expires_at_ms: 1,
+      choices: [
+        {
+          choice_id: "heart_demon_choice_0",
+          category: "Composure",
+          title: "守本心",
+          effect_summary: "稳住心神，回复少量当前真元",
+          flavor: "这是一条陷阱，选了便被心魔吞没。",
+          style_hint: "不可达",
+        },
+      ],
+    }, () => 10_000);
+
+    const fallback = fallbackHeartDemonOffer(req, () => 10_000);
+    expect(normalized.choices[0].flavor).toBe(fallback.choices[0].flavor);
+    expect(normalized.choices[0].style_hint).toBe(fallback.choices[0].style_hint);
   });
 });
 
@@ -163,6 +192,7 @@ describe("HeartDemonRuntime.handleRequestPayload", () => {
     expect(pub.published[0].channel).toBe(HEART_DEMON_OFFER);
     const offer = JSON.parse(pub.published[0].message);
     expect(offer.trigger_id).toBe(req.trigger_id);
+    expect(offer.expires_at_ms).toBe(40_000);
     expect(offer.choices[0].choice_id).toBe("heart_demon_choice_0");
     expect(offer.choices[0].category).toBe("Composure");
   });

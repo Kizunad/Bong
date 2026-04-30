@@ -426,4 +426,88 @@ describe("TribulationNarrationRuntime", () => {
     expect(runtime.stats.llmFailures).toBe(0);
     expect(runtime.stats.fallbackUsed).toBe(1);
   });
+
+  it("falls back when targeted narration leaks broader hidden mechanics", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llm: LlmClient = {
+      async chat() {
+        return JSON.stringify({
+          text: "spawn 的灵物密度过高，异变兽刷新率和负面事件 roll 都被抬升。",
+          style: "narration",
+        });
+      },
+    };
+    const runtime = new TribulationNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "targeted",
+        phase: { kind: "omen" },
+        zone: "spawn",
+        epicenter: [8, 66, 8],
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "zone",
+      target: "spawn",
+      text: "spawn 近日运道不佳，灵机一动便多一分折耗。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(0);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
+
+  it("falls back when LLM narration uses forbidden traditional realm names", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const llm: LlmClient = {
+      async chat() {
+        return JSON.stringify({
+          text: "Azure 渡过化神雷劫，离飞升只差一步。",
+          style: "narration",
+        });
+      },
+    };
+    const runtime = new TribulationNarrationRuntime({
+      llm,
+      model: "mock",
+      sub,
+      pub,
+      logger: silent,
+      systemPrompt: "test",
+    });
+
+    await runtime.handlePayload(
+      JSON.stringify({
+        v: 1,
+        kind: "du_xu",
+        phase: { kind: "omen" },
+        char_id: "offline:Azure",
+        actor_name: "Azure",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const envelope = JSON.parse(pub.published[0].message);
+    expect(envelope.narrations[0]).toEqual({
+      scope: "broadcast",
+      target: "tribulation:du_xu|char:offline:Azure|omen",
+      text: "北风忽起，雷云自聚。又有修士在逆天。",
+      style: "narration",
+    });
+    expect(runtime.stats.llmFailures).toBe(0);
+    expect(runtime.stats.fallbackUsed).toBe(1);
+  });
 });

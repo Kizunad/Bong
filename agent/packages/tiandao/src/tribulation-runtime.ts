@@ -49,7 +49,23 @@ export interface TribulationNarrationRuntimeStats {
 }
 
 function defaultSystemPrompt(): string {
-  return readFileSync(resolve(__dirname, "skills", "tribulation.md"), "utf-8");
+  return readSkillPrompt("tribulation.md");
+}
+
+function readSkillPrompt(fileName: string): string {
+  const candidates = [
+    resolve(__dirname, "skills", fileName),
+    resolve(__dirname, "../src/skills", fileName),
+  ];
+  let lastError: unknown;
+  for (const path of candidates) {
+    try {
+      return readFileSync(path, "utf-8");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function narrationTarget(payload: TribulationEventV1): string {
@@ -170,7 +186,10 @@ function parseNarrationContent(content: string, payload: TribulationEventV1): Na
     }
 
     const first = parsed as { text: string; style: Narration["style"] };
-    if (payload.kind === "targeted" && leaksTargetedCalamity(trimmed)) {
+    if (
+      leaksForbiddenTribulationLore(trimmed) ||
+      (payload.kind === "targeted" && leaksTargetedCalamity(trimmed))
+    ) {
       return fallbackNarration(payload);
     }
 
@@ -191,7 +210,13 @@ function parseNarrationContent(content: string, payload: TribulationEventV1): Na
 }
 
 function leaksTargetedCalamity(content: string): boolean {
-  return /劫气|定向天罚|概率|查询|权重|karma|targeted/i.test(content);
+  return /劫气|定向天罚|天罚|概率|查询|权重|karma|targeted|KarmaWeight|QiDensityHeatmap|灵物密度|热图|负面事件|刷新率|异变兽|高消耗|30\s*天|突破.*次|百分比|roll|%/i.test(
+    content,
+  );
+}
+
+function leaksForbiddenTribulationLore(content: string): boolean {
+  return /炼气|筑基|结丹|金丹|元婴|化神|返虚|合体|大乘|飞升|仙帝/.test(content);
 }
 
 export class TribulationNarrationRuntime {
