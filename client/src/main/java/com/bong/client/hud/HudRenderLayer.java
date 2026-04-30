@@ -13,6 +13,7 @@ public enum HudRenderLayer {
     DERIVED_ATTR,
     TOAST,
     VISUAL,
+    SPIRITUAL_SENSE,
     EDGE_FEEDBACK,
     STATUS_EFFECTS,
     STAMINA_BAR,

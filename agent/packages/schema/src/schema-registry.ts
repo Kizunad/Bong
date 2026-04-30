@@ -130,6 +130,7 @@ import {
   NpcSpawnedV1,
   NpcSpawnSourceV1,
 } from "./npc.js";
+import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
   ServerDataAlchemyFurnaceV1,
@@ -174,6 +175,8 @@ import {
   ServerDataSocialRenownDeltaV1,
   ServerDataSparringInviteV1,
   ServerDataTradeOfferV1,
+  ServerDataRealmVisionParamsV1,
+  ServerDataSpiritualSenseTargetsV1,
   BurstMeridianEventV1,
   TreasureEquippedV1,
   TreasureViewV1,
@@ -202,6 +205,11 @@ import {
   TradeItemSummaryV1,
   TradeOfferPayloadV1,
 } from "./social.js";
+import {
+  SenseEntryV1,
+  SenseKindV1,
+  SpiritualSenseTargetsV1,
+} from "./spiritual-sense.js";
 import {
   DaoxiangSpawnedV1,
   TsyCollapseCompletedV1,
@@ -355,6 +363,13 @@ export const SCHEMA_REGISTRY = {
   serverDataSocialRenownDeltaV1: ServerDataSocialRenownDeltaV1,
   serverDataSparringInviteV1: ServerDataSparringInviteV1,
   serverDataTradeOfferV1: ServerDataTradeOfferV1,
+  fogShapeV1: FogShapeV1,
+  realmVisionParamsV1: RealmVisionParamsV1,
+  serverDataRealmVisionParamsV1: ServerDataRealmVisionParamsV1,
+  senseKindV1: SenseKindV1,
+  senseEntryV1: SenseEntryV1,
+  spiritualSenseTargetsV1: SpiritualSenseTargetsV1,
+  serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
   // 炼丹 (plan-alchemy-v1 §4)
   alchemyOutcomeBucket: AlchemyOutcomeBucket,
   alchemyInterventionV1: AlchemyInterventionV1,
@@ -599,6 +614,15 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-sparring-invite-v1.json":
     SCHEMA_REGISTRY.serverDataSparringInviteV1,
   "server-data-trade-offer-v1.json": SCHEMA_REGISTRY.serverDataTradeOfferV1,
+  "fog-shape-v1.json": SCHEMA_REGISTRY.fogShapeV1,
+  "realm-vision-params-v1.json": SCHEMA_REGISTRY.realmVisionParamsV1,
+  "server-data-realm-vision-params-v1.json":
+    SCHEMA_REGISTRY.serverDataRealmVisionParamsV1,
+  "sense-kind-v1.json": SCHEMA_REGISTRY.senseKindV1,
+  "sense-entry-v1.json": SCHEMA_REGISTRY.senseEntryV1,
+  "spiritual-sense-targets-v1.json": SCHEMA_REGISTRY.spiritualSenseTargetsV1,
+  "server-data-spiritual-sense-targets-v1.json":
+    SCHEMA_REGISTRY.serverDataSpiritualSenseTargetsV1,
   "client-request-sparring-invite-response-v1.json":
     SCHEMA_REGISTRY.clientRequestSparringInviteResponseV1,
   "audio-event-v1.json": SCHEMA_REGISTRY.audioEventV1,

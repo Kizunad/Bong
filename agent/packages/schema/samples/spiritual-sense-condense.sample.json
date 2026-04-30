@@ -1,0 +1,7 @@
+{
+  "generation": 2,
+  "entries": [
+    { "kind": "LivingQi", "x": 18.5, "y": 64, "z": -12.25, "intensity": 0.7 },
+    { "kind": "AmbientLeyline", "x": -42, "y": 70, "z": 96, "intensity": 0.55 }
+  ]
+}

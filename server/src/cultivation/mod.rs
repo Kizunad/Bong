@@ -48,7 +48,9 @@ pub mod negative_zone;
 pub mod overload;
 pub mod possession;
 pub mod qi_zero_decay;
+pub mod realm_vision;
 pub mod skill_registry;
+pub mod spiritual_sense;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
@@ -92,6 +94,13 @@ use self::possession::{
     DuoSheRequestEvent, DuoSheWarningEvent, UseLifeCoreEvent,
 };
 use self::qi_zero_decay::{qi_zero_decay_tick, RealmRegressed};
+use self::realm_vision::push::{
+    push_initial_realm_vision, push_realm_vision_on_breakthrough, push_realm_vision_on_revive,
+};
+use self::realm_vision::view_distance_ramp::view_distance_ramp_system;
+use self::spiritual_sense::push::{
+    cleanup_spiritual_sense_push_state, push_spiritual_sense_targets, SpiritualSensePushState,
+};
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
@@ -116,6 +125,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
+    app.insert_resource(SpiritualSensePushState::default());
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
@@ -174,6 +184,18 @@ pub fn register(app: &mut App) {
             on_player_terminated,
             // plan §11-5 业力
             karma_decay_tick,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            // plan-perception-v1.1 §4.1 server authoritative realm vision.
+            push_initial_realm_vision.after(attach_cultivation_to_joined_clients),
+            push_realm_vision_on_breakthrough.after(breakthrough_system),
+            push_realm_vision_on_revive.after(on_player_revived),
+            view_distance_ramp_system,
+            push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
+            cleanup_spiritual_sense_push_state,
         ),
     );
     app.add_systems(

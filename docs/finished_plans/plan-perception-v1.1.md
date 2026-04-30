@@ -659,3 +659,11 @@ bash scripts/dev-reload.sh
 
 - 2026-04-30：v1.1 起草。基于 v1 模板态进行整合：去 Iris 依赖、补接入面 checklist、给每 Phase 加可 grep 抓手、新增 §10 测试矩阵。当前仓库内"perception"字样仅指 narration `NarrationStyle::Perception` 旁白样式与 `InsightCategory::Perception`（顿悟类别 + `UnlockedPerceptions` 解锁集合），均与本 plan 无关；本 plan 实装时一律使用 `RealmVision` / `SpiritualSense` 词根避免歧义。Phase 0/1/2/3 全部待启动。
 - 2026-04-30：根据用户决策落地三项开放问题决议（视距归属：worldview 写两端 + plan 写中间 / 化虚神识半径：三圈分层 / 隐匿模糊化：境界差三态 hook）+ 视距表现实化重构。基于 Bong server `server/src/preview/mod.rs::boost_view_distance_for_preview` 提示——Valence default `ViewDistance` 仅 2 chunks，preview 模式才提到 32 chunks（vanilla 协议上限）——确认 800m 化虚视距不现实（需要 50 chunks 超出协议）。视距表全替换为 30/50/80/120/180/240m，server `ViewDistance` 按境界绑（4/6/8/12/16/20 chunks），化虚境视距优势削弱由 §5.4 化虚境视觉补偿（粒子 + tint + post-fx 锐化 + 神识全图）补足。新增 §5.4 化虚境视觉补偿、`ClientRenderDistanceAdvisor` toast 引导、`ViewDistanceRampSystem` 平滑过渡。`FLOOR_CLAMP_M` 从 30m 调整到 15m。测试矩阵 server 部分从 ≥ 105 用例扩到 ≥ 124 用例，client 部分从 ≥ 95 扩到 ≥ 99 用例。
+
+## Finish Evidence
+
+- 2026-05-01：Phase 0/1/2/3 已落地。新增 `realm_vision_params` 与 `spiritual_sense_targets` 跨端 schema / samples / generated artifacts；server 接入境界视觉参数计算、ViewDistance ramp、突破/复活推送、神识扫描/节流/payload helper；client 接入 server-data handler、fog/vignette mixin、RealmVision 状态/插值/Planner、低 render distance toast、神识边缘指示器 HUD 投影与渲染。
+- 验证通过：`agent/packages/schema npm test` → 7 files / 224 tests passed。
+- 验证通过：`agent npm run build` → `@bong/schema` 与 `@bong/tiandao` TypeScript build passed。
+- 验证通过：`client JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64 ./gradlew test build` → BUILD SUCCESSFUL。
+- 验证通过：`server cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 1827 tests passed, 0 failed。

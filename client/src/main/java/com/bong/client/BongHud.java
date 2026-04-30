@@ -24,6 +24,11 @@ import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
+import com.bong.client.visual.realm_vision.EdgeIndicatorCmd;
+import com.bong.client.visual.realm_vision.PerceptionEdgeProjector;
+import com.bong.client.visual.realm_vision.PerceptionEdgeRenderer;
+import com.bong.client.visual.realm_vision.PerceptionEdgeState;
+import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -31,6 +36,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -75,6 +81,11 @@ public class BongHud {
             client.getWindow().getScaledHeight(),
             botanyAnchor
         );
+        List<EdgeIndicatorCmd> spiritualSenseIndicators = computeSpiritualSenseIndicators(client);
+        if (!spiritualSenseIndicators.isEmpty()) {
+            commands = new ArrayList<>(commands);
+            PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
+        }
 
         if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
             commands = filterCastBarOnly(commands);
@@ -116,6 +127,17 @@ public class BongHud {
                     client.getWindow().getScaledHeight(),
                     command
                 );
+                continue;
+            }
+            if (command.isEdgeIndicator()) {
+                int size = Math.max(4, (int) Math.round(4.0 + command.intensity() * 6.0));
+                context.fill(
+                    command.x() - size,
+                    command.y() - size,
+                    command.x() + size,
+                    command.y() + size,
+                    command.color()
+                );
             }
         }
 
@@ -130,6 +152,35 @@ public class BongHud {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+    }
+
+    private static List<EdgeIndicatorCmd> computeSpiritualSenseIndicators(MinecraftClient client) {
+        PerceptionEdgeState state = PerceptionEdgeStateStore.snapshot();
+        if (state.isEmpty() || client.gameRenderer == null) {
+            return List.of();
+        }
+        Camera camera = client.gameRenderer.getCamera();
+        if (camera == null) {
+            return List.of();
+        }
+        Vec3d camPos = camera.getPos();
+        double fov = client.options.getFov().getValue().doubleValue();
+        int scaledWidth = client.getWindow().getScaledWidth();
+        int scaledHeight = client.getWindow().getScaledHeight();
+        List<EdgeIndicatorCmd> indicators = new ArrayList<>();
+        for (PerceptionEdgeState.SenseEntry entry : state.entries()) {
+            indicators.add(PerceptionEdgeProjector.project(
+                entry.x(), entry.y(), entry.z(),
+                camPos.x, camPos.y, camPos.z,
+                camera.getYaw(), camera.getPitch(),
+                fov,
+                scaledWidth,
+                scaledHeight,
+                entry.kind(),
+                entry.intensity()
+            ));
+        }
+        return indicators;
     }
 
     private static Identifier parseIdentifier(String path) {

@@ -1,0 +1,12 @@
+{
+  "fog_start": 80,
+  "fog_end": 124,
+  "fog_color_rgb": 11055292,
+  "fog_shape": "Sphere",
+  "vignette_alpha": 0.35,
+  "tint_color_argb": 183038202,
+  "particle_density": 0.2,
+  "transition_ticks": 100,
+  "server_view_distance_chunks": 8,
+  "post_fx_sharpen": 0
+}

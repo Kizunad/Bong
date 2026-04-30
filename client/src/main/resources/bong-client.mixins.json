@@ -5,10 +5,12 @@
   "compatibilityLevel": "JAVA_17",
   "mixins": [],
   "client": [
+    "MixinBackgroundRendererRealmVision",
     "MixinCamera",
     "MixinEntityRenderer",
     "MixinGameRenderer",
     "MixinHeldItemRenderer",
+    "MixinInGameHudRealmVignette",
     "MixinKeyboardSkillKeys",
     "MixinInGameHud",
     "MixinMinecraftClient",

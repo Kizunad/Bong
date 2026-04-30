@@ -24,6 +24,7 @@ pub mod inventory;
 pub mod lingtian;
 pub mod narration;
 pub mod npc;
+pub mod realm_vision;
 pub mod server_data;
 pub mod skill;
 pub mod social;

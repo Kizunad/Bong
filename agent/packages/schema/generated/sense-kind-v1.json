@@ -1,0 +1,24 @@
+{
+  "anyOf": [
+    {
+      "const": "LivingQi",
+      "type": "string"
+    },
+    {
+      "const": "AmbientLeyline",
+      "type": "string"
+    },
+    {
+      "const": "CultivatorRealm",
+      "type": "string"
+    },
+    {
+      "const": "HeavenlyGaze",
+      "type": "string"
+    },
+    {
+      "const": "CrisisPremonition",
+      "type": "string"
+    }
+  ]
+}
