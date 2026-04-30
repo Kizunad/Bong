@@ -34,6 +34,7 @@ use crate::schema::tribulation::{
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::breakthrough::skill_cap_for_realm;
 use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
@@ -93,6 +94,14 @@ pub struct TribulationState {
     pub participants: Vec<String>,
     pub failed: bool,
     pub half_step_on_success: bool,
+}
+
+fn tribulation_dimension_for_participant(
+    current_dimension: Option<&CurrentDimension>,
+) -> DimensionKind {
+    current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or(DimensionKind::Overworld)
 }
 
 #[derive(Debug, Clone, Component)]
@@ -563,10 +572,16 @@ fn begin_heart_demon_phase(
 #[allow(clippy::type_complexity)]
 pub fn tribulation_aoe_system(
     clock: Res<CombatClock>,
-    tribulations: Query<(Entity, &TribulationState, Option<&HeartDemonResolution>)>,
+    tribulations: Query<(
+        Entity,
+        &TribulationState,
+        Option<&HeartDemonResolution>,
+        Option<&CurrentDimension>,
+    )>,
     mut targets: Query<(
         Entity,
         &Position,
+        Option<&CurrentDimension>,
         &mut Cultivation,
         &mut Wounds,
         Option<&Lifecycle>,
@@ -574,13 +589,14 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
 ) {
-    for (tribulator_entity, state, heart_demon) in &tribulations {
+    for (tribulator_entity, state, heart_demon, tribulator_dimension) in &tribulations {
         let TribulationPhase::Wave(wave) = state.phase else {
             continue;
         };
         if clock.tick != state.phase_started_tick {
             continue;
         }
+        let tribulation_dimension = tribulation_dimension_for_participant(tribulator_dimension);
         let center =
             valence::math::DVec3::new(state.epicenter[0], state.epicenter[1], state.epicenter[2]);
         let profile = du_xu_wave_profile(wave);
@@ -589,7 +605,11 @@ pub fn tribulation_aoe_system(
             .map(|heart_demon| heart_demon.next_wave_multiplier)
             .unwrap_or(1.0);
         let strike_damage = profile.damage / profile.strikes.max(1) as f32;
-        for (entity, pos, mut cultivation, mut wounds, lifecycle) in &mut targets {
+        for (entity, pos, current_dimension, mut cultivation, mut wounds, lifecycle) in &mut targets
+        {
+            if tribulation_dimension_for_participant(current_dimension) != tribulation_dimension {
+                continue;
+            }
             if pos.get().distance(center) > TRIBULATION_DANGER_RADIUS {
                 continue;
             }
@@ -887,11 +907,12 @@ fn has_full_tribulation_resources(cultivation: &Cultivation, wounds: &Wounds) ->
 #[allow(clippy::type_complexity)]
 pub fn record_tribulation_interceptor_system(
     mut combat_events: EventReader<CombatEvent>,
-    mut tribulators: Query<(&mut TribulationState, &Lifecycle)>,
-    actors: Query<(&Lifecycle, &Position)>,
+    mut tribulators: Query<(&mut TribulationState, &Lifecycle, Option<&CurrentDimension>)>,
+    actors: Query<(&Lifecycle, &Position, Option<&CurrentDimension>)>,
 ) {
     for event in combat_events.read() {
-        let Ok((mut state, target_lifecycle)) = tribulators.get_mut(event.target) else {
+        let Ok((mut state, target_lifecycle, target_dimension)) = tribulators.get_mut(event.target)
+        else {
             continue;
         };
         if state.kind != TribulationKind::DuXu
@@ -909,11 +930,18 @@ pub fn record_tribulation_interceptor_system(
         {
             continue;
         }
-        let Ok((attacker_lifecycle, attacker_position)) = actors.get(event.attacker) else {
+        let Ok((attacker_lifecycle, attacker_position, attacker_dimension)) =
+            actors.get(event.attacker)
+        else {
             continue;
         };
         if attacker_lifecycle.character_id == target_lifecycle.character_id
             || !attacker_lifecycle.character_id.starts_with("offline:")
+        {
+            continue;
+        }
+        if tribulation_dimension_for_participant(attacker_dimension)
+            != tribulation_dimension_for_participant(target_dimension)
         {
             continue;
         }
@@ -3213,6 +3241,68 @@ mod tests {
     }
 
     #[test]
+    fn tribulation_aoe_ignores_targets_in_other_dimension() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn((
+            CurrentDimension(DimensionKind::Overworld),
+            TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Wave(2),
+                epicenter: [0.0, 66.0, 0.0],
+                wave_current: 2,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 1200,
+                next_wave_tick: 1500,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            },
+        ));
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 0.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 100.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Spectator".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let wounds = app
+            .world()
+            .get::<Wounds>(target)
+            .expect("wounds should remain attached");
+        assert_eq!(wounds.health_current, 100.0);
+        assert!(wounds.entries.is_empty());
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 100.0);
+    }
+
+    #[test]
     fn third_wave_freezes_qi_max_as_soul_devouring_lightning() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 1500 });
@@ -3913,6 +4003,67 @@ mod tests {
             state.participants,
             vec!["offline:Victim".to_string(), "offline:Killer".to_string()]
         );
+    }
+
+    #[test]
+    fn attacking_tribulator_from_other_dimension_does_not_record_interceptor() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, record_tribulation_interceptor_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Lifecycle {
+                    character_id: "offline:Victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Lock,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 0,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 120,
+                    next_wave_tick: 300,
+                    participants: vec!["offline:Victim".to_string()],
+                    failed: false,
+                    half_step_on_success: false,
+                },
+            ))
+            .id();
+        let interceptor = app
+            .world_mut()
+            .spawn((
+                Position::new([12.0, 66.0, 0.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                Lifecycle {
+                    character_id: "offline:Killer".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker: interceptor,
+            target: victim,
+            resolved_at_tick: 120,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Cut,
+            damage: 12.0,
+            contam_delta: 0.0,
+            description: "test cross-dimension interception hit".to_string(),
+        });
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TribulationState>(victim)
+            .expect("tribulation should remain active");
+        assert_eq!(state.participants, vec!["offline:Victim".to_string()]);
     }
 
     #[test]
