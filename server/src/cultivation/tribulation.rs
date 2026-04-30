@@ -1465,6 +1465,29 @@ mod tests {
         meridians
     }
 
+    fn spawn_tribulation_spectator(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
+        app.world_mut()
+            .spawn((
+                Position::new(pos),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 200.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 200.0,
+                    health_max: 200.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: format!("offline:{name}"),
+                    ..Default::default()
+                },
+            ))
+            .id()
+    }
+
     fn test_item(instance_id: u64) -> ItemInstance {
         ItemInstance {
             instance_id,
@@ -2670,6 +2693,69 @@ mod tests {
             .expect("wounds should remain attached");
         assert_eq!(wounds.health_current, 100.0 - DUXU_AOE_DAMAGE_BASE * 2.0);
         assert_eq!(wounds.entries.len(), DUXU_CHAIN_LIGHTNING_STRIKES as usize);
+    }
+
+    #[test]
+    fn spectator_aoe_is_not_reduced_by_distance_within_danger_radius() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(2),
+            epicenter: [0.0, 66.0, 0.0],
+            wave_current: 2,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 1200,
+            next_wave_tick: 1500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+            half_step_on_success: false,
+        });
+        let near = spawn_tribulation_spectator(&mut app, "Near", [3.0, 66.0, 0.0]);
+        let far_inside = spawn_tribulation_spectator(
+            &mut app,
+            "FarInside",
+            [TRIBULATION_DANGER_RADIUS, 66.0, 0.0],
+        );
+        let outside = spawn_tribulation_spectator(
+            &mut app,
+            "Outside",
+            [TRIBULATION_DANGER_RADIUS + 0.1, 66.0, 0.0],
+        );
+
+        app.update();
+
+        let expected_health = 200.0 - DUXU_AOE_DAMAGE_BASE * 2.0;
+        let expected_qi = 200.0 - DUXU_QI_DRAIN_BASE * 2.0;
+        for entity in [near, far_inside] {
+            let wounds = app
+                .world()
+                .get::<Wounds>(entity)
+                .expect("spectator wounds should remain attached");
+            assert_eq!(wounds.health_current, expected_health);
+            assert_eq!(wounds.entries.len(), DUXU_CHAIN_LIGHTNING_STRIKES as usize);
+            let cultivation = app
+                .world()
+                .get::<Cultivation>(entity)
+                .expect("spectator cultivation should remain attached");
+            assert_eq!(cultivation.qi_current, expected_qi);
+        }
+        let outside_wounds = app
+            .world()
+            .get::<Wounds>(outside)
+            .expect("outside spectator wounds should remain attached");
+        assert_eq!(outside_wounds.health_current, 200.0);
+        assert!(outside_wounds.entries.is_empty());
+        let outside_cultivation = app
+            .world()
+            .get::<Cultivation>(outside)
+            .expect("outside spectator cultivation should remain attached");
+        assert_eq!(outside_cultivation.qi_current, 200.0);
     }
 
     #[test]
