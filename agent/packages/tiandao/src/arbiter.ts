@@ -216,24 +216,14 @@ export class Arbiter {
   }
 
   private hasDuxuSignal(narration: Narration): boolean {
-    if (DUXU_EVENT_RE.test(narration.text)) {
-      return true;
-    }
-
-    return this.state.recent_events.some((event) => {
-      const values = [event.type, event.target, event.zone, ...Object.values(event.details ?? {})];
-      return values.some((value) => typeof value === "string" && DUXU_EVENT_RE.test(value));
-    });
+    return DUXU_EVENT_RE.test(narration.text);
   }
 
   private redactPlayerNames(narration: Narration): Narration {
     let text = narration.text;
     for (const player of this.state.players) {
-      if (player.name.trim().length === 0) {
-        continue;
-      }
-      text = replaceAllLiteral(text, player.name, "某修士");
-      text = replaceAllLiteral(text, player.uuid, "某修士");
+      text = redactIdentifierToken(text, player.uuid);
+      text = redactChinesePlayerNameToken(text, player.name);
     }
 
     if (text === narration.text) {
@@ -587,6 +577,50 @@ function isGlobalEraTarget(target: string): boolean {
 
 function replaceAllLiteral(text: string, needle: string, replacement: string): string {
   return text.split(needle).join(replacement);
+}
+
+function redactIdentifierToken(text: string, identifier: string): string {
+  const trimmed = identifier.trim();
+  if (trimmed.length === 0) {
+    return text;
+  }
+
+  return replaceAllLiteral(text, trimmed, "某修士");
+}
+
+function redactChinesePlayerNameToken(text: string, name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) {
+    return text;
+  }
+
+  let output = "";
+  let cursor = 0;
+  while (cursor < text.length) {
+    const index = text.indexOf(trimmed, cursor);
+    if (index === -1) {
+      output += text.slice(cursor);
+      break;
+    }
+
+    const end = index + trimmed.length;
+    if (hasNameBoundary(text, index, end)) {
+      output += text.slice(cursor, index) + "某修士";
+    } else {
+      output += text.slice(cursor, end);
+    }
+    cursor = end;
+  }
+
+  return output;
+}
+
+function hasNameBoundary(text: string, start: number, end: number): boolean {
+  return !isWordLikeCharacter(text[start - 1]) && !isWordLikeCharacter(text[end]);
+}
+
+function isWordLikeCharacter(char: string | undefined): boolean {
+  return char !== undefined && /[\p{L}\p{N}_:-]/u.test(char);
 }
 
 function buildModifyZoneParams(

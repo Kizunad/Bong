@@ -81,11 +81,12 @@
 - `5bc978ca` 2026-05-01 `fix(agent): 扩展叙事现代提示黑名单`
 - `5b4466c4` 2026-05-01 `feat(agent): 收束叙事视角与广播节奏`
 - `5288cb44` 2026-05-01 `feat(agent): 注入叙事感知边界上下文`
+- `待提交` 2026-05-01 `fix(agent): 修复叙事广播豁免与匿名匹配`
 
 ### 测试结果
 
 - `cd agent && npm run build`：通过；`@bong/schema` 与 `@bong/tiandao` TypeScript build 均成功。
-- `cd agent/packages/tiandao && npm test`：24 files / 184 tests passed。
+- `cd agent/packages/tiandao && npm test`：24 files / 186 tests passed。
 - `cd agent/packages/schema && npm test`：7 files / 224 tests passed。
 
 ### 跨仓库核验

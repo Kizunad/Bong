@@ -554,6 +554,79 @@ describe("Arbiter", () => {
     expect(result.narrations[1]?.style).toBe("era_decree");
   });
 
+  it("does not let historical du-xu events exempt unrelated broadcasts", () => {
+    const state = createTestWorldState();
+    state.recent_events = [
+      {
+        type: "event_triggered",
+        tick: 122,
+        zone: "starter_zone",
+        details: { event: "du_xu_tribulation" },
+      },
+    ];
+
+    const result = runMerge(
+      [
+        {
+          source: "mutation",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "broadcast",
+                text: "山脚草木忽寒，云气渐偏，下一轮地脉多半还要再歪半寸。",
+                style: "perception",
+              },
+            ],
+            reasoning: "unrelated local narration",
+          },
+        },
+      ],
+      state,
+    );
+
+    expect(result.narrations).toEqual([
+      {
+        scope: "zone",
+        target: "starter_zone",
+        text: "山脚草木忽寒，云气渐偏，下一轮地脉多半还要再歪半寸。",
+        style: "perception",
+      },
+    ]);
+  });
+
+  it("redacts identifier tokens without replacing short names inside ordinary text", () => {
+    const state = createTestWorldState();
+    state.players[0] = {
+      ...state.players[0],
+      uuid: "offline:a",
+      name: "a",
+    };
+
+    const result = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "karma 与 aura 未被误伤；offline:a 的因果却已被遮去。",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "redaction",
+          },
+        },
+      ],
+      state,
+    );
+
+    expect(result.narrations[0]?.text).toBe("karma 与 aura 未被误伤；某修士 的因果却已被遮去。");
+  });
+
   it("suppresses regular narrations during recent combat ticks without dropping death insights", () => {
     const state = createTestWorldState();
     state.tick = 200;
