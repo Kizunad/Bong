@@ -28,11 +28,18 @@ pub struct ButcherSession {
     pub tool: Option<ToolKind>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ButcherOutcome {
     pub drop: Option<ButcherDropKind>,
     pub wound: bool,
     pub contamination: bool,
+    pub tool_durability_cost: Option<ToolDurabilityCost>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolDurabilityCost {
+    pub tool: ToolKind,
+    pub cost_ratio: f64,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -60,21 +67,34 @@ pub fn resolve_butcher_session(session: &ButcherSession) -> ButcherOutcome {
             drop: Some(ButcherDropKind::Bone),
             wound: false,
             contamination: false,
+            tool_durability_cost: Some(ToolDurabilityCost {
+                tool: ToolKind::GuHaiQian,
+                cost_ratio: ToolKind::GuHaiQian.durability_cost_ratio_per_use(),
+            }),
         },
         Some(ToolKind::CaiYaoDao) => ButcherOutcome {
             drop: Some(ButcherDropKind::Meat),
             wound: false,
             contamination: false,
+            tool_durability_cost: Some(ToolDurabilityCost {
+                tool: ToolKind::CaiYaoDao,
+                cost_ratio: ToolKind::CaiYaoDao.durability_cost_ratio_per_use(),
+            }),
         },
         Some(ToolKind::GuaDao) => ButcherOutcome {
             drop: Some(ButcherDropKind::Hide),
             wound: false,
             contamination: false,
+            tool_durability_cost: Some(ToolDurabilityCost {
+                tool: ToolKind::GuaDao,
+                cost_ratio: ToolKind::GuaDao.durability_cost_ratio_per_use(),
+            }),
         },
         _ => ButcherOutcome {
             drop: None,
             wound: true,
             contamination: true,
+            tool_durability_cost: None,
         },
     }
 }
@@ -118,6 +138,10 @@ mod tests {
                 drop: Some(ButcherDropKind::Bone),
                 wound: false,
                 contamination: false,
+                tool_durability_cost: Some(ToolDurabilityCost {
+                    tool: ToolKind::GuHaiQian,
+                    cost_ratio: 0.01,
+                }),
             }
         );
         assert_eq!(ButcherDropKind::Bone.item_id(), "yi_beast_bone");
@@ -144,6 +168,20 @@ mod tests {
             resolve_butcher_session(&scraper).drop,
             Some(ButcherDropKind::Hide)
         );
+        assert_eq!(
+            resolve_butcher_session(&knife).tool_durability_cost,
+            Some(ToolDurabilityCost {
+                tool: ToolKind::CaiYaoDao,
+                cost_ratio: 0.01,
+            })
+        );
+        assert_eq!(
+            resolve_butcher_session(&scraper).tool_durability_cost,
+            Some(ToolDurabilityCost {
+                tool: ToolKind::GuaDao,
+                cost_ratio: 0.01,
+            })
+        );
     }
 
     #[test]
@@ -156,6 +194,7 @@ mod tests {
                 drop: None,
                 wound: true,
                 contamination: true,
+                tool_durability_cost: None,
             }
         );
 
