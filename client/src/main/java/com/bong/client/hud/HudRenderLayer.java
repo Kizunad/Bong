@@ -21,5 +21,6 @@ public enum HudRenderLayer {
     FLIGHT_HUD,
     TRIBULATION,
     NEAR_DEATH,
-    TSY_EXTRACT
+    TSY_EXTRACT,
+    REALM_COLLAPSE
 }
