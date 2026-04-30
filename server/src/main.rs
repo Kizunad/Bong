@@ -33,6 +33,8 @@ mod social;
 mod shelflife;
 mod skill;
 mod world;
+#[allow(dead_code)]
+mod zhenfa_hooks;
 
 use crossbeam_channel::unbounded;
 use network::agent_bridge::{

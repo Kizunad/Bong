@@ -1,0 +1,32 @@
+{
+  "id": "mao_xin_san_v1",
+  "name": "心安散·茅心引",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "mao_xin_wei", "count": 2 },
+      { "material": "yun_ding_lan", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.40,
+    "target_duration_ticks": 110,
+    "qi_cost": 8.0,
+    "tolerance": { "temp_band": 0.14, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "mao_xin_san", "quality": 1.0, "toxin_amount": 0.25, "toxin_color": "Mellow", "qi_gain": 10.0 },
+    "good": { "pill": "mao_xin_san", "quality": 0.7, "toxin_amount": 0.35, "toxin_color": "Mellow", "qi_gain": 7.0 },
+    "flawed": { "pill": "mao_xin_san_flawed", "quality": 0.4, "toxin_amount": 0.65, "toxin_color": "Turbid", "qi_gain": 3.0 },
+    "waste": null,
+    "explode": { "damage": 8.0, "meridian_crack": 0.03 }
+  },
+  "flawed_fallback": {
+    "pill": "mao_xin_san_flawed",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.4,
+    "side_effect_pool": [
+      { "tag": "soft_heart_drowsy", "duration_s": 30, "weight": 1 }
+    ]
+  }
+}

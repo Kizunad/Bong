@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "note": "plan-zhenfa-v1 is still skeleton-only. This hook manifest reserves v2 botany material IDs for future zhenfa recipe ingestion without inventing a runtime schema here.",
+  "hooks": [
+    {
+      "hook_id": "di_shi_wei_xu_array_carrier",
+      "future_plan": "plan-zhenfa-v1",
+      "materials": ["lie_yuan_tai", "bei_wen_zhi"],
+      "intended_use": "地师伪虚阵载体与残阵拓印纸"
+    }
+  ]
+}

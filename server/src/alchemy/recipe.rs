@@ -607,6 +607,41 @@ mod tests {
     }
 
     #[test]
+    fn default_recipes_include_botany_v2_materials() {
+        let registry = load_recipe_registry().unwrap();
+        let botany_v2_recipes = [
+            "fu_yuan_dan_v1",
+            "shuang_gu_dan_v1",
+            "jing_xin_san_v1",
+            "yuan_xi_dan_v1",
+            "qing_zhuo_san_v1",
+            "mao_xin_san_v1",
+        ];
+        for recipe_id in botany_v2_recipes {
+            let recipe = registry
+                .get(recipe_id)
+                .unwrap_or_else(|| panic!("missing {recipe_id}"));
+            assert!(
+                recipe
+                    .stages
+                    .iter()
+                    .flat_map(|stage| stage.required.iter())
+                    .any(|ingredient| matches!(
+                        ingredient.material.as_str(),
+                        "fu_yuan_jue"
+                            | "xue_po_lian"
+                            | "yuan_ni_hong_yu"
+                            | "lie_yuan_tai"
+                            | "bei_wen_zhi"
+                            | "xue_se_mai_cao"
+                            | "mao_xin_wei"
+                    )),
+                "{recipe_id} should consume at least one botany v2 herb"
+            );
+        }
+    }
+
+    #[test]
     fn recipe_mineral_validation_rejects_unknown_id() {
         let minerals = build_default_mineral_registry();
         let mut recipe = sample_recipe();
