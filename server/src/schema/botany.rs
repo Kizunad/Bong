@@ -31,9 +31,30 @@ pub struct BotanyHarvestProgressV1 {
     pub interrupted: bool,
     pub completed: bool,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hazard_hints: Vec<String>,
     /// plan §1.3 投影锚定：目标植物世界坐标（可选），client 侧 world→screen 投影定位浮窗。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_pos: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BotanyModelOverlayV1 {
+    None,
+    Emissive,
+    DualPhase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BotanyPlantV2RenderProfileV1 {
+    pub plant_id: String,
+    pub base_mesh_ref: String,
+    pub tint_rgb: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint_rgb_secondary: Option<u32>,
+    pub model_overlay: BotanyModelOverlayV1,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -117,6 +138,7 @@ mod tests {
             interrupted: false,
             completed: false,
             detail: "晨露未散".to_string(),
+            hazard_hints: vec!["靠近 -0.4 真元/s 叠加".to_string()],
             target_pos: Some([10.5, 64.0, 10.5]),
         };
 
@@ -139,6 +161,7 @@ mod tests {
             interrupted: false,
             completed: true,
             detail: String::new(),
+            hazard_hints: Vec::new(),
             target_pos: None,
         };
 
@@ -192,6 +215,21 @@ mod tests {
 
         let json = serde_json::to_string(&payload).unwrap();
         let back: BotanySkillV1 = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn botany_v2_render_profile_roundtrip() {
+        let payload = BotanyPlantV2RenderProfileV1 {
+            plant_id: "ying_yuan_gu".to_string(),
+            base_mesh_ref: "red_mushroom".to_string(),
+            tint_rgb: 0xFFA040,
+            tint_rgb_secondary: None,
+            model_overlay: BotanyModelOverlayV1::Emissive,
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: BotanyPlantV2RenderProfileV1 = serde_json::from_str(&json).unwrap();
         assert_eq!(back, payload);
     }
 }

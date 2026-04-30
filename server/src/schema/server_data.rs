@@ -4,6 +4,7 @@ use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
 };
+use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, EventStreamPushV1, QuickSlotConfigV1,
     SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1,
@@ -75,6 +76,7 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     BotanyHarvestProgress,
+    BotanyPlantV2RenderProfiles,
     MiningProgress,
     BotanySkill,
     AlchemyFurnace,
@@ -198,8 +200,10 @@ pub enum ServerDataPayloadV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        hazard_hints: Vec<String>,
         target_pos: Option<[f64; 3]>,
     },
+    BotanyPlantV2RenderProfiles(Vec<BotanyPlantV2RenderProfileV1>),
     MiningProgress {
         session_id: String,
         ore_pos: [i32; 3],
@@ -373,8 +377,13 @@ enum ServerDataPayloadWireV1 {
         interrupted: bool,
         completed: bool,
         detail: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hazard_hints: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_pos: Option<[f64; 3]>,
+    },
+    BotanyPlantV2RenderProfiles {
+        profiles: Vec<BotanyPlantV2RenderProfileV1>,
     },
     MiningProgress {
         session_id: String,
@@ -937,6 +946,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
             } => Ok(Self::BotanyHarvestProgress {
                 session_id,
@@ -950,8 +960,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
             }),
+            ServerDataPayloadWireV1::BotanyPlantV2RenderProfiles { profiles } => {
+                Ok(Self::BotanyPlantV2RenderProfiles(profiles))
+            }
             ServerDataPayloadWireV1::MiningProgress {
                 session_id,
                 ore_pos,
@@ -1283,6 +1297,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted,
                 completed,
                 detail,
+                hazard_hints,
                 target_pos,
             } => Self::BotanyHarvestProgress {
                 session_id: session_id.clone(),
@@ -1296,8 +1311,14 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 interrupted: *interrupted,
                 completed: *completed,
                 detail: detail.clone(),
+                hazard_hints: hazard_hints.clone(),
                 target_pos: *target_pos,
             },
+            ServerDataPayloadV1::BotanyPlantV2RenderProfiles(profiles) => {
+                Self::BotanyPlantV2RenderProfiles {
+                    profiles: profiles.clone(),
+                }
+            }
             ServerDataPayloadV1::MiningProgress {
                 session_id,
                 ore_pos,
@@ -1619,6 +1640,7 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
+            Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
@@ -1772,6 +1794,13 @@ mod tests {
                 overload_ratio: 1.5,
                 integrity_snapshot: 0.9,
             }),
+            ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![BotanyPlantV2RenderProfileV1 {
+                plant_id: "ying_yuan_gu".to_string(),
+                base_mesh_ref: "red_mushroom".to_string(),
+                tint_rgb: 0xFFA040,
+                tint_rgb_secondary: None,
+                model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
+            }]),
         ];
 
         for payload in cases {

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, ResMut, With};
 
+use crate::combat::components::Wounds;
 use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::Cultivation;
@@ -30,6 +31,17 @@ const MOVEMENT_BREAK_DISTANCE_SQ: f64 = 0.3 * 0.3;
 const TRAMPLE_RADIUS_SQ: f64 = 0.7 * 0.7;
 /// 垂直距离 > 2 块认为跟植物不在同一层（平台/洞穴分层），不触发踩踏。
 const TRAMPLE_VERTICAL_MAX: f64 = 2.0;
+
+type HarvestHazardQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static mut Cultivation>,
+        Option<&'static SkillSet>,
+        Option<&'static mut Wounds>,
+    ),
+    With<valence::prelude::Client>,
+>;
 
 #[allow(clippy::too_many_arguments)]
 pub fn start_or_resume_harvest(
@@ -72,7 +84,7 @@ pub fn complete_harvest_for_player(
     player_id: &str,
     plant_query: &mut Query<&mut Plant, With<Plant>>,
     inventory_query: &mut Query<&mut PlayerInventory, With<valence::prelude::Client>>,
-    harvesters: &Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
+    harvest_hazards: &mut HarvestHazardQuery<'_, '_>,
     kind_registry: &BotanyKindRegistry,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
@@ -119,13 +131,22 @@ pub fn complete_harvest_for_player(
     let receipt =
         add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?;
 
-    let herbalism_quality_bonus = harvesters
-        .get(session.client_entity)
-        .ok()
-        .map(|(cultivation, skill_set)| {
-            super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(cultivation, skill_set))
-        })
-        .unwrap_or(0.0);
+    let mut herbalism_quality_bonus = 0.0;
+    if let Ok((cultivation, skill_set, wounds)) = harvest_hazards.get_mut(session.client_entity) {
+        let mut cultivation = cultivation;
+        let mut wounds = wounds;
+        herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
+            cultivation.as_deref(),
+            skill_set,
+        ));
+        super::hazard::apply_completion_hazards(
+            session.target_plant,
+            kind_registry,
+            cultivation.as_deref_mut(),
+            wounds.as_deref_mut(),
+            now_tick,
+        );
+    }
 
     // plan-skill-v1 §6.1 品质偏移先投影到连续 spirit_quality，再叠加 botany 变种修饰。
     if variant != PlantVariant::None || herbalism_quality_bonus > 0.0 {
@@ -247,6 +268,7 @@ pub fn enforce_harvest_session_constraints(
     mut store: ResMut<HarvestSessionStore>,
     mut plants: Query<&mut Plant, With<Plant>>,
     client_positions: Query<(Entity, &Position), With<valence::prelude::Client>>,
+    kind_registry: Res<BotanyKindRegistry>,
     mut combat_events: EventReader<CombatEvent>,
     trample_roll: Res<BotanyTrampleRoll>,
     mut terminal_events: EventWriter<HarvestTerminalEvent>,
@@ -298,6 +320,10 @@ pub fn enforce_harvest_session_constraints(
             moved,
         );
         let trampled = should_trample(trample_seed, trample_roll.chance_inverse);
+        let dispersed = super::hazard::should_disperse_on_fail(
+            trample_seed ^ 0xD1B5_4A32_D192_ED03,
+            super::hazard::failure_dispersal_chance(session.target_plant, kind_registry.as_ref()),
+        );
         let reason: &'static str = if hit { "受击打断" } else { "移动打断" };
         to_interrupt.push(InterruptTarget {
             player_id: session.player_id.clone(),
@@ -306,7 +332,7 @@ pub fn enforce_harvest_session_constraints(
             target_plant: session.target_plant,
             mode: session.mode,
             reason,
-            trampled,
+            trampled: trampled || dispersed,
         });
     }
 
@@ -381,7 +407,7 @@ pub fn tick_harvest_sessions(
     mut store: ResMut<HarvestSessionStore>,
     mut plants: Query<&mut Plant, With<Plant>>,
     mut inventories: Query<&mut PlayerInventory, With<valence::prelude::Client>>,
-    harvesters: Query<(Option<&Cultivation>, Option<&SkillSet>), With<valence::prelude::Client>>,
+    mut harvest_hazards: HarvestHazardQuery<'_, '_>,
     kind_registry: Res<BotanyKindRegistry>,
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
@@ -408,7 +434,7 @@ pub fn tick_harvest_sessions(
             player_id.as_str(),
             &mut plants,
             &mut inventories,
-            &harvesters,
+            &mut harvest_hazards,
             kind_registry.as_ref(),
             item_registry.as_ref(),
             &mut allocator,

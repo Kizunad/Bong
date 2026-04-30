@@ -1,5 +1,6 @@
 mod biome;
 mod blocks;
+pub mod broken_peaks;
 mod column;
 mod decoration;
 mod flora;

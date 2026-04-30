@@ -8,8 +8,10 @@
 
 pub mod components;
 pub mod ecology;
+pub mod env_lock;
 pub mod events;
 pub mod harvest;
+pub mod hazard;
 pub mod integration;
 pub mod lifecycle;
 pub mod plant_kind;
@@ -21,10 +23,13 @@ pub use plant_kind::{GrowthCost, PlantId, PlantKind, PlantRarity};
 #[allow(unused_imports)]
 pub use registry::{load_plant_kind_registry, PlantKindRegistry};
 
-use valence::prelude::{App, EventReader, IntoSystemConfigs, Query, Res, Startup, Update, With};
+use valence::prelude::{
+    Added, App, EventReader, IntoSystemConfigs, Query, Res, Startup, Update, With,
+};
 
 use crate::inventory::{InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory};
 use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::schema::botany::{BotanyModelOverlayV1, BotanyPlantV2RenderProfileV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use components::{
     BotanyHarvestMode, BotanySkillChangedEvent, BotanyTrampleRoll, BotanyVariantRoll,
@@ -36,6 +41,7 @@ use events::{spawn_event_triggered_plants_on_death, BotanyEventSpawnRoll};
 use harvest::{
     detect_non_session_trample, enforce_harvest_session_constraints, tick_harvest_sessions,
 };
+use hazard::{hazard_hints_for_kind, tick_harvest_hazards};
 use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
 use registry::BotanyKindRegistry;
 
@@ -66,6 +72,8 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestTerminalEvent>();
     app.add_event::<BotanySkillChangedEvent>();
 
+    app.add_systems(Startup, validate_botany_inventory_primitives_on_startup);
+
     app.add_systems(
         Update,
         (
@@ -73,16 +81,63 @@ pub fn register(app: &mut App) {
             spawn_event_triggered_plants_on_death,
             detect_non_session_trample,
             run_botany_lifecycle_tick,
+            tick_harvest_hazards,
             enforce_harvest_session_constraints,
             tick_harvest_sessions,
             emit_botany_inventory_snapshots,
+            emit_botany_v2_render_profiles,
             emit_botany_harvest_progress,
             emit_botany_skill,
             emit_botany_ecology_snapshot,
         )
             .chain(),
     );
-    app.add_systems(Startup, validate_botany_inventory_primitives_on_startup);
+}
+
+fn emit_botany_v2_render_profiles(
+    kind_registry: Res<BotanyKindRegistry>,
+    mut clients: Query<
+        &mut valence::prelude::Client,
+        (
+            With<valence::prelude::Client>,
+            Added<valence::prelude::Client>,
+        ),
+    >,
+) {
+    use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+
+    let profiles = kind_registry
+        .iter()
+        .filter_map(|kind| {
+            let spec = kind.v2_spec()?;
+            Some(BotanyPlantV2RenderProfileV1 {
+                plant_id: kind.id.as_str().to_string(),
+                base_mesh_ref: spec.base_mesh_ref.to_string(),
+                tint_rgb: spec.tint_rgb,
+                tint_rgb_secondary: spec.tint_rgb_secondary,
+                model_overlay: match spec.model_overlay {
+                    registry::ModelOverlay::None => BotanyModelOverlayV1::None,
+                    registry::ModelOverlay::Emissive => BotanyModelOverlayV1::Emissive,
+                    registry::ModelOverlay::DualPhase => BotanyModelOverlayV1::DualPhase,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    if profiles.is_empty() {
+        return;
+    }
+    let payload = ServerDataV1::new(ServerDataPayloadV1::BotanyPlantV2RenderProfiles(profiles));
+    let payload_type = payload_type_label(payload.payload_type());
+    let bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+    for mut client in &mut clients {
+        send_server_data_payload(&mut client, bytes.as_slice());
+    }
 }
 
 fn validate_botany_inventory_primitives_on_startup(
@@ -145,6 +200,7 @@ fn emit_botany_inventory_snapshots(
 fn emit_botany_harvest_progress(
     gameplay_tick: Option<Res<crate::player::gameplay::GameplayTick>>,
     store: Res<HarvestSessionStore>,
+    kind_registry: Res<BotanyKindRegistry>,
     mut terminal_events: EventReader<HarvestTerminalEvent>,
     mut clients: Query<&mut valence::prelude::Client, With<valence::prelude::Client>>,
     plants: Query<&Plant, With<Plant>>,
@@ -177,6 +233,7 @@ fn emit_botany_harvest_progress(
             interrupted: false,
             completed: false,
             detail: String::new(),
+            hazard_hints: hazard_hints_for_kind(session.target_plant, kind_registry.as_ref()),
             target_pos,
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -203,6 +260,9 @@ fn emit_botany_harvest_progress(
             interrupted: frame.interrupted,
             completed: frame.completed,
             detail: frame.detail.clone(),
+            hazard_hints: registry::BotanyPlantId::from_canonical(frame.plant_kind.as_str())
+                .map(|id| hazard_hints_for_kind(id, kind_registry.as_ref()))
+                .unwrap_or_default(),
             target_pos: frame.target_pos,
         });
         let payload_type = payload_type_label(payload.payload_type());

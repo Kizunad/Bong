@@ -55,6 +55,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
+        ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
@@ -729,6 +730,7 @@ mod server_data_tests {
             interrupted: false,
             completed: false,
             detail: "晨露未散".to_string(),
+            hazard_hints: Vec::new(),
             target_pos: Some([10.5, 64.0, 10.5]),
         });
         let botany_bytes = serialize_server_data_payload(&botany_payload)

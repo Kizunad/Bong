@@ -2,13 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use valence::prelude::{Commands, Entity, Query, Res, ResMut, With};
 
+use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{BotanyZoneTag, Zone, ZoneRegistry};
 
 use super::components::{
     BotanyVariantRoll, Plant, PlantLifecycleClock, PlantStaticPoint, PlantStaticPointStore,
 };
 use super::registry::{
-    zone_supports, BotanyKindRegistry, BotanyPlantId, BotanySpawnMode, PlantVariant,
+    zone_supports, BotanyKindRegistry, BotanyPlantId, BotanySpawnMode, PlantVariant, SurvivalMode,
 };
 
 const LIFECYCLE_INTERVAL_TICKS: u64 = 100;
@@ -70,6 +71,149 @@ fn spawn_seed(now_tick: u64, kind: BotanyPlantId, spawn_idx: u32) -> u64 {
     now_tick.wrapping_mul(0xA342_3F3A_1E8B_C11D)
         ^ kind_seed.wrapping_mul(0xD1B5_4A32_D192_ED03)
         ^ u64::from(spawn_idx)
+}
+
+fn v2_env_locks_hold(
+    kind: &super::registry::BotanyPlantKind,
+    position: [f64; 3],
+    zone: &Zone,
+    terrain_providers: Option<&TerrainProviders>,
+) -> bool {
+    let Some(terrain) =
+        terrain_providers.and_then(|providers| providers.for_dimension(zone.dimension))
+    else {
+        return false;
+    };
+    super::env_lock::check_env_locks(
+        kind,
+        position[0].round() as i32,
+        position[2].round() as i32,
+        terrain,
+        zone,
+    )
+}
+
+fn spawn_v2_plants_for_zone(
+    commands: &mut Commands,
+    zone: &mut Zone,
+    registry: &BotanyKindRegistry,
+    variant_roll: &BotanyVariantRoll,
+    now_tick: u64,
+    active_counts: &mut HashMap<(String, BotanyPlantId), u32>,
+    terrain_providers: Option<&TerrainProviders>,
+) {
+    let Some(terrain) =
+        terrain_providers.and_then(|providers| providers.for_dimension(zone.dimension))
+    else {
+        return;
+    };
+
+    for kind in registry.iter().filter(|kind| kind.is_v2()) {
+        let Some(spec) = kind.v2_spec() else {
+            continue;
+        };
+        let Some((position, growth_score)) =
+            v2_candidate_position(kind.id, spec.survival_mode, zone, terrain, now_tick)
+        else {
+            continue;
+        };
+        if growth_score <= 0.0 {
+            continue;
+        }
+        if !super::env_lock::check_env_locks(
+            kind,
+            position[0].round() as i32,
+            position[2].round() as i32,
+            terrain,
+            zone,
+        ) {
+            continue;
+        }
+
+        let target_count = u32::from(growth_score >= 1.0);
+        if target_count == 0 {
+            continue;
+        }
+        let count_key = (zone.name.clone(), kind.id);
+        let current_count = active_counts.get(&count_key).copied().unwrap_or(0);
+        for spawn_idx in current_count..target_count {
+            let seed = spawn_seed(now_tick, kind.id, spawn_idx);
+            commands.spawn(Plant {
+                id: kind.id,
+                zone_name: zone.name.clone(),
+                position,
+                planted_at_tick: now_tick,
+                wither_progress: 0,
+                source_point: None,
+                harvested: false,
+                trampled: false,
+                variant: roll_variant_for_zone(
+                    zone,
+                    seed.wrapping_mul(0x5851_F42D_4C95_7F2D),
+                    variant_roll,
+                ),
+            });
+            *active_counts.entry(count_key.clone()).or_default() += 1;
+            zone.spirit_qi = (zone.spirit_qi - f64::from(kind.growth_cost)).clamp(-1.0, 1.0);
+        }
+    }
+}
+
+fn v2_candidate_position(
+    kind: BotanyPlantId,
+    survival_mode: SurvivalMode,
+    zone: &Zone,
+    terrain: &crate::world::terrain::TerrainProvider,
+    now_tick: u64,
+) -> Option<([f64; 3], f32)> {
+    let seed = spawn_seed(now_tick, kind, 0);
+    let mut position = zone_sampled_position(seed, zone);
+    let x = position[0].round() as i32;
+    let z = position[2].round() as i32;
+    let surface = crate::world::terrain::SurfaceProvider::query_surface(terrain, x, z);
+    let sample = terrain.sample(x, z);
+    position[1] = if sample.cavern_floor_y < 9000.0 {
+        f64::from(sample.cavern_floor_y)
+    } else if sample.sky_island_base_y < 9000.0 {
+        f64::from(sample.sky_island_base_y + sample.sky_island_thickness)
+    } else {
+        f64::from(surface.y + 1)
+    };
+    let score = match survival_mode {
+        SurvivalMode::QiAbsorb => zone.spirit_qi.max(0.0) as f32 * 2.0,
+        SurvivalMode::NegPressureFeed => sample.neg_pressure * 2.0,
+        SurvivalMode::PressureDifferential => {
+            sample.qi_vein_flow * (1.0 - sample.mofa_decay).max(0.0) * 3.0
+        }
+        SurvivalMode::SpiritCrystallize => sample.qi_density * 1.5,
+        SurvivalMode::RuinResonance => sample.ruin_density * 2.0,
+        SurvivalMode::ThermalConvection => (sample.underground_tier == 2) as u8 as f32,
+        SurvivalMode::PortalSiphon => {
+            if zone
+                .active_events
+                .iter()
+                .any(|event| event == "portal_rift")
+            {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        SurvivalMode::DualMetabolism => sample.qi_density * 1.2 + sample.mofa_decay * 1.2,
+        SurvivalMode::PhotoLuminance => 1.0,
+        SurvivalMode::WaterPulse => {
+            if zone
+                .active_events
+                .iter()
+                .any(|event| event == "water_pulse_open")
+            {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    };
+    Some((position, score))
 }
 
 /// plan §7：按 zone 环境决定植物变种。
@@ -151,6 +295,7 @@ pub fn run_botany_lifecycle_tick(
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut static_points: ResMut<PlantStaticPointStore>,
     variant_roll: Res<BotanyVariantRoll>,
+    terrain_providers: Option<Res<TerrainProviders>>,
     plants: Query<(Entity, &Plant), With<Plant>>,
 ) {
     lifecycle_clock.tick = lifecycle_clock.tick.saturating_add(1);
@@ -202,14 +347,18 @@ pub fn run_botany_lifecycle_tick(
         let wither_due_trampled = plant.trampled;
         // EventTriggered 植物（如 kong_shou_hen）不检查 biome / spirit_qi 下限（plan §1.2.3）。
         let is_event_kind = kind.spawn_mode == BotanySpawnMode::EventTriggered;
-        let wither_due_unsupported = !is_event_kind && !zone_supports(kind, zone);
+        let v2_env_locked = kind.v2_spec().is_some_and(|_| {
+            !v2_env_locks_hold(kind, plant.position, zone, terrain_providers.as_deref())
+        });
+        let wither_due_unsupported = !kind.is_v2() && !is_event_kind && !zone_supports(kind, zone);
         let wither_due_low_qi =
-            !is_event_kind && zone.spirit_qi < f64::from(kind.survive_threshold);
+            !kind.is_v2() && !is_event_kind && zone.spirit_qi < f64::from(kind.survive_threshold);
         let wither_due_age = age >= kind.max_age_ticks;
         if wither_due_harvest
             || wither_due_trampled
             || wither_due_unsupported
             || wither_due_low_qi
+            || v2_env_locked
             || wither_due_age
         {
             wither_targets.push(entity);
@@ -244,12 +393,22 @@ pub fn run_botany_lifecycle_tick(
     }
 
     for zone in &mut zone_registry.zones {
+        spawn_v2_plants_for_zone(
+            &mut commands,
+            zone,
+            &registry,
+            variant_roll.as_ref(),
+            now_tick,
+            &mut active_counts,
+            terrain_providers.as_deref(),
+        );
+
         if zone.spirit_qi <= 0.0 {
             continue;
         }
 
         for kind in registry.iter() {
-            if kind.spawn_mode != BotanySpawnMode::ZoneRefresh {
+            if kind.is_v2() || kind.spawn_mode != BotanySpawnMode::ZoneRefresh {
                 continue;
             }
             if !zone_supports(kind, zone) {
@@ -784,5 +943,69 @@ mod tests {
         assert_eq!(respawned.len(), 1);
         assert_eq!(respawned[0].id, BotanyPlantId::GuYuanGen);
         assert_eq!(respawned[0].source_point, Some(1));
+    }
+
+    #[test]
+    fn portal_rift_v2_spawn_ignores_negative_zone_qi_then_wither_when_event_closes() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll { chance_inverse: 0 });
+        app.insert_resource(PlantLifecycleClock {
+            tick: LIFECYCLE_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(TerrainProviders {
+            overworld: crate::world::terrain::TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "tsy_shallow".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([16.0, 96.0, 16.0]).get(),
+                ),
+                spirit_qi: -0.4,
+                danger_level: 8,
+                active_events: vec!["portal_rift".to_string()],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+            let mut plants = world.query::<&Plant>();
+            let spawned = plants.iter(world).collect::<Vec<_>>();
+            assert_eq!(spawned.len(), 1);
+            assert_eq!(spawned[0].id, BotanyPlantId::LieYuanTai);
+        }
+        let after_spawn_qi = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
+
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].active_events.clear();
+        }
+        {
+            let mut clock = app.world_mut().resource_mut::<PlantLifecycleClock>();
+            clock.tick = LIFECYCLE_INTERVAL_TICKS * 2 - 1;
+        }
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+            let mut plants = world.query::<&Plant>();
+            assert_eq!(plants.iter(world).count(), 0);
+        }
+        let zone_registry = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zone_registry.zones[0].spirit_qi > after_spawn_qi,
+            "event-closed wither should restore spirit_qi"
+        );
     }
 }
