@@ -67,6 +67,25 @@ class InventoryEquipRulesTest {
     }
 
     @Test
+    void toolCanEquipMainHandButNotHotbarOrArmor() {
+        InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
+
+        assertTrue(InventoryEquipRules.canEquip(tool, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertFalse(InventoryEquipRules.canEquip(tool, EquipSlotType.CHEST, null, equipped()));
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(tool));
+    }
+
+    @Test
+    void toolCannotEquipMainHandWhileTwoHandOccupied() {
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+        InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
+        EnumMap<EquipSlotType, InventoryItem> equipped = equipped();
+        equipped.put(EquipSlotType.TWO_HAND, staff);
+
+        assertFalse(InventoryEquipRules.canEquip(tool, EquipSlotType.MAIN_HAND, null, equipped));
+    }
+
+    @Test
     void consumablesStayHotbarCompatible() {
         assertTrue(InventoryEquipRules.canPlaceIntoHotbar(item(3003L, "guyuan_pill", 1, 1)));
     }

@@ -141,6 +141,7 @@ pub enum ItemCategory {
     Weapon,
     Treasure,
     BoneCoin,
+    Tool,
     Misc,
 }
 
@@ -1163,6 +1164,7 @@ fn parse_item_category(
         "weapon" => Ok(ItemCategory::Weapon),
         "treasure" => Ok(ItemCategory::Treasure),
         "bonecoin" | "bone_coin" | "bone-coins" | "bone_coins" => Ok(ItemCategory::BoneCoin),
+        "tool" => Ok(ItemCategory::Tool),
         "misc" => Ok(ItemCategory::Misc),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
@@ -2485,6 +2487,12 @@ fn validate_move_semantics(
             "weapon `{}` cannot move to hotbar; weapons must stay in equipped slots",
             item.template_id
         )),
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Tool) => {
+            Err(format!(
+                "tool `{}` cannot move to hotbar; tools must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -2496,14 +2504,16 @@ fn validate_move_semantics(
         InventoryLocationV1::Equip { slot } => match slot {
             EquipSlotV1::MainHand => {
                 if template.weapon_spec.is_none()
+                    && !matches!(template.category, ItemCategory::Tool)
                     && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
                 {
                     return Err(format!(
-                        "item `{}` cannot equip to main_hand; expected weapon or hoe",
+                        "item `{}` cannot equip to main_hand; expected weapon, tool, or hoe",
                         item.template_id
                     ));
                 }
-                if template.weapon_spec.is_some()
+                if (template.weapon_spec.is_some()
+                    || matches!(template.category, ItemCategory::Tool))
                     && inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND)
                     && !from_two_hand
                 {
@@ -3096,6 +3106,35 @@ mod tests {
                 "forge asset `{required}` must be registered"
             );
         }
+        for required_tool in [
+            "cai_yao_dao",
+            "bao_chu",
+            "cao_lian",
+            "dun_qi_jia",
+            "gua_dao",
+            "gu_hai_qian",
+            "bing_jia_shou_tao",
+        ] {
+            let template = registry
+                .get(required_tool)
+                .unwrap_or_else(|| panic!("tool asset `{required_tool}` must be registered"));
+            assert!(
+                matches!(template.category, ItemCategory::Tool),
+                "tool asset `{required_tool}` must parse as ItemCategory::Tool"
+            );
+            assert!(
+                template.weapon_spec.is_none(),
+                "tool asset `{required_tool}` must not define combat weapon stats"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_item_category_accepts_tool_alias() {
+        let category = parse_item_category("tool", Path::new("<inline-items.toml>"), "cai_yao_dao")
+            .expect("tool category should parse");
+
+        assert_eq!(category, ItemCategory::Tool);
     }
 
     #[test]
@@ -3854,6 +3893,94 @@ cols = 4
     }
 
     #[test]
+    fn apply_move_allows_tool_to_main_hand() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
+        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect("tool should equip to main_hand");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("dun_qi_jia")
+        );
+    }
+
+    #[test]
+    fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
+        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
+        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            ItemInstance {
+                instance_id: 77,
+                template_id: "wooden_staff".to_string(),
+                display_name: "木杖".to_string(),
+                grid_w: 1,
+                grid_h: 3,
+                weight: 1.2,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect_err("tool should conflict with occupied two_hand");
+
+        assert!(error.contains("two_hand slot is occupied"));
+    }
+
+    #[test]
     fn apply_move_rejects_weapon_to_hotbar() {
         use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
 
@@ -3877,6 +4004,31 @@ cols = 4
         .expect_err("weapon should be rejected from hotbar");
 
         assert!(error.contains("cannot move to hotbar"));
+    }
+
+    #[test]
+    fn apply_move_rejects_tool_to_hotbar() {
+        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "cai_yao_dao".to_string();
+        inv.containers[0].items[0].instance.display_name = "采药刀".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: ContainerIdV1::MainPack,
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("tool should be rejected from hotbar");
+
+        assert!(error.contains("tool `cai_yao_dao` cannot move to hotbar"));
     }
 
     #[test]

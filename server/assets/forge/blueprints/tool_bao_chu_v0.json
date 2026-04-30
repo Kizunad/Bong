@@ -1,0 +1,23 @@
+{
+  "id": "tool_bao_chu_v0",
+  "name": "刨锄",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [{ "material": "fan_tie", "count": 2 }],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "bao_chu", "quality": 1.0 },
+    "good": { "weapon": "bao_chu", "quality": 0.8 },
+    "flawed": { "weapon": "bao_chu", "quality": 0.5 },
+    "waste": null,
+    "explode": { "damage": 4.0, "station_wear": 0.01 }
+  }
+}
