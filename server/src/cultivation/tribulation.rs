@@ -10,8 +10,9 @@
 //! P1/P5：本文件只定义状态机 + 事件；真实天劫伤害由战斗 plan 实施。
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, Event, EventReader, EventWriter, Position,
-    Query, RemovedComponents, Res, Username, With,
+    bevy_ecs, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
+    EventReader, EventWriter, Position, Query, RemovedComponents, Res, ResMut, Resource, Username,
+    With,
 };
 
 use std::collections::HashSet;
@@ -71,6 +72,8 @@ const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;
 const DUXU_FULL_QI_EPSILON: f64 = 0.001;
 const HALF_STEP_QI_MAX_MULTIPLIER: f64 = 1.10;
 const HALF_STEP_LIFESPAN_YEARS: u32 = 200;
+const DUXU_OMEN_CLOUD_BLOCK_Y_OFFSET: i32 = 24;
+const DUXU_OMEN_CLOUD_BLOCK_OFFSETS: [i32; 5] = [-8, -4, 0, 4, 8];
 
 #[derive(Debug, Clone, Copy)]
 struct DuXuWaveProfile {
@@ -94,6 +97,19 @@ pub struct TribulationState {
     pub participants: Vec<String>,
     pub failed: bool,
     pub half_step_on_success: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TribulationOmenCloudBlock {
+    entity: Entity,
+    pos: BlockPos,
+    original: BlockState,
+    expires_at_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct TribulationOmenCloudBlocks {
+    blocks: Vec<TribulationOmenCloudBlock>,
 }
 
 fn tribulation_dimension_for_participant(
@@ -778,6 +794,82 @@ fn emit_tribulation_omen_cloud_vfx(
             duration_ticks: Some(200),
         },
     ));
+}
+
+pub fn tribulation_omen_cloud_block_overlay_system(
+    clock: Res<CombatClock>,
+    mut announced: EventReader<TribulationAnnounce>,
+    active: Query<&TribulationState>,
+    mut clouds: ResMut<TribulationOmenCloudBlocks>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+) {
+    let Ok(mut layer) = layers.get_single_mut() else {
+        announced.clear();
+        return;
+    };
+
+    let mut next_blocks = Vec::with_capacity(clouds.blocks.len());
+    for block in clouds.blocks.drain(..) {
+        let still_omen = active.get(block.entity).is_ok_and(|state| {
+            matches!(state.phase, TribulationPhase::Omen) && clock.tick < block.expires_at_tick
+        });
+        if still_omen {
+            next_blocks.push(block);
+        } else {
+            layer.set_block(block.pos, block.original);
+        }
+    }
+    clouds.blocks = next_blocks;
+
+    for event in announced.read() {
+        if active
+            .get(event.entity)
+            .is_ok_and(|state| !matches!(state.phase, TribulationPhase::Omen))
+        {
+            continue;
+        }
+        let y =
+            (event.epicenter[1].round() as i32 + DUXU_OMEN_CLOUD_BLOCK_Y_OFFSET).clamp(-64, 319);
+        let expires_at_tick = event.started_tick.saturating_add(DUXU_OMEN_TICKS);
+        for dx in DUXU_OMEN_CLOUD_BLOCK_OFFSETS {
+            for dz in DUXU_OMEN_CLOUD_BLOCK_OFFSETS {
+                if dx.abs() + dz.abs() > 12 {
+                    continue;
+                }
+                let pos = BlockPos::new(
+                    event.epicenter[0].round() as i32 + dx,
+                    y,
+                    event.epicenter[2].round() as i32 + dz,
+                );
+                if clouds
+                    .blocks
+                    .iter()
+                    .any(|block| block.entity == event.entity && block.pos == pos)
+                {
+                    continue;
+                }
+                let original = layer
+                    .block(pos)
+                    .map(|block| block.state)
+                    .unwrap_or(BlockState::AIR);
+                layer.set_block(pos, omen_cloud_block_for_offset(dx, dz));
+                clouds.blocks.push(TribulationOmenCloudBlock {
+                    entity: event.entity,
+                    pos,
+                    original,
+                    expires_at_tick,
+                });
+            }
+        }
+    }
+}
+
+fn omen_cloud_block_for_offset(dx: i32, dz: i32) -> BlockState {
+    if dx == 0 && dz == 0 {
+        BlockState::BLACK_WOOL
+    } else {
+        BlockState::WHITE_WOOL
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -1686,7 +1778,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Entity, Events, IntoSystemConfigs, Position, Update, Username};
-    use valence::testing::create_mock_client;
+    use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -1999,6 +2091,82 @@ mod tests {
             }
             other => panic!("unexpected boundary vfx payload: {other:?}"),
         }
+    }
+
+    #[test]
+    fn tribulation_omen_cloud_blocks_overlay_and_restore() {
+        let scenario = ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([0, 0], valence::prelude::UnloadedChunk::new());
+        app.insert_resource(CombatClock { tick: 0 });
+        app.insert_resource(TribulationOmenCloudBlocks::default());
+        app.add_event::<TribulationAnnounce>();
+        app.add_systems(Update, tribulation_omen_cloud_block_overlay_system);
+
+        let entity = app
+            .world_mut()
+            .spawn(TribulationState {
+                kind: TribulationKind::DuXu,
+                phase: TribulationPhase::Omen,
+                epicenter: [8.0, 66.0, 8.0],
+                wave_current: 0,
+                waves_total: 3,
+                started_tick: 0,
+                phase_started_tick: 0,
+                next_wave_tick: DUXU_OMEN_TICKS + DUXU_LOCK_TICKS,
+                participants: vec!["offline:Azure".to_string()],
+                failed: false,
+                half_step_on_success: false,
+            })
+            .id();
+        app.world_mut().send_event(TribulationAnnounce {
+            entity,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [8.0, 66.0, 8.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        app.update();
+
+        let center = BlockPos::new(8, 90, 8);
+        let edge = BlockPos::new(12, 90, 8);
+        {
+            let layer_ref = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("test layer should carry ChunkLayer");
+            assert_eq!(
+                layer_ref.block(center).map(|block| block.state),
+                Some(BlockState::BLACK_WOOL)
+            );
+            assert_eq!(
+                layer_ref.block(edge).map(|block| block.state),
+                Some(BlockState::WHITE_WOOL)
+            );
+        }
+
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<TribulationState>();
+        app.world_mut().resource_mut::<CombatClock>().tick = DUXU_OMEN_TICKS;
+        app.update();
+
+        let layer_ref = app.world().get::<ChunkLayer>(layer).unwrap();
+        assert_eq!(
+            layer_ref.block(center).map(|block| block.state),
+            Some(BlockState::AIR)
+        );
+        assert_eq!(
+            layer_ref.block(edge).map(|block| block.state),
+            Some(BlockState::AIR)
+        );
     }
 
     #[test]

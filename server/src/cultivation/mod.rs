@@ -99,11 +99,12 @@ use self::tribulation::{
     abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
     heart_demon_timeout_system, record_tribulation_interceptor_system, start_du_xu_request_system,
     start_tribulation_system, tribulation_aoe_system, tribulation_escape_boundary_system,
-    tribulation_failure_system, tribulation_intercept_death_system, tribulation_phase_tick_system,
+    tribulation_failure_system, tribulation_intercept_death_system,
+    tribulation_omen_cloud_block_overlay_system, tribulation_phase_tick_system,
     tribulation_wave_system, AscensionQuotaOccupied, AscensionQuotaOpened,
     HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationFled, TribulationLocked, TribulationOriginDimension,
-    TribulationSettled, TribulationState, TribulationWaveCleared,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationOmenCloudBlocks,
+    TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::persistence::{
@@ -124,6 +125,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(CultivationClock::default());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
+    app.insert_resource(TribulationOmenCloudBlocks::default());
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
@@ -195,6 +197,7 @@ pub fn register(app: &mut App) {
             start_du_xu_request_system,
             start_tribulation_system.after(start_du_xu_request_system),
             tribulation_phase_tick_system.after(start_tribulation_system),
+            tribulation_omen_cloud_block_overlay_system.after(start_tribulation_system),
             emit_tribulation_boundary_vfx_system.after(tribulation_phase_tick_system),
             tribulation_aoe_system.after(emit_tribulation_boundary_vfx_system),
             heart_demon_choice_system.after(tribulation_aoe_system),
