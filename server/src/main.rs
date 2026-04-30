@@ -32,6 +32,8 @@ mod social;
 #[allow(dead_code)]
 mod shelflife;
 mod skill;
+#[allow(dead_code)]
+mod tools;
 mod world;
 #[allow(dead_code)]
 mod zhenfa_hooks;
@@ -88,6 +90,7 @@ fn run_server() {
     botany::register(&mut app);
     cmd::register(&mut app);
     skill::register(&mut app);
+    tools::register(&mut app);
     cultivation::register(&mut app);
     alchemy::register(&mut app);
     audio::register(&mut app);

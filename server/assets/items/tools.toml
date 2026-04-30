@@ -1,0 +1,78 @@
+# plan-tools-v1 P0 — 凡器工具。凡器无真元加持，category=tool 且不参与 weapon stats。
+
+[[item]]
+id = "cai_yao_dao"
+name = "采药刀"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.35
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁小刀，刃薄而短，只够割根须和药茎。"
+
+[[item]]
+id = "bao_chu"
+name = "刨锄"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁锄头配木柄，用来翻土、挖根，柄上没有封灵纹。"
+
+[[item]]
+id = "cao_lian"
+name = "草镰"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 0.9
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡俗草镰，适合割草和成片收割，刃口钝了只能回炉重磨。"
+
+[[item]]
+id = "dun_qi_jia"
+name = "钝气夹"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "两片厚铁夹合皮垫，用来夹取毒草和锐刺，挡的是皮肉伤，不挡真元。"
+
+[[item]]
+id = "gua_dao"
+name = "刮刀"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "细刃刮刀，可刮树皮、取脂，也能剥薄矿膜。"
+
+[[item]]
+id = "gu_hai_qian"
+name = "骨骸钳"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.1
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "钳口厚重，柄端预留异兽骨包覆位。fauna-v1 未落地前以占位材料制作。"
+
+[[item]]
+id = "bing_jia_shou_tao"
+name = "冰甲手套"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.7
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "凡铁薄片衬皮缝成的手套，用来处理寒系植物。寒兽皮材料待 fauna-v1 回填。"
