@@ -5292,7 +5292,6 @@ fn handle_alchemy_take_pill(
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
 /// stack_count > 1 时减 1；否则移除整个 slot/placement。成功返回 true。
-#[cfg(test)]
 fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -> bool {
     for slot in inventory.hotbar.iter_mut() {
         if let Some(item) = slot.as_mut() {

@@ -144,12 +144,7 @@ pub fn apply_meridian_overload_events(
             continue;
         }
 
-        apply_meridian_crack_to_system(
-            &mut meridians,
-            event.severity,
-            CrackCause::Overload,
-            now,
-        );
+        apply_meridian_crack_to_system(&mut meridians, event.severity, CrackCause::Overload, now);
 
         let frozen = cultivation.qi_max_frozen.unwrap_or(0.0) + event.severity * FREEZE_FACTOR;
         cultivation.qi_max_frozen = Some(frozen.min(cultivation.qi_max * 0.5));

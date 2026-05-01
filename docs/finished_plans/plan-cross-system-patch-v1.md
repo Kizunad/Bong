@@ -201,16 +201,18 @@ cd client && ./gradlew test
   - P2：`server/src/alchemy/mod.rs` 消费 `AlchemyOutcomeEvent::Explode` 并造成真实伤害 / 死亡 / meridian overload；alchemy start 与 breakthrough 加 zone qi gate；`server/src/cultivation/overload.rs` 消费 `MeridianOverloadEvent`；mineral / lingtian 收获后推 inventory snapshot；服丹路径复用 shelflife 和 `apply_item_effect`；NPC death 释放灵田 owner 并写社交 feud；`server/src/npc/lifecycle.rs` 增加 per-zone budget 并接入 spawn / TSY / world event / agent command。
   - P3：`server/src/npc/possession.rs` 移除 stub 文案并将 `DuoSheIntent` 转发为 `DuoSheRequestEvent`；`server/src/cultivation/possession.rs` 在成功夺舍结算中继承 target 坐标 / 维度 / layer，标记 target `PossessedVictim + Despawned`，并在有 player persistence 时写回 slow slice；`server/src/cultivation/mod.rs` 保证调度在 intent forward 后执行。
 - **关键 commit**：
-  - `441f2844`（2026-05-01）：`plan-cross-system-patch-v1: 补齐 P0 接入通道`。
-  - `05e97fae`（2026-05-01）：`plan-cross-system-patch-v1: 串起 P1 跨系统熟练度`。
-  - `a93bd448`（2026-05-01）：`plan-cross-system-patch-v1: 接通 P2 玩法逻辑`。
-  - `99e6c976`（2026-05-01）：`plan-cross-system-patch-v1: 接通 P3 夺舍分发`。
+  - `a68e5c50`（2026-05-01）：`plan-cross-system-patch-v1: 补齐 P0 接入通道`。
+  - `abed5377`（2026-05-01）：`plan-cross-system-patch-v1: 串起 P1 跨系统熟练度`。
+  - `0a44af11`（2026-05-01）：`plan-cross-system-patch-v1: 接通 P2 玩法逻辑`。
+  - `decd1e58`（2026-05-01）：`plan-cross-system-patch-v1: 接通 P3 夺舍分发`。
+  - `b48e6dcd`（2026-05-01）：`归档 plan-cross-system-patch-v1：Bong · plan-cross-system-patch-v1`。
 - **测试结果**：
   - server P2 gate：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，`1894 passed`。
   - server P3 gate：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，`1895 passed`。
   - P3 定向：`cargo test process_duo_she`，`2 passed`；`cargo test duoshe_intent_event_forwards_runtime_request`，`1 passed`。
-  - agent：`npm run build` 通过；`agent/packages/tiandao npm test`，`187 passed`。
-  - schema：`agent/packages/schema npm test`，`224 passed`。
+  - rebase 后 server final gate：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，`1906 passed`。
+  - agent：`npm run build` 通过；`agent/packages/tiandao npm test`，`188 passed`。
+  - schema：`agent/packages/schema npm test`，`231 passed`。
   - client：`JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64 PATH="/usr/lib/jvm/java-1.17.0-openjdk-amd64/bin:$PATH" ./gradlew test build`，`BUILD SUCCESSFUL`。
 - **跨仓库核验**：
   - server：`RedisOutbound::SkillXpGain`、`SkillId::{Combat,Mineral,Cultivation}`、`EventReader<MeridianOverloadEvent>`、`send_inventory_snapshot_to_client`、`per_zone_caps`、`reserve_zone_batch`、`DuoSheIntentForwardSet` 均已命中。

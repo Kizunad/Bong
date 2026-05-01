@@ -687,11 +687,13 @@ mod integration_tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: canonical_player_id("Azure"),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
             bucket: outcome::OutcomeBucket::Explode,
             outcome: ResolvedOutcome::Explode {
                 damage: 12.0,
                 meridian_crack: 0.2,
             },
+            elapsed_ticks: 120,
         });
         app.update();
 
@@ -735,11 +737,13 @@ mod integration_tests {
         app.world_mut().send_event(AlchemyOutcomeEvent {
             furnace,
             caster_id: "Azure".to_string(),
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
             bucket: outcome::OutcomeBucket::Explode,
             outcome: ResolvedOutcome::Explode {
                 damage: 12.0,
                 meridian_crack: 0.0,
             },
+            elapsed_ticks: 120,
         });
         app.update();
 
