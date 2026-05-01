@@ -56,6 +56,16 @@ public class ZoneInfoHandlerTest {
         assertTrue(dispatch.logMessage().contains("required fields"));
     }
 
+    @Test
+    void activeEventsMarkNoCadenceZoneState() {
+        ServerDataDispatch dispatch = new ZoneInfoHandler(() -> 1L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"zone_info\",\"zone\":\"south_ash_dead_zone\",\"display_name\":\"南荒余烬\",\"spirit_qi\":0.0,\"danger_level\":5,\"active_events\":[\"no_cadence\"]}"
+        ));
+
+        assertTrue(dispatch.handled());
+        assertTrue(dispatch.zoneState().orElseThrow().noCadence());
+    }
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertTrue(parseResult.isSuccess(), () -> "Expected payload to parse successfully but got: " + parseResult.errorMessage());

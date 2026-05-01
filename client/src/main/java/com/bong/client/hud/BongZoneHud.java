@@ -87,7 +87,13 @@ public final class BongZoneHud {
             + " 灵气"
             + qiBar(safeZoneState.spiritQiNormalized())
             + " 危"
-            + dangerText(safeZoneState.dangerLevel());
+            + dangerText(safeZoneState.dangerLevel())
+            + cadenceText(safeZoneState);
+    }
+
+    static String cadenceText(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.noCadence() ? " 节律无节律" : "";
     }
 
     static String qiBar(double spiritQiNormalized) {

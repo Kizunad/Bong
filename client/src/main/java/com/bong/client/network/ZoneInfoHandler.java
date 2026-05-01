@@ -2,9 +2,12 @@ package com.bong.client.network;
 
 import com.bong.client.state.ZoneState;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.function.LongSupplier;
@@ -40,6 +43,7 @@ public final class ZoneInfoHandler implements ServerDataHandler {
             readOptionalString(payload, "display_name"),
             spiritQi,
             dangerLevel,
+            readOptionalStringSet(payload, "active_events"),
             nowMillisSupplier.getAsLong()
         );
         if (zoneState.isEmpty()) {
@@ -84,6 +88,28 @@ public final class ZoneInfoHandler implements ServerDataHandler {
         }
 
         return Integer.parseInt(rawValue);
+    }
+
+    private static Set<String> readOptionalStringSet(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return Set.of();
+        }
+        if (!element.isJsonArray()) {
+            return Set.of();
+        }
+
+        JsonArray array = element.getAsJsonArray();
+        Set<String> values = new LinkedHashSet<>();
+        for (JsonElement entry : array) {
+            if (entry != null && entry.isJsonPrimitive() && entry.getAsJsonPrimitive().isString()) {
+                String value = entry.getAsString().trim();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+            }
+        }
+        return Set.copyOf(values);
     }
 
     private static JsonPrimitive readPrimitive(JsonObject object, String fieldName) {

@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
@@ -16,8 +17,8 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
             known, 1, 92f, 100f, "self", false
         );
 
-        assertTrue(MixinClientPlayerInteractionManagerAlchemy.shouldOpenAlchemyFurnace(known, snapshot));
-        assertFalse(MixinClientPlayerInteractionManagerAlchemy.shouldOpenAlchemyFurnace(new BlockPos(-12, 64, 39), snapshot));
-        assertFalse(MixinClientPlayerInteractionManagerAlchemy.shouldOpenAlchemyFurnace(known, AlchemyFurnaceStore.Snapshot.empty()));
+        assertTrue(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(known, snapshot));
+        assertFalse(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(new BlockPos(-12, 64, 39), snapshot));
+        assertFalse(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(known, AlchemyFurnaceStore.Snapshot.empty()));
     }
 }

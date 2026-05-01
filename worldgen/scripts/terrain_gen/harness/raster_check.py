@@ -12,6 +12,7 @@ Catches known data integrity issues before they reach the Rust server:
 - cavern_floor_y outside [-64, 64] when tier > 0
 - anomaly_kind outside {0..5} or present without anomaly_intensity
 - fossil_bbox outside {0,1,2} or manifest fossil_bboxes with no raster cells
+- ash_dead_zone tiles must keep qi_vein_flow exactly 0
 """
 
 from __future__ import annotations
@@ -165,6 +166,19 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
                     f"outside [0,1] (zones={zones})"
                 )
+
+        if "south_ash_dead_zone" in zones:
+            vein_file = tile_dir / "qi_vein_flow.bin"
+            if not vein_file.exists():
+                errors.append(f"{tile_id}: ash_dead_zone tile missing qi_vein_flow.bin")
+            else:
+                vein_data = _read_float_layer(vein_file, area)
+                if vein_data is not None:
+                    vein_max = max(vein_data)
+                    if vein_max > 0.0:
+                        errors.append(
+                            f"{tile_id}: ash_dead_zone qi_vein_flow max={vein_max:.6f}, expected 0.0"
+                        )
 
         # Check water vs terrain consistency
         water_file = tile_dir / "water_level.bin"

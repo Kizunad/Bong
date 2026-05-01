@@ -459,6 +459,55 @@
       ]
     },
     {
+      "name": "south_ash_dead_zone",
+      "display_name": "南荒余烬",
+      "aabb": {
+        "min": [-2200.0, 60.0, 7000.0],
+        "max": [-200.0, 110.0, 9000.0]
+      },
+      "center_xz": [-1200.0, 8000.0],
+      "size_xz": [2000.0, 2000.0],
+      "spirit_qi": 0.0,
+      "danger_level": 5,
+      "active_events": ["no_cadence"],
+      "patrol_anchors": [
+        [-1880.0, 76.0, 7340.0],
+        [-1200.0, 78.0, 8000.0],
+        [-520.0, 74.0, 8720.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "ash_dead_zone",
+        "shape": "irregular_blob",
+        "boundary": { "mode": "hard", "width": 64 },
+        "height_model": { "base": [70, 82], "peak": 88 },
+        "surface_palette": ["coarse_dirt", "gravel", "sand", "smooth_stone", "stone"],
+        "biome_mix": ["mofa:si_yu", "mofa:fu_ling"],
+        "landmarks": ["silent_obelisk", "vanished_path_marker"],
+        "notes": "真正 qi=0 的余烬死域：不参与季节节律，残灰覆盖，无自然生物刷新。"
+      },
+      "pois": [
+        {
+          "kind": "stele",
+          "name": "无声碑",
+          "pos_xyz": [-1380.0, 78.0, 8120.0],
+          "tags": ["no_cadence", "dead_zone", "lore"],
+          "unlock": "凝脉以上灵识扫过时只感到一片空白",
+          "qi_affinity": -1.0,
+          "danger_bias": 1
+        },
+        {
+          "kind": "corpse_mound",
+          "name": "干尸堆",
+          "pos_xyz": [-1060.0, 74.0, 7820.0],
+          "tags": ["loot", "dead_zone", "surface_exposed"],
+          "unlock": "搜刮 3-5 秒；仅有凡铁、退活骨币、干灵草",
+          "qi_affinity": -0.8,
+          "danger_bias": 1
+        }
+      ]
+    },
+    {
       "name": "zhanhun_plain",
       "display_name": "战魂平野",
       "aabb": {
@@ -686,6 +735,12 @@
       "to": "north_wastes",
       "kind": "desolate_march",
       "approx_distance": 3500
+    },
+    {
+      "from": "north_wastes",
+      "to": "south_ash_dead_zone",
+      "kind": "ash_exile_road",
+      "approx_distance": 15000
     }
   ]
 }

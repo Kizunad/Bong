@@ -5,10 +5,13 @@
 //!
 //! 本系统仅在 sweep 时修改 item — 不对 snapshot emit / probe / consume 读路径产生副作用。
 
-use valence::prelude::{Query, Res, ResMut, Update};
+use valence::prelude::{Position, Query, Res, ResMut, Update};
 
 use crate::inventory::{bump_revision, ItemRegistry, PlayerInventory};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
+use super::compute::zone_multiplier_lookup;
 use super::registry::DecayProfileRegistry;
 use super::variant::apply_variant_switch;
 
@@ -16,7 +19,8 @@ use super::variant::apply_variant_switch;
 /// 对 `TrackState::Dead` / `AgePostPeakSpoiled` 的 item 执行变体切换。
 /// 切换后 bump revision 通知客户端。
 pub fn sweep_shelflife_variants(
-    mut inventories: Query<&mut PlayerInventory>,
+    mut inventories: Query<(&Position, Option<&CurrentDimension>, &mut PlayerInventory)>,
+    zones: Option<Res<ZoneRegistry>>,
     profile_registry: Res<DecayProfileRegistry>,
     item_registry: Res<ItemRegistry>,
     mut tick_counter: ResMut<ShelflifeSweepTick>,
@@ -26,8 +30,9 @@ pub fn sweep_shelflife_variants(
         return;
     }
 
-    for mut inventory in inventories.iter_mut() {
+    for (position, current_dim, mut inventory) in inventories.iter_mut() {
         let mut any_switched = false;
+        let zone_multiplier = zone_multiplier_for_position(zones.as_deref(), position, current_dim);
 
         for container in &mut inventory.containers {
             for placed in &mut container.items {
@@ -36,6 +41,7 @@ pub fn sweep_shelflife_variants(
                     &profile_registry,
                     &item_registry,
                     tick_counter.0,
+                    zone_multiplier,
                 ) {
                     any_switched = true;
                 }
@@ -43,13 +49,25 @@ pub fn sweep_shelflife_variants(
         }
 
         for item in inventory.equipped.values_mut() {
-            if apply_variant_switch(item, &profile_registry, &item_registry, tick_counter.0) {
+            if apply_variant_switch(
+                item,
+                &profile_registry,
+                &item_registry,
+                tick_counter.0,
+                zone_multiplier,
+            ) {
                 any_switched = true;
             }
         }
 
         for item in inventory.hotbar.iter_mut().flatten() {
-            if apply_variant_switch(item, &profile_registry, &item_registry, tick_counter.0) {
+            if apply_variant_switch(
+                item,
+                &profile_registry,
+                &item_registry,
+                tick_counter.0,
+                zone_multiplier,
+            ) {
                 any_switched = true;
             }
         }
@@ -58,6 +76,21 @@ pub fn sweep_shelflife_variants(
             bump_revision(&mut inventory);
         }
     }
+}
+
+fn zone_multiplier_for_position(
+    zones: Option<&ZoneRegistry>,
+    position: &Position,
+    current_dim: Option<&CurrentDimension>,
+) -> f32 {
+    let Some(zones) = zones else {
+        return 1.0;
+    };
+    let dim = current_dim.map(|c| c.0).unwrap_or(DimensionKind::Overworld);
+    zones
+        .find_zone(dim, position.0)
+        .map(|zone| zone_multiplier_lookup(zone.spirit_qi))
+        .unwrap_or(1.0)
 }
 
 /// Sweep 节拍计数器 — 用 u64 回绕保证 infinite server uptime。

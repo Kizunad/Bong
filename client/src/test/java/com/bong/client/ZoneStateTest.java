@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,7 +47,18 @@ public class ZoneStateTest {
         assertEquals("The Extremely Long An...", snapshot.zoneLabel());
         assertEquals(1.0d, snapshot.spiritQi());
         assertEquals(5, snapshot.dangerLevel());
+        assertFalse(snapshot.noCadence());
         assertEquals(5_000L, snapshot.changedAtMs());
+    }
+
+    @Test
+    public void activeEventsMarkLegacyZoneHudNoCadence() {
+        ZoneState.ZoneHudState snapshot = ZoneState.snapshotOf(
+                new BongServerPayload.ZoneInfo("south_ash_dead_zone", 0.0d, 5, java.util.List.of("no_cadence")),
+                5_000L
+        );
+
+        assertTrue(snapshot.noCadence());
     }
 
     @Test

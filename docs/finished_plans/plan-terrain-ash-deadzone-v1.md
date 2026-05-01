@@ -247,19 +247,28 @@ extra_layers = (
 
 ## Finish Evidence
 
-<!-- 全部阶段 ✅ 后填以下小节，迁入 docs/finished_plans/ 前必填 -->
-
 - 落地清单：
-  - P0：`worldgen/terrain-profiles.example.json` 加 `ash_dead_zone` profile + `zones.worldview.example.json` 加 `south_ash_dead_zone` zone；`Season::*_modifier()` 在死域 zone short-circuit 单测
-  - P1：`worldgen/scripts/terrain_gen/profiles/ash_dead_zone.py`（AshDeadZoneGenerator + 6 装饰物）
-  - P2：`server/src/cultivation/dead_zone.rs`（DeadZoneTickHandler）+ `server/src/world/mob_spawn.rs::ban_in_dead_zone` + `server/src/shelflife/decay.rs` 加 `zone_multiplier_lookup` 接口扩展（本 plan 顺手做，shelflife-v1 已归档）
-  - P3：`worldgen/scripts/terrain_gen/structures/corpse_mound.py` + `server/src/mob/ash_spider.rs` 蛛伏击规则 + `raster_check.py` qi_vein_flow=0 pin
+  - P0：`worldgen/terrain-profiles.example.json` 加 `ash_dead_zone` profile；`server/zones.worldview.example.json` 加 `south_ash_dead_zone` 固定 zone，带 `active_events=["no_cadence"]`。
+  - P1：`worldgen/scripts/terrain_gen/profiles/ash_dead_zone.py` 实装 `AshDeadZoneGenerator`、`fill_ash_dead_zone_tile`、6 种装饰物、恒 0 `qi_vein_flow`。
+  - P2：`server/src/cultivation/dead_zone.rs` 接入 `DeadZoneTickHandler`；`server/src/world/mob_spawn.rs` 禁普通自然刷；`server/src/shelflife/compute.rs` / `sweep.rs` / `variant.rs` 接入 `zone_multiplier_lookup`。
+  - P3：`worldgen/scripts/terrain_gen/structures/corpse_mound.py` 导出干尸堆 loot 锚；`server/src/mob/ash_spider.rs` 落地边缘 50 格与 `flora_variant_id == 4` 权重规则；`raster_check.py` 已 pin 死域 `qi_vein_flow == 0`。
+  - client：`zone_info.active_events` 解析 `no_cadence`，两套 HUD 均显示“无节律”。
 - 关键 commit：
-- 测试结果：（目标 P0 1 + P1 ≥ 6 + P2 ≥ 8 + P3 ≥ 4）
+  - `ac554099 feat(worldgen): 实装余烬死域地形剖面`
+  - `217b8b7e feat(server): 接入余烬死域损耗与禁刷规则`
+  - `8aaafddb feat(worldgen): 导出死域干尸堆搜刮锚点`
+  - `3ddf2cf3 feat(client): 显示死域无节律状态`
+- 测试结果：
+  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` ✅（1882 tests passed）
+  - client：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` ✅
+  - worldgen：`python3 -m unittest scripts.terrain_gen.test_ash_dead_zone -v` ✅（3 tests）
+  - worldgen：`python3 -c "from scripts.terrain_gen.structures import corpse_mound; corpse_mound._test_corpse_mound_loot_pool_contains_three_required_fixtures(); corpse_mound._test_corpse_mounds_emit_only_for_ash_dead_zone()"` ✅
+  - worldgen：`bash pipeline.sh ../server/zones.worldview.example.json generated/terrain-gen-ash-smoke raster` ✅（208 tiles synthesized）
+  - worldgen：`validate_rasters('generated/terrain-gen-ash-smoke/rasters')` ✅（All 208 tiles passed validation）
 - 跨仓库核验：
-  - worldgen：`ash_dead_zone` profile / `south_ash_dead_zone` zone / `ASH_DEAD_ZONE_DECORATIONS` / `corpse_mound.py`
-  - server：`DeadZoneTickHandler` / `ban_in_dead_zone` / shelflife `zone_multiplier_lookup` 接入
-  - client：HUD "无节律" 显示
+  - worldgen：`ash_dead_zone` profile / `south_ash_dead_zone` zone / `ASH_DEAD_ZONE_DECORATIONS` / `corpse_mound.py` / raster manifest `corpse_mounds`。
+  - server：`DeadZoneTickHandler` / `MobSpawnFilter::ban_in_dead_zone` / shelflife `zone_multiplier_lookup` 接入。
+  - client：HUD “无节律” 显示。
 - 遗留 / 后续：
   - 死域动态扩张（§8 开放问题——首版不做）
   - 自动慢老化（§8 开放问题——首版不做）
