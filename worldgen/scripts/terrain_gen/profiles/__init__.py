@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .ash_dead_zone import AshDeadZoneGenerator
 from .abyssal_maze import AbyssalMazeGenerator
 from .ancient_battlefield import AncientBattlefieldGenerator
 from .base import ProfileContext, TerrainProfileGenerator
@@ -25,6 +26,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         CaveNetworkGenerator(),
         WastePlateauGenerator(),
         SkyIsleGenerator(),
+        AshDeadZoneGenerator(),
         AbyssalMazeGenerator(),
         AncientBattlefieldGenerator(),
         TsyZongmenRuinGenerator(),

@@ -23,7 +23,11 @@ pub mod sweep;
 pub mod types;
 pub mod variant;
 
-pub use compute::{compute_current_qi, compute_track_state};
+#[allow(unused_imports)]
+pub use compute::{
+    combine_storage_and_zone_multiplier, compute_current_qi, compute_track_state,
+    zone_multiplier_lookup, DEAD_ZONE_SHELFLIFE_MULTIPLIER,
+};
 #[allow(unused_imports)]
 pub use consume::{
     age_peak_check, decay_current_qi_factor, spoil_check, AgeBonusRoll, AgePeakCheck,

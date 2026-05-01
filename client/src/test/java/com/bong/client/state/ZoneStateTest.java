@@ -2,7 +2,10 @@ package com.bong.client.state;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ZoneStateTest {
@@ -16,6 +19,7 @@ public class ZoneStateTest {
         assertEquals(0.0, state.spiritQiNormalized());
         assertEquals(0, state.dangerLevel());
         assertEquals("normal", state.status());
+        assertFalse(state.noCadence());
         assertEquals(0L, state.changedAtMillis());
     }
 
@@ -48,5 +52,19 @@ public class ZoneStateTest {
         assertTrue(state.isEmpty());
         assertEquals(0.0, state.spiritQiNormalized());
         assertEquals(0, state.dangerLevel());
+    }
+
+    @Test
+    void createMarksNoCadenceFromActiveEvents() {
+        ZoneState state = ZoneState.create(
+            "south_ash_dead_zone",
+            "南荒余烬",
+            0.0,
+            5,
+            Set.of("no_cadence"),
+            12L
+        );
+
+        assertTrue(state.noCadence());
     }
 }

@@ -59,6 +59,7 @@ def write_field_summary_json(fields: GeneratedFieldSet, output_dir: Path) -> Pat
 def _surface_color(surface_name: str) -> tuple[int, int, int]:
     palette = {
         "stone": (111, 114, 118),
+        "smooth_stone": (171, 174, 174),
         "dirt": (111, 90, 70),
         "coarse_dirt": (120, 106, 90),
         "gravel": (132, 128, 122),
@@ -139,7 +140,7 @@ def _point_in_zone_core(zone: BlueprintZone, world_x: int, world_z: int) -> bool
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster"}:
+    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         return dx * dx + dz * dz <= 1.0
@@ -175,6 +176,7 @@ def _zone_preview_color(profile_name: str) -> tuple[int, int, int]:
         "rift_valley": (191, 96, 74),
         "cave_network": (114, 102, 158),
         "waste_plateau": (171, 144, 96),
+        "ash_dead_zone": (128, 126, 118),
     }
     return colors.get(profile_name, (214, 88, 185))
 
@@ -188,7 +190,7 @@ def _zone_preview_weight(zone: BlueprintZone, world_x: int, world_z: int) -> flo
     edge_noise = coherent_noise_2d(world_x, world_z, scale=420.0, seed=17)
     edge_warp = 1.0 + edge_noise * 0.12
 
-    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster"}:
+    if shape in {"ellipse", "massif", "basin", "plateau", "subterranean_cluster", "irregular_blob"}:
         dx = (world_x - center_x) / (half_width * edge_warp)
         dz = (world_z - center_z) / (half_depth * (1.0 - edge_noise * 0.08))
         core_ratio = math.sqrt(dx * dx + dz * dz)
@@ -262,6 +264,7 @@ def _wilderness_preview_color(
         "grass_block": (88, 98, 84),
         "moss_block": (82, 92, 80),
         "andesite": (97, 99, 102),
+        "smooth_stone": (126, 128, 128),
         "deepslate": (78, 80, 86),
         "dead_bush": (108, 100, 82),
     }.get(surface_name, (94, 92, 90))

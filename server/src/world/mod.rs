@@ -4,6 +4,7 @@ pub mod events;
 pub mod extract_system;
 pub mod karma;
 pub mod loot_pool;
+pub mod mob_spawn;
 pub mod rift_portal;
 pub mod terrain;
 pub mod tsy;

@@ -33,6 +33,7 @@ public final class ZoneState {
                 clipLabel(humanizeZoneName(zoneInfo.zone()), MAX_ZONE_LABEL_LENGTH),
                 clampSpiritQi(zoneInfo.spiritQi()),
                 clampDangerLevel(zoneInfo.dangerLevel()),
+                zoneInfo.activeEvents().stream().anyMatch("no_cadence"::equalsIgnoreCase),
                 nowMs
         );
     }
@@ -108,7 +109,7 @@ public final class ZoneState {
         currentZone = null;
     }
 
-    public record ZoneHudState(String zoneLabel, double spiritQi, int dangerLevel, long changedAtMs) {
+    public record ZoneHudState(String zoneLabel, double spiritQi, int dangerLevel, boolean noCadence, long changedAtMs) {
         public ZoneHudState {
             Objects.requireNonNull(zoneLabel, "zoneLabel");
         }

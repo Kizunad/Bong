@@ -54,6 +54,24 @@ public class BongHudZoneEventAlertTest {
         assertTrue(surface.drawTexts.size() >= 6, "zone panel text, event banner, and toast should render");
     }
 
+    @Test
+    public void legacyHudShowsNoCadenceForAshDeadZone() {
+        ZoneState.recordZoneInfo(
+                new BongServerPayload.ZoneInfo("south_ash_dead_zone", 0.0d, 5, List.of("no_cadence")),
+                1_000L
+        );
+
+        BongHud.HudSnapshot snapshot = BongHud.snapshot(2_000L);
+        RecordingHudSurface surface = new RecordingHudSurface(320, 180);
+
+        BongHud.renderSurface(surface, snapshot);
+
+        assertTrue(
+                surface.drawTexts.stream().anyMatch(call -> call.text().contains("无节律")),
+                "zone panel should show no-cadence copy"
+        );
+    }
+
     private static final class RecordingHudSurface implements BongHud.HudSurface {
         private final int width;
         private final int height;

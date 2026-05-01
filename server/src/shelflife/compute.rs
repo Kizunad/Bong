@@ -15,6 +15,20 @@
 
 use super::types::{DecayFormula, DecayProfile, Freshness, TrackState};
 
+pub const DEAD_ZONE_SHELFLIFE_MULTIPLIER: f32 = 3.0;
+
+pub fn zone_multiplier_lookup(zone_qi_density: f64) -> f32 {
+    if (0.0..crate::cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD).contains(&zone_qi_density) {
+        DEAD_ZONE_SHELFLIFE_MULTIPLIER
+    } else {
+        1.0
+    }
+}
+
+pub fn combine_storage_and_zone_multiplier(storage_multiplier: f32, zone_qi_density: f64) -> f32 {
+    storage_multiplier.max(0.0) * zone_multiplier_lookup(zone_qi_density)
+}
+
 /// plan §1 / §6.1 — 按 lazy eval 算物品当下灵气 / 真元 / 药力值。
 ///
 /// # 参数
@@ -295,6 +309,33 @@ mod tests {
         let f = fresh_item(&p, 100.0, 0);
         let current = compute_current_qi(&f, &p, 2000, 1.0);
         assert!((current - 25.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn dead_zone_multiplier_triples_effective_decay_time() {
+        let p = decay_exp_profile(1000, 0.0);
+        let f = fresh_item(&p, 100.0, 0);
+        let normal = compute_current_qi(&f, &p, 1000, zone_multiplier_lookup(0.4));
+        let dead_zone = compute_current_qi(&f, &p, 1000, zone_multiplier_lookup(0.0));
+
+        assert!((normal - 50.0).abs() < 1e-3);
+        assert!((dead_zone - 12.5).abs() < 1e-3);
+        assert_eq!(
+            zone_multiplier_lookup(-0.1),
+            1.0,
+            "negative fields are not ash dead zones"
+        );
+    }
+
+    #[test]
+    fn storage_and_zone_multiplier_compose_transparently() {
+        let p = decay_exp_profile(1000, 0.0);
+        let f = fresh_item(&p, 100.0, 0);
+        let combined = combine_storage_and_zone_multiplier(0.5, 0.0);
+
+        assert_eq!(combined, 1.5);
+        let current = compute_current_qi(&f, &p, 1000, combined);
+        assert!((current - (100.0 * (0.5_f32).powf(1.5))).abs() < 1e-3);
     }
 
     #[test]

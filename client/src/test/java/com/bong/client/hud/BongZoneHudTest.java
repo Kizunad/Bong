@@ -4,6 +4,7 @@ import com.bong.client.state.ZoneState;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -71,5 +72,22 @@ public class BongZoneHudTest {
 
         assertFalse(commands.isEmpty());
         assertTrue(commands.get(commands.size() - 1).text().contains("区域"));
+    }
+
+    @Test
+    void noCadenceZoneShowsSilentCadenceLabel() {
+        ZoneState zoneState = ZoneState.create(
+            "south_ash_dead_zone",
+            "南荒余烬",
+            0.0,
+            5,
+            Set.of("no_cadence"),
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 2_500L, FIXED_WIDTH, 260, 10, 22, 320, 180);
+
+        assertTrue(commands.get(commands.size() - 1).text().contains("节律无节律"));
+        assertEquals(" 节律无节律", BongZoneHud.cadenceText(zoneState));
     }
 }

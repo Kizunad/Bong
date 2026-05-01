@@ -17,6 +17,8 @@ mod lingtian;
 // M2 worldgen 接入前 OreIndex 始终空，listener 对所有 block 静默 no-op。
 #[allow(dead_code)]
 mod mineral;
+#[allow(dead_code)]
+mod mob;
 mod network;
 mod npc;
 mod persistence;

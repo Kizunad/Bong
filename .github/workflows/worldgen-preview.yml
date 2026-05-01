@@ -100,11 +100,9 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-            client/.gradle
-          key: ${{ runner.os }}-gradle-preview-${{ hashFiles('client/build.gradle', 'client/gradle.properties') }}
+          key: ${{ runner.os }}-gradle-preview-clean-v1-${{ hashFiles('client/build.gradle', 'client/gradle.properties') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-preview-
-            ${{ runner.os }}-gradle-
+            ${{ runner.os }}-gradle-preview-clean-v1-
 
       - name: Build server (release) — 让后续 cargo run 直接命中 cache
         working-directory: server
@@ -133,9 +131,12 @@ jobs:
         # xvfb-run 自带 -a 抢未用 :N display；mesa llvmpipe 自动接管 OpenGL。
         # client.scheduleStop() 由 PreviewSession 拍完照后调用退出；workflow
         # timeout-minutes 兜底防止 mod 状态机卡住。
+        # 不复用 client/.gradle 任务状态：Loom dev runtime 曾从缓存带入已删除
+        # mixin 类，导致 preview client world 初始化前崩在 stale Mixin 校验。
         run: |
+          ./gradlew clean --no-daemon
           xvfb-run -a --server-args='-screen 0 1280x720x24' \
-            ./gradlew runClientPreview --no-daemon --stacktrace
+            ./gradlew runClientPreview --no-daemon --stacktrace --rerun-tasks
 
       - name: Stop server (cleanup)
         if: always()
