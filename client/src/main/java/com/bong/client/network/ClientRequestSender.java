@@ -6,6 +6,7 @@ import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 
 import java.nio.charset.StandardCharsets;
 
@@ -198,28 +199,32 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipe(recipeId));
     }
 
-    public static void sendAlchemyOpenFurnace(String furnaceId) {
-        dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(furnaceId));
+    public static void sendAlchemyOpenFurnace(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(pos));
     }
 
-    public static void sendAlchemyIgnite(String recipeId) {
-        dispatch(ClientRequestProtocol.encodeAlchemyIgnite(recipeId));
+    public static void sendAlchemyIgnite(BlockPos pos, String recipeId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyIgnite(pos, recipeId));
     }
 
-    public static void sendAlchemyFeedSlot(int slotIdx, String material, int count) {
-        dispatch(ClientRequestProtocol.encodeAlchemyFeedSlot(slotIdx, material, count));
+    public static void sendAlchemyFeedSlot(BlockPos pos, int slotIdx, String material, int count) {
+        dispatch(ClientRequestProtocol.encodeAlchemyFeedSlot(pos, slotIdx, material, count));
     }
 
-    public static void sendAlchemyTakeBack(int slotIdx) {
-        dispatch(ClientRequestProtocol.encodeAlchemyTakeBack(slotIdx));
+    public static void sendAlchemyTakeBack(BlockPos pos, int slotIdx) {
+        dispatch(ClientRequestProtocol.encodeAlchemyTakeBack(pos, slotIdx));
     }
 
-    public static void sendAlchemyInjectQi(double qi) {
-        dispatch(ClientRequestProtocol.encodeAlchemyInjectQi(qi));
+    public static void sendAlchemyInjectQi(BlockPos pos, double qi) {
+        dispatch(ClientRequestProtocol.encodeAlchemyInjectQi(pos, qi));
     }
 
-    public static void sendAlchemyAdjustTemp(double temp) {
-        dispatch(ClientRequestProtocol.encodeAlchemyAdjustTemp(temp));
+    public static void sendAlchemyAdjustTemp(BlockPos pos, double temp) {
+        dispatch(ClientRequestProtocol.encodeAlchemyAdjustTemp(pos, temp));
+    }
+
+    public static void sendAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, itemInstanceId));
     }
 
     public static void sendAlchemyTakePill(String pillItemId) {
