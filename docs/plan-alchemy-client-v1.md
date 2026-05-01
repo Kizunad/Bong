@@ -1,6 +1,8 @@
-# Bong · plan-alchemy-client-v1 · 骨架
+# Bong · plan-alchemy-client-v1
 
 **炼丹系统 Fabric 客户端全接入**。plan-alchemy-v1 server 侧（P0–P5 + §1.2 放置炉）已闭环；本 plan 补全客户端拦截放置、多炉 session 路由、owo-lib 炉 UI 屏幕、agent schema 对齐、配方材料名正典化、炸炉结算 + skill XP 钩子，形成完整玩家端炼丹链路。
+
+> **2026-05-01 决策**：确定 furnace_id（String，旧路由：每玩家一炉，仅作日志）→ furnace_pos（`(i32,i32,i32)`，新路由：世界坐标多炉并行），P1 进入执行状态。详见 §3 patch plan。
 
 **世界观锚点**：`worldview.md §六 个性与差异化 / 真元染色 / 染色谱`（炼丹师 → 温润色；丹毒色对应代码 `ColorKind::Mellow / Sharp / Violent / Turbid` 与 worldview "温润色 / 锋锐色 / 暴烈色 / 浊乱色"对位）· `worldview.md §八 天道行为准则 / 灵物密度阈值`（高级炼丹炉触发天道注视：line ~604）· `worldview.md §九 经济与交易 / 顶级资产`（丹方残卷是顶级情报资产，"情报换命"）
 
@@ -19,7 +21,7 @@
 
 **阶段总览**：
 - P0 ⬜ Fabric 客户端拦截放置（UseItemOnC2s → AlchemyFurnacePlace）
-- P1 ⬜ 多炉 session 路由（payload 加 furnace_pos，AlchemyOpenFurnace / Ignite / Intervention 全部更新）
+- P1 ⏳ 多炉 session 路由（furnace_id→furnace_pos 全链路迁移，详见 §3 patch plan）
 - P2 ⬜ 炉方块右键 → 开炉 Screen（StartAlchemyRequest + 服务端响应）
 - P3 ⬜ owo-lib 三列炉 UI Screen（DragState 扩展 FurnaceSlot + 投料 / 催火 / 干预三列）
 - P4 ⬜ Redis channel `bong:alchemy/*` + agent TypeBox 对齐
@@ -59,14 +61,97 @@
 
 ---
 
-## §3 P1 — 多炉 session 路由
+## §3 P1 — furnace_id → furnace_pos 全链路迁移 (patch plan)
 
-> 当前 `AlchemyIntervention` / `AlchemyIgnite` / `AlchemyOpenFurnace` payload 均靠 `ev.client`（玩家 Entity）定位唯一炉，需改为 `furnace_pos` 路由。
+> **现状诊断（2026-05-01 实地核验）**：
+> - `AlchemyFurnace` 已是独立 ECS entity（`furnace.rs:19`），含 `pos: Option<(i32,i32,i32)>` + `owner: Option<String>`。
+> - `handle_alchemy_furnace_place`（`mod.rs:180`）通过 `commands.spawn(furnace)` 生成独立炉 entity，数据模型已支持多炉。
+> - **但所有 handler 仍走旧路由**：`furnaces.get_mut(entity)` 其中 `entity=ev.client`（玩家 ECS entity），而非按坐标查独立炉 entity。
+> - `AlchemyOpenFurnace.furnace_id: String` 仅写入 `tracing::info!` 日志（`client_request_handler.rs:427`），不参与路由。
+> - `AlchemyIgnite` / `AlchemyIntervention` 根本没有 `furnace_id` 字段，路由全靠玩家 entity。
+> - `AlchemyFeedSlot` / `AlchemyTakeBack` 只有一个空 catch-all（`client_request_handler.rs:609-611`），完全未接线。
+>
+> **结论**：`AlchemyFurnace` 组件上的 `pos` 字段是 dead code——已有坐标数据但 handler 不用它路由。迁移核心是把 handler 的 furnace lookup 从 `player entity → component` 改为 `world pos → entity`。
 
-- [ ] **所有 alchemy payload 加字段**：在 `ClientRequestV1` 的 `AlchemyOpenFurnace` / `AlchemyIgnite` / `AlchemyIntervention` / `AlchemyTerminate` 中加 `furnace_pos: (i32, i32, i32)`
-- [ ] **TypeBox 同步**：`agent/packages/schema/src/alchemy.ts` 中对应 Type.Object 同步加字段
-- [ ] **server handler 改路由**：`handle_alchemy_ignite` 等从 `furnaces.get_mut(ev.client)` 改为 `furnaces.get_by_pos(ev.furnace_pos)` + 权限校验（该炉是否属于本玩家或允许的范围）
-- [ ] **tests**：两个玩家各自操作不同炉坐标 → 互不干扰；同炉坐标不同玩家 → 权限拒绝（炉属主校验）
+### 3.1 Rust Server Schema (`server/src/schema/client_request.rs`)
+
+> 共 5 个 payload 变体需要加 `furnace_pos`；`AlchemyFurnacePlace` 已有 `x/y/z` 无需动；`AlchemyTurnPage` / `AlchemyLearnRecipe` / `AlchemyTakePill` 是配方书/服药操作非炉操作，不加。
+
+- [ ] **`AlchemyOpenFurnace`**：`furnace_id: String` → 替换为 `furnace_pos: (i32, i32, i32)`
+- [ ] **`AlchemyIgnite`**（当前仅有 `recipe_id: String`）：新增 `furnace_pos: (i32, i32, i32)`
+- [ ] **`AlchemyIntervention`**（当前仅有 `intervention: AlchemyInterventionV1`）：新增 `furnace_pos: (i32, i32, i32)`
+- [ ] **`AlchemyFeedSlot`**（当前有 `slot_idx, material, count`）：新增 `furnace_pos: (i32, i32, i32)`
+- [ ] **`AlchemyTakeBack`**（当前有 `slot_idx`）：新增 `furnace_pos: (i32, i32, i32)`
+- [ ] **serde 注解**：5 个变体均加 `#[serde(deny_unknown_fields)]`，确保 client/agent 字段名拼写错误被拒绝而非静默丢弃
+- [ ] **单元测试更新**：`client_request.rs:787` 处 `AlchemyOpenFurnace` 的 deser 测试从 `furnace_id` 改为 `furnace_pos` 元组
+
+### 3.2 Server Schema — 推送 payload (`server/src/schema/alchemy.rs`)
+
+- [ ] **`AlchemyFurnaceDataV1`**（`alchemy.rs:103`）：`furnace_id: String` → `pos: Option<(i32, i32, i32)>`（对齐 ECS 组件 `AlchemyFurnace.pos`）
+- [ ] **`alchemy_snapshot_emit.rs:76`**：测试 fixture 从 `furnace_id: "block_-12_64_38".into()` 改为 `pos: Some((-12, 64, 38))`
+
+### 3.3 Server Handler 路由改造 (`server/src/network/client_request_handler.rs`)
+
+> 核心变更：所有 furnace 查询从「查 player entity 上的 AlchemyFurnace 组件」→「遍历所有 AlchemyFurnace entity，按 `pos` 匹配 + `owner` 权限校验」。
+
+- [ ] **`AlchemyOpenFurnace` handler**（line 415-428）：
+  - 删除 `furnace_id` 日志行
+  - 改为：遍历 `furnaces` query，匹配 `f.pos == Some((x,y,z))` → 校验 `f.owner == Some(player_name)` → emit snapshot
+  - 炉不存在 → 发 `bong:system/error`（不 crash）
+  - 权限不匹配 → 发 `bong:system/error` + warn 日志
+- [ ] **`AlchemyIntervention` handler**（line 4318 `handle_alchemy_intervention`）：
+  - 函数签名从 `entity: Entity` → `furnace_pos: (i32, i32, i32)`
+  - 内部 from `furnaces.get_mut(entity)` → 遍历匹配 pos + owner
+- [ ] **`AlchemyIgnite` handler**（当前在 catch-all line 609-611，无实际逻辑）：
+  - 新增 `handle_alchemy_ignite(entity, furnace_pos, recipe_id, ...)`
+  - 路由：匹配 pos → 校验 owner → 调用 furnace 的 ignite 方法
+- [ ] **`AlchemyFeedSlot` handler**（当前空 catch-all）：
+  - 新增 `handle_alchemy_feed_slot(entity, furnace_pos, slot_idx, material, count, ...)`
+  - 路由：匹配 pos → 校验 owner → 投料
+- [ ] **`AlchemyTakeBack` handler**（当前空 catch-all）：
+  - 新增 `handle_alchemy_take_back(entity, furnace_pos, slot_idx, ...)`
+  - 路由：匹配 pos → 校验 owner → 退料
+- [ ] **`handle_alchemy_take_pill`**（line 4352）：**不加 furnace_pos**——服药是背包操作，不依赖特定炉。服用时 player entity 即可定位。
+
+### 3.4 Agent TypeBox Schema (`agent/packages/schema/`)
+
+- [ ] **`agent/packages/schema/src/client-request.ts`**：
+  - `AlchemyOpenFurnaceRequestV1`（line 313）：`furnace_id: Type.String()` → `furnace_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()])`
+  - `AlchemyIgniteRequestV1`（line 342）：新增 `furnace_pos: Type.Tuple([...])`
+  - `AlchemyInterventionRequestV1`（line 353）：新增 `furnace_pos: Type.Tuple([...])`
+  - `AlchemyFeedSlotRequestV1`（line 319）：新增 `furnace_pos: Type.Tuple([...])`
+  - `AlchemyTakeBackRequestV1`（line 332）：新增 `furnace_pos: Type.Tuple([...])`
+  - 建议：extract `BlockPosV1 = Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()])` 复用
+- [ ] **`agent/packages/schema/src/server-data.ts`**：
+  - `ServerDataAlchemyFurnaceV1`（line 444）：`furnace_id: Type.String()` → `pos: Type.Optional(Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]))`
+- [ ] **`agent/packages/schema/dist/`**：`npm run build` 自动重新生成 `.d.ts`
+
+### 3.5 Java Client Protocol (`client/src/main/java/...`)
+
+- [ ] **`ClientRequestProtocol.java`**（line 142）：
+  - `encodeAlchemyOpenFurnace(String furnaceId)` → `encodeAlchemyOpenFurnace(BlockPos pos)`
+  - JSON 字段 `furnace_id` → `furnace_pos: [x, y, z]`
+  - 新增 `encodeAlchemyIgnite(BlockPos pos, String recipeId)`
+  - 新增 `encodeAlchemyFeedSlot(BlockPos pos, int slotIdx, String material, int count)`
+  - 新增 `encodeAlchemyTakeBack(BlockPos pos, int slotIdx)`
+  - 更新 `encodeAlchemyIntervention(BlockPos pos, AlchemyInterventionV1 intervention)`
+- [ ] **`ClientRequestSender.java`**（line 201）：
+  - `sendAlchemyOpenFurnace(String)` → `sendAlchemyOpenFurnace(BlockPos)`
+  - 对应新增/更新其他 sender 方法签名
+
+### 3.6 权限模型决策
+
+> plan §11 开放问题第一条「多炉权限」——迁移实施前必须定。
+
+- [ ] **决策：放置者独享**。`AlchemyFurnace.owner` 字段已存在，handler 校验 `f.owner == Some(player_name)`。组队共用等 plan-social 立项后通过 `co_owners: Vec<String>` 扩展，本次不动。
+
+### 3.7 测试
+
+- [ ] `server/src/schema/client_request.rs`：5 个 payload 的 serde roundtrip + deny_unknown_fields
+- [ ] `server/src/alchemy/mod.rs` 集成测试：两个玩家各放一炉 → 各自 `AlchemyIgnite` 不同 pos → 互不干扰
+- [ ] `server/src/alchemy/mod.rs` 集成测试：玩家 A 试图 ignite 玩家 B 的炉 → 权限拒绝 + error channel
+- [ ] `agent/packages/schema/`：npm test — TypeBox compile check + schema sample 对拍 5 个 payload
+- [ ] Java client：协议 encode/decode 单元（若项目有 client test infrastructure）
 
 ---
 
@@ -161,7 +246,7 @@
 | P | 契约 | 位置 |
 |---|------|------|
 | P0 | `BongItemRegistry.FURNACE_ITEMS` | `client/src/main/java/moe/bong/client/item/BongItemRegistry.java` |
-| P1 | `furnace_pos: (i32,i32,i32)` in all alchemy payloads | `server/src/schema/client_request.rs` + `agent/packages/schema/src/alchemy.ts` |
+| P1 | `furnace_pos: (i32,i32,i32)` in 5 payloads (Open/Ignite/Intervention/FeedSlot/TakeBack) + handler 按 pos 路由 + owner 校验 | `server/src/schema/client_request.rs` + `server/src/schema/alchemy.rs` (AlchemyFurnaceDataV1) + `server/src/network/client_request_handler.rs` + `agent/packages/schema/src/client-request.ts` + `agent/packages/schema/src/server-data.ts` + `client/.../ClientRequestProtocol.java` + `client/.../ClientRequestSender.java` |
 | P2 | `AlchemyOpenFurnace` payload + `bong:alchemy/furnace_state` channel | `server/src/schema/channels.rs` |
 | P3 | `DragTarget::FurnaceSlot(u8)` + `AlchemyFurnaceScreen` | `client/src/main/java/moe/bong/client/screen/AlchemyFurnaceScreen.java` |
 | P4 | `bong:alchemy/session_start` + `session_end` + `intervention_result` | `server/src/schema/alchemy.rs` + `agent/packages/schema/src/alchemy.ts` |
@@ -184,4 +269,5 @@
 
 ## §12 进度日志
 
-- **2026-04-27**：骨架立项。从 `docs/plans-skeleton/reminder.md` plan-alchemy-v1 仍延后/依赖/开放问题节提炼。server 侧 P0–P5 + §1.2 放置炉已在 plan-alchemy-v1 完成（✅ 2026-04-15 / 2026-04-21）。本 plan 全 P 均为 server 以外的接入工作，等 `/consume-plan alchemy-client-v1` 升 active。
+- **2026-04-27**：骨架立项。从 `docs/plans-skeleton/reminder.md` plan-alchemy-v1 仍延后/依赖/开放问题节提炼。server 侧 P0–P5 + §1.2 放置炉已在 plan-alchemy-v1 完成（✅ 2026-04-15 / 2026-04-21）。
+- **2026-05-01**：P1 实地核验 + patch plan 落地。确认 furnace_id（String，旧路由每玩家一炉）→ furnace_pos（`(i32,i32,i32)`，新路由世界坐标多炉并行），编写 §3 全链路迁移步骤（Rust server / TS agent / Java client 三栈 7 文件变更清单 + handler 路由改造 + 权限模型决策）。P1 进入执行状态（⏳）。
