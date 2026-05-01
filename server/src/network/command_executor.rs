@@ -398,7 +398,7 @@ fn execute_spawn_npc(
         return "rejected_invalid_spawn_count";
     };
 
-    let reserved_count = registry.reserve_spawn_batch(requested_count);
+    let reserved_count = registry.reserve_zone_batch(zone.name.as_str(), requested_count);
     if reserved_count == 0 {
         tracing::info!(
             "[bong][network] spawn_npc target `{}` rejected because npc registry budget is exhausted",

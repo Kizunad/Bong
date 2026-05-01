@@ -8,6 +8,14 @@ const {
   AGENT_WORLD_MODEL,
   ALCHEMY_SESSION_END,
   FACTION_EVENT,
+  AGING,
+  BOTANY_ECOLOGY,
+  BREAKTHROUGH_EVENT,
+  COMBAT_REALTIME,
+  FORGE_OUTCOME,
+  REBIRTH,
+  SKILL_XP_GAIN,
+  SOCIAL_FEUD,
   NPC_DEATH,
   NPC_SPAWN,
   PLAYER_CHAT,
@@ -157,6 +165,10 @@ class FakeRedisListClient {
       return [...this.published];
     }
     return this.published.filter((entry) => entry.channel === channel);
+  }
+
+  getSubscribedChannels(): string[] {
+    return [...this.subscribers.keys()];
   }
 }
 
@@ -425,6 +437,63 @@ describe("redis-ipc", () => {
         caster_id: "offline:Azure",
         damage: 12,
       }),
+    ]);
+  });
+
+  it("subscribes and buffers cross-system runtime events", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onCrossSystemEvent(callback);
+
+    await ipc.connect();
+
+    expect(sub.getSubscribedChannels()).toEqual(
+      expect.arrayContaining([
+        BOTANY_ECOLOGY,
+        AGING,
+        BREAKTHROUGH_EVENT,
+        SOCIAL_FEUD,
+        COMBAT_REALTIME,
+        FORGE_OUTCOME,
+        REBIRTH,
+        SKILL_XP_GAIN,
+      ]),
+    );
+
+    await sub.publish(
+      BOTANY_ECOLOGY,
+      JSON.stringify({
+        v: 1,
+        tick: 84,
+        zones: [{ zone: "spawn", spirit_qi: 0.2, plant_counts: [], variant_counts: [] }],
+      }),
+    );
+    await sub.publish(
+      AGING,
+      JSON.stringify({ v: 1, character_id: "offline:Azure", at_tick: 85, kind: "tick_rate" }),
+    );
+    await sub.publish(SOCIAL_FEUD, JSON.stringify({ v: 1, left: "char:a", right: "char:b", tick: 86 }));
+    await sub.publish(SKILL_XP_GAIN, JSON.stringify({ v: 1, char_id: 1, skill: "herbalism", amount: 2 }));
+
+    expect(callback).toHaveBeenCalledTimes(4);
+    expect(ipc.getLatestCrossSystemEvents()).toEqual([
+      expect.objectContaining({ channel: BOTANY_ECOLOGY, payload: expect.objectContaining({ tick: 84 }) }),
+      expect.objectContaining({ channel: AGING, payload: expect.objectContaining({ character_id: "offline:Azure" }) }),
+      expect.objectContaining({ channel: SOCIAL_FEUD, payload: expect.objectContaining({ left: "char:a" }) }),
+      expect.objectContaining({ channel: SKILL_XP_GAIN, payload: expect.objectContaining({ skill: "herbalism" }) }),
     ]);
   });
 

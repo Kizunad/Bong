@@ -349,6 +349,11 @@ pub fn register(app: &mut App) {
     app.add_systems(Update, alchemy_bridge::publish_alchemy_session_end_events);
     app.add_systems(
         Update,
+        cultivation_bridge::publish_rebirth_events
+            .after(crate::combat::lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
         (
             vfx_animation_trigger::emit_attack_animation_triggers
                 .after(crate::combat::resolve::resolve_attack_intents),
@@ -385,6 +390,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads,
+    );
+    app.add_systems(
+        Update,
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(client_request_handler::handle_client_request_payloads),
     );
     // Separate add_systems call to avoid Bevy 0.14 tuple-arity limit.
     app.add_systems(
@@ -1866,6 +1876,9 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
                 "herbalism" => Some(SkillId::Herbalism),
                 "alchemy" => Some(SkillId::Alchemy),
                 "forging" => Some(SkillId::Forging),
+                "combat" => Some(SkillId::Combat),
+                "mineral" => Some(SkillId::Mineral),
+                "cultivation" => Some(SkillId::Cultivation),
                 _ => None,
             };
             continue;

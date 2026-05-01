@@ -13,7 +13,7 @@ use valence::prelude::{bevy_ecs, Component};
 /// plan §8 游戏内 tick，与 `player::gameplay::GameplayTick` 对齐。
 pub type Tick = u64;
 
-/// plan §1 首批 skill 列表（MVP 三种）。v2+ 的战斗武学 / 阵法 / 师承均待定（见 plan §11）。
+/// plan §1 首批 skill 列表（MVP 三种）+ plan-cross-system-patch-v1 P1 补齐的跨系统熟练度。
 ///
 /// serde 落盘为 snake_case 字符串，与 `agent/packages/schema/src/skill.ts` 对齐。
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,16 +22,30 @@ pub enum SkillId {
     Herbalism,
     Alchemy,
     Forging,
+    Combat,
+    Mineral,
+    Cultivation,
 }
 
 impl SkillId {
+    pub const ALL: [Self; 6] = [
+        Self::Herbalism,
+        Self::Alchemy,
+        Self::Forging,
+        Self::Combat,
+        Self::Mineral,
+        Self::Cultivation,
+    ];
+
     /// plan §7 汇总表 source-of-truth string id，供 XpGainSource.Action::plan / Redis channel 派生使用。
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Herbalism => "herbalism",
             Self::Alchemy => "alchemy",
             Self::Forging => "forging",
+            Self::Combat => "combat",
+            Self::Mineral => "mineral",
+            Self::Cultivation => "cultivation",
         }
     }
 }
@@ -88,9 +102,28 @@ mod tests {
         assert_eq!(SkillId::Herbalism.as_str(), "herbalism");
         assert_eq!(SkillId::Alchemy.as_str(), "alchemy");
         assert_eq!(SkillId::Forging.as_str(), "forging");
+        assert_eq!(SkillId::Combat.as_str(), "combat");
+        assert_eq!(SkillId::Mineral.as_str(), "mineral");
+        assert_eq!(SkillId::Cultivation.as_str(), "cultivation");
 
         let json = serde_json::to_string(&SkillId::Herbalism).unwrap();
         assert_eq!(json, "\"herbalism\"");
+    }
+
+    #[test]
+    fn all_skill_ids_stays_in_wire_order() {
+        assert_eq!(SkillId::ALL.len(), 6);
+        assert_eq!(
+            SkillId::ALL.map(|skill| skill.as_str()),
+            [
+                "herbalism",
+                "alchemy",
+                "forging",
+                "combat",
+                "mineral",
+                "cultivation",
+            ]
+        );
     }
 
     #[test]

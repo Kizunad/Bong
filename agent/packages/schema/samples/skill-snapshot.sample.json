@@ -27,6 +27,30 @@
         "total_xp": 0,
         "cap": 5,
         "recent_gain_xp": 0
+      },
+      "combat": {
+        "lv": 0,
+        "xp": 0,
+        "xp_to_next": 100,
+        "total_xp": 0,
+        "cap": 5,
+        "recent_gain_xp": 0
+      },
+      "mineral": {
+        "lv": 0,
+        "xp": 0,
+        "xp_to_next": 100,
+        "total_xp": 0,
+        "cap": 5,
+        "recent_gain_xp": 0
+      },
+      "cultivation": {
+        "lv": 0,
+        "xp": 0,
+        "xp_to_next": 100,
+        "total_xp": 0,
+        "cap": 5,
+        "recent_gain_xp": 0
       }
     }
   }

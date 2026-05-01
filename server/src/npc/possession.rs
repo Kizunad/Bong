@@ -1,15 +1,16 @@
-//! 夺舍（plan §3.4 / plan-death §4e）hook 占位。
+//! 夺舍（plan §3.4 / plan-death §4e）NPC 入口。
 //!
-//! 这里只暴露 `DuoSheIntent` 事件与一个 stub 消费系统（仅 log），真实的
-//! 肉身接管、两卷交叉引用、坐标继承等由 plan-death §4e 接入。该模块
-//! 提供稳定的事件契约，避免 §4e 实装时与 NPC 层冲突。
+//! 本模块把 NPC 层选中的实体目标转成 cultivation 侧权威请求；资格校验、
+//! 肉身接管、两卷交叉引用与坐标继承由 `cultivation::possession` 统一结算。
 
-use valence::prelude::{bevy_ecs, App, Entity, Event, EventReader, EventWriter, Update};
+use valence::prelude::{
+    bevy_ecs, App, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Update,
+};
 
 use crate::cultivation::possession::DuoSheRequestEvent;
 use crate::npc::brain::canonical_npc_id;
 
-/// 玩家请求夺舍某 NPC。§4e 之前仅被 stub 消费。
+/// 玩家请求夺舍某 NPC。
 #[derive(Clone, Debug, Event)]
 pub struct DuoSheIntent {
     pub player_entity: Entity,
@@ -38,8 +39,11 @@ impl DuoSheReason {
 
 pub fn register(app: &mut App) {
     app.add_event::<DuoSheIntent>()
-        .add_systems(Update, forward_duoshe_intent);
+        .add_systems(Update, forward_duoshe_intent.in_set(DuoSheIntentForwardSet));
 }
+
+#[derive(bevy_ecs::schedule::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DuoSheIntentForwardSet;
 
 fn forward_duoshe_intent(
     mut events: EventReader<DuoSheIntent>,
@@ -64,7 +68,7 @@ mod tests {
     use valence::prelude::App;
 
     #[test]
-    fn duoshe_intent_event_is_registered_and_consumed_without_panic() {
+    fn duoshe_intent_event_forwards_runtime_request() {
         let mut app = App::new();
         app.add_event::<DuoSheRequestEvent>();
         register(&mut app);
@@ -83,7 +87,10 @@ mod tests {
         let events = app
             .world()
             .resource::<bevy_ecs::event::Events<DuoSheIntent>>();
-        assert!(events.len() <= 1, "event should be drained by stub");
+        assert!(
+            events.len() <= 1,
+            "event should be drained by forwarding system"
+        );
 
         let requests = app
             .world()

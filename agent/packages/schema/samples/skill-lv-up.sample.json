@@ -10,5 +10,11 @@
     "char_id": 2002,
     "skill": "alchemy",
     "new_lv": 10
+  },
+  {
+    "v": 1,
+    "char_id": 3003,
+    "skill": "combat",
+    "new_lv": 2
   }
 ]

@@ -56,6 +56,7 @@ public class ServerDataRouterTest {
             "techniques_snapshot",
             "unlocks_sync",
             "event_stream_push",
+            "burst_meridian_event",
             // plan-weapon-v1 §8.2 装备/损坏推送。
             "weapon_equipped",
             "weapon_broken",
@@ -173,6 +174,19 @@ public class ServerDataRouterTest {
         assertFalse(result.isParseError());
         assertTrue(result.isHandled());
         assertEquals("botany_skill", result.envelope().type());
+    }
+
+    @Test
+    void routesBurstMeridianEventWithoutNoOp() {
+        String json = """
+            {"v":1,"type":"burst_meridian_event","skill":"thunder_step","caster":"offline:Azure","target":"npc_1v1","tick":84000,"overload_ratio":0.75,"integrity_snapshot":0.4}
+            """;
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertFalse(result.isNoOp());
+        assertEquals("burst_meridian_event", result.envelope().type());
     }
 
     @Test

@@ -10,5 +10,11 @@
     "char_id": 1001,
     "skill": "alchemy",
     "new_cap": 3
+  },
+  {
+    "v": 1,
+    "char_id": 1001,
+    "skill": "cultivation",
+    "new_cap": 7
   }
 ]

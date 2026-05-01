@@ -22,6 +22,9 @@ pub enum SkillIdV1 {
     Herbalism,
     Alchemy,
     Forging,
+    Combat,
+    Mineral,
+    Cultivation,
 }
 
 /// plan §8 XpGainSource — tagged union（tag="type"）。
@@ -188,11 +191,7 @@ impl SkillSnapshotPayloadV1 {
         cap_for: impl Fn(crate::skill::components::SkillId) -> u8,
     ) -> Self {
         let mut skills = BTreeMap::new();
-        for skill in [
-            crate::skill::components::SkillId::Herbalism,
-            crate::skill::components::SkillId::Alchemy,
-            crate::skill::components::SkillId::Forging,
-        ] {
+        for skill in crate::skill::components::SkillId::ALL {
             let entry = skill_set.skills.get(&skill).cloned().unwrap_or_default();
             skills.insert(
                 skill.as_str().to_string(),
@@ -305,9 +304,15 @@ mod tests {
 
         let payload = SkillSnapshotPayloadV1::from_runtime(1001, &set, |_| 5);
         assert_eq!(payload.char_id, 1001);
-        assert_eq!(payload.skills.len(), 3);
+        assert_eq!(
+            payload.skills.len(),
+            crate::skill::components::SkillId::ALL.len()
+        );
         assert_eq!(payload.skills.get("alchemy").unwrap().lv, 3);
         assert_eq!(payload.skills.get("alchemy").unwrap().cap, 5);
         assert_eq!(payload.skills.get("forging").unwrap().lv, 0);
+        assert_eq!(payload.skills.get("combat").unwrap().lv, 0);
+        assert_eq!(payload.skills.get("mineral").unwrap().lv, 0);
+        assert_eq!(payload.skills.get("cultivation").unwrap().lv, 0);
     }
 }

@@ -60,6 +60,7 @@ public final class ServerDataRouter {
         TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
         UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
         EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
+        BurstMeridianHandler burstMeridianHandler = new BurstMeridianHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
@@ -106,6 +107,7 @@ public final class ServerDataRouter {
         handlers.put("techniques_snapshot", techniquesSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
+        handlers.put("burst_meridian_event", burstMeridianHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);

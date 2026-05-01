@@ -89,7 +89,8 @@ use self::lifespan::{
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::{
-    apply_meridian_crack_events, overload_detection_tick, MeridianCrackEvent, MeridianOverloadEvent,
+    apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
+    MeridianCrackEvent, MeridianOverloadEvent,
 };
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
@@ -111,6 +112,7 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
+use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
     load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
 };
@@ -191,7 +193,12 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
-        meridian_heal_tick.after(apply_meridian_crack_events),
+        (
+            apply_meridian_overload_events.after(overload_detection_tick),
+            meridian_heal_tick
+                .after(apply_meridian_crack_events)
+                .after(apply_meridian_overload_events),
+        ),
     );
     app.add_systems(
         Update,
@@ -209,7 +216,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             process_lifespan_extension_intents.after(lifespan_aging_tick),
-            process_duo_she_requests.after(lifespan_aging_tick),
+            process_duo_she_requests
+                .after(lifespan_aging_tick)
+                .after(DuoSheIntentForwardSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );
@@ -420,11 +429,7 @@ fn emit_skill_caps_on_realm_regressed(
 ) {
     for event in regressed.read() {
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
-        for skill in [
-            crate::skill::components::SkillId::Herbalism,
-            crate::skill::components::SkillId::Alchemy,
-            crate::skill::components::SkillId::Forging,
-        ] {
+        for skill in crate::skill::components::SkillId::ALL {
             skill_cap_events.send(SkillCapChanged {
                 char_entity: event.entity,
                 skill,
@@ -787,7 +792,7 @@ mod tests {
             .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
             .drain()
             .collect();
-        assert_eq!(caps.len(), 3);
+        assert_eq!(caps.len(), crate::skill::components::SkillId::ALL.len());
         assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 }

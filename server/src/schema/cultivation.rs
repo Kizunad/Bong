@@ -62,6 +62,9 @@ impl SkillMilestoneSnapshotV1 {
                 crate::skill::components::SkillId::Herbalism => "herbalism",
                 crate::skill::components::SkillId::Alchemy => "alchemy",
                 crate::skill::components::SkillId::Forging => "forging",
+                crate::skill::components::SkillId::Combat => "combat",
+                crate::skill::components::SkillId::Mineral => "mineral",
+                crate::skill::components::SkillId::Cultivation => "cultivation",
             }
             .to_string(),
             new_lv: milestone.new_lv,

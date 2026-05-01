@@ -6535,6 +6535,18 @@
             {
               "const": "forging",
               "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
+              "type": "string"
             }
           ]
         },
@@ -6662,6 +6674,18 @@
             {
               "const": "forging",
               "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
+              "type": "string"
             }
           ]
         },
@@ -6707,6 +6731,18 @@
             },
             {
               "const": "forging",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
               "type": "string"
             }
           ]
@@ -6759,6 +6795,18 @@
             },
             {
               "const": "forging",
+              "type": "string"
+            },
+            {
+              "const": "combat",
+              "type": "string"
+            },
+            {
+              "const": "mineral",
+              "type": "string"
+            },
+            {
+              "const": "cultivation",
               "type": "string"
             }
           ]

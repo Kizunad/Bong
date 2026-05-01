@@ -11,23 +11,29 @@
 //!  * 找不到 inventory / registry miss / allocator 耗尽 → warn + skip（不 panic，
 //!    丢失一次 drop 不阻塞服务器）。
 
-use valence::prelude::{BlockPos, EventReader, Query, Res, ResMut};
+use valence::prelude::{BlockPos, Client, EventReader, Events, Query, Res, ResMut, Username};
 
 use super::events::MineralDropEvent;
 use super::persistence::MineralTickClock;
 use super::registry::{MineralEntry, MineralRegistry};
 use super::types::MineralRarity;
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::player::state::PlayerState;
 use crate::shelflife::DecayProfileRegistry;
 use crate::shelflife::{DecayProfileId, Freshness};
+use crate::skill::components::SkillId;
+use crate::skill::events::{SkillXpGain, XpGainSource};
 
 /// Mineral ore drop 的默认堆数 —— 一次挖方块产一枚（与 vanilla 一致）。
 const DEFAULT_DROP_STACK_COUNT: u32 = 1;
 
 /// plan-mineral-v1 §2.2 consumer —— 把 MineralDropEvent 写成 PlayerInventory 的 ItemInstance。
+#[allow(clippy::too_many_arguments)] // Bevy system signature; drop, inventory, snapshot, and skill concerns stay explicit.
 pub fn consume_mineral_drops_into_inventory(
     mut events: EventReader<MineralDropEvent>,
     registry: Res<MineralRegistry>,
@@ -35,6 +41,8 @@ pub fn consume_mineral_drops_into_inventory(
     clock: Res<MineralTickClock>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&mut Client, &Username, &PlayerState, &Cultivation)>,
+    mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     for event in events.read() {
         let Ok(mut inventory) = inventories.get_mut(event.player) else {
@@ -95,6 +103,29 @@ pub fn consume_mineral_drops_into_inventory(
         });
 
         inventory.revision.0 = inventory.revision.0.saturating_add(1);
+        if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
+            skill_xp_events.send(SkillXpGain {
+                char_entity: event.player,
+                skill: SkillId::Mineral,
+                amount: 1,
+                source: XpGainSource::Action {
+                    plan_id: "mineral",
+                    action: "ore_drop",
+                },
+            });
+        }
+        if let Ok((mut client, username, player_state, cultivation)) = clients.get_mut(event.player)
+        {
+            send_inventory_snapshot_to_client(
+                event.player,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "mineral_drop",
+            );
+        }
     }
 }
 
@@ -280,6 +311,7 @@ mod tests {
     fn drop_event_appends_instance_to_main_pack() {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
         app.insert_resource(build_default_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
         app.insert_resource(MineralTickClock::default());
@@ -309,6 +341,15 @@ mod tests {
         assert_eq!(item.mineral_id.as_deref(), Some("fan_tie"));
         assert_eq!(item.template_id, "mineral_fan_tie");
         assert_eq!(inv.revision.0, 1);
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        let xp = xp_events
+            .iter_current_update_events()
+            .next()
+            .expect("mineral drop should emit skill xp");
+        assert_eq!(xp.char_entity, player);
+        assert_eq!(xp.skill, SkillId::Mineral);
+        assert_eq!(xp.amount, 1);
     }
 
     #[test]
@@ -323,6 +364,7 @@ mod tests {
     fn drop_event_without_inventory_is_silently_skipped() {
         let mut app = App::new();
         app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
         app.insert_resource(build_default_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
         app.insert_resource(MineralTickClock::default());
