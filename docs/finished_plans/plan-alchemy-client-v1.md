@@ -271,16 +271,3 @@
 
 - **2026-04-27**：骨架立项。从 `docs/plans-skeleton/reminder.md` plan-alchemy-v1 仍延后/依赖/开放问题节提炼。server 侧 P0–P5 + §1.2 放置炉已在 plan-alchemy-v1 完成（✅ 2026-04-15 / 2026-04-21）。
 - **2026-05-01**：P1 实地核验 + patch plan 落地。确认 furnace_id（String，旧路由每玩家一炉）→ furnace_pos（`(i32,i32,i32)`，新路由世界坐标多炉并行），编写 §3 全链路迁移步骤（Rust server / TS agent / Java client 三栈 7 文件变更清单 + handler 路由改造 + 权限模型决策）。P1 进入执行状态（⏳）。
-
-## Finish Evidence
-
-- P0/P2/P3：客户端右键放置/打开真实炉，炼丹 UI 以 `furnace_pos` 发送 ignite/feed/take_back/intervention 请求。
-- P1/P4：Rust/TS/Java 契约统一到 `furnace_pos`，新增炼丹 Redis `session_start` / `session_end` / `intervention_result` schema 与 tiandao `session_end` 订阅。
-- P5：默认炼丹 recipe JSON 改用已注册正典材料 ID，并补配方 alias 防回退测试。
-- P6：爆炉结算真实扣施法者 `Wounds`，按炉阶缩放反噬，并发 `MeridianCrackEvent` 写入经脉裂痕管线。
-- P7：新增 `furnace_fantie.png` 128×128 图标及资源路径单测。
-- 验证：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过，1883 tests passed。
-- 验证：`cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` 通过。
-- 验证：`cd agent/packages/schema && npm test && npm run check` 通过，231 tests passed。
-- 验证：`cd agent/packages/tiandao && npm test` 通过，187 tests passed。
-- 验证：`cd agent && npm run build` 通过。
