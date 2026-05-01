@@ -12,6 +12,11 @@ import { ChatMessageV1 } from "../src/chat-message.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
+  HeartDemonOfferDraftV1,
+  HeartDemonPregenRequestV1,
+} from "../src/heart-demon.js";
+import { validateBiographyEntryV1Contract } from "../src/biography.js";
+import {
   AgingEventV1,
   DeceasedIndexEntryV1,
   DeceasedSnapshotV1,
@@ -348,6 +353,55 @@ describe("sample files pass schema validation", () => {
 
   it("server-data.skill-snapshot.sample.json", () => {
     const data = loadSample("server-data.skill-snapshot.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.heart-demon-offer.sample.json", () => {
+    const data = loadSample("server-data.heart-demon-offer.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("accepts heart demon pregen request and offer draft", () => {
+    const request = {
+      trigger_id: "heart_demon:1:1000",
+      character_id: "offline:Azure",
+      actor_name: "Azure",
+      realm: "Spirit",
+      qi_color_state: { main: "Mellow", is_chaotic: false, is_hunyuan: false },
+      recent_biography: ["t240:reach:Spirit"],
+      composure: 0.7,
+      started_tick: 1000,
+      waves_total: 5,
+    };
+    const draft = {
+      offer_id: "heart_demon:1:1000",
+      trigger_id: "heart_demon:1:1000",
+      trigger_label: "心魔劫临身",
+      realm_label: "渡虚劫 · 心魔",
+      composure: 0.7,
+      quota_remaining: 1,
+      quota_total: 1,
+      expires_at_ms: 123,
+      choices: [
+        {
+          choice_id: "heart_demon_choice_0",
+          category: "Composure",
+          title: "守本心",
+          effect_summary: "稳住心神，回复少量当前真元",
+          flavor: "旧事浮起，仍可守心。",
+          style_hint: "稳妥",
+        },
+      ],
+    };
+
+    expect(validate(HeartDemonPregenRequestV1, request).ok).toBe(true);
+    expect(validate(HeartDemonOfferDraftV1, draft).ok).toBe(true);
+  });
+
+  it("server-data.tribulation-broadcast.sample.json", () => {
+    const data = loadSample("server-data.tribulation-broadcast.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -784,6 +838,14 @@ describe("negative sample files fail schema validation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects tribulation broadcast payload drift", () => {
+    const data = loadObjectSample("server-data.tribulation-broadcast.sample.json");
+    delete data.spectate_distance;
+    data.actor_id = "offline:YanWujiu";
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects invalid skill bar binding union", () => {
     const data = {
       v: 1,
@@ -899,6 +961,30 @@ describe("schema rejects invalid data", () => {
       "WorldStateV1 life record skill milestone snapshots",
       validateWorldStateV1Contract,
       data,
+    );
+  });
+
+  it("accepts tribulation interception biography tags", () => {
+    expectContractAccepts(
+      "BiographyEntryV1 TribulationIntercepted tag",
+      validateBiographyEntryV1Contract,
+      {
+        TribulationIntercepted: {
+          victim_id: "offline:Victim",
+          tag: "戮道者 · 截劫",
+          tick: 120,
+        },
+      },
+    );
+    expectContractAccepts(
+      "BiographyEntryV1 legacy TribulationIntercepted without tag",
+      validateBiographyEntryV1Contract,
+      {
+        TribulationIntercepted: {
+          victim_id: "offline:Victim",
+          tick: 120,
+        },
+      },
     );
   });
 

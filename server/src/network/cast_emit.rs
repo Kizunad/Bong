@@ -9,7 +9,7 @@
 //!
 //! 当前 v1 限制：
 //! - 只做受击中断（contam）；移动 / 控制效果 / 主动取消 留 TODO
-//! - 不消耗物品、不应用效果（plan §4.4 完成路径需要 inventory event）
+//! - 完成时按绑定物品消耗库存并应用已支持的物品效果
 //! - duration 来自 client intent / 默认 1500ms（无 QuickSlotBindings 时）
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,8 +21,9 @@ use crate::combat::components::{
 };
 use crate::combat::events::StatusEffectKind;
 use crate::combat::CombatClock;
-use crate::cultivation::components::Cultivation;
-use crate::cultivation::components::{Contamination, MeridianSystem};
+use crate::cultivation::components::{
+    recover_current_qi, Contamination, Cultivation, MeridianSystem,
+};
 use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -53,6 +54,7 @@ type CastTickQueryItem<'a> = (
     &'a mut QuickSlotBindings,
     &'a mut SkillBarBindings,
     Option<&'a StatusEffects>,
+    Option<&'a mut Cultivation>,
     Option<&'a mut MeridianSystem>,
     Option<&'a mut Contamination>,
 );
@@ -76,6 +78,7 @@ pub fn tick_casts_or_interrupt(
         mut bindings,
         mut skillbar_bindings,
         status_effects,
+        mut cultivation,
         meridians,
         contamination,
     ) in &mut clients
@@ -200,7 +203,14 @@ pub fn tick_casts_or_interrupt(
             };
             // 2) 应用效果
             if let Some(effect) = effect_to_apply.as_ref() {
-                apply_item_effect(effect, meridians, contamination, &username.0, entity);
+                apply_item_effect(
+                    effect,
+                    cultivation.as_deref_mut(),
+                    meridians,
+                    contamination,
+                    &username.0,
+                    entity,
+                );
             }
             // 3) 设置完成冷却（来自 ItemTemplate.cooldown_ms 折算后的 ticks）
             set_cast_cooldown(
@@ -225,13 +235,15 @@ pub fn tick_casts_or_interrupt(
             );
             // 5) 同步 inventory（消耗后）
             if consumed {
+                let default_cultivation = Cultivation::default();
+                let cultivation = cultivation.as_deref().unwrap_or(&default_cultivation);
                 send_inventory_snapshot_to_client(
                     entity,
                     &mut client,
                     username.0.as_str(),
                     &inventory,
                     player_state,
-                    &Cultivation::default(),
+                    cultivation,
                     "cast_complete_consume",
                 );
                 emit_player_local_audio(
@@ -311,6 +323,7 @@ fn lookup_template_id(inv: &PlayerInventory, instance_id: u64) -> Option<String>
 
 pub(crate) fn apply_item_effect(
     effect: &ItemEffect,
+    cultivation: Option<&mut Cultivation>,
     meridians: Option<valence::prelude::Mut<MeridianSystem>>,
     contamination: Option<valence::prelude::Mut<Contamination>>,
     username: &str,
@@ -372,6 +385,19 @@ pub(crate) fn apply_item_effect(
             tracing::info!(
                 "[bong][network][cast] ContaminationCleanse magnitude={magnitude} for `{username}` ({entity:?}) — {:.3} cleansed",
                 magnitude - remaining
+            );
+        }
+        ItemEffect::QiRecovery { amount } => {
+            let Some(cultivation) = cultivation else {
+                tracing::debug!(
+                    "[bong][network][cast] QiRecovery noop: entity {entity:?} `{username}` has no Cultivation"
+                );
+                return;
+            };
+            let qi_max_before = cultivation.qi_max;
+            let recovered = recover_current_qi(cultivation, *amount);
+            tracing::info!(
+                "[bong][network][cast] QiRecovery amount={amount} for `{username}` ({entity:?}) — recovered {recovered:.1}, qi_max stays {qi_max_before:.1}"
             );
         }
         ItemEffect::BreakthroughBonus { magnitude } => {
@@ -568,6 +594,29 @@ mod tests {
         // Healing past severity should retain cull at 0.5.
         crack.healing_progress = (crack.healing_progress + 0.4).clamp(0.0, crack.severity);
         assert!((crack.healing_progress - crack.severity).abs() < 1e-9);
+    }
+
+    #[test]
+    fn qi_recovery_effect_restores_current_qi_without_raising_cap() {
+        let mut cultivation = Cultivation {
+            qi_current: 130.0,
+            qi_max: 210.0,
+            qi_max_frozen: Some(20.0),
+            ..Default::default()
+        };
+
+        apply_item_effect(
+            &ItemEffect::QiRecovery { amount: 120.0 },
+            Some(&mut cultivation),
+            None,
+            None,
+            "Azure",
+            Entity::PLACEHOLDER,
+        );
+
+        assert_eq!(cultivation.qi_current, 190.0);
+        assert_eq!(cultivation.qi_max, 210.0);
+        assert_eq!(cultivation.qi_max_frozen, Some(20.0));
     }
 
     #[test]

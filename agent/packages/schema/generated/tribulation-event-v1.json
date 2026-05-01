@@ -1,0 +1,197 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "phase"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "du_xu",
+          "type": "string"
+        },
+        {
+          "const": "zone_collapse",
+          "type": "string"
+        },
+        {
+          "const": "targeted",
+          "type": "string"
+        },
+        {
+          "const": "ascension_quota_open",
+          "type": "string"
+        }
+      ]
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "omen",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lock",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "wave"
+          ],
+          "properties": {
+            "kind": {
+              "const": "wave",
+              "type": "string"
+            },
+            "wave": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "heart_demon",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "settle",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "char_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "actor_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "epicenter": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "wave_current": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "wave_total": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "char_id",
+        "outcome",
+        "waves_survived"
+      ],
+      "properties": {
+        "char_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "ascended",
+              "type": "string"
+            },
+            {
+              "const": "half_step",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            },
+            {
+              "const": "killed",
+              "type": "string"
+            },
+            {
+              "const": "fled",
+              "type": "string"
+            }
+          ]
+        },
+        "killer": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "waves_survived": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    "occupied_slots": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

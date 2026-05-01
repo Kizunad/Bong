@@ -22,6 +22,7 @@ public class ZoneInfoHandlerTest {
         assertEquals("Blood Valley", zoneState.zoneLabel());
         assertEquals(1.0, zoneState.spiritQiNormalized(), 0.0001);
         assertEquals(5, zoneState.dangerLevel());
+        assertEquals("collapsed", zoneState.status());
         assertEquals(4_242L, zoneState.changedAtMillis());
     }
 
@@ -31,7 +32,9 @@ public class ZoneInfoHandlerTest {
         ServerDataDispatch dispatch = new ZoneInfoHandler(() -> 88L).handle(parseEnvelope(json));
 
         assertTrue(dispatch.handled());
-        assertEquals("jade_valley", dispatch.zoneState().orElseThrow().zoneLabel());
+        ZoneState zoneState = dispatch.zoneState().orElseThrow();
+        assertEquals("jade_valley", zoneState.zoneLabel());
+        assertEquals("normal", zoneState.status());
     }
 
     @Test

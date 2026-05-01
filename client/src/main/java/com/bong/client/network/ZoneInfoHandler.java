@@ -43,6 +43,7 @@ public final class ZoneInfoHandler implements ServerDataHandler {
             readOptionalString(payload, "display_name"),
             spiritQi,
             dangerLevel,
+            readOptionalString(payload, "status"),
             readOptionalStringSet(payload, "active_events"),
             nowMillisSupplier.getAsLong()
         );

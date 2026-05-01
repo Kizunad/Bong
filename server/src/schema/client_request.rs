@@ -31,6 +31,16 @@ pub enum ClientRequestV1 {
     BreakthroughRequest {
         v: u8,
     },
+    StartDuXu {
+        v: u8,
+    },
+    AbortTribulation {
+        v: u8,
+    },
+    HeartDemonDecision {
+        v: u8,
+        choice_idx: Option<u32>,
+    },
     ForgeRequest {
         v: u8,
         meridian: MeridianId,
@@ -1069,6 +1079,29 @@ mod tests {
         assert!(matches!(
             req,
             ClientRequestV1::CancelExtractRequest { v: 1 }
+        ));
+    }
+
+    #[test]
+    fn heart_demon_decision_roundtrip() {
+        let json = r#"{"type":"heart_demon_decision","v":1,"choice_idx":2}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::HeartDemonDecision { v, choice_idx } => {
+                assert_eq!(v, 1);
+                assert_eq!(choice_idx, Some(2));
+            }
+            other => panic!("expected HeartDemonDecision, got {other:?}"),
+        }
+
+        let timeout = r#"{"type":"heart_demon_decision","v":1,"choice_idx":null}"#;
+        let req: ClientRequestV1 = serde_json::from_str(timeout).unwrap();
+        assert!(matches!(
+            req,
+            ClientRequestV1::HeartDemonDecision {
+                v: 1,
+                choice_idx: None
+            }
         ));
     }
 }

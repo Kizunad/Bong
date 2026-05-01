@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import com.bong.client.state.RealmCollapseHudState;
 import com.bong.client.state.VisualEffectState;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -44,12 +45,35 @@ public final class EventAlertHandler implements ServerDataHandler {
             durationMillis
         );
         VisualEffectState visualEffectState = parseEffectHint(payload.get("effect"), severity, durationMillis, nowMillisSupplier.getAsLong());
+        RealmCollapseHudState realmCollapseHudState = parseRealmCollapseHudState(
+            readOptionalString(payload, "event"),
+            message,
+            readOptionalString(payload, "zone"),
+            readOptionalLong(payload, "duration_ticks"),
+            nowMillisSupplier.getAsLong()
+        );
 
         String logMessage = "Routed event_alert payload with severity '"
             + severity.wireName()
             + "'"
             + (visualEffectState.isEmpty() ? "" : " and effect hint");
-        return ServerDataDispatch.handledWithEventAlert(envelope.type(), toastSpec, visualEffectState, logMessage);
+        return ServerDataDispatch.handledWithEventAlert(envelope.type(), toastSpec, visualEffectState, realmCollapseHudState, logMessage);
+    }
+
+    private static RealmCollapseHudState parseRealmCollapseHudState(
+        String eventName,
+        String message,
+        String zone,
+        Long durationTicks,
+        long nowMillis
+    ) {
+        if (!"realm_collapse".equals(normalizeText(eventName).toLowerCase(Locale.ROOT))) {
+            return RealmCollapseHudState.empty();
+        }
+        if (durationTicks == null || durationTicks <= 0L || durationTicks > Integer.MAX_VALUE) {
+            return RealmCollapseHudState.empty();
+        }
+        return RealmCollapseHudState.create(zone, message, nowMillis, durationTicks.intValue());
     }
 
     static String formatToastText(String title, String message) {

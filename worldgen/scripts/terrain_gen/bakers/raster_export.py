@@ -76,6 +76,7 @@ def export_rasters(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_tiles: list[dict[str, object]] = []
+    written_layer_names: set[str] = set()
     for tile in fields.tiles:
         tile_dir = output_dir / tile.tile.tile_id
         tile_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +96,7 @@ def export_rasters(
             else:
                 raise ValueError(f"unsupported raster layer '{layer_name}'")
             written_layers.append(layer_name)
+            written_layer_names.add(layer_name)
 
         manifest_tiles.append(
             {
@@ -109,6 +111,7 @@ def export_rasters(
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
+    collapsed_zones_payload = _collect_collapsed_zone_payload(plan)
     fossil_bboxes = _collect_fossil_bboxes(plan.blueprint_zones)
     corpse_mounds = _collect_corpse_mounds(plan.blueprint_zones)
 
@@ -129,9 +132,15 @@ def export_rasters(
         "pois": pois_payload,
         "semantic_layers": [
             name
-            for name in ("qi_density", "mofa_decay", "qi_vein_flow")
-            if name in LAYER_REGISTRY
+            for name in (
+                "qi_density",
+                "mofa_decay",
+                "qi_vein_flow",
+                "realm_collapse_mask",
+            )
+            if name in written_layer_names
         ],
+        "collapsed_zones": collapsed_zones_payload,
         "vertical_layers": [
             name
             for name in (
@@ -173,6 +182,8 @@ def export_rasters(
             "  manifest.fossil_bboxes carries AABB metadata for mineral anchor materialization.",
             "Ash dead zone corpse_mounds carry dried surface loot: fan tie, rotten bone coin, dried herb.",
             "POIs are zone-scoped narrative anchors for agent / NPC / HUD consumers.",
+            "Realm collapse: realm_collapse_mask=1 marks persisted collapsed zones; keep blocks",
+            "  but disable qi-dependent structures / shrines / furnaces in those columns.",
         ],
     }
 
@@ -268,6 +279,41 @@ def _collect_global_decoration_palette() -> list[dict[str, object]]:
     _remap_flora_variant_to_global). Consumers index this list directly.
     """
     return [dict(entry) for entry in GLOBAL_DECORATION_PALETTE]
+
+
+def _collect_collapsed_zone_payload(
+    plan: TerrainGenerationPlan,
+) -> list[dict[str, object]]:
+    zones_by_name = {zone.name: zone for zone in plan.blueprint_zones}
+    payload: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for overlay in plan.zone_overlays:
+        if overlay.overlay_kind != "collapsed":
+            continue
+        if overlay.payload.get("zone_status") != "collapsed":
+            continue
+        if overlay.zone_id in seen:
+            continue
+        seen.add(overlay.zone_id)
+        zone = zones_by_name.get(overlay.zone_id)
+        entry: dict[str, object] = {
+            "zone_id": overlay.zone_id,
+            "zone_status": "collapsed",
+            "payload_version": overlay.payload_version,
+            "since_wall": overlay.since_wall,
+            "active_events": list(overlay.payload.get("active_events", [])),
+        }
+        if zone is not None:
+            entry["display_name"] = zone.display_name
+            entry["dimension"] = zone.dimension
+            entry["bounds_xz"] = {
+                "min_x": zone.bounds_xz.min_x,
+                "max_x": zone.bounds_xz.max_x,
+                "min_z": zone.bounds_xz.min_z,
+                "max_z": zone.bounds_xz.max_z,
+            }
+        payload.append(entry)
+    return payload
 
 
 def build_raster_bake_plan(plan: TerrainGenerationPlan, output_root: Path) -> BakePlan:

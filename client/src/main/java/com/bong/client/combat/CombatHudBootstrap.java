@@ -79,6 +79,7 @@ public final class CombatHudBootstrap {
         com.bong.client.combat.store.DamageFloaterStore.resetForTests();
         com.bong.client.combat.store.DeathStateStore.resetForTests();
         com.bong.client.combat.store.TerminateStateStore.resetForTests();
+        com.bong.client.combat.store.TribulationStateStore.resetForTests();
         com.bong.client.combat.store.TribulationBroadcastStore.resetForTests();
         com.bong.client.combat.inspect.TechniquesListPanel.resetForTests();
         com.bong.client.combat.inspect.WeaponTreasurePanel.resetForTests();

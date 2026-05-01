@@ -9,7 +9,7 @@ public final class TribulationBroadcastStore {
     public record State(
         boolean active,
         String actorName,
-        String stage,              // "warn" / "striking" / "done"
+        String stage,              // "warn" / "locked" / "striking" / "done"
         double worldX,
         double worldZ,
         long expiresAtMs,

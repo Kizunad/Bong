@@ -7,6 +7,7 @@
 
 use valence::prelude::{Entity, EventWriter, Position, Query, Res};
 
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::Cultivation;
@@ -26,14 +27,22 @@ pub fn siphon_amount(zone_qi: f64, qi_max: f64) -> f64 {
 pub fn negative_zone_siphon_tick(
     zones: Option<Res<ZoneRegistry>>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
-    mut players: Query<(Entity, &Position, &mut Cultivation)>,
+    mut players: Query<(
+        Entity,
+        &Position,
+        Option<&CurrentDimension>,
+        &mut Cultivation,
+    )>,
 ) {
     let Some(zones) = zones else {
         return;
     };
-    for (entity, pos, mut cultivation) in players.iter_mut() {
+    for (entity, pos, current_dimension, mut cultivation) in players.iter_mut() {
+        let dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
         let zone_name = zones
-            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .find_zone(dimension, pos.0)
             .map(|z| (z.name.clone(), z.spirit_qi));
         let Some((zone_name, zone_qi)) = zone_name else {
             continue;
@@ -63,6 +72,8 @@ pub fn negative_zone_siphon_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use valence::prelude::{App, Events, Update};
 
     #[test]
     fn positive_zone_no_siphon() {
@@ -76,5 +87,39 @@ mod tests {
         let b = siphon_amount(-0.5, 200.0);
         assert!(b > a);
         assert!((b - 2.0 * a).abs() < 1e-9);
+    }
+
+    #[test]
+    fn negative_zone_siphon_uses_current_dimension_for_zone_lookup() {
+        let mut app = App::new();
+        app.add_event::<CultivationDeathTrigger>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+        app.insert_resource(zones);
+        app.add_systems(Update, negative_zone_siphon_tick);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_current, 1.0);
+        let deaths: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CultivationDeathTrigger>>()
+            .drain()
+            .collect();
+        assert!(deaths.is_empty());
     }
 }

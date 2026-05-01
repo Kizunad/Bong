@@ -59,6 +59,21 @@ public class EventAlertHandlerTest {
     }
 
     @Test
+    void realmCollapseAlertStartsPersistentHudCountdown() {
+        ServerDataDispatch dispatch = new EventAlertHandler(() -> 12_000L).handle(parseEnvelope(
+            "{\"v\":1,\"type\":\"event_alert\",\"event\":\"realm_collapse\",\"message\":\"域崩撤离窗口已开启\",\"zone\":\"blood_valley\",\"duration_ticks\":12000}"
+        ));
+
+        assertTrue(dispatch.handled());
+        var collapse = dispatch.realmCollapseHudState().orElseThrow();
+        assertEquals("blood_valley", collapse.zone());
+        assertEquals("域崩撤离窗口已开启", collapse.message());
+        assertEquals(12_000L, collapse.startedAtMillis());
+        assertEquals(12_000, collapse.durationTicks());
+        assertEquals(11_980, collapse.remainingTicks(13_000L));
+    }
+
+    @Test
     void parsesCriticalAlertAndMapsEffectHint() throws IOException {
         String json = PayloadFixtureLoader.readText("valid-event-alert-critical.json");
         ServerDataDispatch dispatch = new EventAlertHandler(() -> 9_999L).handle(parseEnvelope(json));

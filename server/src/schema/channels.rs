@@ -8,6 +8,8 @@ pub const CH_AGENT_WORLD_MODEL: &str = "bong:agent_world_model";
 // 修炼 (plan-cultivation-v1 §6.1)
 pub const CH_INSIGHT_REQUEST: &str = "bong:insight_request";
 pub const CH_INSIGHT_OFFER: &str = "bong:insight_offer";
+pub const CH_HEART_DEMON_REQUEST: &str = "bong:heart_demon_request";
+pub const CH_HEART_DEMON_OFFER: &str = "bong:heart_demon_offer";
 pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
 pub const CH_FORGE_EVENT: &str = "bong:forge_event";
 pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
@@ -17,6 +19,15 @@ pub const CH_DEATH_INSIGHT: &str = "bong:death_insight";
 pub const CH_AGING: &str = "bong:aging";
 pub const CH_LIFESPAN_EVENT: &str = "bong:lifespan_event";
 pub const CH_DUO_SHE_EVENT: &str = "bong:duo_she_event";
+
+// 天劫（plan-tribulation-v1 §6）：所有天劫事件统一进主 channel；Redis bridge
+// 同时 fanout 到 phase/kind 子 channel，供前端/agent 按语义分流。
+pub const CH_TRIBULATION: &str = "bong:tribulation";
+pub const CH_TRIBULATION_OMEN: &str = "bong:tribulation/omen";
+pub const CH_TRIBULATION_LOCK: &str = "bong:tribulation/lock";
+pub const CH_TRIBULATION_WAVE: &str = "bong:tribulation/wave";
+pub const CH_TRIBULATION_SETTLE: &str = "bong:tribulation/settle";
+pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 
 // NPC / 派系观测（plan-npc-ai-v1 §6）。Agent → Server 指令仍统一走
 // `bong:agent_command`，这里仅声明 server → agent 事件流水。
@@ -73,12 +84,25 @@ mod tests {
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
+        assert_eq!(CH_INSIGHT_REQUEST, "bong:insight_request");
+        assert_eq!(CH_INSIGHT_OFFER, "bong:insight_offer");
+        assert_eq!(CH_HEART_DEMON_REQUEST, "bong:heart_demon_request");
+        assert_eq!(CH_HEART_DEMON_OFFER, "bong:heart_demon_offer");
+        assert_eq!(CH_BREAKTHROUGH_EVENT, "bong:breakthrough_event");
+        assert_eq!(CH_FORGE_EVENT, "bong:forge_event");
+        assert_eq!(CH_CULTIVATION_DEATH, "bong:cultivation_death");
         assert_eq!(CH_DEATH, "bong:death");
         assert_eq!(CH_REBIRTH, "bong:rebirth");
         assert_eq!(CH_DEATH_INSIGHT, "bong:death_insight");
         assert_eq!(CH_AGING, "bong:aging");
         assert_eq!(CH_LIFESPAN_EVENT, "bong:lifespan_event");
         assert_eq!(CH_DUO_SHE_EVENT, "bong:duo_she_event");
+        assert_eq!(CH_TRIBULATION, "bong:tribulation");
+        assert_eq!(CH_TRIBULATION_OMEN, "bong:tribulation/omen");
+        assert_eq!(CH_TRIBULATION_LOCK, "bong:tribulation/lock");
+        assert_eq!(CH_TRIBULATION_WAVE, "bong:tribulation/wave");
+        assert_eq!(CH_TRIBULATION_SETTLE, "bong:tribulation/settle");
+        assert_eq!(CH_TRIBULATION_COLLAPSE, "bong:tribulation/collapse");
         assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
         assert_eq!(CH_NPC_DEATH, "bong:npc/death");
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");

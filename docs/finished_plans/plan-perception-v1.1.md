@@ -191,7 +191,7 @@ final_fog_end = min(final_clear × end_to_clear_ratio(realm), base_view × 16 - 
 参考《死亡搁浅》的 BB 探测器、《地平线》的专注模式：
 
 ```
-       ↑                    
+       ↑
    ╔═══════╗
    ║       ║  ←─ 屏幕边缘
    ║       ║

@@ -324,6 +324,18 @@ impl Default for Cultivation {
     }
 }
 
+pub fn recover_current_qi(cultivation: &mut Cultivation, amount: f64) -> f64 {
+    let amount = if amount.is_finite() {
+        amount.max(0.0)
+    } else {
+        0.0
+    };
+    let effective_qi_max = (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+    let before = cultivation.qi_current;
+    cultivation.qi_current = (cultivation.qi_current + amount).clamp(0.0, effective_qi_max);
+    (cultivation.qi_current - before).max(0.0)
+}
+
 /// 因果 / 业力（plan §1.1）— P1 仅存储权重，推演留给后续切片。
 #[derive(Debug, Clone, Default, Component, Serialize, Deserialize)]
 pub struct Karma {
@@ -361,6 +373,23 @@ mod tests {
             prev = n;
         }
         assert_eq!(Realm::Void.required_meridians(), 20);
+    }
+
+    #[test]
+    fn recover_current_qi_clamps_to_effective_max_without_raising_cap() {
+        let mut cultivation = Cultivation {
+            qi_current: 160.0,
+            qi_max: 210.0,
+            qi_max_frozen: Some(30.0),
+            ..Default::default()
+        };
+
+        let recovered = recover_current_qi(&mut cultivation, 80.0);
+
+        assert_eq!(recovered, 20.0);
+        assert_eq!(cultivation.qi_current, 180.0);
+        assert_eq!(cultivation.qi_max, 210.0);
+        assert_eq!(cultivation.qi_max_frozen, Some(30.0));
     }
 
     #[test]

@@ -72,6 +72,28 @@ public final class ClientRequestProtocol {
         return envelope("breakthrough_request").toString();
     }
 
+    public static String encodeStartDuXuRequest() {
+        return envelope("start_du_xu").toString();
+    }
+
+    public static String encodeAbortTribulationRequest() {
+        return envelope("abort_tribulation").toString();
+    }
+
+    /** 心魔劫决定 C2S 回执。{@code chosenIdx = null} 表示超时或未选。 */
+    public static String encodeHeartDemonDecision(Integer chosenIdx) {
+        JsonObject obj = envelope("heart_demon_decision");
+        if (chosenIdx == null) {
+            obj.add("choice_idx", com.google.gson.JsonNull.INSTANCE);
+        } else {
+            if (chosenIdx < 0) {
+                throw new IllegalArgumentException("chosenIdx must be >= 0, got " + chosenIdx);
+            }
+            obj.addProperty("choice_idx", chosenIdx.intValue());
+        }
+        return obj.toString();
+    }
+
     /**
      * 顿悟决定 C2S 回执。{@code chosenIdx = null} 表示拒绝或超时；否则为选中候选下标（0-based）。
      */

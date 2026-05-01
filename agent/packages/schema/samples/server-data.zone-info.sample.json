@@ -4,6 +4,7 @@
   "zone": "blood_valley",
   "spirit_qi": -0.42,
   "danger_level": 3,
+  "status": "normal",
   "active_events": [
     "beast_tide"
   ]

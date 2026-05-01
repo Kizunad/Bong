@@ -7,6 +7,7 @@ public final class PlayerStateViewModel {
     private static final double DEFAULT_SPIRIT_QI_MAX = 100.0;
 
     private final String realm;
+    private final String playerId;
     private final double spiritQiCurrent;
     private final double spiritQiMax;
     private final double spiritQiFillRatio;
@@ -20,6 +21,7 @@ public final class PlayerStateViewModel {
 
     private PlayerStateViewModel(
         String realm,
+        String playerId,
         double spiritQiCurrent,
         double spiritQiMax,
         double spiritQiFillRatio,
@@ -32,6 +34,7 @@ public final class PlayerStateViewModel {
         double zoneSpiritQiNormalized
     ) {
         this.realm = Objects.requireNonNull(realm, "realm");
+        this.playerId = Objects.requireNonNull(playerId, "playerId");
         this.spiritQiCurrent = spiritQiCurrent;
         this.spiritQiMax = spiritQiMax;
         this.spiritQiFillRatio = spiritQiFillRatio;
@@ -46,6 +49,7 @@ public final class PlayerStateViewModel {
 
     public static PlayerStateViewModel empty() {
         return new PlayerStateViewModel(
+            "",
             "",
             0.0,
             DEFAULT_SPIRIT_QI_MAX,
@@ -62,6 +66,7 @@ public final class PlayerStateViewModel {
 
     public static PlayerStateViewModel create(
         String realm,
+        String playerId,
         double spiritQiCurrent,
         double spiritQiMax,
         double karma,
@@ -76,6 +81,7 @@ public final class PlayerStateViewModel {
         if (normalizedRealm.isEmpty()) {
             return empty();
         }
+        String normalizedPlayerId = normalizeText(playerId);
 
         double normalizedCurrentBase = clampNonNegative(spiritQiCurrent);
         double normalizedMax = normalizeSpiritQiMax(spiritQiMax, normalizedCurrentBase);
@@ -91,6 +97,7 @@ public final class PlayerStateViewModel {
 
         return new PlayerStateViewModel(
             normalizedRealm,
+            normalizedPlayerId,
             normalizedCurrent,
             normalizedMax,
             normalizedCurrent / normalizedMax,
@@ -131,6 +138,10 @@ public final class PlayerStateViewModel {
 
     public String realm() {
         return realm;
+    }
+
+    public String playerId() {
+        return playerId;
     }
 
     public double spiritQiCurrent() {

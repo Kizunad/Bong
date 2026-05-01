@@ -24,13 +24,13 @@
 
 根 CLAUDE.md 的 plan 文件结构讲了"可核验交付物抓手"；这里再加一节 **接入面**，避免新模块自成孤岛。新 plan 头部必须明列：
 
-- **进料**：从哪些现有模块取数据 / 物品 / event？  
+- **进料**：从哪些现有模块取数据 / 物品 / event？
   例：「从 `inventory` 消耗草药 → 查 `botany::PlantRegistry` → 订阅 `cultivation::BreakthroughEvent`」
-- **出料**：产出去哪里？  
+- **出料**：产出去哪里？
   例：「输出 `Pill` 实例进 `inventory` → emit `alchemy::BrewedEvent` 给 `skill` 加经验 → 接 `shelflife` 走腐败检查」
 - **共享类型 / event**：复用了哪些已有 component / event / schema？另建一份的话理由是什么？（防止"又造一个 `BreakthroughEvent`"）
 - **跨仓库契约**：server / agent / client 各自命中的 symbol（IPC schema 名 / Redis key / CustomPayload type ID）
-- **worldview 锚点**：这个玩法对应 `worldview.md` 哪一节？（境界？经济？传承？阵法？）  
+- **worldview 锚点**：这个玩法对应 `worldview.md` 哪一节？（境界？经济？传承？阵法？）
   没锚点的玩法要么补 worldview、要么不该立。
 
 ## 三、调研工具

@@ -96,6 +96,10 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::ForgeSession => "forge_session",
         ServerDataType::ForgeOutcome => "forge_outcome",
         ServerDataType::ForgeBlueprintBook => "forge_blueprint_book",
+        ServerDataType::TribulationState => "tribulation_state",
+        ServerDataType::TribulationBroadcast => "tribulation_broadcast",
+        ServerDataType::AscensionQuota => "ascension_quota",
+        ServerDataType::HeartDemonOffer => "heart_demon_offer",
         ServerDataType::BurstMeridianEvent => "burst_meridian_event",
         ServerDataType::SocialAnonymity => "social_anonymity",
         ServerDataType::SocialExposure => "social_exposure",
@@ -267,7 +271,7 @@ mod server_data_tests {
     use crate::schema::server_data::{
         ServerDataPayloadV1, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION, WELCOME_MESSAGE,
     };
-    use crate::schema::world_state::PlayerPowerBreakdown;
+    use crate::schema::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -442,6 +446,7 @@ mod server_data_tests {
                     zone: "blood_valley".to_string(),
                     spirit_qi: 0.42,
                     danger_level: 3,
+                    status: ZoneStatusV1::Normal,
                     active_events: Some(vec!["beast_tide".to_string()]),
                 }),
                 json!({
@@ -450,6 +455,7 @@ mod server_data_tests {
                     "zone": "blood_valley",
                     "spirit_qi": 0.42,
                     "danger_level": 3,
+                    "status": "normal",
                     "active_events": ["beast_tide"],
                 }),
             ),

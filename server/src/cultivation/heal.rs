@@ -6,6 +6,8 @@
 
 use valence::prelude::{Position, Query, Res};
 
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::MeridianSystem;
@@ -26,14 +28,23 @@ pub fn advance_heal(severity: f64, progress: &mut f64, zone_qi: f64) -> (f64, bo
 
 pub fn meridian_heal_tick(
     zones: Option<Res<ZoneRegistry>>,
-    mut players: Query<(&Position, &mut MeridianSystem)>,
+    mut players: Query<(&Position, Option<&CurrentDimension>, &mut MeridianSystem)>,
 ) {
     let Some(zones) = zones else {
         return;
     };
-    for (pos, mut meridians) in players.iter_mut() {
+    for (pos, current_dimension, mut meridians) in players.iter_mut() {
+        let dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
         let zone_qi = zones
-            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .find_zone(dimension, pos.0)
+            .filter(|zone| {
+                !zone
+                    .active_events
+                    .iter()
+                    .any(|event| event == EVENT_REALM_COLLAPSE)
+            })
             .map(|z| z.spirit_qi)
             .unwrap_or(0.0);
         if zone_qi <= 0.0 {
@@ -60,6 +71,10 @@ pub fn meridian_heal_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{CrackCause, MeridianId, MeridianSystem};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::{App, Update};
 
     #[test]
     fn zero_zone_no_heal() {
@@ -80,5 +95,75 @@ mod tests {
             }
         }
         assert!(p >= sev);
+    }
+
+    #[test]
+    fn collapsed_zone_blocks_meridian_heal_even_with_stale_qi() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        let zone = zones.find_zone_mut("spawn").unwrap();
+        zone.spirit_qi = 0.9;
+        zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+        app.add_systems(Update, meridian_heal_tick);
+
+        let mut meridians = MeridianSystem::default();
+        let lung = meridians.get_mut(MeridianId::Lung);
+        lung.integrity = 0.5;
+        lung.cracks
+            .push(crate::cultivation::components::MeridianCrack {
+                severity: 0.05,
+                healing_progress: 0.0,
+                cause: CrackCause::Attack,
+                created_at: 0,
+            });
+        let player = app
+            .world_mut()
+            .spawn((Position::new([8.0, 66.0, 8.0]), meridians))
+            .id();
+
+        app.update();
+
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        let lung = meridians.get(MeridianId::Lung);
+        assert_eq!(lung.integrity, 0.5);
+        assert_eq!(lung.cracks.len(), 1);
+        assert_eq!(lung.cracks[0].healing_progress, 0.0);
+    }
+
+    #[test]
+    fn meridian_heal_uses_current_dimension_for_zone_lookup() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(zones);
+        app.add_systems(Update, meridian_heal_tick);
+
+        let mut meridians = MeridianSystem::default();
+        let lung = meridians.get_mut(MeridianId::Lung);
+        lung.integrity = 0.5;
+        lung.cracks
+            .push(crate::cultivation::components::MeridianCrack {
+                severity: 0.05,
+                healing_progress: 0.0,
+                cause: CrackCause::Attack,
+                created_at: 0,
+            });
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                meridians,
+            ))
+            .id();
+
+        app.update();
+
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        let lung = meridians.get(MeridianId::Lung);
+        assert_eq!(lung.integrity, 0.5);
+        assert_eq!(lung.cracks.len(), 1);
+        assert_eq!(lung.cracks[0].healing_progress, 0.0);
     }
 }

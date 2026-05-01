@@ -57,11 +57,14 @@ pub mod topology;
 pub mod tribulation;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Res,
-    Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or, Query,
+    Res, Update, Username, Without,
 };
 
-use self::breakthrough::{breakthrough_system, BreakthroughOutcome, BreakthroughRequest};
+use self::breakthrough::{
+    breakthrough_system, rapid_breakthrough_karma_mark_system, BreakthroughOutcome,
+    BreakthroughRequest,
+};
 use self::color::{qi_color_evolution_tick, PracticeLog};
 use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
@@ -109,20 +112,29 @@ use self::spiritual_sense::push::{
 use self::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    start_tribulation_system, tribulation_failure_system, tribulation_wave_system,
-    InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed, TribulationState,
-    TribulationWaveCleared,
+    abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
+    heart_demon_timeout_system, record_tribulation_interceptor_system, start_du_xu_request_system,
+    start_tribulation_system, tribulation_aoe_system, tribulation_escape_boundary_system,
+    tribulation_failure_system, tribulation_intercept_death_system,
+    tribulation_omen_cloud_block_overlay_system, tribulation_phase_tick_system,
+    tribulation_wave_system, AscensionQuotaOccupied, AscensionQuotaOpened,
+    HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationOmenCloudBlocks,
+    TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
-    load_active_tribulation, load_player_cultivation_bundle, PersistenceSettings,
+    load_active_tribulation, load_player_cultivation_bundle, release_ascension_quota_slot,
+    PersistenceSettings,
 };
 use crate::player::state::{
     canonical_player_id, load_current_character_id, player_character_id, PlayerState,
     PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
+use crate::world::dimension::CurrentDimension;
+use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -132,6 +144,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(skill_registry::init_registry());
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
+    app.insert_resource(TribulationOmenCloudBlocks::default());
     app.insert_resource(SpiritualSensePushState::default());
 
     // 事件（plan §3/§4/§5 全家桶）
@@ -151,9 +164,16 @@ pub fn register(app: &mut App) {
     app.add_event::<DuoSheWarningEvent>();
     app.add_event::<UseLifeCoreEvent>();
     app.add_event::<InitiateXuhuaTribulation>();
+    app.add_event::<StartDuXuRequest>();
     app.add_event::<TribulationAnnounce>();
+    app.add_event::<TribulationLocked>();
     app.add_event::<TribulationWaveCleared>();
     app.add_event::<TribulationFailed>();
+    app.add_event::<TribulationFled>();
+    app.add_event::<TribulationSettled>();
+    app.add_event::<AscensionQuotaOpened>();
+    app.add_event::<AscensionQuotaOccupied>();
+    app.add_event::<HeartDemonChoiceSubmitted>();
     app.add_event::<InsightRequest>();
     app.add_event::<InsightOffer>();
     app.add_event::<InsightChosen>();
@@ -172,6 +192,7 @@ pub fn register(app: &mut App) {
             lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
             breakthrough_system.after(meridian_open_tick),
+            rapid_breakthrough_karma_mark_system.after(breakthrough_system),
             forging_system.after(breakthrough_system),
             // 稳态演化
             qi_color_evolution_tick,
@@ -184,13 +205,37 @@ pub fn register(app: &mut App) {
             apply_meridian_crack_events.after(overload_detection_tick),
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
-            // plan §3.2 渡劫
-            start_tribulation_system,
-            tribulation_wave_system,
-            tribulation_failure_system,
             // plan §4 死亡/重生钩子
             on_player_revived,
             on_player_terminated,
+            // plan §11-5 业力
+            karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
+            void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            // plan §3.2 渡劫：单独分组，避免 Bevy 0.14 tuple arity 上限。
+            start_du_xu_request_system,
+            start_tribulation_system.after(start_du_xu_request_system),
+            tribulation_phase_tick_system.after(start_tribulation_system),
+            tribulation_omen_cloud_block_overlay_system.after(start_tribulation_system),
+            emit_tribulation_boundary_vfx_system.after(tribulation_phase_tick_system),
+            tribulation_aoe_system.after(emit_tribulation_boundary_vfx_system),
+            heart_demon_choice_system.after(tribulation_aoe_system),
+            heart_demon_timeout_system.after(heart_demon_choice_system),
+            tribulation_failure_system.after(heart_demon_timeout_system),
+            abort_du_xu_on_client_removed
+                .after(tribulation_failure_system)
+                .before(crate::player::despawn_disconnected_clients),
+            tribulation_escape_boundary_system.after(abort_du_xu_on_client_removed),
+            record_tribulation_interceptor_system
+                .after(crate::combat::lifecycle::sync_combat_state_from_events),
+            tribulation_wave_system.after(tribulation_escape_boundary_system),
+            tribulation_intercept_death_system
+                .after(crate::combat::lifecycle::death_arbiter_tick)
+                .before(crate::inventory::apply_death_drop_on_revive),
         ),
     );
     app.add_systems(
@@ -242,11 +287,15 @@ pub fn register(app: &mut App) {
     );
 }
 
-type CultivationAttachFilter = (Added<Client>, Without<Cultivation>);
+type CultivationAttachFilter = (
+    Or<(Added<Client>, Added<CurrentDimension>)>,
+    Without<Cultivation>,
+);
 type CultivationAttachQueryItem<'a> = (
     Entity,
     &'a Username,
     Option<&'a PlayerState>,
+    Option<&'a CurrentDimension>,
     Option<&'a LifespanComponent>,
 );
 
@@ -256,7 +305,7 @@ fn attach_cultivation_to_joined_clients(
     player_persistence: Option<Res<PlayerStatePersistence>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, restored_lifespan) in &joined_clients {
+    for (entity, username, player_state, current_dimension, restored_lifespan) in &joined_clients {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,
@@ -382,13 +431,22 @@ fn attach_cultivation_to_joined_clients(
                 None
             }
         };
-        let restored_tribulation = active_tribulation.as_ref().map(|record| TribulationState {
-            wave_current: record
-                .wave_current
-                .saturating_add(1)
-                .min(record.waves_total),
-            waves_total: record.waves_total,
-            started_tick: record.started_tick,
+        let restored_tribulation = active_tribulation.as_ref().map(|record| {
+            (
+                TribulationState::restored(
+                    record
+                        .wave_current
+                        .saturating_add(1)
+                        .min(record.waves_total),
+                    record.waves_total,
+                    record.started_tick,
+                ),
+                TribulationOriginDimension(
+                    current_dimension
+                        .map(|current_dimension| current_dimension.0)
+                        .unwrap_or_default(),
+                ),
+            )
         });
         if restored_tribulation.is_some() {
             cultivation.realm = Realm::Spirit;
@@ -428,10 +486,28 @@ fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error
 }
 
 fn emit_skill_caps_on_realm_regressed(
+    settings: Res<PersistenceSettings>,
     mut regressed: EventReader<RealmRegressed>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
 ) {
     for event in regressed.read() {
+        if event.from == Realm::Void && event.to != Realm::Void {
+            match release_ascension_quota_slot(&settings) {
+                Ok(release) if release.opened_slot => {
+                    quota_opened.send(AscensionQuotaOpened {
+                        occupied_slots: release.quota.occupied_slots,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to release ascension quota after realm regression for {:?}: {error}",
+                        event.entity,
+                    );
+                }
+            }
+        }
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
         for skill in crate::skill::components::SkillId::ALL {
             skill_cap_events.send(SkillCapChanged {
@@ -456,8 +532,29 @@ mod tests {
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
     use crate::skill::events::SkillCapChanged;
+    use crate::world::dimension::DimensionKind;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
+
+    fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-{test_name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        (settings, temp_root)
+    }
 
     #[test]
     fn joined_clients_receive_canonical_player_character_id() {
@@ -610,6 +707,68 @@ mod tests {
         assert_eq!(tribulation.wave_current, 3);
         assert_eq!(tribulation.waves_total, 5);
         assert_eq!(tribulation.started_tick, 1440);
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("tribulation origin dimension should restore");
+        assert_eq!(origin.0, DimensionKind::Overworld);
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn joined_clients_restore_active_tribulation_origin_dimension() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-cultivation-tribulation-restore-dim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let db_path = temp_root.join("data").join("bong.db");
+        let deceased_dir = temp_root
+            .join("library-web")
+            .join("public")
+            .join("deceased");
+        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("Azure"),
+                wave_current: 2,
+                waves_total: 5,
+                started_tick: 1440,
+            },
+        )
+        .expect("active tribulation should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                CurrentDimension(DimensionKind::Tsy),
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let origin = app
+            .world()
+            .get::<TribulationOriginDimension>(entity)
+            .expect("tribulation origin dimension should restore");
+        assert_eq!(origin.0, DimensionKind::Tsy);
 
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -704,6 +863,8 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.add_event::<tribulation::TribulationWaveCleared>();
+        app.add_event::<tribulation::TribulationSettled>();
+        app.add_event::<tribulation::AscensionQuotaOccupied>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_systems(
             Update,
@@ -778,7 +939,9 @@ mod tests {
     #[test]
     fn realm_regressed_emits_cap_changed_for_all_skills() {
         let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
         app.add_event::<RealmRegressed>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_systems(Update, emit_skill_caps_on_realm_regressed);
 
@@ -798,5 +961,44 @@ mod tests {
             .collect();
         assert_eq!(caps.len(), crate::skill::components::SkillId::ALL.len());
         assert!(caps.iter().all(|e| e.new_cap == 8));
+    }
+
+    #[test]
+    fn void_realm_regression_releases_ascension_quota() {
+        let (settings, root) = temp_persistence_settings("void-regression-release-quota");
+        crate::persistence::complete_tribulation_ascension(
+            &settings,
+            canonical_player_id("Azure").as_str(),
+        )
+        .expect("quota setup should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_event::<RealmRegressed>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, emit_skill_caps_on_realm_regressed);
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RealmRegressed {
+            entity,
+            from: Realm::Void,
+            to: Realm::Spirit,
+            closed_meridians: 8,
+        });
+
+        app.update();
+
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+        let quota_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<AscensionQuotaOpened>>()
+            .drain()
+            .collect();
+        assert_eq!(quota_events.len(), 1);
+        assert_eq!(quota_events[0].occupied_slots, 0);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

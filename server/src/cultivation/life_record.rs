@@ -9,6 +9,15 @@ use super::components::{ColorKind, MeridianId, Realm};
 use crate::skill::components::SkillId;
 
 const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
+const TRIBULATION_INTERCEPT_TAG: &str = "戮道者 · 截劫";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartDemonOutcome {
+    Steadfast,
+    Obsession,
+    NoSolution,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BiographyEntry {
@@ -128,6 +137,24 @@ pub enum BiographyEntry {
     /// plan-lingtian-v1 §1.7 — 自家田被铲（owner 视角）。
     PlotDestroyedByOther {
         plot_pos: [i32; 3],
+        tick: u64,
+    },
+    /// plan-tribulation-v1 §2.6 — 截胡杀死渡虚劫者，获得“戮道者 · 截劫”战绩。
+    TribulationIntercepted {
+        victim_id: String,
+        #[serde(default = "default_tribulation_intercept_tag")]
+        tag: String,
+        tick: u64,
+    },
+    /// plan-tribulation-v1 §2.6 — 下线/逃离劫场，按首波失败处理并公开记档。
+    TribulationFled {
+        wave: u32,
+        tick: u64,
+    },
+    /// plan-tribulation-v1 §2.4 — 心魔劫抉择公开记档。
+    HeartDemonRecord {
+        outcome: HeartDemonOutcome,
+        choice_idx: Option<u32>,
         tick: u64,
     },
     /// plan-social-v1 §6.2 — 交易写入双方生平卷。只记物品摘要与匿名对手。
@@ -271,6 +298,10 @@ fn default_combat_hit_wound_kind() -> String {
     "Blunt".to_string()
 }
 
+fn default_tribulation_intercept_tag() -> String {
+    TRIBULATION_INTERCEPT_TAG.to_string()
+}
+
 fn format_entry(entry: &BiographyEntry) -> String {
     match entry {
         BiographyEntry::BreakthroughStarted { realm_target, tick } => {
@@ -372,6 +403,21 @@ fn format_entry(entry: &BiographyEntry) -> String {
             "t{tick}:lingtian:destroyed_by_other:[{},{},{}]",
             plot_pos[0], plot_pos[1], plot_pos[2]
         ),
+        BiographyEntry::TribulationIntercepted {
+            victim_id,
+            tag,
+            tick,
+        } => {
+            format!("t{tick}:tribulation_intercepted:{victim_id}:{tag}")
+        }
+        BiographyEntry::TribulationFled { wave, tick } => {
+            format!("t{tick}:tribulation_fled:wave{wave}:畏劫而逃")
+        }
+        BiographyEntry::HeartDemonRecord {
+            outcome,
+            choice_idx,
+            tick,
+        } => format!("t{tick}:heart_demon:{outcome:?}:{choice_idx:?}"),
         BiographyEntry::TradeCompleted {
             counterparty_id,
             offered_item,
@@ -535,6 +581,46 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy life record should deserialize");
 
         assert!(decoded.skill_milestones.is_empty());
+    }
+
+    #[test]
+    fn heart_demon_record_summary_is_public() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::HeartDemonRecord {
+            outcome: HeartDemonOutcome::Steadfast,
+            choice_idx: Some(0),
+            tick: 233,
+        });
+
+        assert_eq!(
+            lr.recent_summary_text(1),
+            "t233:heart_demon:Steadfast:Some(0)"
+        );
+    }
+
+    #[test]
+    fn legacy_tribulation_intercept_defaults_ludao_tag() {
+        let legacy = serde_json::json!({
+            "character_id": "offline:Killer",
+            "created_at": 5,
+            "biography": [{
+                "TribulationIntercepted": {
+                    "victim_id": "offline:Victim",
+                    "tick": 120
+                }
+            }],
+            "insights_taken": [],
+            "skill_milestones": [],
+            "spirit_root_first": null
+        });
+
+        let decoded: LifeRecord = serde_json::from_value(legacy)
+            .expect("legacy tribulation intercept should deserialize");
+
+        assert_eq!(
+            decoded.recent_summary_text(1),
+            "t120:tribulation_intercepted:offline:Victim:戮道者 · 截劫"
+        );
     }
 
     #[test]

@@ -139,6 +139,7 @@
       "name": "blood_valley",
       "spirit_qi": 0.42,
       "danger_level": 3,
+      "status": "normal",
       "active_events": ["beast_tide_warning"],
       "player_count": 1
     },
@@ -146,6 +147,7 @@
       "name": "starter_valley",
       "spirit_qi": 0.95,
       "danger_level": 0,
+      "status": "normal",
       "active_events": [],
       "player_count": 1
     }

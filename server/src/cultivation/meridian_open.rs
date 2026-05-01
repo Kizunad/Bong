@@ -9,6 +9,8 @@
 
 use valence::prelude::{bevy_ecs, Component, Entity, Events, Position, Query, Res, ResMut};
 
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{Cultivation, MeridianId, MeridianSystem};
@@ -30,6 +32,7 @@ pub const MERIDIAN_CAPACITY_ON_OPEN: f64 = 10.0;
 type MeridianOpenItem<'a> = (
     Entity,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a MeridianTarget,
     &'a mut Cultivation,
     &'a mut MeridianSystem,
@@ -119,6 +122,7 @@ pub fn is_target_adjacent(
         .any(|n| meridians.get(*n).opened)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn meridian_open_tick(
     topo: Res<MeridianTopology>,
     clock: Res<CultivationClock>,
@@ -130,9 +134,20 @@ pub fn meridian_open_tick(
         return;
     };
     let now = clock.tick;
-    for (entity, pos, target, mut cultivation, mut meridians, life) in entities.iter_mut() {
+    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life) in
+        entities.iter_mut()
+    {
+        let dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
         let zone_qi = zones
-            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos.0)
+            .find_zone(dimension, pos.0)
+            .filter(|zone| {
+                !zone
+                    .active_events
+                    .iter()
+                    .any(|event| event == EVENT_REALM_COLLAPSE)
+            })
             .map(|z| z.spirit_qi)
             .unwrap_or(0.0);
         let adj = is_target_adjacent(&topo, &meridians, target.0);
@@ -174,6 +189,9 @@ pub fn meridian_open_tick(
 mod tests {
     use super::*;
     use crate::cultivation::components::Cultivation;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::{App, Update};
 
     fn player_with_qi(qi: f64) -> Cultivation {
         Cultivation {
@@ -242,5 +260,65 @@ mod tests {
         }
         assert!(ms.get(MeridianId::Lung).opened);
         assert!(c.qi_max >= 1000.0 + MERIDIAN_CAPACITY_ON_OPEN);
+    }
+
+    #[test]
+    fn collapsed_zone_blocks_meridian_open_progress_even_with_stale_qi() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        let zone = zones.find_zone_mut("spawn").unwrap();
+        zone.spirit_qi = 0.9;
+        zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+        app.add_systems(Update, meridian_open_tick);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                player_with_qi(10.0),
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        assert_eq!(cultivation.qi_current, 10.0);
+        assert_eq!(meridians.get(MeridianId::Lung).open_progress, 0.0);
+        assert!(!meridians.get(MeridianId::Lung).opened);
+    }
+
+    #[test]
+    fn meridian_open_uses_current_dimension_for_zone_lookup() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(zones);
+        app.add_systems(Update, meridian_open_tick);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Tsy),
+                MeridianTarget(MeridianId::Lung),
+                player_with_qi(10.0),
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        assert_eq!(cultivation.qi_current, 10.0);
+        assert_eq!(meridians.get(MeridianId::Lung).open_progress, 0.0);
     }
 }

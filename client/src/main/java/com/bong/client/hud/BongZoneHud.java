@@ -84,6 +84,7 @@ public final class BongZoneHud {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
         return "区域"
             + safeZoneState.zoneLabel()
+            + statusText(safeZoneState)
             + " 灵气"
             + qiBar(safeZoneState.spiritQiNormalized())
             + " 危"
@@ -94,6 +95,11 @@ public final class BongZoneHud {
     static String cadenceText(ZoneState zoneState) {
         ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
         return safeZoneState.noCadence() ? " 节律无节律" : "";
+    }
+
+    static String statusText(ZoneState zoneState) {
+        ZoneState safeZoneState = zoneState == null ? ZoneState.empty() : zoneState;
+        return safeZoneState.collapsed() ? " 死域" : "";
     }
 
     static String qiBar(double spiritQiNormalized) {

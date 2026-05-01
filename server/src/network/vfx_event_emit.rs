@@ -30,6 +30,8 @@ pub const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
 
 /// Phase 1 默认广播半径（plan §4.2）。后续可按配置下调或按 zone 差异化。
 pub const VFX_BROADCAST_RADIUS: f64 = 64.0;
+const TRIBULATION_BOUNDARY_VFX_RADIUS: f64 = 128.0;
+const REALM_COLLAPSE_BOUNDARY_VFX_RADIUS: f64 = 512.0;
 
 /// `/bong-vfx play` 默认 priority —— 落在战斗层中段（plan §3.3: 战斗 1000~1999）。
 pub const DEFAULT_DEBUG_PRIORITY: u16 = 1000;
@@ -102,8 +104,22 @@ pub fn vanilla_particle_from_id(id: &str) -> Option<Particle> {
 
 /// 距离过滤纯函数。拆成独立函数主要是单测可达性——Valence 的 `Position` / `Query`
 /// 在 App 之外构造成本很高。`<=` 让正好 64 格边界的玩家也被纳入广播，避免抖动。
-pub fn is_within_vfx_broadcast_radius(origin: DVec3, target: DVec3) -> bool {
-    origin.distance_squared(target) <= VFX_BROADCAST_RADIUS * VFX_BROADCAST_RADIUS
+#[cfg(test)]
+fn is_within_vfx_broadcast_radius(origin: DVec3, target: DVec3) -> bool {
+    is_within_vfx_broadcast_radius_for_event(None, origin, target)
+}
+
+fn is_within_vfx_broadcast_radius_for_event(
+    event_id: Option<&str>,
+    origin: DVec3,
+    target: DVec3,
+) -> bool {
+    let radius = match event_id {
+        Some("bong:tribulation_boundary") => TRIBULATION_BOUNDARY_VFX_RADIUS,
+        Some("bong:realm_collapse_boundary") => REALM_COLLAPSE_BOUNDARY_VFX_RADIUS,
+        _ => VFX_BROADCAST_RADIUS,
+    };
+    origin.distance_squared(target) <= radius * radius
 }
 
 /// plan-particle-system-v1 §2.5：合批 bin 边长（米）。
@@ -137,9 +153,11 @@ pub enum VfxPriority {
 /// critical 事件(渡劫/突破/死亡) 全服可见,永不丢;normal 战斗事件可在拥挤 chunk 时牺牲。
 pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
     match event_id {
-        "bong:tribulation_lightning" | "bong:breakthrough_pillar" | "bong:death_soul_dissipate" => {
-            VfxPriority::Critical
-        }
+        "bong:tribulation_lightning"
+        | "bong:tribulation_boundary"
+        | "bong:realm_collapse_boundary"
+        | "bong:breakthrough_pillar"
+        | "bong:death_soul_dissipate" => VfxPriority::Critical,
         "bong:enlightenment_aura" => VfxPriority::Important,
         _ => VfxPriority::Normal,
     }
@@ -281,6 +299,10 @@ pub fn emit_vfx_event_payloads(
     for request in capped {
         let event = VfxEventV1::new(request.payload.clone());
         let payload_type = event.payload_type();
+        let event_id = match &request.payload {
+            VfxEventPayloadV1::SpawnParticle { event_id, .. } => Some(event_id.as_str()),
+            _ => None,
+        };
         let bytes = match event.to_json_bytes_checked() {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -294,7 +316,7 @@ pub fn emit_vfx_event_payloads(
 
         let mut recipients = 0usize;
         for (entity, mut client, position) in &mut clients {
-            if !is_within_vfx_broadcast_radius(request.origin, position.get()) {
+            if !is_within_vfx_broadcast_radius_for_event(event_id, request.origin, position.get()) {
                 continue;
             }
             let sent = per_client_sent.entry(entity).or_insert(0);
@@ -637,6 +659,14 @@ mod tests {
             VfxPriority::Critical
         );
         assert_eq!(
+            vfx_default_priority("bong:tribulation_boundary"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
+            vfx_default_priority("bong:realm_collapse_boundary"),
+            VfxPriority::Critical
+        );
+        assert_eq!(
             vfx_default_priority("bong:breakthrough_pillar"),
             VfxPriority::Critical
         );
@@ -923,6 +953,38 @@ mod tests {
         // sqrt(40^2 + 40^2 + 40^2) ≈ 69.28 > 64
         let target = DVec3::new(40.0, 40.0, 40.0);
         assert!(!is_within_vfx_broadcast_radius(origin, target));
+    }
+
+    #[test]
+    fn tribulation_boundary_uses_extended_vfx_radius() {
+        let origin = DVec3::new(0.0, 64.0, 0.0);
+        let target = DVec3::new(100.0, 64.0, 0.0);
+        assert!(is_within_vfx_broadcast_radius_for_event(
+            Some("bong:tribulation_boundary"),
+            origin,
+            target,
+        ));
+        assert!(!is_within_vfx_broadcast_radius_for_event(
+            Some("bong:tribulation_lightning"),
+            origin,
+            target,
+        ));
+    }
+
+    #[test]
+    fn realm_collapse_boundary_uses_zone_scale_vfx_radius() {
+        let origin = DVec3::new(128.0, 65.0, 128.0);
+        let target = DVec3::new(384.0, 65.0, 128.0);
+        assert!(is_within_vfx_broadcast_radius_for_event(
+            Some("bong:realm_collapse_boundary"),
+            origin,
+            target,
+        ));
+        assert!(!is_within_vfx_broadcast_radius_for_event(
+            Some("bong:tribulation_lightning"),
+            origin,
+            target,
+        ));
     }
 
     // ========== parse_vfx_debug_command ==========
@@ -1300,6 +1362,34 @@ mod tests {
             }
             other => panic!("expected PlayAnim, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn emit_boundary_vfx_reaches_tribulation_edge_clients() {
+        let mut app = setup_vfx_emit_app();
+        let mut edge_helper = spawn_mock_client_at(&mut app, "Edge", [100.0, 64.0, 0.0]);
+        let mut far_helper = spawn_mock_client_at(&mut app, "Far", [160.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(VfxEventRequest::new(
+            DVec3::new(0.0, 64.0, 0.0),
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:tribulation_boundary".to_string(),
+                origin: [0.0, 64.0, 0.0],
+                direction: None,
+                color: Some("#D0C8FF".to_string()),
+                strength: Some(1.0),
+                count: Some(1),
+                duration_ticks: Some(200),
+            },
+        ));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let edge_payloads = count_vfx_channel_packets(&mut edge_helper);
+        let far_payloads = count_vfx_channel_packets(&mut far_helper);
+        assert_eq!(edge_payloads.len(), 1);
+        assert!(far_payloads.is_empty());
     }
 
     #[test]

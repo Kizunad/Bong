@@ -293,6 +293,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         });
         Object[] breakthroughBtn = buildActionButton("突破",
             com.bong.client.network.ClientRequestSender::sendBreakthroughRequest);
+        Object[] duXuBtn = buildActionButton("渡虚劫", this::dispatchStartDuXuIfEligible);
         Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
             var sel = bodyInspect.selectedChannel();
             if (sel != null) {
@@ -310,10 +311,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         });
         var setTargetLabel = (LabelComponent) setTargetBtn[1];
+        var duXuLabel = (LabelComponent) duXuBtn[1];
         var forgeRateLabel = (LabelComponent) forgeRateBtn[1];
         var forgeCapLabel = (LabelComponent) forgeCapBtn[1];
         actionBar.child((io.wispforest.owo.ui.core.Component) setTargetBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) breakthroughBtn[0]);
+        actionBar.child((io.wispforest.owo.ui.core.Component) duXuBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) forgeRateBtn[0]);
         actionBar.child((io.wispforest.owo.ui.core.Component) forgeCapBtn[0]);
         // 横向可滚动容器：塞不下时可拖滚动条或滚轮横向浏览
@@ -364,6 +367,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             boolean hasSel = bodyInspect.selectedChannel() != null;
             int c = hasSel ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR;
             setTargetLabel.color(Color.ofArgb(c));
+            duXuLabel.color(Color.ofArgb(isDuXuEligible(bodyInspect.meridianBody()) ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
             forgeRateLabel.color(Color.ofArgb(c));
             forgeCapLabel.color(Color.ofArgb(c));
         };
@@ -1210,6 +1214,30 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         this.bodyInspect = bodyInspect;
     }
 
+    boolean dispatchStartDuXuIfEligible() {
+        MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
+        if (!isDuXuEligible(body)) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] start_du_xu skipped: requires Spirit realm and all 20 meridians opened");
+            return false;
+        }
+        com.bong.client.network.ClientRequestSender.sendStartDuXuRequest();
+        return true;
+    }
+
+    static boolean isDuXuEligible(MeridianBody body) {
+        if (body == null || !"Spirit".equals(body.realm())) {
+            return false;
+        }
+        for (MeridianChannel channel : MeridianChannel.values()) {
+            ChannelState state = body.channel(channel);
+            if (state == null || state.blocked()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static InventoryModel.ContainerDef containerDefAt(InventoryModel model, int index) {
         return model.containers().get(index);
     }
@@ -1624,7 +1652,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 item.itemId());
             return false;
         }
-        if (!"guyuan_pill".equals(item.itemId()) && !"huiyuan_pill_forbidden".equals(item.itemId())) {
+        if (!"guyuan_pill".equals(item.itemId())
+            && !"huiyuan_pill".equals(item.itemId())
+            && !"huiyuan_pill_forbidden".equals(item.itemId())) {
             return false;
         }
         com.bong.client.BongClient.LOGGER.info(
@@ -1675,7 +1705,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item == null || item.instanceId() == 0L) {
             return actions;
         }
-        if ("guyuan_pill".equals(item.itemId()) || "huiyuan_pill_forbidden".equals(item.itemId())) {
+        if ("guyuan_pill".equals(item.itemId())
+            || "huiyuan_pill".equals(item.itemId())
+            || "huiyuan_pill_forbidden".equals(item.itemId())) {
             actions.add(new PillMenuAction("服用", ActionKind.SELF_USE));
         }
         if ("ningmai_powder".equals(item.itemId())) {

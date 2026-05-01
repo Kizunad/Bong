@@ -141,6 +141,44 @@ const PossessedBy = Type.Object(
   },
   { additionalProperties: false },
 );
+const TribulationFled = Type.Object(
+  {
+    TribulationFled: Type.Object({
+      wave: Type.Integer({ minimum: 0 }),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+const TribulationIntercepted = Type.Object(
+  {
+    TribulationIntercepted: Type.Object({
+      victim_id: Type.String({ minLength: 1, maxLength: 128 }),
+      tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const HeartDemonOutcomeV1 = Type.Union([
+  Type.Literal("steadfast"),
+  Type.Literal("obsession"),
+  Type.Literal("no_solution"),
+]);
+export type HeartDemonOutcomeV1 = Static<typeof HeartDemonOutcomeV1>;
+
+const HeartDemonRecord = Type.Object(
+  {
+    HeartDemonRecord: Type.Object({
+      outcome: HeartDemonOutcomeV1,
+      choice_idx: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+      tick: tickField,
+    }),
+  },
+  { additionalProperties: false },
+);
 
 const TradeCompleted = Type.Object(
   {
@@ -170,6 +208,9 @@ export const BiographyEntryV1 = Type.Union([
   LifespanExtended,
   DuoShePerformed,
   PossessedBy,
+  TribulationIntercepted,
+  TribulationFled,
+  HeartDemonRecord,
   TradeCompleted,
 ]);
 export type BiographyEntryV1 = Static<typeof BiographyEntryV1>;

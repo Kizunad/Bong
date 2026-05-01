@@ -243,7 +243,7 @@ fn tick_player_persistence_timer(mut timer: ResMut<PlayerStateAutosaveTimer>) {
 }
 
 #[allow(clippy::type_complexity)]
-fn despawn_disconnected_clients(
+pub(crate) fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     mut disconnected_clients: RemovedComponents<Client>,

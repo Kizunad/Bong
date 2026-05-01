@@ -1,6 +1,7 @@
 pub mod agent_bridge;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
 pub mod burst_event_emit;
@@ -31,6 +32,9 @@ pub mod skillbar_config_emit;
 mod skillbar_config_emit_test;
 pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
+pub mod tribulation_broadcast_emit;
+pub mod tribulation_heart_demon_offer_emit;
+pub mod tribulation_state_emit;
 pub mod tsy_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
@@ -91,14 +95,14 @@ use crate::schema::social::{
 };
 use crate::schema::world_state::{
     DiscipleSummaryV1, FactionSummaryV1, LineageSummaryV1, MissionQueueSummaryV1, NpcDigestV1,
-    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot,
+    NpcSnapshot, PlayerProfile, WorldStateV1, ZoneSnapshot, ZoneStatusV1,
 };
 use crate::skill::components::SkillId;
 use crate::social::components::{
     Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
 };
-use crate::world::events::ActiveEventsResource;
-use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
+use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 #[cfg(test)]
 use crate::cultivation::components::Realm;
@@ -323,7 +327,17 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::possession::process_duo_she_requests),
             cultivation_bridge::publish_aging_events
                 .after(crate::cultivation::lifespan::lifespan_aging_tick),
+            crate::cultivation::tribulation::publish_tribulation_events,
+            tribulation_broadcast_emit::emit_tribulation_broadcast_payloads,
+            ascension_quota_emit::emit_ascension_quota_payloads
+                .after(crate::cultivation::tribulation::tribulation_wave_system),
+            tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
             burst_event_emit::emit_burst_meridian_events,
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             audio_event_emit::handle_audio_debug_commands,
             audio_event_emit::emit_audio_play_payloads
@@ -336,6 +350,11 @@ pub fn register(app: &mut App) {
                 .after(vfx_event_emit::handle_vfx_debug_commands),
             vfx_event_emit::emit_vanilla_vfx_particles
                 .after(vfx_event_emit::handle_vfx_debug_commands),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
             // plan-tsy-zone-followup-v1 §2 — TsyEnter/Exit Bevy event → bong:tsy_event
             tsy_event_bridge::publish_tsy_enter_events,
             tsy_event_bridge::publish_tsy_exit_events,
@@ -386,6 +405,16 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_player_state_audio_triggers,
         )
             .before(audio_event_emit::emit_audio_play_payloads),
+    );
+    app.add_systems(
+        Update,
+        crate::cultivation::tribulation::publish_heart_demon_pregen_requests
+            .after(crate::cultivation::tribulation::start_tribulation_system),
+    );
+    app.add_systems(
+        Update,
+        tribulation_state_emit::emit_tribulation_state_payloads
+            .after(crate::cultivation::tribulation::tribulation_wave_system),
     );
     app.add_systems(
         Update,
@@ -1116,6 +1145,7 @@ fn collect_zone_snapshots(
             name: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
             danger_level: zone.danger_level,
+            status: zone_status(zone),
             active_events: zone.active_events.clone(),
             player_count: player_counts_by_zone
                 .get(&zone.name)
@@ -1127,6 +1157,18 @@ fn collect_zone_snapshots(
     zones.sort_by(|left, right| left.name.cmp(&right.name));
 
     zones
+}
+
+fn zone_status(zone: &Zone) -> ZoneStatusV1 {
+    if zone
+        .active_events
+        .iter()
+        .any(|event| event == EVENT_REALM_COLLAPSE)
+    {
+        ZoneStatusV1::Collapsed
+    } else {
+        ZoneStatusV1::Normal
+    }
 }
 
 fn collect_npc_action_states(
@@ -1320,6 +1362,7 @@ fn emit_zone_info_on_zone_transition(
             zone: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
             danger_level: zone.danger_level,
+            status: zone_status(zone),
             active_events: (!zone.active_events.is_empty()).then(|| zone.active_events.clone()),
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -1349,6 +1392,13 @@ fn emit_event_alerts_on_major_event_creation(
     };
 
     for pending_alert in active_events.drain_major_event_alerts() {
+        let message = pending_alert.message.unwrap_or_else(|| {
+            major_event_alert_message(
+                pending_alert.event_name.as_str(),
+                pending_alert.zone_name.as_str(),
+                pending_alert.duration_ticks,
+            )
+        });
         let Some(event_kind) = event_kind_from_name(pending_alert.event_name.as_str()) else {
             tracing::warn!(
                 "[bong][network] skipping unsupported major event alert `{}` for zone `{}`",
@@ -1360,11 +1410,7 @@ fn emit_event_alerts_on_major_event_creation(
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::EventAlert {
             event: event_kind,
-            message: major_event_alert_message(
-                pending_alert.event_name.as_str(),
-                pending_alert.zone_name.as_str(),
-                pending_alert.duration_ticks,
-            ),
+            message,
             zone: Some(pending_alert.zone_name.clone()),
             duration_ticks: Some(pending_alert.duration_ticks),
         });
@@ -1397,7 +1443,7 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
     let event_label = match event_name {
         crate::world::events::EVENT_THUNDER_TRIBULATION => "天劫",
         crate::world::events::EVENT_BEAST_TIDE => "兽潮",
-        crate::world::events::EVENT_REALM_COLLAPSE => "境界坍塌",
+        crate::world::events::EVENT_REALM_COLLAPSE => "域崩",
         crate::world::events::EVENT_KARMA_BACKLASH => "因果反噬",
         _ => "异变",
     };
@@ -1511,6 +1557,35 @@ fn process_redis_inbound(
                     choices,
                 });
             }
+            RedisInbound::HeartDemonOffer(offer) => {
+                tracing::info!(
+                    "[bong][network] heart_demon_offer_received trigger_id={} choices={}",
+                    offer.trigger_id,
+                    offer.choices.len()
+                );
+                let Some((entity, _, _, _)) = clients.iter_mut().find(|(entity, _, _, _)| {
+                    let Some((entity_index, started_tick)) =
+                        parse_heart_demon_trigger_id(&offer.trigger_id)
+                    else {
+                        return false;
+                    };
+                    entity.index() == entity_index
+                        && heart_demon_trigger_id_for_entity(entity.index(), started_tick)
+                            == offer.trigger_id
+                }) else {
+                    tracing::warn!(
+                        "[bong][network] heart demon offer trigger_id={:?} has no connected target; dropping",
+                        offer.trigger_id
+                    );
+                    continue;
+                };
+                commands.entity(entity).insert(
+                    crate::cultivation::tribulation::PendingHeartDemonOffer {
+                        trigger_id: offer.trigger_id.clone(),
+                        payload: offer,
+                    },
+                );
+            }
         }
     }
 
@@ -1519,6 +1594,21 @@ fn process_redis_inbound(
             "[bong][network] redis inbound drain hit budget {REDIS_INBOUND_DRAIN_BUDGET}; remaining messages will be handled next tick"
         );
     }
+}
+
+fn parse_heart_demon_trigger_id(trigger_id: &str) -> Option<(u32, u64)> {
+    let mut parts = trigger_id.split(':');
+    let prefix = parts.next()?;
+    let entity_index = parts.next()?.parse().ok()?;
+    let started_tick = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || prefix != "heart_demon" {
+        return None;
+    }
+    Some((entity_index, started_tick))
+}
+
+fn heart_demon_trigger_id_for_entity(entity_index: u32, started_tick: u64) -> String {
+    format!("heart_demon:{entity_index}:{started_tick}")
 }
 
 fn process_agent_world_model_envelope(
@@ -2197,6 +2287,7 @@ pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::server_data::{HeartDemonOfferChoiceV1, HeartDemonOfferV1};
     use crossbeam_channel::{bounded, unbounded, Receiver};
     use std::time::Duration;
     use valence::testing::create_mock_client;
@@ -2261,6 +2352,67 @@ mod tests {
             .expect("drain should return immediately when channel is empty");
 
         assert_eq!(drained, 0);
+    }
+
+    #[test]
+    fn parse_heart_demon_trigger_id_requires_current_format() {
+        assert_eq!(
+            parse_heart_demon_trigger_id("heart_demon:42:1200"),
+            Some((42, 1200))
+        );
+        assert_eq!(
+            parse_heart_demon_trigger_id("heart_demon:demon:42:1200"),
+            None
+        );
+        assert_eq!(parse_heart_demon_trigger_id("insight:42:1200"), None);
+    }
+
+    #[test]
+    fn process_redis_inbound_caches_heart_demon_offer_for_matching_client() {
+        let (tx_outbound, _rx_outbound) = unbounded();
+        let (tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(CommandExecutorResource::default());
+        app.insert_resource(NarrationDedupeResource::default());
+        app.add_event::<crate::cultivation::insight::InsightOffer>();
+        app.add_systems(Update, process_redis_inbound);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let offer = HeartDemonOfferV1 {
+            offer_id: format!("heart_demon:{}:1000", entity.index()),
+            trigger_id: format!("heart_demon:{}:1000", entity.index()),
+            trigger_label: "心魔照见".to_string(),
+            realm_label: "渡虚劫 · 心魔".to_string(),
+            composure: 0.6,
+            quota_remaining: 1,
+            quota_total: 1,
+            expires_at_ms: 123,
+            choices: vec![HeartDemonOfferChoiceV1 {
+                choice_id: "heart_demon_choice_0".to_string(),
+                category: "Composure".to_string(),
+                title: "守本心".to_string(),
+                effect_summary: "稳住心神，回复少量当前真元".to_string(),
+                flavor: "旧事浮起，仍可不逐影。".to_string(),
+                style_hint: "稳妥".to_string(),
+            }],
+        };
+
+        tx_inbound
+            .send(RedisInbound::HeartDemonOffer(offer.clone()))
+            .expect("heart demon offer should enqueue");
+        app.update();
+
+        let cached = app
+            .world()
+            .get::<crate::cultivation::tribulation::PendingHeartDemonOffer>(entity)
+            .expect("matching heart demon offer should be cached on client entity");
+        assert_eq!(cached.trigger_id, offer.trigger_id);
+        assert_eq!(cached.payload.choices[0].choice_id, "heart_demon_choice_0");
     }
 
     mod world_state_tests {
@@ -2359,10 +2511,35 @@ mod tests {
 
             assert!(state.players.is_empty());
             assert_eq!(spawn_zone.player_count, 0);
+            assert_eq!(spawn_zone.status, ZoneStatusV1::Normal);
             assert!(
                 state.recent_events.is_empty(),
                 "recent_events should be an explicit empty array when no event buffer exists"
             );
+        }
+
+        #[test]
+        fn world_state_marks_realm_collapse_zone_collapsed() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .active_events
+                .push(EVENT_REALM_COLLAPSE.to_string());
+
+            let state = publish_once(&mut app, &rx_outbound);
+            let spawn_zone = state
+                .zones
+                .iter()
+                .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn fallback zone should still be emitted");
+
+            assert_eq!(spawn_zone.status, ZoneStatusV1::Collapsed);
+            assert!(spawn_zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE));
         }
 
         #[test]
@@ -3147,11 +3324,13 @@ mod tests {
                     zone,
                     spirit_qi,
                     danger_level,
+                    status,
                     active_events,
                 } => {
                     assert_eq!(zone, "spawn");
                     assert_eq!(*spirit_qi, 0.9);
                     assert_eq!(*danger_level, 0);
+                    assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &None);
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
@@ -3180,11 +3359,13 @@ mod tests {
                     zone,
                     spirit_qi,
                     danger_level,
+                    status,
                     active_events,
                 } => {
                     assert_eq!(zone, "blood_valley");
                     assert_eq!(*spirit_qi, 0.42);
                     assert_eq!(*danger_level, 4);
+                    assert_eq!(*status, ZoneStatusV1::Normal);
                     assert_eq!(active_events, &Some(vec!["beast_tide".to_string()]));
                 }
                 other => panic!("expected zone_info payload, got {other:?}"),
@@ -3197,6 +3378,44 @@ mod tests {
                 third_payloads.is_empty(),
                 "no additional payload should be emitted without a new transition"
             );
+        }
+
+        #[test]
+        fn zone_info_marks_realm_collapse_zone_collapsed() {
+            let collapsed_zone = Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
+                spirit_qi: 0.0,
+                danger_level: 5,
+                active_events: vec![EVENT_REALM_COLLAPSE.to_string()],
+                patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                blocked_tiles: vec![],
+            };
+            let mut app = setup_zone_transition_app(ZoneRegistry {
+                zones: vec![collapsed_zone],
+            });
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(payloads.len(), 1);
+            match &payloads[0].payload {
+                ServerDataPayloadV1::ZoneInfo {
+                    zone,
+                    status,
+                    active_events,
+                    ..
+                } => {
+                    assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert_eq!(*status, ZoneStatusV1::Collapsed);
+                    assert_eq!(active_events, &Some(vec![EVENT_REALM_COLLAPSE.to_string()]));
+                }
+                other => panic!("expected zone_info payload, got {other:?}"),
+            }
         }
     }
 

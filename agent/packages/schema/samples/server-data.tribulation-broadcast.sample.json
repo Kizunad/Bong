@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "tribulation_broadcast",
+  "active": true,
+  "actor_name": "Yan Wujiu",
+  "stage": "omen",
+  "world_x": 1200,
+  "world_z": -400,
+  "expires_at_ms": 1712345678000,
+  "spectate_invite": true,
+  "spectate_distance": 85.5
+}

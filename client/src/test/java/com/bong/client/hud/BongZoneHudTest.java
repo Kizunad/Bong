@@ -34,6 +34,16 @@ public class BongZoneHudTest {
     }
 
     @Test
+    void collapsedZoneOverlayShowsDeadZoneStatus() {
+        ZoneState zoneState = ZoneState.create("blood_valley", "Blood Valley", 0.0, 5, "collapsed", 1_000L);
+
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(zoneState, 3_000L, FIXED_WIDTH, 400, 10, 22, 320, 180);
+
+        assertEquals(1, commands.size());
+        assertEquals("区域Blood Valley 死域 灵气[░░░░░░░░░░] 危☠☠☠☠☠", commands.get(0).text());
+    }
+
+    @Test
     void fadeAlphaDropsDuringFinalHalfSecondAndExpiresAtTwoSeconds() {
         assertEquals(255, BongZoneHud.centeredTitleAlpha(1_000L, 2_500L));
         assertEquals(128, BongZoneHud.centeredTitleAlpha(1_000L, 2_750L));

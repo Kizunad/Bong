@@ -1,4 +1,5 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
@@ -27,7 +28,7 @@ use super::social::{
     PlayerSocialSnapshotV1, SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1,
     SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
-use super::world_state::PlayerPowerBreakdown;
+use super::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -118,6 +119,10 @@ pub enum ServerDataType {
     ForgeSession,
     ForgeOutcome,
     ForgeBlueprintBook,
+    TribulationState,
+    TribulationBroadcast,
+    AscensionQuota,
+    HeartDemonOffer,
     BurstMeridianEvent,
     SocialAnonymity,
     SocialExposure,
@@ -145,6 +150,7 @@ pub enum ServerDataPayloadV1 {
         zone: String,
         spirit_qi: f64,
         danger_level: u8,
+        status: ZoneStatusV1,
         active_events: Option<Vec<String>>,
     },
     EventAlert {
@@ -275,6 +281,10 @@ pub enum ServerDataPayloadV1 {
     ForgeSession(Box<ForgeSessionDataV1>),
     ForgeOutcome(Box<ForgeOutcomeDataV1>),
     ForgeBlueprintBook(Box<ForgeBlueprintBookDataV1>),
+    TribulationState(TribulationStateV1),
+    TribulationBroadcast(TribulationBroadcastV1),
+    AscensionQuota(AscensionQuotaV1),
+    HeartDemonOffer(HeartDemonOfferV1),
     BurstMeridianEvent(BurstMeridianEventV1),
     SocialAnonymity(SocialAnonymityPayloadV1),
     SocialExposure(SocialExposureEventV1),
@@ -285,6 +295,152 @@ pub enum ServerDataPayloadV1 {
     TradeOffer(TradeOfferPayloadV1),
     RealmVisionParams(RealmVisionParamsV1),
     SpiritualSenseTargets(SpiritualSenseTargetsV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeartDemonOfferChoiceV1 {
+    pub choice_id: String,
+    pub category: String,
+    pub title: String,
+    pub effect_summary: String,
+    pub flavor: String,
+    pub style_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeartDemonOfferV1 {
+    pub offer_id: String,
+    pub trigger_id: String,
+    pub trigger_label: String,
+    pub realm_label: String,
+    pub composure: f64,
+    pub quota_remaining: u32,
+    pub quota_total: u32,
+    pub expires_at_ms: u64,
+    pub choices: Vec<HeartDemonOfferChoiceV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TribulationBroadcastV1 {
+    pub active: bool,
+    pub actor_name: String,
+    pub stage: String,
+    pub world_x: f64,
+    pub world_z: f64,
+    pub expires_at_ms: u64,
+    pub spectate_invite: bool,
+    pub spectate_distance: f64,
+}
+
+impl TribulationBroadcastV1 {
+    pub fn active(
+        actor_name: impl Into<String>,
+        stage: impl Into<String>,
+        world_x: f64,
+        world_z: f64,
+        ttl_ms: u64,
+    ) -> Self {
+        Self {
+            active: true,
+            actor_name: actor_name.into(),
+            stage: stage.into(),
+            world_x,
+            world_z,
+            expires_at_ms: tribulation_broadcast_expires_at_ms(ttl_ms),
+            spectate_invite: false,
+            spectate_distance: 0.0,
+        }
+    }
+
+    pub fn clear() -> Self {
+        Self {
+            active: false,
+            actor_name: String::new(),
+            stage: "done".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            expires_at_ms: 0,
+            spectate_invite: false,
+            spectate_distance: 0.0,
+        }
+    }
+
+    pub fn refresh(&mut self, ttl_ms: u64) {
+        self.expires_at_ms = tribulation_broadcast_expires_at_ms(ttl_ms);
+    }
+}
+
+fn tribulation_broadcast_expires_at_ms(ttl_ms: u64) -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+        .saturating_add(ttl_ms)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TribulationStateV1 {
+    pub active: bool,
+    pub char_id: String,
+    pub actor_name: String,
+    pub kind: String,
+    pub phase: String,
+    pub world_x: f64,
+    pub world_z: f64,
+    pub wave_current: u32,
+    pub wave_total: u32,
+    pub started_tick: u64,
+    pub phase_started_tick: u64,
+    pub next_wave_tick: u64,
+    pub failed: bool,
+    pub half_step_on_success: bool,
+    pub participants: Vec<String>,
+    pub result: Option<String>,
+}
+
+impl TribulationStateV1 {
+    pub fn clear() -> Self {
+        Self {
+            active: false,
+            char_id: String::new(),
+            actor_name: String::new(),
+            kind: "du_xu".to_string(),
+            phase: "settle".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            wave_current: 0,
+            wave_total: 0,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: 0,
+            failed: false,
+            half_step_on_success: false,
+            participants: Vec::new(),
+            result: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AscensionQuotaV1 {
+    pub occupied_slots: u32,
+    pub quota_limit: u32,
+    pub available_slots: u32,
+}
+
+impl AscensionQuotaV1 {
+    pub fn new(occupied_slots: u32, quota_limit: u32) -> Self {
+        Self {
+            occupied_slots,
+            quota_limit,
+            available_slots: quota_limit.saturating_sub(occupied_slots),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -315,6 +471,8 @@ enum ServerDataPayloadWireV1 {
         zone: String,
         spirit_qi: f64,
         danger_level: u8,
+        #[serde(default)]
+        status: ZoneStatusV1,
         #[serde(skip_serializing_if = "Option::is_none")]
         active_events: Option<Vec<String>>,
     },
@@ -581,6 +739,22 @@ enum ServerDataPayloadWireV1 {
     ForgeBlueprintBook {
         #[serde(flatten)]
         data: Box<ForgeBlueprintBookDataV1>,
+    },
+    TribulationState {
+        #[serde(flatten)]
+        data: TribulationStateV1,
+    },
+    TribulationBroadcast {
+        #[serde(flatten)]
+        data: TribulationBroadcastV1,
+    },
+    AscensionQuota {
+        #[serde(flatten)]
+        data: AscensionQuotaV1,
+    },
+    HeartDemonOffer {
+        #[serde(flatten)]
+        data: HeartDemonOfferV1,
     },
     BurstMeridianEvent {
         #[serde(flatten)]
@@ -877,11 +1051,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             } => Ok(Self::ZoneInfo {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             }),
             ServerDataPayloadWireV1::EventAlert {
@@ -1138,6 +1314,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ForgeBlueprintBook { data } => {
                 Ok(Self::ForgeBlueprintBook(data))
             }
+            ServerDataPayloadWireV1::TribulationState { data } => Ok(Self::TribulationState(data)),
+            ServerDataPayloadWireV1::TribulationBroadcast { data } => {
+                Ok(Self::TribulationBroadcast(data))
+            }
+            ServerDataPayloadWireV1::AscensionQuota { data } => Ok(Self::AscensionQuota(data)),
+            ServerDataPayloadWireV1::HeartDemonOffer { data } => Ok(Self::HeartDemonOffer(data)),
             ServerDataPayloadWireV1::BurstMeridianEvent { event } => {
                 validate_burst_meridian_event(&event)?;
                 Ok(Self::BurstMeridianEvent(event))
@@ -1229,11 +1411,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 zone,
                 spirit_qi,
                 danger_level,
+                status,
                 active_events,
             } => Self::ZoneInfo {
                 zone: zone.clone(),
                 spirit_qi: *spirit_qi,
                 danger_level: *danger_level,
+                status: *status,
                 active_events: active_events.clone(),
             },
             ServerDataPayloadV1::EventAlert {
@@ -1503,6 +1687,16 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ForgeBlueprintBook(data) => {
                 Self::ForgeBlueprintBook { data: data.clone() }
             }
+            ServerDataPayloadV1::TribulationState(data) => {
+                Self::TribulationState { data: data.clone() }
+            }
+            ServerDataPayloadV1::TribulationBroadcast(data) => {
+                Self::TribulationBroadcast { data: data.clone() }
+            }
+            ServerDataPayloadV1::AscensionQuota(data) => Self::AscensionQuota { data: *data },
+            ServerDataPayloadV1::HeartDemonOffer(data) => {
+                Self::HeartDemonOffer { data: data.clone() }
+            }
             ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
                 event: event.clone(),
             },
@@ -1706,6 +1900,10 @@ impl ServerDataPayloadV1 {
             Self::ForgeSession(..) => ServerDataType::ForgeSession,
             Self::ForgeOutcome(..) => ServerDataType::ForgeOutcome,
             Self::ForgeBlueprintBook(..) => ServerDataType::ForgeBlueprintBook,
+            Self::TribulationState(..) => ServerDataType::TribulationState,
+            Self::TribulationBroadcast(..) => ServerDataType::TribulationBroadcast,
+            Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
+            Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
             Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
             Self::SocialAnonymity(..) => ServerDataType::SocialAnonymity,
             Self::SocialExposure(..) => ServerDataType::SocialExposure,
@@ -1812,6 +2010,46 @@ mod tests {
                 at_tick: 100,
                 remaining_ticks: 600,
                 collapse_tear_entity_ids: vec![2, 3, 4],
+            }),
+            ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
+                "Kiz", "warn", 12.0, -34.0, 60_000,
+            )),
+            ServerDataPayloadV1::TribulationState(TribulationStateV1 {
+                active: true,
+                char_id: "offline:Kiz".to_string(),
+                actor_name: "Kiz".to_string(),
+                kind: "du_xu".to_string(),
+                phase: "wave".to_string(),
+                world_x: 12.0,
+                world_z: -34.0,
+                wave_current: 2,
+                wave_total: 5,
+                started_tick: 120,
+                phase_started_tick: 2_400,
+                next_wave_tick: 2_700,
+                failed: false,
+                half_step_on_success: false,
+                participants: vec!["offline:Kiz".to_string()],
+                result: None,
+            }),
+            ServerDataPayloadV1::AscensionQuota(AscensionQuotaV1::new(1, 3)),
+            ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
+                offer_id: "heart_demon:1:100".to_string(),
+                trigger_id: "heart_demon:1:100".to_string(),
+                trigger_label: "心魔劫临身".to_string(),
+                realm_label: "渡虚劫 · 心魔".to_string(),
+                composure: 0.5,
+                quota_remaining: 1,
+                quota_total: 1,
+                expires_at_ms: 1_700_000_000_000,
+                choices: vec![HeartDemonOfferChoiceV1 {
+                    choice_id: "heart_demon_choice_0".to_string(),
+                    category: "Composure".to_string(),
+                    title: "守本心".to_string(),
+                    effect_summary: "回复少量当前真元".to_string(),
+                    flavor: "你把呼吸压回丹田。".to_string(),
+                    style_hint: "稳妥".to_string(),
+                }],
             }),
             ServerDataPayloadV1::BurstMeridianEvent(BurstMeridianEventV1 {
                 skill: "beng_quan".to_string(),
@@ -2084,6 +2322,18 @@ mod tests {
                 "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
             ),
             include_str!(
+                "../../../agent/packages/schema/samples/server-data.tribulation-broadcast.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.tribulation-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.ascension-quota.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"
+            ),
+            include_str!(
                 "../../../agent/packages/schema/samples/server-data.burst-meridian-event.sample.json"
             ),
             include_str!(
@@ -2134,6 +2384,46 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    #[test]
+    fn deserialize_zone_info_defaults_missing_status() {
+        let value = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "zone_info",
+            "zone": "blood_valley",
+            "spirit_qi": -0.42,
+            "danger_level": 3,
+            "active_events": ["beast_tide"]
+        });
+
+        let payload: ServerDataV1 = serde_json::from_value(value).expect("deserialize zone_info");
+        match payload.payload {
+            ServerDataPayloadV1::ZoneInfo { status, .. } => {
+                assert_eq!(status, ZoneStatusV1::Normal);
+            }
+            other => panic!("expected ZoneInfo, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serialize_zone_info_includes_status() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
+            zone: "blood_valley".to_string(),
+            spirit_qi: -0.42,
+            danger_level: 3,
+            status: ZoneStatusV1::Collapsed,
+            active_events: Some(vec!["realm_collapse".to_string()]),
+        });
+
+        let value: serde_json::Value = serde_json::from_slice(
+            &payload
+                .to_json_bytes_checked()
+                .expect("zone_info should serialize"),
+        )
+        .expect("zone_info JSON should decode");
+
+        assert_eq!(value["status"], "collapsed");
     }
 
     #[test]

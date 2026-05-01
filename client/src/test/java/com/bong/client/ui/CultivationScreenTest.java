@@ -32,6 +32,7 @@ public class CultivationScreenTest {
     void syncedModeFormatsStructuredContentInStableOrder() {
         CultivationScreen.RenderContent content = CultivationScreen.describe(PlayerStateViewModel.create(
             "Induce",
+            "offline:Azure",
             78.0,
             100.0,
             0.20,
@@ -69,6 +70,7 @@ public class CultivationScreenTest {
 
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Condense",
+            "offline:Azure",
             60.0,
             100.0,
             -0.25,
@@ -89,6 +91,7 @@ public class CultivationScreenTest {
     void disconnectResetClearsStaleSnapshotBeforeNextScreenBuild() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Spirit",
+            "offline:Azure",
             88.0,
             100.0,
             0.45,

@@ -16,6 +16,12 @@ public class ClientRequestInsightDispatcherTest {
         void accept(String t, Integer i) { triggerId = t; idx = i; called = true; }
     }
 
+    private static final class HeartDemonCapture {
+        Integer idx;
+        boolean called;
+        void accept(Integer i) { idx = i; called = true; }
+    }
+
     @Test
     void chosenResolvesChoiceIdToIdx() {
         InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
@@ -71,5 +77,31 @@ public class ClientRequestInsightDispatcherTest {
         dispatcher.dispatch(InsightDecision.chosen(offer.triggerId(), "nonexistent_choice"));
 
         assertNull(cap.idx);
+    }
+
+    @Test
+    void heartDemonTriggerRoutesToHeartDemonSender() {
+        InsightOfferViewModel offer = MockInsightOfferData.heartDemonOffer();
+        Capture insight = new Capture();
+        HeartDemonCapture heartDemon = new HeartDemonCapture();
+        var dispatcher = new ClientRequestInsightDispatcher(() -> offer, insight::accept, heartDemon::accept);
+
+        dispatcher.dispatch(InsightDecision.chosen(offer.triggerId(), "heart_demon_choice_2"));
+
+        assertEquals(Integer.valueOf(2), heartDemon.idx);
+        assertEquals(false, insight.called);
+    }
+
+    @Test
+    void heartDemonDeclinedSendsNullToHeartDemonSender() {
+        InsightOfferViewModel offer = MockInsightOfferData.heartDemonOffer();
+        Capture insight = new Capture();
+        HeartDemonCapture heartDemon = new HeartDemonCapture();
+        var dispatcher = new ClientRequestInsightDispatcher(() -> offer, insight::accept, heartDemon::accept);
+
+        dispatcher.dispatch(InsightDecision.declined(offer.triggerId()));
+
+        assertNull(heartDemon.idx);
+        assertEquals(false, insight.called);
     }
 }

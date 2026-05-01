@@ -39,7 +39,10 @@ public class ServerDataRouterTest {
             "death_screen",
             "terminate_screen",
             "wounds_snapshot",
+            "tribulation_state",
             "tribulation_broadcast",
+            "ascension_quota",
+            "heart_demon_offer",
             // Alchemy handlers (plan-alchemy-v1 §4).
             "alchemy_furnace",
             "alchemy_session",

@@ -3445,8 +3445,8 @@ mod tests {
     fn rogue_tribulation_loop_advances_spirit_to_void_and_releases_quota() {
         use crate::cultivation::tribulation::{
             start_tribulation_system, tribulation_failure_system, tribulation_wave_system,
-            InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed,
-            TribulationWaveCleared,
+            InitiateXuhuaTribulation, TribulationAnnounce, TribulationFailed, TribulationLocked,
+            TribulationSettled, TribulationWaveCleared,
         };
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
         use crate::npc::tribulation::{
@@ -3461,8 +3461,11 @@ mod tests {
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
         app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<crate::cultivation::tribulation::AscensionQuotaOccupied>();
         app.add_event::<crate::cultivation::death_hooks::CultivationDeathTrigger>();
 
         app.add_systems(

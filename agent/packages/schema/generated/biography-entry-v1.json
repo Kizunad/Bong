@@ -981,6 +981,114 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "TribulationIntercepted"
+      ],
+      "properties": {
+        "TribulationIntercepted": {
+          "type": "object",
+          "required": [
+            "victim_id",
+            "tick"
+          ],
+          "properties": {
+            "victim_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "tag": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "TribulationFled"
+      ],
+      "properties": {
+        "TribulationFled": {
+          "type": "object",
+          "required": [
+            "wave",
+            "tick"
+          ],
+          "properties": {
+            "wave": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "HeartDemonRecord"
+      ],
+      "properties": {
+        "HeartDemonRecord": {
+          "type": "object",
+          "required": [
+            "outcome",
+            "choice_idx",
+            "tick"
+          ],
+          "properties": {
+            "outcome": {
+              "anyOf": [
+                {
+                  "const": "steadfast",
+                  "type": "string"
+                },
+                {
+                  "const": "obsession",
+                  "type": "string"
+                },
+                {
+                  "const": "no_solution",
+                  "type": "string"
+                }
+              ]
+            },
+            "choice_idx": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tick": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
         "TradeCompleted"
       ],
       "properties": {

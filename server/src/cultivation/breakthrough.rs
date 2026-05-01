@@ -9,7 +9,8 @@
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
 use valence::prelude::{
-    bevy_ecs, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+    bevy_ecs, BlockPos, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
+    ResMut, Username,
 };
 
 use crate::combat::components::StatusEffects;
@@ -18,7 +19,8 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
-use crate::world::dimension::DimensionKind;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::karma::{KarmaWeightStore, KARMA_WEIGHT_MAX};
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
@@ -27,6 +29,8 @@ use super::life_record::{BiographyEntry, LifeRecord};
 use super::meridian_open::MIN_ZONE_QI_TO_OPEN;
 use super::tick::CultivationClock;
 
+pub const RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
+pub const RAPID_BREAKTHROUGH_KARMA_WEIGHT_DELTA: f32 = KARMA_WEIGHT_MAX;
 pub const MIN_ZONE_QI_TO_BREAKTHROUGH: f64 = MIN_ZONE_QI_TO_OPEN;
 
 /// 每境界的基础成功率（未叠心境/完整度/材料）。
@@ -413,12 +417,89 @@ pub fn breakthrough_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
+pub fn rapid_breakthrough_karma_mark_system(
+    clock: Res<CultivationClock>,
+    mut outcomes: EventReader<BreakthroughOutcome>,
+    mut weights: Option<ResMut<KarmaWeightStore>>,
+    players: Query<(
+        &LifeRecord,
+        Option<&Username>,
+        &Position,
+        Option<&CurrentDimension>,
+    )>,
+    zones: Option<Res<ZoneRegistry>>,
+) {
+    let Some(weights) = weights.as_deref_mut() else {
+        return;
+    };
+    let now = clock.tick;
+
+    for outcome in outcomes.read() {
+        if outcome.result.is_err() {
+            continue;
+        }
+        let Ok((life_record, username, position, current_dimension)) = players.get(outcome.entity)
+        else {
+            continue;
+        };
+        if !has_rapid_breakthrough_karma_trigger(life_record, now) {
+            continue;
+        }
+
+        let dimension = current_dimension
+            .map(|current| current.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let position_vec = position.get();
+        let zone_name = zones.as_deref().and_then(|registry| {
+            registry
+                .find_zone(dimension, position_vec)
+                .map(|zone| zone.name.clone())
+        });
+        let player_id = username
+            .map(|name| name.0.clone())
+            .unwrap_or_else(|| life_record.character_id.clone());
+
+        weights.mark_player(
+            player_id,
+            zone_name,
+            block_pos_from_position(position),
+            RAPID_BREAKTHROUGH_KARMA_WEIGHT_DELTA,
+            now,
+        );
+    }
+}
+
+fn has_rapid_breakthrough_karma_trigger(life_record: &LifeRecord, now: u64) -> bool {
+    life_record
+        .biography
+        .iter()
+        .filter(|entry| matches_recent_breakthrough_success(entry, now))
+        .take(2)
+        .count()
+        >= 2
+}
+
+fn matches_recent_breakthrough_success(entry: &BiographyEntry, now: u64) -> bool {
+    matches!(
+        entry,
+        BiographyEntry::BreakthroughSucceeded { tick, .. }
+            if *tick <= now && now - *tick <= RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS
+    )
+}
+
+fn block_pos_from_position(position: &Position) -> BlockPos {
+    let p = position.get();
+    BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::ZoneRegistry;
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Events, Update, Username};
 
     struct FixedRoll(f64);
     impl RollSource for FixedRoll {
@@ -593,5 +674,126 @@ mod tests {
         assert_eq!(skill_cap_for_realm(Realm::Solidify), 8);
         assert_eq!(skill_cap_for_realm(Realm::Spirit), 9);
         assert_eq!(skill_cap_for_realm(Realm::Void), 10);
+    }
+
+    fn setup_rapid_breakthrough_karma_app(now: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: now });
+        app.insert_resource(KarmaWeightStore::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<BreakthroughOutcome>();
+        app.add_systems(Update, rapid_breakthrough_karma_mark_system);
+        app
+    }
+
+    fn breakthrough_success_outcome(entity: Entity) -> BreakthroughOutcome {
+        BreakthroughOutcome {
+            entity,
+            from: Realm::Awaken,
+            result: Ok(BreakthroughSuccess {
+                to: Realm::Induce,
+                success_rate: 1.0,
+                used_qi: 0.0,
+            }),
+        }
+    }
+
+    #[test]
+    fn rapid_breakthrough_success_marks_hidden_karma_weight() {
+        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
+        let mut app = setup_rapid_breakthrough_karma_app(now);
+        let mut life = LifeRecord::new("offline:Azure");
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Awaken,
+            tick: now - 100,
+        });
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce,
+            tick: now,
+        });
+        let entity = app
+            .world_mut()
+            .spawn((
+                life,
+                Username("Azure".to_string()),
+                Position::new([8.8, 66.2, 8.1]),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(breakthrough_success_outcome(entity));
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        let entry = weights
+            .entry_for_player("Azure")
+            .expect("rapid breakthroughs should mark hidden karma weight");
+        assert_eq!(entry.weight, RAPID_BREAKTHROUGH_KARMA_WEIGHT_DELTA);
+        assert_eq!(entry.zone.as_deref(), Some("spawn"));
+        assert_eq!(entry.last_position, [8, 66, 8]);
+        assert_eq!(entry.last_tick, now);
+    }
+
+    #[test]
+    fn old_breakthrough_success_outside_window_does_not_mark_karma() {
+        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
+        let mut app = setup_rapid_breakthrough_karma_app(now);
+        let mut life = LifeRecord::new("offline:Azure");
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Awaken,
+            tick: now - RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS - 1,
+        });
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce,
+            tick: now,
+        });
+        let entity = app
+            .world_mut()
+            .spawn((
+                life,
+                Username("Azure".to_string()),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(breakthrough_success_outcome(entity));
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        assert!(weights.entry_for_player("Azure").is_none());
+    }
+
+    #[test]
+    fn failed_breakthrough_outcome_does_not_mark_karma() {
+        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
+        let mut app = setup_rapid_breakthrough_karma_app(now);
+        let mut life = LifeRecord::new("offline:Azure");
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Awaken,
+            tick: now - 100,
+        });
+        life.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce,
+            tick: now,
+        });
+        let entity = app
+            .world_mut()
+            .spawn((
+                life,
+                Username("Azure".to_string()),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughOutcome {
+            entity,
+            from: Realm::Awaken,
+            result: Err(BreakthroughError::RolledFailure { severity: 0.2 }),
+        });
+        app.update();
+
+        let weights = app.world().resource::<KarmaWeightStore>();
+        assert!(weights.entry_for_player("Azure").is_none());
     }
 }

@@ -5,7 +5,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .blueprint import BlueprintZone, TerrainProfileCatalog, WorldBlueprint
+from .blueprint import (
+    BlueprintZone,
+    TerrainProfileCatalog,
+    WorldBlueprint,
+    ZoneOverlaySpec,
+)
 from .fields import (
     LAYER_REGISTRY,
     GeneratedFieldSet,
@@ -41,6 +46,7 @@ def build_generation_plan(
     profiles_path: Path,
     output_dir: Path,
     tile_size: int,
+    zone_overlays: tuple[ZoneOverlaySpec, ...] = (),
 ) -> TerrainGenerationPlan:
     zone_plans = []
     for zone in blueprint.zones:
@@ -70,6 +76,7 @@ def build_generation_plan(
         tiles=build_world_tiles(blueprint.bounds_xz, tile_size),
         wilderness=build_wilderness_base_plan(blueprint.bounds_xz),
         blueprint_zones=list(blueprint.zones),
+        zone_overlays=list(zone_overlays),
         zone_plans=zone_plans,
         stitch_strategy="zone_to_wilderness_distance_falloff_v1",
         notes=(
@@ -357,6 +364,29 @@ def _zone_intersects_tile(zone: BlueprintZone, tile: WorldTile) -> bool:
     return expanded_bounds.intersects(tile.bounds)
 
 
+def _collapsed_zone_names(overlays: list[ZoneOverlaySpec]) -> set[str]:
+    collapsed = set()
+    for overlay in overlays:
+        if overlay.overlay_kind != "collapsed":
+            continue
+        if overlay.payload.get("zone_status") == "collapsed":
+            collapsed.add(overlay.zone_id)
+    return collapsed
+
+
+def _apply_realm_collapse_mask(
+    buffer: TileFieldBuffer, zone: BlueprintZone
+) -> None:
+    if "realm_collapse_mask" not in buffer.layers:
+        return
+    wx, wz = _tile_coords(buffer.tile.min_x, buffer.tile.min_z, buffer.tile_size)
+    weight = _compute_boundary_weight_array(zone, wx, wz).ravel()
+    buffer.layers["realm_collapse_mask"] = np.maximum(
+        buffer.layers["realm_collapse_mask"],
+        (weight > 0.0).astype(np.uint8),
+    )
+
+
 def _remap_flora_variant_to_global(
     buffer: TileFieldBuffer, profile_name: str
 ) -> None:
@@ -431,6 +461,9 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
         for layer_name in zone_plan.required_layers:
             if layer_name not in all_layers:
                 all_layers.append(layer_name)
+    collapsed_zones = _collapsed_zone_names(plan.zone_overlays)
+    if collapsed_zones and "realm_collapse_mask" not in all_layers:
+        all_layers.append("realm_collapse_mask")
 
     generated_tiles: list[TileFieldBuffer] = []
     active_tiles = [
@@ -450,6 +483,8 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             if overlay_tile is None:
                 continue
             _blend_tile_layers(base_tile, overlay_tile, zone)
+            if zone.name in collapsed_zones:
+                _apply_realm_collapse_mask(base_tile, zone)
         generated_tiles.append(base_tile)
 
     return GeneratedFieldSet(
@@ -469,6 +504,7 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             "Implemented: sky_isle overlay (sky_island_* vertical layers).",
             "Implemented: abyssal_maze overlay (underground_tier/cavern_floor_y).",
             "Implemented: ancient_battlefield overlay (anomaly_intensity/anomaly_kind).",
+            "Implemented: realm_collapse_mask from server zone_overlays collapsed records.",
             "Only active tiles intersecting named zones are synthesized in this scaffold stage.",
         ),
     )

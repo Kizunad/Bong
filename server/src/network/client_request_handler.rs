@@ -13,7 +13,7 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, Entity, EntityManager, EventReader, EventWriter,
+    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter,
     Events, Query, Res, ResMut, Resource, Username, With,
 };
 
@@ -30,7 +30,7 @@ use crate::combat::events::{
 };
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{recover_current_qi, Cultivation};
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::InsightChosen;
 use crate::cultivation::known_techniques::{technique_definition, TechniqueDefinition};
@@ -38,6 +38,7 @@ use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
 use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
+use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
@@ -46,10 +47,11 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
-    add_item_to_player_inventory, apply_inventory_move, consume_item_instance_once,
-    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
-    inventory_item_by_instance_borrow, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryInstanceIdAllocator, InventoryMoveOutcome, PlayerInventory,
+    add_item_to_player_inventory, apply_inventory_move, apply_item_spiritual_wear,
+    consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
+    DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
+    InventoryMoveOutcome, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{
     ItemEffect, ItemRegistry, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
@@ -99,11 +101,17 @@ use crate::social::events::{
     SpiritNichePlaceRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
     StartExtractRequest as StartExtractRequestEvent,
 };
+use crate::world::karma::KarmaWeightStore;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+const TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
+const TARGETED_ITEM_WEAR_MAX_FRACTION: f64 = 0.05;
+const TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD: f32 = 0.01;
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -174,6 +182,8 @@ pub struct AlchemyRequestParams<'w, 's> {
 pub struct ClientRequestDispatchParams<'w> {
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
+    pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
+    pub heart_demon_choice_tx: Option<ResMut<'w, Events<HeartDemonChoiceSubmitted>>>,
     pub forge_tx: EventWriter<'w, ForgeRequest>,
     pub insight_tx: EventWriter<'w, InsightChosen>,
     pub lifespan_extension_tx: Option<ResMut<'w, Events<LifespanExtensionIntent>>>,
@@ -224,6 +234,8 @@ pub fn handle_client_request_payloads(
     mut alchemy_params: AlchemyRequestParams,
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
+    karma_weights: Option<Res<KarmaWeightStore>>,
+    mut durability_changed_tx: Option<ResMut<Events<InventoryDurabilityChangedEvent>>>,
     mut combat_params: CombatRequestParams,
     mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
@@ -264,6 +276,9 @@ pub fn handle_client_request_payloads(
         let v = match &request {
             ClientRequestV1::SetMeridianTarget { v, .. }
             | ClientRequestV1::BreakthroughRequest { v }
+            | ClientRequestV1::StartDuXu { v }
+            | ClientRequestV1::AbortTribulation { v }
+            | ClientRequestV1::HeartDemonDecision { v, .. }
             | ClientRequestV1::ForgeRequest { v, .. }
             | ClientRequestV1::InsightDecision { v, .. }
             | ClientRequestV1::BotanyHarvestRequest { v, .. }
@@ -346,6 +361,38 @@ pub fn handle_client_request_payloads(
                     entity: ev.client,
                     material_bonus: 0.0,
                 });
+            }
+            ClientRequestV1::StartDuXu { .. } => {
+                tracing::info!(
+                    "[bong][network] client_request start_du_xu entity={:?}",
+                    ev.client,
+                );
+                if let Some(start_du_xu_tx) = dispatch.start_du_xu_tx.as_deref_mut() {
+                    start_du_xu_tx.send(StartDuXuRequest {
+                        entity: ev.client,
+                        requested_at_tick: combat_clock.tick,
+                    });
+                }
+            }
+            ClientRequestV1::AbortTribulation { .. } => {
+                tracing::warn!(
+                    "[bong][network] client_request abort_tribulation ignored entity={:?}; DuXu cannot be cancelled after confirmation",
+                    ev.client,
+                );
+            }
+            ClientRequestV1::HeartDemonDecision { choice_idx, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request heart_demon_decision entity={:?} idx={:?}",
+                    ev.client,
+                    choice_idx,
+                );
+                if let Some(heart_demon_choice_tx) = dispatch.heart_demon_choice_tx.as_deref_mut() {
+                    heart_demon_choice_tx.send(HeartDemonChoiceSubmitted {
+                        entity: ev.client,
+                        choice_idx,
+                        submitted_at_tick: combat_clock.tick,
+                    });
+                }
             }
             ClientRequestV1::InsightDecision {
                 trigger_id,
@@ -436,6 +483,7 @@ pub fn handle_client_request_payloads(
                     intervention.into(),
                     &mut clients,
                     &mut alchemy_params.furnaces,
+                    alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
                 );
             }
@@ -453,6 +501,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     &pill_item_id,
                     None,
+                    &mut commands,
                     &combat_clock,
                     &mut inventories,
                     &mut clients,
@@ -700,6 +749,8 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
+                    karma_weights.as_deref(),
+                    durability_changed_tx.as_deref_mut(),
                 );
             }
             ClientRequestV1::InventoryDiscardItem {
@@ -804,6 +855,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     instance_id,
                     target,
+                    &mut commands,
                     &combat_clock,
                     &mut inventories,
                     &mut clients,
@@ -1670,10 +1722,12 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 mod tests {
     use super::*;
     use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
+    use crate::cultivation::components::Realm;
+    use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
         BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
-        ItemCategory, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
+        ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
     };
     use crate::skill::components::SkillSet;
     use valence::prelude::{
@@ -1691,6 +1745,11 @@ mod tests {
     struct CapturedForgeRequests(Vec<ForgeRequest>);
 
     impl valence::prelude::Resource for CapturedForgeRequests {}
+
+    #[derive(Default)]
+    struct CapturedStartDuXuRequests(Vec<StartDuXuRequest>);
+
+    impl valence::prelude::Resource for CapturedStartDuXuRequests {}
 
     #[derive(Default)]
     struct CapturedInsightChoices(Vec<InsightChosen>);
@@ -1742,6 +1801,13 @@ mod tests {
     fn capture_forge_requests(
         mut events: EventReader<ForgeRequest>,
         mut captured: ResMut<CapturedForgeRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_start_du_xu_requests(
+        mut events: EventReader<StartDuXuRequest>,
+        mut captured: ResMut<CapturedStartDuXuRequests>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -1954,6 +2020,27 @@ mod tests {
         }
     }
 
+    fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
     fn flush_all_client_packets(app: &mut App) {
         let world = app.world_mut();
         let mut query = world.query::<&mut Client>();
@@ -1976,6 +2063,29 @@ mod tests {
                 continue;
             };
             if value.get("type").and_then(|ty| ty.as_str()) == Some("inventory_snapshot") {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn has_inventory_durability_payload(helper: &mut MockClientHelper, instance_id: u64) -> bool {
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) else {
+                continue;
+            };
+            if value.get("type").and_then(|ty| ty.as_str()) != Some("inventory_event") {
+                continue;
+            }
+            if value.get("kind").and_then(|kind| kind.as_str()) == Some("durability_changed")
+                && value.get("instance_id").and_then(|id| id.as_u64()) == Some(instance_id)
+            {
                 return true;
             }
         }
@@ -2036,15 +2146,60 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
         app.add_event::<crate::combat::events::CombatEvent>();
         app.add_event::<crate::combat::events::DeathEvent>();
         app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
-        app.add_systems(Update, handle_client_request_payloads);
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
+            )
+                .chain(),
+        );
         app.add_systems(
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
+    }
+
+    #[test]
+    fn alchemy_inject_qi_ignored_for_furnace_in_collapsed_zone() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut("spawn")
+            .unwrap()
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
+        furnace.owner = Some("offline:Azure".into());
+        furnace.session = Some(AlchemySession::new(
+            "kai_mai_pill_v0".into(),
+            "offline:Azure".into(),
+        ));
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[8,66,8],"intervention":{"kind":"inject_qi","qi":5.0}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert_eq!(furnace.session.as_ref().unwrap().qi_injected, 0.0);
     }
 
     #[test]
@@ -2298,6 +2453,227 @@ mod tests {
                 .is_empty(),
             "unsupported request version should not emit InsightChosen"
         );
+    }
+
+    #[test]
+    fn abort_tribulation_request_is_ignored_after_start_confirmation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(CapturedStartDuXuRequests::default());
+        app.add_event::<StartDuXuRequest>();
+        app.add_systems(
+            Update,
+            capture_start_du_xu_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"start_du_xu","v":1}"#.to_vec().into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<CapturedStartDuXuRequests>().0.len(),
+            1,
+            "control start_du_xu request should emit StartDuXuRequest"
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"abort_tribulation","v":1}"#.to_vec().into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<CapturedStartDuXuRequests>().0.len(),
+            1,
+            "abort_tribulation must not emit another StartDuXuRequest or cancellation side effect"
+        );
+    }
+
+    #[test]
+    fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "spiritual_ore".to_string(),
+            ItemTemplate {
+                id: "spiritual_ore".to_string(),
+                display_name: "灵矿".to_string(),
+                category: ItemCategory::Misc,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Rare,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+            },
+        )])));
+        let mut karma = KarmaWeightStore::default();
+        karma.mark_player(
+            "Azure",
+            Some("spawn".to_string()),
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1.0,
+            1,
+        );
+        app.insert_resource(karma);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "spiritual_ore".to_string(),
+                    display_name: "灵矿".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Rare,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: Some("ling_shi_zhong".to_string()),
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":0,"col":1}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let moved = inventory_item_by_instance_borrow(inventory, 77).expect("item should remain");
+        assert!(moved.durability < 1.0);
+        assert!(moved.durability >= 0.95);
+        assert_eq!(moved.durability, moved.spirit_quality);
+        assert!(
+            has_inventory_durability_payload(&mut helper, 77),
+            "targeted wear should reuse durability incremental payload"
+        );
+    }
+
+    #[test]
+    fn apply_pill_during_tribulation_recovers_current_qi_only() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "huiyuan_pill".to_string(),
+            ItemTemplate {
+                id: "huiyuan_pill".to_string(),
+                display_name: "回元丹".to_string(),
+                category: ItemCategory::Pill,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Rare,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: Some(ItemEffect::QiRecovery { amount: 90.0 }),
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "huiyuan_pill".to_string(),
+                    display_name: "回元丹".to_string(),
+                    grid_w: 1,
+                    grid_h: 1,
+                    weight: 0.1,
+                    rarity: ItemRarity::Rare,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                }),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 20.0,
+                    qi_max: 100.0,
+                    qi_max_frozen: Some(30.0),
+                    ..Cultivation::default()
+                },
+                PlayerState::default(),
+                TribulationState::restored(2, 5, 10),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(cultivation.qi_current, 70.0);
+        assert_eq!(cultivation.qi_max, 100.0);
+        assert_eq!(cultivation.qi_max_frozen, Some(30.0));
+        assert!(app.world().get::<TribulationState>(entity).is_some());
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(inventory.revision.0, 1);
     }
 
     #[test]
@@ -4179,7 +4555,18 @@ fn handle_inventory_move(
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
+    karma_weights: Option<&KarmaWeightStore>,
+    durability_changed_tx: Option<&mut Events<InventoryDurabilityChangedEvent>>,
 ) {
+    let item_before_move = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id).cloned());
+    let username = clients
+        .get(entity)
+        .ok()
+        .map(|(username, _)| username.0.clone());
+
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
         Err(_) => {
@@ -4192,6 +4579,17 @@ fn handle_inventory_move(
 
     match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
+            let wear_update = maybe_apply_targeted_item_wear(
+                entity,
+                &mut inventory,
+                item_before_move.as_ref(),
+                username.as_deref(),
+                karma_weights,
+                durability_changed_tx,
+            );
+            let revision = wear_update
+                .map(|update| update.revision)
+                .unwrap_or(revision);
             tracing::info!(
                 "[bong][network][inventory] moved instance={instance_id} {from:?} -> {to:?} revision={}",
                 revision.0
@@ -4234,6 +4632,72 @@ fn handle_inventory_move(
             );
         }
     }
+}
+
+fn maybe_apply_targeted_item_wear(
+    entity: Entity,
+    inventory: &mut PlayerInventory,
+    item: Option<&ItemInstance>,
+    username: Option<&str>,
+    karma_weights: Option<&KarmaWeightStore>,
+    durability_changed_tx: Option<&mut Events<InventoryDurabilityChangedEvent>>,
+) -> Option<crate::inventory::InventorySpiritualWearUpdate> {
+    let item = item?;
+    if !is_spiritual_item_for_targeted_wear(item) {
+        return None;
+    }
+    let username = username?;
+    let weight = karma_weights?.weight_for_player(username);
+    if weight < TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD {
+        return None;
+    }
+
+    let wear_fraction = targeted_item_wear_fraction(item.instance_id, username, weight);
+    match apply_item_spiritual_wear(inventory, item.instance_id, wear_fraction) {
+        Ok(update) => {
+            if let Some(events) = durability_changed_tx {
+                events.send(InventoryDurabilityChangedEvent {
+                    entity,
+                    revision: update.revision,
+                    instance_id: update.instance_id,
+                    durability: update.durability,
+                });
+            }
+            tracing::info!(
+                "[bong][network][inventory] targeted item wear entity={entity:?} instance={} wear={:.4} durability={:.4} spirit_quality={:.4}",
+                update.instance_id,
+                update.wear_fraction,
+                update.durability,
+                update.spirit_quality
+            );
+            Some(update)
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][network][inventory] targeted item wear failed entity={entity:?} instance={}: {error}",
+                item.instance_id
+            );
+            None
+        }
+    }
+}
+
+fn is_spiritual_item_for_targeted_wear(item: &ItemInstance) -> bool {
+    item.spirit_quality > 0.0 || item.forge_quality.is_some() || item.mineral_id.is_some()
+}
+
+fn targeted_item_wear_fraction(instance_id: u64, username: &str, karma_weight: f32) -> f64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    instance_id.hash(&mut hasher);
+    username.hash(&mut hasher);
+    karma_weight.to_bits().hash(&mut hasher);
+    let bucket = hasher.finish() % 10_000;
+    let unit = bucket as f64 / 9_999.0;
+    TARGETED_ITEM_WEAR_MIN_FRACTION
+        + (TARGETED_ITEM_WEAR_MAX_FRACTION - TARGETED_ITEM_WEAR_MIN_FRACTION) * unit
 }
 
 fn send_moved_event(
@@ -4281,6 +4745,26 @@ fn resync_snapshot(
     cultivations: &Query<&Cultivation>,
     reason: &str,
 ) {
+    resync_snapshot_with_cultivation_override(
+        entity,
+        inventory,
+        clients,
+        player_states,
+        cultivations,
+        None,
+        reason,
+    );
+}
+
+fn resync_snapshot_with_cultivation_override(
+    entity: valence::prelude::Entity,
+    inventory: &PlayerInventory,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    cultivation_override: Option<&Cultivation>,
+    reason: &str,
+) {
     let player_state = match player_states.get(entity) {
         Ok(state) => state,
         Err(_) => {
@@ -4290,13 +4774,20 @@ fn resync_snapshot(
             return;
         }
     };
-    let cultivation = match cultivations.get(entity) {
-        Ok(cultivation) => cultivation,
-        Err(_) => {
-            tracing::warn!(
-                "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
-            );
-            return;
+    let fallback_cultivation;
+    let cultivation = match cultivation_override {
+        Some(cultivation) => cultivation,
+        None => {
+            fallback_cultivation = match cultivations.get(entity) {
+                Ok(cultivation) => cultivation,
+                Err(_) => {
+                    tracing::warn!(
+                        "[bong][network][inventory] cannot resync entity={entity:?} — no Cultivation"
+                    );
+                    return;
+                }
+            };
+            fallback_cultivation
         }
     };
     if let Ok((username, mut client)) = clients.get_mut(entity) {
@@ -4503,6 +4994,7 @@ fn handle_apply_pill(
     entity: Entity,
     instance_id: u64,
     _target: crate::schema::client_request::ApplyPillTargetV1,
+    commands: &mut Commands,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -4528,6 +5020,7 @@ fn handle_apply_pill(
         entity,
         &template_id,
         Some(instance_id),
+        commands,
         clock,
         inventories,
         clients,
@@ -4657,6 +5150,7 @@ fn handle_alchemy_intervention(
     intervention: Intervention,
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
@@ -4664,6 +5158,14 @@ fn handle_alchemy_intervention(
     };
     let player_id = canonical_player_id(username.0.as_str());
     let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        if matches!(intervention, Intervention::InjectQi(_))
+            && furnace_zone_is_collapsed(furnace, zones)
+        {
+            tracing::debug!(
+                "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
+            );
+            return;
+        }
         let session = match furnace.session.as_mut() {
             Some(s) => s,
             None => {
@@ -5179,14 +5681,35 @@ fn scale_alchemy_explosion_crack(base_severity: f64, furnace_tier: u8) -> f64 {
     (base_severity * (1.0 + (tier - 1.0) * 0.25)).clamp(0.0, 1.0)
 }
 
+fn furnace_zone_is_collapsed(
+    furnace: &AlchemyFurnace,
+    zone_registry: Option<&ZoneRegistry>,
+) -> bool {
+    let Some(zone_registry) = zone_registry else {
+        return false;
+    };
+    let Some((x, y, z)) = furnace.pos else {
+        return false;
+    };
+    let furnace_pos = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
+    zone_registry
+        .find_zone(DimensionKind::Overworld, furnace_pos)
+        .is_some_and(|zone| {
+            zone.active_events
+                .iter()
+                .any(|event| event == EVENT_REALM_COLLAPSE)
+        })
+}
+
 /// plan-cultivation-v1 §3.1：玩家服用 pill → 扣一颗 → 根据 ItemEffect 分派运行时效果。
-/// 目前仅 `BreakthroughBonus` 有运行时接入（发 `ApplyStatusEffectIntent` 挂 buff）；
+/// `BreakthroughBonus` / `QiRecovery` 已有运行时接入；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
 #[allow(clippy::too_many_arguments)]
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
     instance_id: Option<u64>,
+    commands: &mut Commands,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -5262,6 +5785,7 @@ fn handle_alchemy_take_pill(
         return;
     }
 
+    let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
             combat_params.buff_tx.send(ApplyStatusEffectIntent {
@@ -5274,6 +5798,22 @@ fn handle_alchemy_take_pill(
             tracing::info!(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BreakthroughBoost +{magnitude:.3} for {BREAKTHROUGH_BOOST_DURATION_TICKS} ticks"
             );
+        }
+        ItemEffect::QiRecovery { amount } => {
+            if let Ok(current) = cultivations.get(entity) {
+                let mut cultivation = current.clone();
+                let qi_max_before = cultivation.qi_max;
+                let recovered = recover_current_qi(&mut cultivation, amount);
+                cultivation_snapshot_override = Some(cultivation.clone());
+                commands.entity(entity).insert(cultivation);
+                tracing::info!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` recovered current qi +{recovered:.1}; qi_max stays {qi_max_before:.1}"
+                );
+            } else {
+                tracing::debug!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` QiRecovery noop: no Cultivation"
+                );
+            }
         }
         ItemEffect::LifespanExtension { years, source } => {
             if let Some(lifespan_extension_tx) = lifespan_extension_tx.as_deref_mut() {
@@ -5290,16 +5830,24 @@ fn handle_alchemy_take_pill(
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();
             let contamination = combat_params.contaminations.get_mut(entity).ok();
-            apply_item_effect(&effect, meridians, contamination, pill_item_id, entity);
+            apply_item_effect(
+                &effect,
+                None,
+                meridians,
+                contamination,
+                pill_item_id,
+                entity,
+            );
         }
     }
 
-    resync_snapshot(
+    resync_snapshot_with_cultivation_override(
         entity,
         &inventory,
         clients,
         player_states,
         cultivations,
+        cultivation_snapshot_override.as_ref(),
         "take_pill",
     );
 }

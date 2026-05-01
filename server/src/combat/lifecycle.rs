@@ -18,6 +18,7 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted, RebirthChanceInput,
     ZoneDeathKind,
 };
+use crate::cultivation::tribulation::AscensionQuotaOpened;
 use crate::cultivation::{
     color::PracticeLog,
     components::{Karma, QiColor},
@@ -34,7 +35,8 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
     persist_near_death_transition, persist_revival_transition, persist_termination_transition,
-    persist_termination_transition_with_death_context, LifespanEventRecord, PersistenceSettings,
+    persist_termination_transition_with_death_context, release_ascension_quota_slot,
+    LifespanEventRecord, PersistenceSettings,
 };
 use crate::player::state::{
     player_character_id, rotate_current_character_id, save_player_shrine_anchor_slice,
@@ -706,6 +708,7 @@ pub fn handle_revival_action_intents(
     mut intents: EventReader<RevivalActionIntent>,
     mut revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
+    mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut commands: valence::prelude::Commands,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
@@ -759,6 +762,7 @@ pub fn handle_revival_action_intents(
                         player_state,
                         position,
                         &mut revived,
+                        &mut quota_opened,
                     ) {
                         hide_death_screen(&mut clients, entity);
                         hide_terminate_screen(&mut clients, entity);
@@ -1144,6 +1148,7 @@ fn revive_lifecycle(
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     position: Option<valence::prelude::Mut<'_, Position>>,
     revived: &mut EventWriter<PlayerRevived>,
+    quota_opened: &mut EventWriter<AscensionQuotaOpened>,
 ) -> bool {
     let mut staged_lifecycle = lifecycle.clone();
     if matches!(
@@ -1183,6 +1188,22 @@ fn revive_lifecycle(
                 staged_life_record.character_id
             );
             return false;
+        }
+        if prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void {
+            match release_ascension_quota_slot(persistence) {
+                Ok(release) if release.opened_slot => {
+                    quota_opened.send(AscensionQuotaOpened {
+                        occupied_slots: release.quota.occupied_slots,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
+                        entity,
+                    );
+                }
+            }
         }
     }
 
@@ -1521,6 +1542,9 @@ fn death_zone_from_context(
     if cause_lower.contains("negative") {
         return ZoneDeathKind::Negative;
     }
+    if cause_lower.contains("realm_collapse") {
+        return ZoneDeathKind::Death;
+    }
     if cause_lower.contains("death") {
         return ZoneDeathKind::Death;
     }
@@ -1734,7 +1758,8 @@ mod tests {
     use crate::cultivation::tick::CultivationClock;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
-        bootstrap_sqlite, DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
+        bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota, DeceasedIndexEntry,
+        DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::player_character_id;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -1839,6 +1864,18 @@ mod tests {
             ),
             root,
         )
+    }
+
+    #[test]
+    fn realm_collapse_death_causes_count_as_death_zone() {
+        assert_eq!(
+            death_zone_from_context("realm_collapse", None, None),
+            ZoneDeathKind::Death
+        );
+        assert_eq!(
+            death_zone_from_context("realm_collapse_entry_lock", None, None),
+            ZoneDeathKind::Death
+        );
     }
 
     #[test]
@@ -2036,6 +2073,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2565,6 +2603,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
@@ -2697,6 +2736,76 @@ mod tests {
     }
 
     #[test]
+    fn void_revival_releases_ascension_quota() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("void-revival-release-quota");
+        complete_tribulation_ascension(&settings, "offline:VoidWalker")
+            .expect("quota setup should succeed");
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 700 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:VoidWalker".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(800),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 12.0,
+                    qi_max: 240.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:VoidWalker"),
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 700,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(cultivation.realm, Realm::Spirit);
+        let quota = load_ascension_quota(&settings).expect("quota load should succeed");
+        assert_eq!(quota.occupied_slots, 0);
+        let quota_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .drain()
+            .collect();
+        assert_eq!(quota_events.len(), 1);
+        assert_eq!(quota_events[0].occupied_slots, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn deceased_snapshot_export_writes_public_json_after_termination_confirmation() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("deceased-public-json");
@@ -2708,6 +2817,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2785,6 +2895,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -2854,6 +2965,7 @@ mod tests {
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(
             Update,
@@ -2928,6 +3040,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -3114,6 +3227,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 
@@ -3367,6 +3481,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, handle_revival_action_intents);
 

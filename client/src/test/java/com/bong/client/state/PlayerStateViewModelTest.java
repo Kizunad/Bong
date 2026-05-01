@@ -15,6 +15,7 @@ public class PlayerStateViewModelTest {
 
         assertTrue(state.isEmpty());
         assertEquals("", state.realm());
+        assertEquals("", state.playerId());
         assertEquals(0.0, state.spiritQiCurrent());
         assertEquals(100.0, state.spiritQiMax());
         assertEquals(0.0, state.spiritQiFillRatio());
@@ -28,6 +29,7 @@ public class PlayerStateViewModelTest {
     void createClampsOutOfRangeValuesIntoRenderSafeState() {
         PlayerStateViewModel state = PlayerStateViewModel.create(
             " Induce ",
+            " offline:Azure ",
             150.0,
             80.0,
             1.6,
@@ -40,6 +42,7 @@ public class PlayerStateViewModelTest {
         );
 
         assertEquals("Induce", state.realm());
+        assertEquals("offline:Azure", state.playerId());
         assertEquals(80.0, state.spiritQiCurrent(), 0.0001);
         assertEquals(80.0, state.spiritQiMax(), 0.0001);
         assertEquals(1.0, state.spiritQiFillRatio(), 0.0001);
@@ -62,6 +65,7 @@ public class PlayerStateViewModelTest {
     void invalidSpiritQiMaxFallsBackToSafeDefaultAndNullBreakdown() {
         PlayerStateViewModel state = PlayerStateViewModel.create(
             "Condense",
+            null,
             45.0,
             0.0,
             -1.6,
@@ -89,6 +93,7 @@ public class PlayerStateViewModelTest {
     void blankRealmTransitionsBackToEmptyState() {
         PlayerStateViewModel state = PlayerStateViewModel.create(
             "   ",
+            "offline:Azure",
             25.0,
             100.0,
             0.2,

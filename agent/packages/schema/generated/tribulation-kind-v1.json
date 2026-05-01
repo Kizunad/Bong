@@ -1,0 +1,20 @@
+{
+  "anyOf": [
+    {
+      "const": "du_xu",
+      "type": "string"
+    },
+    {
+      "const": "zone_collapse",
+      "type": "string"
+    },
+    {
+      "const": "targeted",
+      "type": "string"
+    },
+    {
+      "const": "ascension_quota_open",
+      "type": "string"
+    }
+  ]
+}

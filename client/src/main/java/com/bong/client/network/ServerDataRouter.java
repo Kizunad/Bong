@@ -26,6 +26,7 @@ public final class ServerDataRouter {
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
         BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
+        HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -52,6 +53,10 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.WoundsSnapshotHandler();
         com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
             new com.bong.client.combat.handler.TribulationBroadcastHandler();
+        com.bong.client.combat.handler.TribulationStateHandler tribulationStateHandler =
+            new com.bong.client.combat.handler.TribulationStateHandler();
+        com.bong.client.combat.handler.AscensionQuotaHandler ascensionQuotaHandler =
+            new com.bong.client.combat.handler.AscensionQuotaHandler();
         CombatHudStateHandler combatHudStateHandler = new CombatHudStateHandler();
         DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
         CastSyncHandler castSyncHandler = new CastSyncHandler();
@@ -98,7 +103,10 @@ public final class ServerDataRouter {
         handlers.put("death_screen", deathScreenHandler);
         handlers.put("terminate_screen", terminateScreenHandler);
         handlers.put("wounds_snapshot", woundsSnapshotHandler);
+        handlers.put("tribulation_state", tribulationStateHandler);
         handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
+        handlers.put("ascension_quota", ascensionQuotaHandler);
+        handlers.put("heart_demon_offer", heartDemonOfferHandler);
         handlers.put("combat_hud_state", combatHudStateHandler);
         handlers.put("defense_window", defenseWindowHandler);
         handlers.put("cast_sync", castSyncHandler);

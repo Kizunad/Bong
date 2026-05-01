@@ -2,6 +2,7 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod events;
 pub mod extract_system;
+pub mod karma;
 pub mod loot_pool;
 pub mod mob_spawn;
 pub mod rift_portal;
@@ -92,6 +93,8 @@ pub fn register(app: &mut App) {
     dimension::register(app);
     dimension_transfer::register(app);
     zone::register(app);
+    app.insert_resource(karma::KarmaWeightStore::default());
+    app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);
     terrain::register(app);
     // plan-tsy-zone-v1 §2.3 — drain tick 接到 combat::Physics set 内：

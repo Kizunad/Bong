@@ -10,6 +10,7 @@ from .blueprint import (
     WORLDGEN_ROOT,
     load_blueprint,
     load_profile_catalog,
+    load_zone_overlays,
 )
 from .bakers.raster_export import build_raster_bake_plan, export_rasters
 from .bakers.worldpainter import (
@@ -79,6 +80,18 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TSY_OUTPUT_DIR,
         help="Directory for the TSY-dim raster export (only used when --tsy-blueprint is given)",
     )
+    parser.add_argument(
+        "--zone-overlays",
+        type=Path,
+        default=None,
+        help="Optional zones_export_v1 JSON carrying persisted zone_overlays from the server",
+    )
+    parser.add_argument(
+        "--tsy-zone-overlays",
+        type=Path,
+        default=None,
+        help="Optional TSY-dim zones_export_v1 JSON carrying persisted zone_overlays",
+    )
     return parser.parse_args()
 
 
@@ -91,12 +104,14 @@ def _run_pipeline(
     *,
     layer_whitelist: Optional[set[str]] = None,
     label: str = "",
+    zone_overlays_path: Optional[Path] = None,
 ) -> None:
     """Single export pass; mirrors original `main()` body."""
     if label:
         print(f"\n=== {label} ===")
     blueprint = load_blueprint(blueprint_path)
     profile_catalog = load_profile_catalog(profiles_path)
+    zone_overlays = load_zone_overlays(zone_overlays_path)
     plan = build_generation_plan(
         blueprint=blueprint,
         profile_catalog=profile_catalog,
@@ -104,6 +119,7 @@ def _run_pipeline(
         profiles_path=profiles_path,
         output_dir=output_dir,
         tile_size=tile_size,
+        zone_overlays=zone_overlays,
     )
     if backend == "worldpainter":
         plan.bake_plan = build_worldpainter_bake_plan(plan, output_dir)
@@ -138,6 +154,7 @@ def main() -> None:
         args.backend,
         layer_whitelist=overworld_whitelist if args.backend == "raster" else None,
         label="overworld" if args.tsy_blueprint else "",
+        zone_overlays_path=args.zone_overlays,
     )
     if args.tsy_blueprint is not None:
         _run_pipeline(
@@ -148,6 +165,7 @@ def main() -> None:
             args.backend,
             layer_whitelist=None,
             label="tsy",
+            zone_overlays_path=args.tsy_zone_overlays,
         )
 
 

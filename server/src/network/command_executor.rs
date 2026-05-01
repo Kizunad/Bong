@@ -22,6 +22,7 @@ use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::events::ActiveEventsResource;
+use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::zone::ZoneRegistry;
 
 const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
@@ -138,6 +139,8 @@ pub fn execute_agent_commands(
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut faction_store: Option<ResMut<FactionStore>>,
     mut npc_behavior: Option<ResMut<NpcBehaviorConfig>>,
+    karma_weights: Option<valence::prelude::Res<KarmaWeightStore>>,
+    qi_heatmap: Option<valence::prelude::Res<QiDensityHeatmap>>,
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     layers: LayerQuery<'_, '_>,
@@ -167,6 +170,8 @@ pub fn execute_agent_commands(
                 &mut skin_pool,
                 &mut faction_store,
                 &mut npc_behavior,
+                karma_weights.as_deref(),
+                qi_heatmap.as_deref(),
                 &mut npc_spawn_notices,
                 &mut faction_notices,
                 &layers,
@@ -203,6 +208,8 @@ fn execute_single_command(
     skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
+    karma_weights: Option<&KarmaWeightStore>,
+    qi_heatmap: Option<&QiDensityHeatmap>,
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
     layers: &LayerQuery<'_, '_>,
@@ -239,7 +246,13 @@ fn execute_single_command(
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
-        CommandType::SpawnEvent => execute_spawn_event(command, zone_registry, active_events),
+        CommandType::SpawnEvent => execute_spawn_event(
+            command,
+            zone_registry,
+            active_events,
+            karma_weights,
+            qi_heatmap,
+        ),
     };
 
     tracing::info!(
@@ -593,6 +606,8 @@ fn execute_spawn_event(
     command: &Command,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
+    karma_weights: Option<&KarmaWeightStore>,
+    qi_heatmap: Option<&QiDensityHeatmap>,
 ) -> &'static str {
     let Some(active_events) = active_events.as_deref_mut() else {
         tracing::warn!(
@@ -602,7 +617,12 @@ fn execute_spawn_event(
         return "rejected_missing_active_events";
     };
 
-    if active_events.enqueue_from_spawn_command(command, zone_registry.as_deref_mut()) {
+    if active_events.enqueue_from_spawn_command_with_karma(
+        command,
+        zone_registry.as_deref_mut(),
+        karma_weights,
+        qi_heatmap,
+    ) {
         "ok"
     } else {
         "rejected_spawn_event"
@@ -878,13 +898,18 @@ mod command_executor_tests {
     use std::collections::HashMap;
 
     use serde_json::json;
-    use valence::prelude::{App, DVec3, EntityKind, Position, Update};
+    use valence::prelude::{App, BlockPos, DVec3, EntityKind, Position, Update};
     use valence::testing::ScenarioSingleClient;
 
     use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
     use crate::npc::faction::FactionStore;
     use crate::schema::agent_command::Command;
-    use crate::world::events::{ActiveEventsResource, EVENT_THUNDER_TRIBULATION};
+    use crate::world::events::{
+        ActiveEventsResource, EVENT_KARMA_BACKLASH, EVENT_THUNDER_TRIBULATION,
+    };
+    use crate::world::karma::{
+        TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
+    };
 
     fn command(command_type: CommandType, target: &str, params: HashMap<String, Value>) -> Command {
         Command {
@@ -912,10 +937,67 @@ mod command_executor_tests {
         app.insert_resource(NpcBehaviorConfig::default());
         app.insert_resource(NpcRegistry::default());
         app.insert_resource(FactionStore::default());
+        app.insert_resource(KarmaWeightStore::default());
+        app.insert_resource(QiDensityHeatmap::default());
         app.add_event::<NpcSpawnNotice>();
         app.add_event::<FactionEventNotice>();
         app.add_systems(Update, execute_agent_commands);
         app
+    }
+
+    #[test]
+    fn spawn_event_applies_hidden_karma_probability_weighting() {
+        let mut app = setup_executor_app();
+        app.world_mut()
+            .resource_mut::<KarmaWeightStore>()
+            .mark_player(
+                "Azure",
+                Some("spawn".to_string()),
+                BlockPos::new(8, 66, 8),
+                1.0,
+                99,
+            );
+
+        let mut params = HashMap::new();
+        params.insert("event".to_string(), json!(EVENT_KARMA_BACKLASH));
+        params.insert("intensity".to_string(), json!(0.2));
+        params.insert("duration_ticks".to_string(), json!(3));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_karma_backlash_weighted",
+                vec![command(CommandType::SpawnEvent, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let events = app.world().resource::<ActiveEventsResource>();
+        let recent = events.recent_events_snapshot();
+        let marker = recent
+            .iter()
+            .find(|event| event.target.as_deref() == Some(EVENT_KARMA_BACKLASH))
+            .expect("karma backlash should record hidden marker");
+        let details = marker.details.as_ref().expect("hidden marker details");
+        assert_eq!(
+            details.get("command_intensity").and_then(Value::as_f64),
+            Some(0.2)
+        );
+        assert_eq!(
+            details.get("karma_weight").and_then(Value::as_f64),
+            Some(1.0)
+        );
+        assert_eq!(
+            details.get("base_probability").and_then(Value::as_f64),
+            Some(f64::from(TARGETED_CALAMITY_BASE_PROBABILITY))
+        );
+        assert_eq!(
+            details.get("effective_probability").and_then(Value::as_f64),
+            Some(f64::from(TARGETED_CALAMITY_MAX_PROBABILITY))
+        );
     }
 
     #[test]

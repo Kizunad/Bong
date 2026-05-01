@@ -20,7 +20,7 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
-import { BiographyEntryV1 } from "./biography.js";
+import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
@@ -43,6 +43,7 @@ import {
   AlchemyTurnPageRequestV1,
   BotanyHarvestRequestV1,
   BreakthroughRequestV1,
+  AbortTribulationRequestV1,
   CancelExtractRequestV1,
   CombatCreateNewCharacterRequestV1,
   CombatReincarnateRequestV1,
@@ -50,6 +51,7 @@ import {
   ClientRequestV1,
   DuoSheRequestV1,
   ForgeRequestV1,
+  HeartDemonDecisionRequestV1,
   ForgeStartSessionRequestV1,
   ForgeTemperingHitRequestV1,
   ForgeInscriptionScrollRequestV1,
@@ -64,6 +66,7 @@ import {
   SetMeridianTargetRequestV1,
   SkillBarBindRequestV1,
   SkillBarCastRequestV1,
+  StartDuXuRequestV1,
   SparringInviteResponseRequestV1,
   StartExtractRequestV1,
   TradeOfferRequestV1,
@@ -122,7 +125,18 @@ import {
 import { InventoryEventV1, InventorySnapshotV1 } from "./inventory.js";
 import { InsightOfferV1 } from "./insight-offer.js";
 import { InsightRequestV1 } from "./insight-request.js";
+import {
+  HeartDemonOfferDraftV1,
+  HeartDemonPregenRequestV1,
+} from "./heart-demon.js";
 import { NarrationV1 } from "./narration.js";
+import {
+  DuXuOutcomeV1,
+  DuXuResultV1,
+  TribulationEventV1,
+  TribulationKindV1,
+  TribulationPhaseV1,
+} from "./tribulation.js";
 import {
   FactionEventKindV1,
   FactionEventV1,
@@ -161,7 +175,10 @@ import {
   ServerDataSkillSnapshotV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillXpGainV1,
+  ServerDataAscensionQuotaV1,
   ServerDataTechniquesSnapshotV1,
+  ServerDataTribulationStateV1,
+  ServerDataTribulationBroadcastV1,
   ServerDataTreasureEquippedV1,
   ServerDataTsyCollapseStartedIpcV1,
   ServerDataV1,
@@ -171,6 +188,8 @@ import {
   ServerDataForgeSessionV1,
   ServerDataForgeOutcomeV1,
   ServerDataForgeBlueprintBookV1,
+  HeartDemonOfferChoiceV1,
+  ServerDataHeartDemonOfferV1,
   ServerDataSocialAnonymityV1,
   ServerDataSocialExposureV1,
   ServerDataSocialPactV1,
@@ -267,6 +286,8 @@ export const SCHEMA_REGISTRY = {
   clientPayloadPlayerStateV1: PlayerStatePayloadV1,
   insightRequestV1: InsightRequestV1,
   insightOfferV1: InsightOfferV1,
+  heartDemonPregenRequestV1: HeartDemonPregenRequestV1,
+  heartDemonOfferDraftV1: HeartDemonOfferDraftV1,
   breakthroughEventV1: BreakthroughEventV1,
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
@@ -275,6 +296,7 @@ export const SCHEMA_REGISTRY = {
   deathRegistryV1: DeathRegistryV1,
   deceasedIndexEntryV1: DeceasedIndexEntryV1,
   deceasedSnapshotV1: DeceasedSnapshotV1,
+  heartDemonOutcomeV1: HeartDemonOutcomeV1,
   lifespanEventV1: LifespanEventV1,
   agingEventV1: AgingEventV1,
   duoSheEventV1: DuoSheEventV1,
@@ -286,6 +308,11 @@ export const SCHEMA_REGISTRY = {
   combatRealtimeEventV1: CombatRealtimeEventV1,
   combatSummaryV1: CombatSummaryV1,
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
+  tribulationKindV1: TribulationKindV1,
+  tribulationPhaseV1: TribulationPhaseV1,
+  duXuOutcomeV1: DuXuOutcomeV1,
+  duXuResultV1: DuXuResultV1,
+  tribulationEventV1: TribulationEventV1,
   audioEventV1: AudioEventV1,
   playSoundRecipeEventV1: PlaySoundRecipeEventV1,
   stopSoundRecipeEventV1: StopSoundRecipeEventV1,
@@ -293,6 +320,9 @@ export const SCHEMA_REGISTRY = {
   clientRequestV1: ClientRequestV1,
   clientRequestSetMeridianTargetV1: SetMeridianTargetRequestV1,
   clientRequestBreakthroughV1: BreakthroughRequestV1,
+  clientRequestStartDuXuV1: StartDuXuRequestV1,
+  clientRequestAbortTribulationV1: AbortTribulationRequestV1,
+  clientRequestHeartDemonDecisionV1: HeartDemonDecisionRequestV1,
   clientRequestForgeV1: ForgeRequestV1,
   clientRequestInsightDecisionV1: InsightDecisionRequestV1,
   clientRequestDuoSheV1: DuoSheRequestV1,
@@ -318,6 +348,11 @@ export const SCHEMA_REGISTRY = {
   serverDataBotanySkillV1: ServerDataBotanySkillV1,
   serverDataDeathScreenV1: ServerDataDeathScreenV1,
   serverDataTerminateScreenV1: ServerDataTerminateScreenV1,
+  serverDataTribulationStateV1: ServerDataTribulationStateV1,
+  serverDataTribulationBroadcastV1: ServerDataTribulationBroadcastV1,
+  serverDataAscensionQuotaV1: ServerDataAscensionQuotaV1,
+  heartDemonOfferChoiceV1: HeartDemonOfferChoiceV1,
+  serverDataHeartDemonOfferV1: ServerDataHeartDemonOfferV1,
   serverDataSkillXpGainV1: ServerDataSkillXpGainV1,
   serverDataSkillLvUpV1: ServerDataSkillLvUpV1,
   serverDataSkillCapChangedV1: ServerDataSkillCapChangedV1,
@@ -490,9 +525,13 @@ export const GENERATED_SCHEMA_FILES = {
   "client-payload-player-state-v1.json": SCHEMA_REGISTRY.clientPayloadPlayerStateV1,
   "insight-request-v1.json": SCHEMA_REGISTRY.insightRequestV1,
   "insight-offer-v1.json": SCHEMA_REGISTRY.insightOfferV1,
+  "heart-demon-pregen-request-v1.json":
+    SCHEMA_REGISTRY.heartDemonPregenRequestV1,
+  "heart-demon-offer-draft-v1.json": SCHEMA_REGISTRY.heartDemonOfferDraftV1,
   "breakthrough-event-v1.json": SCHEMA_REGISTRY.breakthroughEventV1,
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
+  "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
   "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
@@ -509,10 +548,20 @@ export const GENERATED_SCHEMA_FILES = {
   "combat-realtime-event-v1.json": SCHEMA_REGISTRY.combatRealtimeEventV1,
   "combat-summary-v1.json": SCHEMA_REGISTRY.combatSummaryV1,
   "armor-durability-changed-v1.json": SCHEMA_REGISTRY.armorDurabilityChangedV1,
+  "tribulation-kind-v1.json": SCHEMA_REGISTRY.tribulationKindV1,
+  "tribulation-phase-v1.json": SCHEMA_REGISTRY.tribulationPhaseV1,
+  "du-xu-outcome-v1.json": SCHEMA_REGISTRY.duXuOutcomeV1,
+  "du-xu-result-v1.json": SCHEMA_REGISTRY.duXuResultV1,
+  "tribulation-event-v1.json": SCHEMA_REGISTRY.tribulationEventV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,
   "client-request-breakthrough-v1.json": SCHEMA_REGISTRY.clientRequestBreakthroughV1,
+  "client-request-start-du-xu-v1.json": SCHEMA_REGISTRY.clientRequestStartDuXuV1,
+  "client-request-abort-tribulation-v1.json":
+    SCHEMA_REGISTRY.clientRequestAbortTribulationV1,
+  "client-request-heart-demon-decision-v1.json":
+    SCHEMA_REGISTRY.clientRequestHeartDemonDecisionV1,
   "client-request-forge-v1.json": SCHEMA_REGISTRY.clientRequestForgeV1,
   "client-request-insight-decision-v1.json":
     SCHEMA_REGISTRY.clientRequestInsightDecisionV1,
@@ -554,6 +603,13 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataBotanySkillV1,
   "server-data-death-screen-v1.json": SCHEMA_REGISTRY.serverDataDeathScreenV1,
   "server-data-terminate-screen-v1.json": SCHEMA_REGISTRY.serverDataTerminateScreenV1,
+  "server-data-tribulation-state-v1.json":
+    SCHEMA_REGISTRY.serverDataTribulationStateV1,
+  "server-data-tribulation-broadcast-v1.json":
+    SCHEMA_REGISTRY.serverDataTribulationBroadcastV1,
+  "server-data-ascension-quota-v1.json": SCHEMA_REGISTRY.serverDataAscensionQuotaV1,
+  "heart-demon-offer-choice-v1.json": SCHEMA_REGISTRY.heartDemonOfferChoiceV1,
+  "server-data-heart-demon-offer-v1.json": SCHEMA_REGISTRY.serverDataHeartDemonOfferV1,
   "server-data-skill-xp-gain-v1.json":
     SCHEMA_REGISTRY.serverDataSkillXpGainV1,
   "server-data-skill-lv-up-v1.json":

@@ -9,6 +9,14 @@ use super::social::PlayerSocialSnapshotV1;
 
 pub type Vec3 = [f64; 3];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneStatusV1 {
+    #[default]
+    Normal,
+    Collapsed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerPowerBreakdown {
@@ -109,6 +117,8 @@ pub struct ZoneSnapshot {
     pub name: String,
     pub spirit_qi: f64,
     pub danger_level: u8,
+    #[serde(default)]
+    pub status: ZoneStatusV1,
     pub active_events: Vec<String>,
     pub player_count: u32,
 }
@@ -243,5 +253,28 @@ mod tests {
         value["players"][0]["rogue_power"] = json!(999);
 
         assert!(serde_json::from_value::<WorldStateV1>(value).is_err());
+    }
+
+    #[test]
+    fn deserialize_world_state_defaults_missing_zone_status() {
+        let mut value = sample_world_state_value();
+        value["zones"][0]
+            .as_object_mut()
+            .expect("sample zone should be an object")
+            .remove("status");
+
+        let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize world state");
+
+        assert_eq!(state.zones[0].status, ZoneStatusV1::Normal);
+    }
+
+    #[test]
+    fn deserialize_world_state_accepts_collapsed_zone_status() {
+        let mut value = sample_world_state_value();
+        value["zones"][0]["status"] = json!("collapsed");
+
+        let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize world state");
+
+        assert_eq!(state.zones[0].status, ZoneStatusV1::Collapsed);
     }
 }

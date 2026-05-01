@@ -37,6 +37,8 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
     area = tile_size * tile_size
     errors: list[str] = []
     warnings: list[str] = []
+    collapse_mask_tiles = 0
+    collapse_mask_has_positive = False
     fossil_cell_count = 0
 
     for tile_info in tiles:
@@ -166,6 +168,21 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
                     f"outside [0,1] (zones={zones})"
                 )
+
+        collapse_file = tile_dir / "realm_collapse_mask.bin"
+        if collapse_file.exists():
+            collapse_mask_tiles += 1
+            raw = collapse_file.read_bytes()
+            if len(raw) != area:
+                errors.append(
+                    f"{tile_id}: realm_collapse_mask length={len(raw)} expected {area}"
+                )
+            elif any(value not in (0, 1) for value in raw):
+                errors.append(
+                    f"{tile_id}: realm_collapse_mask contains values outside {{0,1}}"
+                )
+            elif max(raw) > 0:
+                collapse_mask_has_positive = True
 
         if "south_ash_dead_zone" in zones:
             vein_file = tile_dir / "qi_vein_flow.bin"
@@ -321,6 +338,27 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                         f"overworld manifest tile {tile['dir']} unexpectedly "
                         f"contains {layer}"
                     )
+
+    collapsed_zones = manifest.get("collapsed_zones", [])
+    semantic_layers = manifest.get("semantic_layers", [])
+    if collapsed_zones:
+        if "realm_collapse_mask" not in semantic_layers:
+            errors.append(
+                "manifest has collapsed_zones but semantic_layers lacks realm_collapse_mask"
+            )
+        if collapse_mask_tiles == 0:
+            errors.append("manifest has collapsed_zones but no tile writes realm_collapse_mask")
+        elif not collapse_mask_has_positive:
+            errors.append("realm_collapse_mask is present but contains no collapsed cells")
+    elif "realm_collapse_mask" in semantic_layers:
+        errors.append(
+            "manifest semantic_layers includes realm_collapse_mask but collapsed_zones is empty"
+        )
+
+    if "realm_collapse_mask" in semantic_layers and collapse_mask_tiles == 0:
+        errors.append(
+            "manifest semantic_layers includes realm_collapse_mask but no tile writes it"
+        )
 
     # Build report
     lines: list[str] = []

@@ -194,11 +194,7 @@ mod tests {
             .world_mut()
             .spawn((
                 NpcMarker,
-                TribulationState {
-                    wave_current: 0,
-                    waves_total: 3,
-                    started_tick: 0,
-                },
+                TribulationState::restored(0, 3, 0),
                 NpcTribulationPacing {
                     ticks_per_wave: 3,
                     ticks_since_last_wave: 0,

@@ -13,6 +13,7 @@ import com.bong.client.network.VfxEventRouter;
 import com.bong.client.visual.particle.BongVfxParticleBridge;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.RealmCollapseHudStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -84,6 +85,7 @@ public class BongNetworkHandler {
                 || dispatch.zoneState().isPresent()
                 || dispatch.visualEffectState().isPresent()
                 || dispatch.alertToast().isPresent()
+                || dispatch.realmCollapseHudState().isPresent()
                 || dispatch.uiOpenState().isPresent()) {
                 client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
             }
@@ -173,6 +175,7 @@ public class BongNetworkHandler {
             System.currentTimeMillis(),
             alertToast.durationMillis()
         ));
+        dispatch.realmCollapseHudState().ifPresent(RealmCollapseHudStateStore::replace);
         dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
 
         if (client.player == null) {

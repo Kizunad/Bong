@@ -26,6 +26,12 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAbortTribulationRequest() {
+        String json = ClientRequestProtocol.encodeAbortTribulationRequest();
+        assertEquals("{\"type\":\"abort_tribulation\",\"v\":1}", json);
+    }
+
+    @Test
     void encodesForgeRequestWithRateAxis() {
         String json = ClientRequestProtocol.encodeForgeRequest(
             ClientRequestProtocol.MeridianId.Ren,
@@ -365,6 +371,24 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInsightDecision("awaken_first", null);
         assertEquals(
             "{\"type\":\"insight_decision\",\"v\":1,\"trigger_id\":\"awaken_first\",\"choice_idx\":null}",
+            json
+        );
+    }
+
+    @Test
+    void encodesHeartDemonDecisionChosen() {
+        String json = ClientRequestProtocol.encodeHeartDemonDecision(2);
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":2}",
+            json
+        );
+    }
+
+    @Test
+    void encodesHeartDemonDecisionTimeoutAsNull() {
+        String json = ClientRequestProtocol.encodeHeartDemonDecision(null);
+        assertEquals(
+            "{\"type\":\"heart_demon_decision\",\"v\":1,\"choice_idx\":null}",
             json
         );
     }

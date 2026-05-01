@@ -38,6 +38,35 @@ export const BreakthroughRequestV1 = Type.Object(
 );
 export type BreakthroughRequestV1 = Static<typeof BreakthroughRequestV1>;
 
+export const StartDuXuRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("start_du_xu"),
+  },
+  { additionalProperties: false },
+);
+export type StartDuXuRequestV1 = Static<typeof StartDuXuRequestV1>;
+
+export const AbortTribulationRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("abort_tribulation"),
+  },
+  { additionalProperties: false },
+);
+export type AbortTribulationRequestV1 = Static<typeof AbortTribulationRequestV1>;
+
+export const HeartDemonDecisionRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("heart_demon_decision"),
+    // null = 超时/未选；非 null = 选中候选下标。
+    choice_idx: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+export type HeartDemonDecisionRequestV1 = Static<typeof HeartDemonDecisionRequestV1>;
+
 export const ForgeRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -607,6 +636,9 @@ export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
+  StartDuXuRequestV1,
+  AbortTribulationRequestV1,
+  HeartDemonDecisionRequestV1,
   ForgeRequestV1,
   InsightDecisionRequestV1,
   InventoryMoveIntentRequestV1,
