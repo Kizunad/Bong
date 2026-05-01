@@ -17,17 +17,21 @@ use std::collections::HashMap;
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, BlockState, ChunkLayer, Commands, Entity, EventReader, EventWriter, Events, Query,
-    Res, ResMut, Resource, With,
+    bevy_ecs, BlockState, ChunkLayer, Client, Commands, Entity, EventReader, EventWriter, Events,
+    Query, Res, ResMut, Resource, Username, With,
 };
 
 use crate::botany::{PlantId, PlantKindRegistry};
+use crate::combat::events::DeathEvent;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::npc::spawn::NpcMarker;
+use crate::player::state::PlayerState;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
@@ -672,6 +676,57 @@ pub fn apply_completed_sessions(
     }
 }
 
+pub fn emit_harvest_inventory_snapshots(
+    mut events: EventReader<HarvestCompleted>,
+    inventories: Query<&PlayerInventory>,
+    player_states: Query<&PlayerState>,
+    cultivations: Query<&Cultivation>,
+    mut clients: Query<(&Username, &mut Client)>,
+) {
+    for event in events.read() {
+        let Ok(inventory) = inventories.get(event.player) else {
+            continue;
+        };
+        let Ok(player_state) = player_states.get(event.player) else {
+            continue;
+        };
+        let Ok(cultivation) = cultivations.get(event.player) else {
+            continue;
+        };
+        let Ok((username, mut client)) = clients.get_mut(event.player) else {
+            continue;
+        };
+
+        send_inventory_snapshot_to_client(
+            event.player,
+            &mut client,
+            username.0.as_str(),
+            inventory,
+            player_state,
+            cultivation,
+            "lingtian_harvest",
+        );
+    }
+}
+
+pub fn release_lingtian_plot_owner_on_npc_death(
+    mut deaths: EventReader<DeathEvent>,
+    dead_npcs: Query<(), With<NpcMarker>>,
+    mut plots: Query<&mut LingtianPlot>,
+) {
+    for death in deaths.read() {
+        if dead_npcs.get(death.target).is_err() {
+            continue;
+        }
+
+        for mut plot in &mut plots {
+            if plot.owner == Some(death.target) {
+                plot.owner = None;
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_planting_completion(
     player: Entity,
@@ -1302,6 +1357,7 @@ pub fn advance_plot_one_lingtian_tick(
 mod tests {
     use super::*;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
+    use crate::npc::spawn::NpcMarker;
     use std::collections::HashMap;
     use valence::prelude::{App, BlockPos, IntoSystemConfigs, Update};
 
@@ -1523,6 +1579,57 @@ mod tests {
             max_weight: 45.0,
         };
         assert!(equipped_main_hand_hoe(&inv).is_none());
+    }
+
+    #[test]
+    fn release_lingtian_plot_owner_on_npc_death_clears_npc_owner() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
+
+        let owner = app.world_mut().spawn(NpcMarker).id();
+        let plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(app.world().get::<LingtianPlot>(plot).unwrap().owner, None);
+    }
+
+    #[test]
+    fn release_lingtian_plot_owner_ignores_player_death() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
+
+        let owner = app.world_mut().spawn_empty().id();
+        let plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<LingtianPlot>(plot).unwrap().owner,
+            Some(owner)
+        );
     }
 
     #[test]

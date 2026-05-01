@@ -339,10 +339,30 @@ fn seed_initial_rogue_population_on_startup(
         return;
     }
 
-    let reserved = match registry.as_deref_mut() {
-        Some(r) => r.reserve_spawn_batch(cfg.target_count as usize) as u32,
-        None => cfg.target_count,
-    };
+    let (desired_resource_count, desired_other_count) =
+        match (resource_zones.is_empty(), other_zones.is_empty()) {
+            (true, true) => {
+                return;
+            }
+            (true, false) => (0u32, cfg.target_count),
+            (false, true) => (cfg.target_count, 0u32),
+            (false, false) => {
+                let r = ((cfg.target_count as f32) * cfg.resource_fraction).round() as u32;
+                (
+                    r.min(cfg.target_count),
+                    cfg.target_count.saturating_sub(r.min(cfg.target_count)),
+                )
+            }
+        };
+
+    let resource_dist = reserve_zone_distribution(
+        registry.as_deref_mut(),
+        &resource_zones,
+        desired_resource_count,
+    );
+    let other_dist =
+        reserve_zone_distribution(registry.as_deref_mut(), &other_zones, desired_other_count);
+    let reserved = resource_dist.iter().sum::<u32>() + other_dist.iter().sum::<u32>();
     if reserved == 0 {
         tracing::warn!(
             "[bong][npc] rogue seed skipped — NpcRegistry budget exhausted (desired={})",
@@ -350,25 +370,6 @@ fn seed_initial_rogue_population_on_startup(
         );
         return;
     }
-
-    let (resource_count, other_count) = match (resource_zones.is_empty(), other_zones.is_empty()) {
-        (true, true) => {
-            // classify 已兜底，这里不可达；保守回滚再退出。
-            if let Some(r) = registry.as_deref_mut() {
-                r.release_spawn_batch(reserved as usize);
-            }
-            return;
-        }
-        (true, false) => (0u32, reserved),
-        (false, true) => (reserved, 0u32),
-        (false, false) => {
-            let r = ((reserved as f32) * cfg.resource_fraction).round() as u32;
-            (r.min(reserved), reserved.saturating_sub(r.min(reserved)))
-        }
-    };
-
-    let resource_dist = distribute_counts_evenly(resource_count, resource_zones.len());
-    let other_dist = distribute_counts_evenly(other_count, other_zones.len());
 
     let max_age = NpcArchetype::Rogue.default_max_age_ticks();
     let mut global_index: u32 = 0;
@@ -406,9 +407,9 @@ fn seed_initial_rogue_population_on_startup(
         "[bong][npc] seeded {} rogue NPCs (resource_zones={} @ {} / other_zones={} @ {})",
         global_index,
         resource_zones.len(),
-        resource_count,
+        resource_dist.iter().sum::<u32>(),
         other_zones.len(),
-        other_count,
+        other_dist.iter().sum::<u32>(),
     );
     *already_seeded = true;
 }
@@ -451,7 +452,7 @@ fn process_npc_reproduction_requests(
         }
 
         if let Some(registry) = registry.as_deref_mut() {
-            if registry.reserve_spawn_batch(1) == 0 {
+            if registry.reserve_zone_batch(request.home_zone.as_str(), 1) == 0 {
                 tracing::info!(
                     "[bong][npc] reproduction for `{}` rejected — registry budget exhausted",
                     request.home_zone
@@ -505,6 +506,24 @@ fn process_npc_reproduction_requests(
             request.initial_age_ticks.max(0.0),
         ));
     }
+}
+
+fn reserve_zone_distribution(
+    mut registry: Option<&mut NpcRegistry>,
+    zones: &[&crate::world::zone::Zone],
+    desired_total: u32,
+) -> Vec<u32> {
+    let desired = distribute_counts_evenly(desired_total, zones.len());
+    zones
+        .iter()
+        .zip(desired)
+        .map(|(zone, count)| match registry.as_deref_mut() {
+            Some(registry) => {
+                registry.reserve_zone_batch(zone.name.as_str(), count as usize) as u32
+            }
+            None => count,
+        })
+        .collect()
 }
 
 fn startup_npc_thinker() -> ThinkerBuilder {

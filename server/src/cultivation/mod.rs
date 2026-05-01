@@ -89,7 +89,8 @@ use self::lifespan::{
 use self::meridian_open::meridian_open_tick;
 use self::negative_zone::negative_zone_siphon_tick;
 use self::overload::{
-    apply_meridian_crack_events, overload_detection_tick, MeridianCrackEvent, MeridianOverloadEvent,
+    apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
+    MeridianCrackEvent, MeridianOverloadEvent,
 };
 use self::possession::{
     process_duo_she_requests, process_life_core_requests, DuoSheCooldowns, DuoSheEventEmitted,
@@ -191,7 +192,12 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
-        meridian_heal_tick.after(apply_meridian_crack_events),
+        (
+            apply_meridian_overload_events.after(overload_detection_tick),
+            meridian_heal_tick
+                .after(apply_meridian_crack_events)
+                .after(apply_meridian_overload_events),
+        ),
     );
     app.add_systems(
         Update,

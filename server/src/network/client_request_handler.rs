@@ -73,7 +73,7 @@ use crate::network::agent_bridge::{
 use crate::network::alchemy_bridge::alchemy_session_id;
 use crate::network::alchemy_snapshot_emit;
 use crate::network::cast_emit::{
-    current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
+    apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
@@ -89,6 +89,11 @@ use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::shelflife::{
+    age_peak_check, container_storage_multiplier, spoil_check, AgeBonusRoll, AgePeakCheck,
+    ContainerFreshnessBehavior, DecayProfileRegistry, SpoilCheckOutcome, SpoilConsumeWarning,
+    SpoilSeverity,
+};
 use crate::skill::components::{ScrollId, SkillId, SkillSet};
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
@@ -120,9 +125,14 @@ pub struct CombatRequestParams<'w, 's> {
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
     pub entity_manager: Option<Res<'w, EntityManager>>,
     pub item_registry: Res<'w, ItemRegistry>,
+    pub decay_profiles: Option<Res<'w, DecayProfileRegistry>>,
     pub buff_tx: EventWriter<'w, ApplyStatusEffectIntent>,
     pub start_extract_tx: Option<ResMut<'w, Events<StartExtractRequestEvent>>>,
     pub cancel_extract_tx: Option<ResMut<'w, Events<CancelExtractRequestEvent>>>,
+    pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
+    pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
+    pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
+    pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
 }
 
 #[derive(SystemParam)]
@@ -444,6 +454,7 @@ pub fn handle_client_request_payloads(
                 handle_alchemy_take_pill(
                     ev.client,
                     &pill_item_id,
+                    None,
                     &combat_clock,
                     &mut inventories,
                     &mut clients,
@@ -4469,6 +4480,7 @@ fn handle_apply_pill(
     handle_alchemy_take_pill(
         entity,
         &template_id,
+        Some(instance_id),
         clock,
         inventories,
         clients,
@@ -5160,6 +5172,7 @@ fn apply_alchemy_explode_backlash(
 fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
+    instance_id: Option<u64>,
     clock: &CombatClock,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -5190,9 +5203,47 @@ fn handle_alchemy_take_pill(
             return;
         }
     };
-    if !consume_one_by_template(&mut inventory, pill_item_id) {
+    let Some(consumed_item) = resolve_pill_consume_target(&inventory, pill_item_id, instance_id)
+    else {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` not in inventory"
+        );
+        return;
+    };
+
+    let (spoil, age) = shelflife_checks_for_item(
+        &consumed_item,
+        clock.tick,
+        combat_params.decay_profiles.as_deref(),
+    );
+    emit_shelflife_consume_events(
+        entity,
+        consumed_item.instance_id,
+        &spoil,
+        &age,
+        &mut combat_params.spoil_warnings,
+        &mut combat_params.age_bonus_rolls,
+    );
+
+    if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` blocked by spoil CriticalBlock"
+        );
+        resync_snapshot(
+            entity,
+            &inventory,
+            clients,
+            player_states,
+            cultivations,
+            "take_pill_spoil_blocked",
+        );
+        return;
+    }
+
+    let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
+    if let Err(error) = consume_result {
+        tracing::warn!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` consume failed: {error}"
         );
         return;
     }
@@ -5223,11 +5274,9 @@ fn handle_alchemy_take_pill(
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
-            // 需对应 tick 系统（meridian_heal / contamination_cleanse）消费，当前尚未 wire。
-            tracing::warn!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` effect {:?} not yet wired to runtime",
-                effect
-            );
+            let meridians = combat_params.meridians.get_mut(entity).ok();
+            let contamination = combat_params.contaminations.get_mut(entity).ok();
+            apply_item_effect(&effect, meridians, contamination, pill_item_id, entity);
         }
     }
 
@@ -5243,6 +5292,7 @@ fn handle_alchemy_take_pill(
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
 /// stack_count > 1 时减 1；否则移除整个 slot/placement。成功返回 true。
+#[cfg(test)]
 fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -> bool {
     for slot in inventory.hotbar.iter_mut() {
         if let Some(item) = slot.as_mut() {
@@ -5315,6 +5365,118 @@ fn inventory_has_template_count(
         }
     }
     total >= required
+}
+
+fn resolve_pill_consume_target(
+    inventory: &PlayerInventory,
+    template_id: &str,
+    instance_id: Option<u64>,
+) -> Option<crate::inventory::ItemInstance> {
+    if let Some(instance_id) = instance_id {
+        return inventory_item_by_instance_borrow(inventory, instance_id)
+            .and_then(|item| (item.template_id == template_id).then(|| item.clone()));
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template_id)
+        .cloned()
+        .or_else(|| {
+            inventory
+                .containers
+                .iter()
+                .flat_map(|container| container.items.iter())
+                .find(|placed| placed.instance.template_id == template_id)
+                .map(|placed| placed.instance.clone())
+        })
+        .or_else(|| {
+            inventory
+                .equipped
+                .values()
+                .find(|item| item.template_id == template_id)
+                .cloned()
+        })
+}
+
+fn shelflife_checks_for_item(
+    item: &crate::inventory::ItemInstance,
+    now_tick: u64,
+    profiles: Option<&DecayProfileRegistry>,
+) -> (SpoilCheckOutcome, AgePeakCheck) {
+    let Some(freshness) = item.freshness.as_ref() else {
+        return (
+            SpoilCheckOutcome::NotApplicable,
+            AgePeakCheck::NotApplicable,
+        );
+    };
+    let Some(profile) = profiles.and_then(|profiles| profiles.get(&freshness.profile)) else {
+        tracing::warn!(
+            "[bong][network][alchemy] freshness profile `{}` missing for consumed item instance={}",
+            freshness.profile.as_str(),
+            item.instance_id
+        );
+        return (
+            SpoilCheckOutcome::NotApplicable,
+            AgePeakCheck::NotApplicable,
+        );
+    };
+
+    let multiplier = container_storage_multiplier(&ContainerFreshnessBehavior::Normal, profile);
+    (
+        spoil_check(freshness, profile, now_tick, multiplier),
+        age_peak_check(freshness, profile, now_tick, multiplier),
+    )
+}
+
+fn emit_shelflife_consume_events(
+    entity: Entity,
+    instance_id: u64,
+    spoil: &SpoilCheckOutcome,
+    age: &AgePeakCheck,
+    spoil_warnings: &mut Option<ResMut<Events<SpoilConsumeWarning>>>,
+    age_bonus_rolls: &mut Option<ResMut<Events<AgeBonusRoll>>>,
+) {
+    if let Some(spoil_warnings) = spoil_warnings.as_deref_mut() {
+        match spoil {
+            SpoilCheckOutcome::Warn {
+                current_qi,
+                spoil_threshold,
+            } => {
+                spoil_warnings.send(SpoilConsumeWarning {
+                    player: entity,
+                    instance_id,
+                    severity: SpoilSeverity::Sharp,
+                    current_qi: *current_qi,
+                    spoil_threshold: *spoil_threshold,
+                });
+            }
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi,
+                spoil_threshold,
+            } => {
+                spoil_warnings.send(SpoilConsumeWarning {
+                    player: entity,
+                    instance_id,
+                    severity: SpoilSeverity::CriticalBlock,
+                    current_qi: *current_qi,
+                    spoil_threshold: *spoil_threshold,
+                });
+            }
+            SpoilCheckOutcome::NotApplicable | SpoilCheckOutcome::Safe { .. } => {}
+        }
+    }
+
+    if let (Some(age_bonus_rolls), AgePeakCheck::Peaking { bonus_strength }) =
+        (age_bonus_rolls.as_deref_mut(), age)
+    {
+        age_bonus_rolls.send(AgeBonusRoll {
+            player: entity,
+            instance_id,
+            bonus_strength: *bonus_strength,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -5398,5 +5560,67 @@ mod take_pill_tests {
         let mut inv = fresh_inventory();
         assert!(!consume_one_by_template(&mut inv, "ghost_pill"));
         assert_eq!(inv.revision.0, 0);
+    }
+
+    #[test]
+    fn resolve_pill_consume_target_uses_exact_instance_when_provided() {
+        let mut inv = fresh_inventory();
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(7, "guyuan_pill", 1),
+            });
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 1,
+                instance: make_pill(8, "guyuan_pill", 1),
+            });
+
+        let item = resolve_pill_consume_target(&inv, "guyuan_pill", Some(8)).unwrap();
+
+        assert_eq!(item.instance_id, 8);
+    }
+
+    #[test]
+    fn shelflife_warn_emits_spoil_warning() {
+        let profile = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 100,
+            },
+            spoil_threshold: 60.0,
+        };
+        let mut profiles = DecayProfileRegistry::new();
+        profiles.insert(profile.clone()).unwrap();
+        let mut item = make_pill(9, "guyuan_pill", 1);
+        item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
+
+        let (spoil, age) = shelflife_checks_for_item(&item, 100, Some(&profiles));
+
+        assert!(matches!(spoil, SpoilCheckOutcome::Warn { .. }));
+        assert!(matches!(age, AgePeakCheck::NotApplicable));
+    }
+
+    #[test]
+    fn shelflife_critical_block_is_detected_before_consumption() {
+        let profile = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("test_spoil"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 100,
+            },
+            spoil_threshold: 60.0,
+        };
+        let mut profiles = DecayProfileRegistry::new();
+        profiles.insert(profile.clone()).unwrap();
+        let mut item = make_pill(9, "guyuan_pill", 1);
+        item.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &profile));
+
+        let (spoil, _age) = shelflife_checks_for_item(&item, 1_000, Some(&profiles));
+
+        assert!(matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }));
     }
 }

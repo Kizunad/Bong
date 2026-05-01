@@ -11,16 +11,19 @@
 //!  * 找不到 inventory / registry miss / allocator 耗尽 → warn + skip（不 panic，
 //!    丢失一次 drop 不阻塞服务器）。
 
-use valence::prelude::{BlockPos, EventReader, Events, Query, Res, ResMut};
+use valence::prelude::{BlockPos, Client, EventReader, Events, Query, Res, ResMut, Username};
 
 use super::events::MineralDropEvent;
 use super::persistence::MineralTickClock;
 use super::registry::{MineralEntry, MineralRegistry};
 use super::types::MineralRarity;
+use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
     MAIN_PACK_CONTAINER_ID,
 };
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::player::state::PlayerState;
 use crate::shelflife::DecayProfileRegistry;
 use crate::shelflife::{DecayProfileId, Freshness};
 use crate::skill::components::SkillId;
@@ -30,6 +33,7 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 const DEFAULT_DROP_STACK_COUNT: u32 = 1;
 
 /// plan-mineral-v1 §2.2 consumer —— 把 MineralDropEvent 写成 PlayerInventory 的 ItemInstance。
+#[allow(clippy::too_many_arguments)] // Bevy system signature; drop, inventory, snapshot, and skill concerns stay explicit.
 pub fn consume_mineral_drops_into_inventory(
     mut events: EventReader<MineralDropEvent>,
     registry: Res<MineralRegistry>,
@@ -37,6 +41,7 @@ pub fn consume_mineral_drops_into_inventory(
     clock: Res<MineralTickClock>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&mut Client, &Username, &PlayerState, &Cultivation)>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     for event in events.read() {
@@ -108,6 +113,18 @@ pub fn consume_mineral_drops_into_inventory(
                     action: "ore_drop",
                 },
             });
+        }
+        if let Ok((mut client, username, player_state, cultivation)) = clients.get_mut(event.player)
+        {
+            send_inventory_snapshot_to_client(
+                event.player,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "mineral_drop",
+            );
         }
     }
 }

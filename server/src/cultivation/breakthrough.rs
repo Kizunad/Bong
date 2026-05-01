@@ -18,11 +18,16 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::ZoneRegistry;
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::life_record::{BiographyEntry, LifeRecord};
+use super::meridian_open::MIN_ZONE_QI_TO_OPEN;
 use super::tick::CultivationClock;
+
+pub const MIN_ZONE_QI_TO_BREAKTHROUGH: f64 = MIN_ZONE_QI_TO_OPEN;
 
 /// 每境界的基础成功率（未叠心境/完整度/材料）。
 pub fn base_success_rate(next: Realm) -> f64 {
@@ -114,6 +119,7 @@ pub enum BreakthroughError {
     RequiresTribulation, // Spirit→Void 必须走 tribulation 流程
     NotEnoughMeridians { need: usize, have: usize },
     NotEnoughQi { need: f64, have: f64 },
+    ZoneTooWeak { need: f64, have: f64 },
     RolledFailure { severity: f64 }, // 骰子输了
 }
 
@@ -163,6 +169,24 @@ fn breakthrough_precondition_error(
         });
     }
     None
+}
+
+fn breakthrough_zone_qi_error(
+    position: &Position,
+    zones: Option<&ZoneRegistry>,
+) -> Option<BreakthroughError> {
+    let zone_qi = zones
+        .and_then(|zones| zones.find_zone(DimensionKind::Overworld, position.get()))
+        .map(|zone| zone.spirit_qi)
+        .unwrap_or(0.0);
+    if zone_qi < MIN_ZONE_QI_TO_BREAKTHROUGH {
+        Some(BreakthroughError::ZoneTooWeak {
+            need: MIN_ZONE_QI_TO_BREAKTHROUGH,
+            have: zone_qi,
+        })
+    } else {
+        None
+    }
 }
 
 /// 随机骰子抽象 — 测试时可注入确定值。
@@ -266,6 +290,7 @@ pub fn breakthrough_system(
     mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
     mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
+    zones: Option<Res<ZoneRegistry>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
@@ -293,10 +318,17 @@ pub fn breakthrough_system(
             .unwrap_or(0.0);
         let material_bonus = req.material_bonus + buff_bonus;
 
-        let res = breakthrough_precondition_error(&cultivation, &meridians).map_or_else(
-            || try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll),
-            Err,
-        );
+        let zone_error = positions
+            .get(req.entity)
+            .ok()
+            .and_then(|position| breakthrough_zone_qi_error(position, zones.as_deref()));
+
+        let res = zone_error
+            .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
+            .map_or_else(
+                || try_breakthrough(&mut cultivation, &mut meridians, material_bonus, &mut roll),
+                Err,
+            );
 
         match &res {
             Ok(success) => {
@@ -385,6 +417,8 @@ pub fn breakthrough_system(
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::{App, Events, Update};
 
     struct FixedRoll(f64);
     impl RollSource for FixedRoll {
@@ -504,6 +538,50 @@ mod tests {
 
         assert!(matches!(err, BreakthroughError::NotEnoughQi { .. }));
         assert!((c.pending_material_bonus - 0.12).abs() < 1e-9);
+    }
+
+    #[test]
+    fn breakthrough_rejects_when_zone_qi_too_weak() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (mut cultivation, meridians) = setup_for_induce();
+        cultivation.pending_material_bonus = 0.12;
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::default(),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let outcomes = app.world().resource::<Events<BreakthroughOutcome>>();
+        let outcome = outcomes.iter_current_update_events().next().unwrap();
+        assert!(matches!(
+            outcome.result,
+            Err(BreakthroughError::ZoneTooWeak { .. })
+        ));
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.qi_current, 100.0);
+        assert!((cultivation.pending_material_bonus - 0.12).abs() < 1e-9);
     }
 
     /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。

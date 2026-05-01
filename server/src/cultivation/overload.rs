@@ -125,9 +125,50 @@ pub fn apply_meridian_crack_to_system(
     Some(target_id)
 }
 
+pub fn apply_meridian_overload_events(
+    clock: Res<CultivationClock>,
+    mut overload_events: EventReader<MeridianOverloadEvent>,
+    mut players: Query<(&mut Cultivation, &mut MeridianSystem)>,
+) {
+    let now = clock.tick;
+    for event in overload_events.read() {
+        if event.severity <= f64::EPSILON {
+            continue;
+        }
+
+        let Ok((mut cultivation, mut meridians)) = players.get_mut(event.entity) else {
+            continue;
+        };
+
+        if has_current_tick_overload_crack(&meridians, now) {
+            continue;
+        }
+
+        apply_meridian_crack_to_system(
+            &mut meridians,
+            event.severity,
+            CrackCause::Overload,
+            now,
+        );
+
+        let frozen = cultivation.qi_max_frozen.unwrap_or(0.0) + event.severity * FREEZE_FACTOR;
+        cultivation.qi_max_frozen = Some(frozen.min(cultivation.qi_max * 0.5));
+    }
+}
+
+fn has_current_tick_overload_crack(meridians: &MeridianSystem, now: u64) -> bool {
+    meridians.iter().any(|meridian| {
+        meridian
+            .cracks
+            .iter()
+            .any(|crack| crack.cause == CrackCause::Overload && crack.created_at == now)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::IntoSystemConfigs;
 
     #[test]
     fn no_severity_below_threshold() {
@@ -175,5 +216,75 @@ mod tests {
 
         assert_eq!(hit, Some(MeridianId::Lung));
         assert_eq!(meridians.get(MeridianId::Lung).cracks.len(), 1);
+    }
+
+    #[test]
+    fn meridian_overload_event_reader_writes_crack() {
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(CultivationClock { tick: 7 });
+        app.add_event::<MeridianOverloadEvent>();
+        app.add_systems(valence::prelude::Update, apply_meridian_overload_events);
+
+        let mut meridians = MeridianSystem::default();
+        meridians
+            .get_mut(super::super::components::MeridianId::Lung)
+            .opened = true;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                meridians,
+            ))
+            .id();
+
+        app.world_mut().send_event(MeridianOverloadEvent {
+            entity,
+            severity: 0.2,
+        });
+        app.update();
+
+        let meridians = app.world().get::<MeridianSystem>(entity).unwrap();
+        let lung = meridians.get(super::super::components::MeridianId::Lung);
+        assert_eq!(lung.cracks.len(), 1);
+        assert_eq!(lung.cracks[0].cause, CrackCause::Overload);
+        assert_eq!(lung.cracks[0].created_at, 7);
+        assert!((lung.integrity - 0.98).abs() < 1e-9);
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!((cultivation.qi_max_frozen.unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn overload_detection_and_reader_do_not_double_apply_same_tick() {
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(CultivationClock { tick: 9 });
+        app.add_event::<MeridianOverloadEvent>();
+        app.add_systems(
+            valence::prelude::Update,
+            (overload_detection_tick, apply_meridian_overload_events).chain(),
+        );
+
+        let mut meridians = MeridianSystem::default();
+        let lung = meridians.get_mut(super::super::components::MeridianId::Lung);
+        lung.opened = true;
+        lung.flow_rate = 1.0;
+        lung.throughput_current = 2.5;
+        let entity = app
+            .world_mut()
+            .spawn((Cultivation::default(), meridians))
+            .id();
+
+        app.update();
+
+        let meridians = app.world().get::<MeridianSystem>(entity).unwrap();
+        assert_eq!(
+            meridians
+                .get(super::super::components::MeridianId::Lung)
+                .cracks
+                .len(),
+            1
+        );
     }
 }
