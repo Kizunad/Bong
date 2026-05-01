@@ -1,6 +1,7 @@
 package com.bong.client.state;
 
 import java.util.Objects;
+import java.util.Set;
 
 public final class ZoneState {
     private static final int MIN_DANGER_LEVEL = 0;
@@ -10,21 +11,34 @@ public final class ZoneState {
     private final String zoneLabel;
     private final double spiritQiNormalized;
     private final int dangerLevel;
+    private final boolean noCadence;
     private final long changedAtMillis;
 
-    private ZoneState(String zoneId, String zoneLabel, double spiritQiNormalized, int dangerLevel, long changedAtMillis) {
+    private ZoneState(String zoneId, String zoneLabel, double spiritQiNormalized, int dangerLevel, boolean noCadence, long changedAtMillis) {
         this.zoneId = Objects.requireNonNull(zoneId, "zoneId");
         this.zoneLabel = Objects.requireNonNull(zoneLabel, "zoneLabel");
         this.spiritQiNormalized = spiritQiNormalized;
         this.dangerLevel = dangerLevel;
+        this.noCadence = noCadence;
         this.changedAtMillis = changedAtMillis;
     }
 
     public static ZoneState empty() {
-        return new ZoneState("", "", 0.0, 0, 0L);
+        return new ZoneState("", "", 0.0, 0, false, 0L);
     }
 
     public static ZoneState create(String zoneId, String zoneLabel, double spiritQiNormalized, int dangerLevel, long changedAtMillis) {
+        return create(zoneId, zoneLabel, spiritQiNormalized, dangerLevel, Set.of(), changedAtMillis);
+    }
+
+    public static ZoneState create(
+        String zoneId,
+        String zoneLabel,
+        double spiritQiNormalized,
+        int dangerLevel,
+        Set<String> activeEvents,
+        long changedAtMillis
+    ) {
         String normalizedZoneId = normalizeText(zoneId);
         if (normalizedZoneId.isEmpty()) {
             return empty();
@@ -40,8 +54,19 @@ public final class ZoneState {
             normalizedZoneLabel,
             clamp(spiritQiNormalized, 0.0, 1.0),
             clamp(dangerLevel, MIN_DANGER_LEVEL, MAX_DANGER_LEVEL),
+            containsNoCadence(activeEvents),
             Math.max(0L, changedAtMillis)
         );
+    }
+
+    private static boolean containsNoCadence(Set<String> activeEvents) {
+        if (activeEvents == null || activeEvents.isEmpty()) {
+            return false;
+        }
+        return activeEvents.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .anyMatch("no_cadence"::equalsIgnoreCase);
     }
 
     private static String normalizeText(String value) {
@@ -73,6 +98,10 @@ public final class ZoneState {
 
     public int dangerLevel() {
         return dangerLevel;
+    }
+
+    public boolean noCadence() {
+        return noCadence;
     }
 
     public long changedAtMillis() {

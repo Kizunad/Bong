@@ -118,5 +118,8 @@ public final class BongZoneHud {
                 dangerColor(zoneState.dangerLevel()),
                 true
         );
+        if (zoneState.noCadence()) {
+            surface.drawText("节律 无节律", HUD_LEFT + 62, DANGER_Y, 0xFFBFC4CC, true);
+        }
     }
 }
