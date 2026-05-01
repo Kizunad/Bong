@@ -1871,6 +1871,9 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
                 "herbalism" => Some(SkillId::Herbalism),
                 "alchemy" => Some(SkillId::Alchemy),
                 "forging" => Some(SkillId::Forging),
+                "combat" => Some(SkillId::Combat),
+                "mineral" => Some(SkillId::Mineral),
+                "cultivation" => Some(SkillId::Cultivation),
                 _ => None,
             };
             continue;

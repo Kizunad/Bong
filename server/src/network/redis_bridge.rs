@@ -16,8 +16,10 @@ use crate::schema::channels::{
     CH_ARMOR_DURABILITY_CHANGED, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
     CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
     CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_REBIRTH, CH_SOCIAL_EXPOSURE,
-    CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT, CH_WORLD_STATE,
+    CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_REBIRTH,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_TSY_EVENT,
+    CH_WORLD_STATE,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
@@ -32,6 +34,9 @@ use crate::schema::death_lifecycle::{
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::skill::{
+    SkillCapChangedPayloadV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1, SkillXpGainPayloadV1,
+};
 use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1,
 };
@@ -76,6 +81,10 @@ pub enum RedisOutbound {
     LifespanEvent(LifespanEventV1),
     DuoSheEvent(DuoSheEventV1),
     Rebirth(RebirthEventV1),
+    SkillXpGain(SkillXpGainPayloadV1),
+    SkillLvUp(SkillLvUpPayloadV1),
+    SkillCapChanged(SkillCapChangedPayloadV1),
+    SkillScrollUsed(SkillScrollUsedPayloadV1),
     NpcSpawned(NpcSpawnedV1),
     NpcDeath(NpcDeathV1),
     FactionEvent(FactionEventV1),
@@ -471,6 +480,46 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_REBIRTH,
+                payload,
+            })
+        }
+        RedisOutbound::SkillXpGain(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SkillXpGainPayloadV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_XP_GAIN,
+                payload,
+            })
+        }
+        RedisOutbound::SkillLvUp(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize SkillLvUpPayloadV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_LV_UP,
+                payload,
+            })
+        }
+        RedisOutbound::SkillCapChanged(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SkillCapChangedPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_CAP_CHANGED,
+                payload,
+            })
+        }
+        RedisOutbound::SkillScrollUsed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SkillScrollUsedPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SKILL_SCROLL_USED,
                 payload,
             })
         }
@@ -1675,6 +1724,79 @@ mod redis_bridge_tests {
                 assert_eq!(v["character_id"], "offline:Azure");
                 assert_eq!(v["prior_realm"], "Induce");
                 assert_eq!(v["new_realm"], "Awaken");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_skill_events_on_skill_channels() {
+        let xp = prepare_outbound_command(RedisOutbound::SkillXpGain(SkillXpGainPayloadV1::new(
+            1001,
+            crate::schema::skill::SkillIdV1::Combat,
+            4,
+            crate::schema::skill::XpGainSourceV1::Action {
+                plan_id: "combat".to_string(),
+                action: "kill_npc".to_string(),
+            },
+        )))
+        .expect("skill xp payload should serialize");
+        match xp {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_XP_GAIN);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "combat");
+                assert_eq!(v["amount"], 4);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let lv = prepare_outbound_command(RedisOutbound::SkillLvUp(SkillLvUpPayloadV1::new(
+            1001,
+            crate::schema::skill::SkillIdV1::Mineral,
+            2,
+        )))
+        .expect("skill level payload should serialize");
+        match lv {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_LV_UP);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "mineral");
+                assert_eq!(v["new_lv"], 2);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let cap = prepare_outbound_command(RedisOutbound::SkillCapChanged(
+            SkillCapChangedPayloadV1::new(1001, crate::schema::skill::SkillIdV1::Cultivation, 7),
+        ))
+        .expect("skill cap payload should serialize");
+        match cap {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_CAP_CHANGED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "cultivation");
+                assert_eq!(v["new_cap"], 7);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+
+        let scroll = prepare_outbound_command(RedisOutbound::SkillScrollUsed(
+            SkillScrollUsedPayloadV1::new(
+                1001,
+                "scroll:mine_cave_scrap",
+                crate::schema::skill::SkillIdV1::Mineral,
+                100,
+                false,
+            ),
+        ))
+        .expect("skill scroll payload should serialize");
+        match scroll {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SKILL_SCROLL_USED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["skill"], "mineral");
+                assert_eq!(v["scroll_id"], "scroll:mine_cave_scrap");
             }
             other => panic!("expected publish, got {other:?}"),
         }

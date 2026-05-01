@@ -14,5 +14,13 @@
     "skill": "herbalism",
     "xp_granted": 0,
     "was_duplicate": true
+  },
+  {
+    "v": 1,
+    "char_id": 1001,
+    "scroll_id": "scroll:mine_cave_scrap",
+    "skill": "mineral",
+    "xp_granted": 100,
+    "was_duplicate": false
   }
 ]

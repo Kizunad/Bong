@@ -420,11 +420,7 @@ fn emit_skill_caps_on_realm_regressed(
 ) {
     for event in regressed.read() {
         let new_cap = breakthrough::skill_cap_for_realm(event.to);
-        for skill in [
-            crate::skill::components::SkillId::Herbalism,
-            crate::skill::components::SkillId::Alchemy,
-            crate::skill::components::SkillId::Forging,
-        ] {
+        for skill in crate::skill::components::SkillId::ALL {
             skill_cap_events.send(SkillCapChanged {
                 char_entity: event.entity,
                 skill,
@@ -787,7 +783,7 @@ mod tests {
             .resource_mut::<valence::prelude::Events<SkillCapChanged>>()
             .drain()
             .collect();
-        assert_eq!(caps.len(), 3);
+        assert_eq!(caps.len(), crate::skill::components::SkillId::ALL.len());
         assert!(caps.iter().all(|e| e.new_cap == 8));
     }
 }

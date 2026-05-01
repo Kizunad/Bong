@@ -8,14 +8,16 @@
 //! 化虚渡劫为特殊流程（§3.2）：不走本 system 的 try_breakthrough，而是
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res};
+use valence::prelude::{
+    bevy_ecs, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+};
 
 use crate::combat::components::StatusEffects;
 use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
-use crate::skill::events::SkillCapChanged;
+use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
 
 use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, Realm};
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
@@ -266,6 +268,7 @@ pub fn breakthrough_system(
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
+    mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
 ) {
     let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
     let now = clock.tick;
@@ -304,11 +307,22 @@ pub fn breakthrough_system(
                 // plan-skill-v1 §4 境界软挂钩：突破到新境界 → 三个 MVP skill 的 cap 全部上调。
                 // Client / agent 订阅 SkillCapChanged 做 narration / inspect 面板 effective_lv 展示。
                 let new_cap = skill_cap_for_realm(success.to);
-                for skill in [SkillId::Herbalism, SkillId::Alchemy, SkillId::Forging] {
+                for skill in SkillId::ALL {
                     skill_cap_events.send(SkillCapChanged {
                         char_entity: req.entity,
                         skill,
                         new_cap,
+                    });
+                }
+                if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
+                    skill_xp_events.send(SkillXpGain {
+                        char_entity: req.entity,
+                        skill: SkillId::Cultivation,
+                        amount: 3,
+                        source: XpGainSource::Action {
+                            plan_id: "cultivation",
+                            action: "breakthrough_success",
+                        },
                     });
                 }
                 // plan-particle-system-v1 §4.4：突破成功发 breakthrough_pillar 光柱。
