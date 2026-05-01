@@ -250,9 +250,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn classify_zones_by_qi(zones: &[Zone], threshold: f64) -> (Vec<&Zone>, Vec<&Zone>) {
     zones
         .iter()
-        .filter(|z| {
-            MobSpawnFilter::default_candidates_for_zone(z).contains(&NaturalMobKind::Zombie)
-        })
+        .filter(|z| MobSpawnFilter::default_candidates_for_zone(z).contains(&NaturalMobKind::Rogue))
         .partition(|z| z.spirit_qi >= threshold)
 }
 

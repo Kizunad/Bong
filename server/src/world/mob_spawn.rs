@@ -8,14 +8,18 @@ pub enum NaturalMobKind {
     Zombie,
     Skeleton,
     Creeper,
+    Rogue,
     AshSpider,
     Daoxiang,
 }
 
-pub const DEFAULT_NATURAL_MOB_CANDIDATES: [NaturalMobKind; 3] = [
+pub const DEFAULT_MOB_SPAWN_CANDIDATES: [NaturalMobKind; 6] = [
     NaturalMobKind::Zombie,
     NaturalMobKind::Skeleton,
     NaturalMobKind::Creeper,
+    NaturalMobKind::Rogue,
+    NaturalMobKind::AshSpider,
+    NaturalMobKind::Daoxiang,
 ];
 
 pub const DEAD_ZONE_MOB_WHITELIST: [NaturalMobKind; 2] =
@@ -29,9 +33,8 @@ impl MobSpawnFilter {
     }
 
     pub fn default_candidates_for_zone(zone: &Zone) -> Vec<NaturalMobKind> {
-        DEFAULT_NATURAL_MOB_CANDIDATES
+        DEFAULT_MOB_SPAWN_CANDIDATES
             .into_iter()
-            .chain(DEAD_ZONE_MOB_WHITELIST)
             .filter(|mob| !Self::ban_in_dead_zone(zone, *mob))
             .collect()
     }
@@ -82,5 +85,6 @@ mod tests {
             &zone,
             NaturalMobKind::Creeper
         ));
+        assert!(MobSpawnFilter::default_candidates_for_zone(&zone).contains(&NaturalMobKind::Rogue));
     }
 }
